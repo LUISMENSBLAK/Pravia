@@ -1,0 +1,19 @@
+*, *::before, *::after { box-sizing: border-box; }
+html { min-width: 320px; min-height: 100%; color-scheme: light; }
+body { min-width: 320px; min-height: 100dvh; margin: 0; background: var(--color-workspace); }
+body, button, input { -webkit-font-smoothing: antialiased; }
+button, input { font-family: inherit; }
+button, a { touch-action: manipulation; }
+button { -webkit-tap-highlight-color: transparent; }
+img, svg { display: block; }
+a { color: inherit; }
+::selection { color: var(--color-navy-950); background: var(--color-gold-200); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

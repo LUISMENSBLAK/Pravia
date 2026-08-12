@@ -1,0 +1,19 @@
+.field { display: grid; gap: var(--space-2); }
+.label { color: var(--color-text-primary); font-size: var(--text-sm); font-weight: 620; }
+.control {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  transition: border-color var(--motion-fast), box-shadow var(--motion-fast);
+}
+.control:focus-within { border-color: var(--color-gold-500); box-shadow: 0 0 0 3px var(--color-focus); }
+.invalid { border-color: var(--color-danger-500); }
+.input { width: 100%; min-width: 0; border: 0; outline: 0; padding: 0 var(--space-3); color: var(--color-text-primary); background: transparent; font: inherit; font-size: var(--text-base); }
+.input::placeholder { color: var(--color-text-muted); }
+.leading, .trailing { flex: 0 0 auto; display: grid; place-items: center; color: var(--color-text-muted); }
+.leading { margin-left: var(--space-3); }
+.trailing { margin-right: var(--space-1); }
+.error { color: var(--color-danger-600); font-size: var(--text-xs); line-height: 1.4; }

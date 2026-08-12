@@ -1,0 +1,45 @@
+{
+  "name": "PRAVIA IA Owl",
+  "version": "1.1.0",
+  "basePath": "/brand/pravia-ai",
+  "runtimeMaxDimension": 384,
+  "masterReference": "owl-master-reference.jpg",
+  "states": {
+    "idle": {
+      "file": "owl-idle.png",
+      "intendedMotion": "subtle breathing, rare head tilt, occasional blink"
+    },
+    "blink": {
+      "file": "owl-blink.png",
+      "intendedMotion": "brief blink frame used from idle"
+    },
+    "greeting": {
+      "file": "owl-greeting.png",
+      "intendedMotion": "short wave when the assistant is intentionally opened"
+    },
+    "thinking": {
+      "file": "owl-thinking.png",
+      "intendedMotion": "gentle float / eye glow while reasoning"
+    },
+    "processing": {
+      "file": "owl-processing.png",
+      "intendedMotion": "document/tool processing state"
+    },
+    "success": {
+      "file": "owl-success.png",
+      "intendedMotion": "short positive confirmation after a successful action"
+    }
+  },
+  "interactionModes": [
+    "proactive",
+    "balanced",
+    "discreet"
+  ],
+  "defaultInteractionMode": "balanced",
+  "rules": [
+    "Do not interrupt without a concrete contextual reason",
+    "Do not perform sensitive write actions without explicit confirmation",
+    "Use the same permissions as the signed-in user",
+    "Prefer contextual suggestions over generic 'need help?' prompts"
+  ]
+}

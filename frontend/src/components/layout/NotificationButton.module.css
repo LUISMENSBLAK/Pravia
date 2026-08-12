@@ -1,0 +1,5 @@
+.root { position: relative; }
+.popover { position: absolute; z-index: var(--layer-menu); top: calc(100% + 9px); right: 0; width: 290px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-4); color: var(--color-text-primary); background: var(--color-surface); box-shadow: var(--shadow-md); }
+.popover strong { font-size: var(--text-sm); }
+.popover p { margin: var(--space-2) 0 0; color: var(--color-text-secondary); font-size: var(--text-xs); line-height: 1.5; }
+@media (max-width: 480px) { .popover { position: fixed; top: var(--topbar-height); right: var(--space-3); width: calc(100vw - 24px); } }

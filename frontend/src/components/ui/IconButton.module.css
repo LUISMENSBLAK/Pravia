@@ -1,0 +1,15 @@
+.button {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border: 0;
+  border-radius: var(--radius-md);
+  display: inline-grid;
+  place-items: center;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  transition: background-color var(--motion-fast), color var(--motion-fast);
+}
+.button:hover { background: rgb(255 255 255 / 8%); }
+.button:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 1px; }

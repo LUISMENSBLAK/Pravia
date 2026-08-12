@@ -1,0 +1,15 @@
+.trigger { width: min(100%, 590px); height: 42px; display: flex; align-items: center; gap: var(--space-3); border: 1px solid rgb(255 255 255 / 12%); border-radius: var(--radius-md); padding: 0 var(--space-3); color: var(--color-sidebar-muted); background: rgb(255 255 255 / 5%); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; transition: border-color var(--motion-fast), background-color var(--motion-fast); }
+.trigger:hover { color: white; border-color: rgb(255 255 255 / 20%); background: rgb(255 255 255 / 7%); }
+.trigger:focus-visible { outline: 3px solid var(--color-focus-on-dark); }
+.trigger span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trigger kbd { height: 25px; display: inline-flex; align-items: center; gap: 3px; border: 1px solid rgb(255 255 255 / 10%); border-radius: 6px; padding: 0 7px; color: var(--color-sidebar-muted); background: rgb(0 0 0 / 14%); font-family: inherit; font-size: 11px; }
+.mobileTrigger { display: none; }
+.overlay { position: fixed; inset: 0; z-index: var(--layer-modal); display: grid; justify-items: center; align-content: start; padding: 11vh var(--space-4) var(--space-4); background: rgb(2 10 24 / 58%); backdrop-filter: blur(3px); }
+.dialog { width: min(640px, 100%); overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: var(--shadow-lg); }
+.searchControl { height: 62px; display: flex; align-items: center; gap: var(--space-3); border-bottom: 1px solid var(--color-border); padding-left: var(--space-5); color: var(--color-text-muted); }
+.searchControl input { flex: 1; min-width: 0; border: 0; outline: 0; color: var(--color-text-primary); background: transparent; font: inherit; font-size: var(--text-base); }
+.empty { display: grid; gap: var(--space-2); padding: var(--space-6); }
+.empty span { color: var(--color-text-primary); font-weight: 650; }
+.empty p { margin: 0; color: var(--color-text-secondary); font-size: var(--text-sm); line-height: 1.6; }
+
+@media (max-width: 880px) { .trigger { display: none; } .mobileTrigger { display: inline-grid; } }

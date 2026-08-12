@@ -1,0 +1,22 @@
+.root { position: relative; }
+.trigger { min-height: 52px; display: flex; align-items: center; gap: var(--space-3); border: 0; border-radius: var(--radius-md); padding: 5px 8px; color: white; background: transparent; font: inherit; cursor: pointer; transition: background-color var(--motion-fast); }
+.trigger:hover { background: rgb(255 255 255 / 7%); }
+.trigger:focus-visible { outline: 3px solid var(--color-focus-on-dark); }
+.summary { min-width: 0; display: grid; gap: 2px; text-align: left; }
+.summary strong { max-width: 170px; overflow: hidden; color: white; font-size: var(--text-sm); font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
+.summary small { max-width: 170px; overflow: hidden; color: var(--color-sidebar-muted); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.trigger svg { transition: transform var(--motion-fast); }
+.chevronOpen { transform: rotate(180deg); }
+.menu { position: absolute; z-index: var(--layer-menu); top: calc(100% + 8px); right: 0; width: 260px; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-lg); color: var(--color-text-primary); background: var(--color-surface); box-shadow: var(--shadow-md); }
+.identity { display: grid; gap: 3px; border-bottom: 1px solid var(--color-border); padding: var(--space-4); }
+.identity strong { font-size: var(--text-sm); }
+.identity span { overflow: hidden; color: var(--color-text-secondary); font-size: var(--text-xs); text-overflow: ellipsis; }
+.menu button { width: 100%; min-height: 46px; display: flex; align-items: center; gap: var(--space-3); border: 0; padding: 0 var(--space-4); color: var(--color-danger-600); background: transparent; font: inherit; font-size: var(--text-sm); cursor: pointer; }
+.menu button:hover { background: var(--color-danger-100); }
+.menu button:focus-visible { outline: 3px solid var(--color-focus); outline-offset: -3px; }
+
+@media (max-width: 620px) {
+  .summary, .trigger > svg { display: none; }
+  .trigger { padding-inline: 4px; }
+  .menu { position: fixed; top: var(--topbar-height); right: var(--space-3); width: calc(100vw - 24px); }
+}

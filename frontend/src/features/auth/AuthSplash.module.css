@@ -1,0 +1,25 @@
+.splash {
+  min-height: 100dvh;
+  display: grid;
+  place-content: center;
+  gap: var(--space-4);
+  justify-items: center;
+  color: var(--color-text-secondary);
+  background: var(--color-workspace);
+  font-size: var(--text-sm);
+}
+
+.mark {
+  width: 34px;
+  aspect-ratio: 1;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-gold-500);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .mark { animation-duration: 1500ms; }
+}

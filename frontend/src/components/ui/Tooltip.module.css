@@ -1,0 +1,4 @@
+.wrapper { position: relative; display: block; }
+.tip { pointer-events: none; position: absolute; z-index: 50; left: calc(100% + 10px); top: 50%; transform: translate(4px, -50%); opacity: 0; white-space: nowrap; padding: 7px 9px; border-radius: var(--radius-sm); color: white; background: var(--color-navy-800); box-shadow: var(--shadow-md); font-size: var(--text-xs); transition: opacity var(--motion-fast), transform var(--motion-fast); }
+.wrapper:hover .tip, .wrapper:focus-within .tip { opacity: 1; transform: translate(0, -50%); }
+@media (max-width: 767px) { .tip { display: none; } }
