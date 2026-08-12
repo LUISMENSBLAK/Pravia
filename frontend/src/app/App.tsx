@@ -6,8 +6,10 @@ import { ProtectedRoute } from '../features/auth/ProtectedRoute';
 import { ModulePlaceholder } from '../pages/ModulePlaceholder';
 import { MyDayPage } from '../features/my-day/MyDayPage';
 import { AssistantProvider } from '../features/assistant/AssistantProvider';
+import { ProspectsPage } from '../features/prospects/ProspectsPage';
+import { ProspectDetailPage } from '../features/prospects/ProspectDetailPage';
 
-const modulePaths = ['prospectos', 'cotizaciones', 'expedientes', 'notarias', 'comparecientes', 'finanzas', 'agenda', 'reportes', 'riesgos', 'configuracion'];
+const modulePaths = ['cotizaciones', 'expedientes', 'notarias', 'comparecientes', 'finanzas', 'agenda', 'reportes', 'riesgos', 'configuracion'];
 
 export function App() {
   return (
@@ -18,6 +20,8 @@ export function App() {
           <Route element={<AssistantProvider><AppShell /></AssistantProvider>}>
             <Route index element={<Navigate to="/mi-dia" replace />} />
             <Route path="/mi-dia" element={<MyDayPage />} />
+            <Route path="/prospectos" element={<ProspectsPage />} />
+            <Route path="/prospectos/:id" element={<ProspectDetailPage />} />
             <Route path="/expedientes/:id" element={<ModulePlaceholder />} />
             {modulePaths.map((path) => <Route key={path} path={`/${path}`} element={<ModulePlaceholder />} />)}
           </Route>

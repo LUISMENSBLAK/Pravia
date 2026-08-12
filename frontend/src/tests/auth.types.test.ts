@@ -11,4 +11,10 @@ describe('normalizeUser', () => {
   it('rechaza respuestas sin identidad utilizable', () => {
     expect(normalizeUser({ data: {} })).toBeNull();
   });
+
+  it('acepta el contrato real del backend con nombre, apellido y rol', () => {
+    expect(normalizeUser({ user: { id: 'u-2', nombre: 'María', apellido: 'López', email: 'maria@notaria.mx', rol: 'ADMINISTRACION', permissions: ['prospectos.read'] } })).toMatchObject({
+      id: 'u-2', name: 'María López', role: 'ADMINISTRACION', permissions: ['prospectos.read'],
+    });
+  });
 });

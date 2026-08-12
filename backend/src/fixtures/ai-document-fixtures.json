@@ -1,0 +1,140 @@
+[
+  {
+    "id": "ine-clara",
+    "kind": "INE",
+    "expected_values": { "nombre": "ALMA PRUEBA", "apellido_paterno": "SEGURA", "curp": "SAAA900101MDFGLM01" },
+    "expected_conflicts": [],
+    "expected_escalation": false,
+    "models": {
+      "gpt-5.4-nano": { "input_tokens": 920, "output_tokens": 108, "estimated_usd": 0.0002, "latency_ms": 840, "fields": [
+        { "campo": "nombre", "valor": "ALMA PRUEBA", "confianza": "LECTURA_CLARA", "fuente": "INE sintética", "documento_id": "fx-ine" },
+        { "campo": "apellido_paterno", "valor": "SEGURA", "confianza": "LECTURA_CLARA", "fuente": "INE sintética", "documento_id": "fx-ine" },
+        { "campo": "curp", "valor": "SAAA900101MDFGLM01", "confianza": "LECTURA_CLARA", "fuente": "INE sintética", "documento_id": "fx-ine" }
+      ] },
+      "gpt-5.4-mini": { "input_tokens": 940, "output_tokens": 112, "estimated_usd": 0.0011, "latency_ms": 1180, "fields": [
+        { "campo": "nombre", "valor": "ALMA PRUEBA", "confianza": "LECTURA_CLARA", "fuente": "INE sintética", "documento_id": "fx-ine" },
+        { "campo": "apellido_paterno", "valor": "SEGURA", "confianza": "LECTURA_CLARA", "fuente": "INE sintética", "documento_id": "fx-ine" },
+        { "campo": "curp", "valor": "SAAA900101MDFGLM01", "confianza": "LECTURA_CLARA", "fuente": "INE sintética", "documento_id": "fx-ine" }
+      ] }
+    }
+  },
+  {
+    "id": "pasaporte-claro",
+    "kind": "PASAPORTE",
+    "expected_values": { "nombre": "LUIS EJEMPLO", "apellido_paterno": "CONTROL", "nacionalidad": "MEXICANA" },
+    "expected_conflicts": [],
+    "expected_escalation": false,
+    "models": {
+      "gpt-5.4-nano": { "input_tokens": 880, "output_tokens": 96, "estimated_usd": 0.0002, "latency_ms": 790, "fields": [
+        { "campo": "nombre", "valor": "LUIS EJEMPLO", "confianza": "LECTURA_CLARA", "fuente": "Pasaporte sintético", "documento_id": "fx-pass" },
+        { "campo": "apellido_paterno", "valor": "CONTROL", "confianza": "LECTURA_CLARA", "fuente": "Pasaporte sintético", "documento_id": "fx-pass" },
+        { "campo": "nacionalidad", "valor": "MEXICANA", "confianza": "LECTURA_CLARA", "fuente": "Pasaporte sintético", "documento_id": "fx-pass" }
+      ] },
+      "gpt-5.4-mini": { "input_tokens": 900, "output_tokens": 101, "estimated_usd": 0.001, "latency_ms": 1100, "fields": [
+        { "campo": "nombre", "valor": "LUIS EJEMPLO", "confianza": "LECTURA_CLARA", "fuente": "Pasaporte sintético", "documento_id": "fx-pass" },
+        { "campo": "apellido_paterno", "valor": "CONTROL", "confianza": "LECTURA_CLARA", "fuente": "Pasaporte sintético", "documento_id": "fx-pass" },
+        { "campo": "nacionalidad", "valor": "MEXICANA", "confianza": "LECTURA_CLARA", "fuente": "Pasaporte sintético", "documento_id": "fx-pass" }
+      ] }
+    }
+  },
+  {
+    "id": "curp-clara",
+    "kind": "CURP",
+    "expected_values": { "curp": "COEL850202HDFNJS02", "nombre": "JORGE EJEMPLO" },
+    "expected_conflicts": [],
+    "expected_escalation": false,
+    "models": {
+      "gpt-5.4-nano": { "input_tokens": 650, "output_tokens": 74, "estimated_usd": 0.0001, "latency_ms": 610, "fields": [
+        { "campo": "curp", "valor": "COEL850202HDFNJS02", "confianza": "LECTURA_CLARA", "fuente": "CURP sintética", "documento_id": "fx-curp" },
+        { "campo": "nombre", "valor": "JORGE EJEMPLO", "confianza": "LECTURA_CLARA", "fuente": "CURP sintética", "documento_id": "fx-curp" }
+      ] },
+      "gpt-5.4-mini": { "input_tokens": 670, "output_tokens": 78, "estimated_usd": 0.0008, "latency_ms": 930, "fields": [
+        { "campo": "curp", "valor": "COEL850202HDFNJS02", "confianza": "LECTURA_CLARA", "fuente": "CURP sintética", "documento_id": "fx-curp" },
+        { "campo": "nombre", "valor": "JORGE EJEMPLO", "confianza": "LECTURA_CLARA", "fuente": "CURP sintética", "documento_id": "fx-curp" }
+      ] }
+    }
+  },
+  {
+    "id": "csf-clara",
+    "kind": "CONSTANCIA_SITUACION_FISCAL",
+    "expected_values": { "rfc": "EJEC850202AA1", "domicilio_fiscal": "CALLE DEMOSTRACION 100, COLONIA PRUEBA" },
+    "expected_conflicts": [],
+    "expected_escalation": false,
+    "models": {
+      "gpt-5.4-nano": { "input_tokens": 1180, "output_tokens": 132, "estimated_usd": 0.0003, "latency_ms": 920, "fields": [
+        { "campo": "rfc", "valor": "EJEC850202AA1", "confianza": "LECTURA_CLARA", "fuente": "CSF sintética", "documento_id": "fx-csf" },
+        { "campo": "domicilio_fiscal", "valor": "CALLE DEMOSTRACION 100, COLONIA PRUEBA", "confianza": "LECTURA_CLARA", "fuente": "CSF sintética", "documento_id": "fx-csf" }
+      ] },
+      "gpt-5.4-mini": { "input_tokens": 1200, "output_tokens": 136, "estimated_usd": 0.0014, "latency_ms": 1320, "fields": [
+        { "campo": "rfc", "valor": "EJEC850202AA1", "confianza": "LECTURA_CLARA", "fuente": "CSF sintética", "documento_id": "fx-csf" },
+        { "campo": "domicilio_fiscal", "valor": "CALLE DEMOSTRACION 100, COLONIA PRUEBA", "confianza": "LECTURA_CLARA", "fuente": "CSF sintética", "documento_id": "fx-csf" }
+      ] }
+    }
+  },
+  {
+    "id": "domicilio-claro",
+    "kind": "COMPROBANTE_DOMICILIO",
+    "expected_values": { "domicilio_particular": "AVENIDA CONTROL 45, CP 00000" },
+    "expected_conflicts": [],
+    "expected_escalation": false,
+    "models": {
+      "gpt-5.4-nano": { "input_tokens": 740, "output_tokens": 62, "estimated_usd": 0.0001, "latency_ms": 680, "fields": [
+        { "campo": "domicilio_particular", "valor": "AVENIDA CONTROL 45, CP 00000", "confianza": "LECTURA_CLARA", "fuente": "Comprobante CFE sintético", "documento_id": "fx-dom" }
+      ] },
+      "gpt-5.4-mini": { "input_tokens": 760, "output_tokens": 67, "estimated_usd": 0.0008, "latency_ms": 970, "fields": [
+        { "campo": "domicilio_particular", "valor": "AVENIDA CONTROL 45, CP 00000", "confianza": "LECTURA_CLARA", "fuente": "Comprobante CFE sintético", "documento_id": "fx-dom" }
+      ] }
+    }
+  },
+  {
+    "id": "word-y-multiples",
+    "kind": "WORD_MULTIPLES",
+    "expected_values": { "nombre": "ALMA PRUEBA", "rfc": "EJEC850202AA1" },
+    "expected_conflicts": [],
+    "expected_escalation": false,
+    "models": {
+      "gpt-5.4-nano": { "input_tokens": 1560, "output_tokens": 154, "estimated_usd": 0.0004, "latency_ms": 1040, "fields": [
+        { "campo": "nombre", "valor": "ALMA PRUEBA", "confianza": "LECTURA_CLARA", "fuente": "Ficha Word sintética", "documento_id": "fx-word" },
+        { "campo": "nombre", "valor": "alma prueba", "confianza": "LECTURA_CLARA", "fuente": "INE sintética", "documento_id": "fx-ine-2" },
+        { "campo": "rfc", "valor": "EJEC850202AA1", "confianza": "LECTURA_CLARA", "fuente": "CSF sintética", "documento_id": "fx-csf-2" }
+      ] },
+      "gpt-5.4-mini": { "input_tokens": 1600, "output_tokens": 160, "estimated_usd": 0.0018, "latency_ms": 1490, "fields": [
+        { "campo": "nombre", "valor": "ALMA PRUEBA", "confianza": "LECTURA_CLARA", "fuente": "Ficha Word sintética", "documento_id": "fx-word" },
+        { "campo": "nombre", "valor": "alma prueba", "confianza": "LECTURA_CLARA", "fuente": "INE sintética", "documento_id": "fx-ine-2" },
+        { "campo": "rfc", "valor": "EJEC850202AA1", "confianza": "LECTURA_CLARA", "fuente": "CSF sintética", "documento_id": "fx-csf-2" }
+      ] }
+    }
+  },
+  {
+    "id": "fuentes-en-conflicto",
+    "kind": "CONFLICTO",
+    "expected_values": {},
+    "expected_conflicts": ["rfc"],
+    "expected_escalation": true,
+    "models": {
+      "gpt-5.4-nano": { "input_tokens": 1320, "output_tokens": 140, "estimated_usd": 0.0003, "latency_ms": 980, "fields": [
+        { "campo": "rfc", "valor": "EJEC850202AA1", "confianza": "LECTURA_CLARA", "fuente": "CSF sintética", "documento_id": "fx-conf-1" },
+        { "campo": "rfc", "valor": "EJEC850202BB2", "confianza": "LECTURA_CLARA", "fuente": "Ficha Word sintética", "documento_id": "fx-conf-2" }
+      ] },
+      "gpt-5.4-mini": { "input_tokens": 1360, "output_tokens": 145, "estimated_usd": 0.0016, "latency_ms": 1400, "fields": [
+        { "campo": "rfc", "valor": "EJEC850202AA1", "confianza": "LECTURA_CLARA", "fuente": "CSF sintética", "documento_id": "fx-conf-1" },
+        { "campo": "rfc", "valor": "EJEC850202BB2", "confianza": "LECTURA_CLARA", "fuente": "Ficha Word sintética", "documento_id": "fx-conf-2" }
+      ] }
+    }
+  },
+  {
+    "id": "imagen-deficiente",
+    "kind": "BAJA_CALIDAD",
+    "expected_values": { "curp": "SAAA900101MDFGLM01" },
+    "expected_conflicts": [],
+    "expected_escalation": true,
+    "models": {
+      "gpt-5.4-nano": { "input_tokens": 1020, "output_tokens": 88, "estimated_usd": 0.0002, "latency_ms": 900, "fields": [
+        { "campo": "curp", "valor": "SAAA900101MDFGLM01", "confianza": "LECTURA_DUDOSA", "fuente": "Imagen sintética borrosa", "documento_id": "fx-poor" }
+      ] },
+      "gpt-5.4-mini": { "input_tokens": 1060, "output_tokens": 93, "estimated_usd": 0.0012, "latency_ms": 1270, "fields": [
+        { "campo": "curp", "valor": "SAAA900101MDFGLM01", "confianza": "LECTURA_DUDOSA", "fuente": "Imagen sintética borrosa", "documento_id": "fx-poor" }
+      ] }
+    }
+  }
+]

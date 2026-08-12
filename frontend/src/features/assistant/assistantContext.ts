@@ -44,6 +44,12 @@ const actions: Partial<Record<AssistantModule, AssistantAction[]>> = {
     { id: 'person-documents', label: 'Documentos', prompt: 'Revisa sus documentos.' },
     { id: 'person-files', label: 'Expedientes relacionados', prompt: 'Muéstrame sus expedientes relacionados.' },
   ],
+  prospectos: [
+    { id: 'prospects-stale', label: 'Sin seguimiento', prompt: 'Muéstrame los prospectos sin seguimiento reciente.' },
+    { id: 'prospects-priority', label: 'Prioridades', prompt: 'Resume las prioridades de prospectos.' },
+    { id: 'prospects-quotes', label: 'Cotizaciones pendientes', prompt: 'Muéstrame los prospectos con cotización pendiente.' },
+    { id: 'prospects-search', label: 'Buscar prospecto', prompt: 'Ayúdame a buscar un prospecto.' },
+  ],
   agenda: [
     { id: 'agenda-today', label: '¿Qué tengo hoy?', prompt: '¿Qué tengo en la agenda hoy?' },
     { id: 'agenda-next', label: 'Próximos eventos', prompt: 'Muéstrame los próximos eventos.' },
@@ -61,4 +67,13 @@ const fallbackActions: AssistantAction[] = [
   { id: 'general-pending', label: 'Ver pendientes', prompt: '¿Hay pendientes relacionados con esta pantalla?' },
 ];
 
-export const getAssistantActions = (context: AssistantContext) => actions[context.module] ?? fallbackActions;
+const prospectDetailActions: AssistantAction[] = [
+  { id: 'prospect-summary', label: 'Resumir prospecto', prompt: 'Resume este prospecto.' },
+  { id: 'prospect-next', label: 'Próximo paso', prompt: '¿Cuál es el próximo paso para este prospecto?' },
+  { id: 'prospect-activity', label: 'Actividad reciente', prompt: 'Muéstrame la actividad reciente de este prospecto.' },
+  { id: 'prospect-follow-up', label: 'Preparar seguimiento', prompt: 'Ayúdame a preparar el seguimiento de este prospecto.' },
+];
+
+export const getAssistantActions = (context: AssistantContext) => context.entityType === 'prospecto'
+  ? prospectDetailActions
+  : actions[context.module] ?? fallbackActions;

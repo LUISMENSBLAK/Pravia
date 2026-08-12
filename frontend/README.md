@@ -1,6 +1,6 @@
-# PRAVIA OS — Frontend Fases 1, 2 y 3
+# PRAVIA OS — Frontend Fases 1 a 4
 
-Frontend nuevo construido desde cero. Incluye login, capa de autenticación, rutas protegidas, application shell responsive, el dashboard operativo **Mi Día** y el copiloto transversal **PRAVIA IA**.
+Frontend nuevo construido desde cero. Incluye login, capa de autenticación, rutas protegidas, application shell responsive, el dashboard operativo **Mi Día**, el copiloto transversal **PRAVIA IA** y el pipeline de **Prospectos**.
 
 ## Desarrollo
 
@@ -26,6 +26,10 @@ PRAVIA IA se monta una sola vez dentro del shell privado. Su contexto procede de
 
 La arquitectura, contratos y estados se documentan en [PHASE_3_REPORT.md](./PHASE_3_REPORT.md).
 
+## Integración de Prospectos
+
+Prospectos consume el contrato real `GET/POST /prospectos`, `GET /prospectos/:id`, `POST /prospectos/:id/seguimientos` y `GET /prospectos/:id/documentos`. El mapeo visual de estados, las limitaciones de volumen y la evidencia de QA se documentan en [PHASE_4_REPORT.md](./PHASE_4_REPORT.md).
+
 ## Alcance
 
-Los demás módulos operativos continúan como placeholders intencionales. Sus acciones contextuales de PRAVIA IA solo precargan consultas y no implementan lógica del módulo.
+Cotizaciones, Expedientes y los demás módulos operativos continúan como placeholders intencionales. Sus acciones contextuales de PRAVIA IA solo precargan consultas y no implementan lógica del módulo.

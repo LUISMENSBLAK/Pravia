@@ -1,0 +1,2193 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ═══════════════════════════════════════
+// USUARIOS Y AUTENTICACIÓN
+// ═══════════════════════════════════════
+
+model User {
+  id                       String    @id @default(uuid()) @db.Uuid
+  email                    String    @unique
+  password_hash            String
+  nombre                   String
+  apellido                 String
+  rol                      Role      @default(ABOGADO)
+  avatar_url               String?
+  activo                   Boolean   @default(true)
+  password_changed_at      DateTime?
+  failed_login_attempts    Int       @default(0)
+  locked_until             DateTime?
+  last_login_at            DateTime?
+  requires_password_change Boolean   @default(true)
+  created_at               DateTime  @default(now())
+  updated_at               DateTime  @updatedAt
+
+  expedientes               Expediente[]            @relation("ExpedienteAbogado")
+  expedientesGestor         Expediente[]            @relation("ExpedienteGestor")
+  expedientesCreados        Expediente[]            @relation("ExpedienteCreador")
+  expedientesArchivados     Expediente[]            @relation("ExpedienteArchivedBy")
+  prospectos                Prospecto[]
+  archivedProspectos        Prospecto[]             @relation("ProspectoArchivedBy")
+  notas                     Nota[]
+  eventos                   EventoAgenda[]          @relation("EventoResponsable")
+  eventosCancelados         EventoAgenda[]          @relation("EventoCanceladoPor")
+  aiUsageLogs               AIUsageLog[]
+  complianceRulesCreated    ComplianceRuleSet[]     @relation("ComplianceRuleCreator")
+  complianceRulesApproved   ComplianceRuleSet[]     @relation("ComplianceRuleApprover")
+  complianceReviewsCreated  ComplianceReview[]      @relation("ComplianceReviewCreator")
+  complianceReviewsReviewed ComplianceReview[]      @relation("ComplianceReviewReviewer")
+  complianceEvidenceAdded   ComplianceEvidence[]    @relation("ComplianceEvidenceAdder")
+  auditLogs                 AuditLog[]
+  cotizaciones              Cotizacion[]
+  comunicaciones            Comunicacion[]
+  seguimientosProspectos    ProspectoSeguimiento[]
+  seguimientosCotizaciones  CotizacionSeguimiento[]
+  documentosSubidos         Documento[]
+  authSessions              AuthSession[]
+  passwordResetTokens       PasswordResetToken[]
+
+  // Relaciones con motor operativo, finanzas, auditoría y vínculos de documentos
+  formularioVersionesCreadas   FormularioVersion[]          @relation("FormularioVersionCreador")
+  flujoVersionesCreadas        FlujoVersion[]               @relation("FlujoVersionCreador")
+  plantillaDocVersionesCreadas PlantillaDocumentalVersion[] @relation("PlantillaDocumentalVersionCreador")
+  movimientosCapturados        MovimientoFinanciero[]       @relation("MovimientoCapturado")
+  movimientosValidados         MovimientoFinanciero[]       @relation("MovimientoValidado")
+  movimientosRevertidos        MovimientoFinanciero[]       @relation("MovimientoRevertido")
+  expedienteActividades        ExpedienteActividad[]
+  tareasAsignadas              Tarea[]                      @relation("TareaAsignado")
+  tareasCreadas                Tarea[]                      @relation("TareaCreador")
+  outboxEventosDisparados      DomainEventOutbox[]          @relation("OutboxActor")
+
+  expedienteVinculosCreados    ExpedienteDocumento[]       @relation("ExpedienteDocCreador")
+  cotizacionVinculosCreados    CotizacionDocumento[]       @relation("CotizacionDocCreador")
+  comparecienteVinculosCreados ComparecienteDocumento[]    @relation("ComparecienteDocCreador")
+  comparecienteDocsValidados   ComparecienteDocumento[]    @relation("ComparecienteDocValidador")
+  prospectoVinculosCreados     ProspectoDocumento[]        @relation("ProspectoDocCreador")
+  requisitoVinculosCreados     RequisitoDocumentoVinculo[] @relation("RequisitoDocCreador")
+  movimientoVinculosCreados    MovimientoDocumento[]       @relation("MovimientoDocCreador")
+  comunicacionVinculosCreados  ComunicacionDocumento[]     @relation("ComunicacionDocCreador")
+  entregasRegistradas          ExpedienteEntrega[]         @relation("ExpedienteEntregaRegistrador")
+  tramitesPostfirmaGestionados TareaExterna[]              @relation("TareaExternaGestor")
+
+  comparecientesCreados                  Compareciente[]               @relation("ComparecienteCreador")
+  instrumentosMoralCreados               PersonaMoralInstrumento[]     @relation("InstrumentoCreador")
+  instrumentosMoralValidados             PersonaMoralInstrumento[]     @relation("InstrumentoValidador")
+  domiciliosComparecienteCreados         ComparecienteDomicilio[]      @relation("DomicilioCreador")
+  contactosComparecienteCreados          ComparecienteContacto[]       @relation("ContactoCreador")
+  identificacionesComparecienteCreadas   ComparecienteIdentificacion[] @relation("IdentificacionCreador")
+  identificacionesComparecienteValidadas ComparecienteIdentificacion[] @relation("IdentificacionValidador")
+  representantesCorporativosCreados      PersonaMoralRepresentante[]   @relation("RepresentanteCorporativoCreador")
+  expedienteComparecientesCreados        ExpedienteCompareciente[]     @relation("ExpedienteComparecienteCreador")
+  expedienteComparecientesValidados      ExpedienteCompareciente[]     @relation("ExpedienteComparecienteValidador")
+  expedienteRepresentacionesCreadas      ExpedienteRepresentacion[]    @relation("ExpedienteRepresentacionCreador")
+  expedienteRepresentacionesValidadas    ExpedienteRepresentacion[]    @relation("ExpedienteRepresentacionValidador")
+
+  comparecienteAltaSessions ComparecienteAltaSession[] @relation("ComparecienteAltaSessionUsuario")
+  cargasTemporales          CargaTemporalDocumento[]   @relation("CargaTemporalUsuario")
+  datosFuenteConfirmados    ComparecienteDatoFuente[]  @relation("DatoFuenteConfirmador")
+
+  @@map("users")
+}
+
+enum Role {
+  DIRECCION
+  ADMINISTRACION
+  ABOGADO
+  RECEPCION
+  GESTORIA
+  CONSULTA
+}
+
+model AuthSession {
+  id                 String    @id @default(uuid()) @db.Uuid
+  user_id            String    @db.Uuid
+  refresh_token_hash String    @unique
+  user_agent         String?
+  ip_address         String?
+  expires_at         DateTime
+  last_used_at       DateTime  @default(now())
+  revoked_at         DateTime?
+  revoked_reason     String?
+  rotated_from_id    String?   @db.Uuid
+  created_at         DateTime  @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, revoked_at, expires_at])
+  @@map("auth_sessions")
+}
+
+model PasswordResetToken {
+  id           String    @id @default(uuid()) @db.Uuid
+  user_id      String    @db.Uuid
+  token_hash   String    @unique
+  expires_at   DateTime
+  used_at      DateTime?
+  requested_ip String?
+  created_at   DateTime  @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, used_at, expires_at])
+  @@map("password_reset_tokens")
+}
+
+// ═══════════════════════════════════════
+// PROSPECTOS Y NOTARÍAS
+// ═══════════════════════════════════════
+
+model Prospecto {
+  id                     String             @id @default(uuid()) @db.Uuid
+  nombre                 String
+  telefono               String?
+  email                  String?
+  tipo_acto              String?
+  necesidad              String?
+  documentos_disponibles String?
+  tiene_antecedente      Boolean?
+  tiene_predial          Boolean?
+  puede_compartir_docs   Boolean?
+  tiempo_estimado        String?
+  ciudad                 String?
+  fuente                 String?
+  prioridad              ProspectoPrioridad @default(MEDIA)
+  estado                 ProspectoEstado    @default(NUEVO)
+  user_id                String             @db.Uuid
+
+  archived_at    DateTime?
+  archived_by    String?   @db.Uuid
+  motivo_archivo String?
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
+
+  atendido_por        User                   @relation(fields: [user_id], references: [id])
+  archived_by_user    User?                  @relation("ProspectoArchivedBy", fields: [archived_by], references: [id])
+  seguimientos        ProspectoSeguimiento[]
+  cotizacion          Cotizacion?
+  documentos          Documento[]
+  prospectoDocumentos ProspectoDocumento[]
+
+  @@map("prospectos")
+}
+
+enum ProspectoPrioridad {
+  BAJA
+  MEDIA
+  ALTA
+}
+
+enum ProspectoEstado {
+  NUEVO
+  INFO_PENDIENTE
+  DOCS_RECIBIDOS
+  EN_REVISION
+  COTIZACION_SOLICITADA
+  COTIZACION_ENVIADA
+  SEGUIMIENTO
+  ACEPTADO
+  PERDIDO
+  CANCELADO
+  ARCHIVADO
+}
+
+model ProspectoSeguimiento {
+  id                        String    @id @default(uuid()) @db.Uuid
+  prospecto_id              String    @db.Uuid
+  usuario_id                String    @db.Uuid
+  tipo                      String
+  contenido                 String
+  proxima_accion            String?
+  fecha_proximo_seguimiento DateTime?
+  created_at                DateTime  @default(now())
+
+  prospecto Prospecto @relation(fields: [prospecto_id], references: [id], onDelete: Cascade)
+  usuario   User      @relation(fields: [usuario_id], references: [id])
+
+  @@map("prospecto_seguimientos")
+}
+
+model Notaria {
+  id                 String  @id @default(uuid()) @db.Uuid
+  numero_notaria     String?
+  nombre             String
+  notario_titular    String?
+  ciudad             String?
+  entidad_federativa String  @default("Nayarit")
+  municipio          String  @default("Tepic")
+  demarcacion        String?
+  direccion          String?
+  codigo_postal      String?
+
+  // Contacto
+  telefono           String?
+  whatsapp           String?
+  correo_general     String?
+  correo_proyectos   String?
+  pagina_web         String?
+  contacto_principal String?
+
+  // Información Operativa
+  horario                  String?
+  dias_atencion            String?
+  tiempo_respuesta         String?
+  tiempo_presupuesto       String?
+  tiempo_firma             String?
+  instrucciones_especiales String?
+  observaciones_generales  String?
+  requisitos_frecuentes    String?
+  dias_respuesta_estimados Int     @default(5)
+
+  // Configuración
+  activa                    Boolean @default(true)
+  predeterminada            Boolean @default(false)
+  color_identificador       String? @default("#D4AF37")
+  tipos_acto_json           Json?
+  instituciones_json        Json?
+  municipios_atendidos_json Json?
+
+  archived_at DateTime?
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @updatedAt
+
+  contactos             NotariaContacto[]
+  cotizaciones          Cotizacion[]
+  expedientes           Expediente[]
+  plantillaDocumentales PlantillaDocumentalVersion[]
+
+  @@map("notarias")
+}
+
+model NotariaContacto {
+  id            String   @id @default(uuid()) @db.Uuid
+  notaria_id    String   @db.Uuid
+  nombre        String
+  cargo         String // Abogado, Proyectista, Gestor, Administración, Contabilidad, Recepción
+  telefono      String?
+  whatsapp      String?
+  correo        String?
+  observaciones String?
+  activo        Boolean  @default(true)
+  created_at    DateTime @default(now())
+
+  notaria Notaria @relation(fields: [notaria_id], references: [id], onDelete: Cascade)
+
+  @@map("notaria_contactos")
+}
+
+// ═══════════════════════════════════════
+// COTIZACIONES (RESPETANDO ARQUITECTURA VIGENTE SIN REGRESIONES)
+// ═══════════════════════════════════════
+
+model Cotizacion {
+  id                String           @id @default(uuid()) @db.Uuid
+  numero_solicitud  String?          @unique
+  numero_cotizacion String?          @unique
+  version_actual    Int              @default(1)
+  prospecto_id      String?          @unique @db.Uuid
+  user_id           String           @db.Uuid
+  notaria_id        String?          @db.Uuid
+  estado            CotizacionEstado @default(BORRADOR)
+
+  fecha_solicitud_notaria        DateTime?
+  fecha_limite_respuesta_notaria DateTime?
+  fecha_presupuesto_recibido     DateTime?
+  fecha_enviada_cliente          DateTime?
+  fecha_aceptacion_cliente       DateTime?
+  fecha_aprobacion_version       DateTime?
+  fecha_conversion_expediente    DateTime?
+
+  total_notaria     Decimal? @db.Decimal(14, 2)
+  honorarios_pravia Decimal? @db.Decimal(14, 2)
+  total_cliente     Decimal? @db.Decimal(14, 2)
+
+  cuerpo_correo_notaria String?
+  cuerpo_correo_cliente String?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @default(now()) @updatedAt
+
+  prospecto              Prospecto?              @relation(fields: [prospecto_id], references: [id])
+  creada_por             User                    @relation(fields: [user_id], references: [id])
+  notaria                Notaria?                @relation(fields: [notaria_id], references: [id])
+  versiones              CotizacionVersion[]
+  expediente             Expediente?
+  documentos             Documento[]
+  cotizacionDocumentos   CotizacionDocumento[]
+  pagos                  Pago[]
+  movimientosFinancieros MovimientoFinanciero[]
+  seguimientos           CotizacionSeguimiento[]
+
+  @@map("cotizaciones")
+}
+
+enum CotizacionEstado {
+  BORRADOR
+  ENVIADA_NOTARIA
+  PRESUPUESTO_RECIBIDO
+  EN_REVISION_ABOGADO
+  ENVIADA_CLIENTE
+  EN_NEGOCIACION
+  ACEPTADA
+  RECHAZADA
+  VENCIDA
+  CONVERTIDA_EXPEDIENTE
+}
+
+model CotizacionVersion {
+  id                  String   @id @default(uuid()) @db.Uuid
+  cotizacion_id       String   @db.Uuid
+  version             Int
+  desglose_notaria    Json?
+  desglose_pravia     Json?
+  total_notaria       Decimal  @db.Decimal(14, 2)
+  honorarios_pravia   Decimal  @db.Decimal(14, 2)
+  total_cliente       Decimal  @db.Decimal(14, 2)
+  montos_extraidos_ia Json?
+  notas               String?
+  pdf_url             String?
+  aprobada            Boolean  @default(false)
+  created_at          DateTime @default(now())
+  creada_por_id       String?  @db.Uuid
+
+  cotizacion Cotizacion @relation(fields: [cotizacion_id], references: [id], onDelete: Cascade)
+
+  @@unique([cotizacion_id, version])
+  @@map("cotizacion_versiones")
+}
+
+model CotizacionSeguimiento {
+  id                        String    @id @default(uuid()) @db.Uuid
+  cotizacion_id             String    @db.Uuid
+  usuario_id                String    @db.Uuid
+  tipo                      String
+  destinatario              String
+  resumen                   String
+  resultado                 String?
+  proxima_accion            String?
+  responsable               String?
+  fecha_proximo_seguimiento DateTime?
+  created_at                DateTime  @default(now())
+
+  cotizacion Cotizacion @relation(fields: [cotizacion_id], references: [id], onDelete: Cascade)
+  usuario    User       @relation(fields: [usuario_id], references: [id])
+
+  @@map("cotizacion_seguimientos")
+}
+
+// ═══════════════════════════════════════
+// MOTOR CONFIGURABLE Y VERSIONADO POR TIPO DE ACTO
+// ═══════════════════════════════════════
+
+model TipoActo {
+  id                 String    @id @default(uuid()) @db.Uuid
+  nombre             String
+  descripcion        String?
+  machote_referencia String?
+  activo             Boolean   @default(true)
+  archived_at        DateTime?
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @default(now()) @updatedAt
+
+  checklist                       ChecklistItem[]
+  expedientes                     Expediente[]
+  formularioSecciones             FormularioSeccion[]
+  flujoEtapas                     FlujoEtapa[]
+  formularioVersiones             FormularioVersion[]
+  flujoVersiones                  FlujoVersion[]
+  plantillaDocVersiones           PlantillaDocumentalVersion[]
+  tipoActoCaracteresCompareciente TipoActoCaracterCompareciente[]
+
+  @@map("tipos_acto")
+}
+
+model FormularioSeccion {
+  id           String  @id @default(uuid()) @db.Uuid
+  tipo_acto_id String  @db.Uuid
+  clave        String
+  titulo       String
+  orden        Int     @default(0)
+  descripcion  String?
+
+  tipo_acto TipoActo          @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
+  campos    FormularioCampo[]
+
+  @@unique([tipo_acto_id, clave])
+  @@map("formulario_secciones")
+}
+
+model FormularioCampo {
+  id                         String  @id @default(uuid()) @db.Uuid
+  seccion_id                 String  @db.Uuid
+  clave_tecnica              String
+  etiqueta                   String
+  tipo_dato                  String
+  orden                      Int     @default(0)
+  obligatorio                Boolean @default(false)
+  valor_predeterminado       String?
+  opciones_json              Json?
+  validaciones_json          Json?
+  condicion_visibilidad_json Json?
+  texto_ayuda                String?
+  activo                     Boolean @default(true)
+
+  seccion FormularioSeccion @relation(fields: [seccion_id], references: [id], onDelete: Cascade)
+
+  @@unique([seccion_id, clave_tecnica])
+  @@map("formulario_campos")
+}
+
+model FlujoEtapa {
+  id                         String  @id @default(uuid()) @db.Uuid
+  tipo_acto_id               String  @db.Uuid
+  clave                      String
+  nombre                     String
+  orden                      Int     @default(1)
+  obligatoria                Boolean @default(true)
+  se_puede_omitir            Boolean @default(false)
+  duracion_esperada_dias     Int     @default(3)
+  estado_general_relacionado String
+  etapa_siguiente_id         String? @db.Uuid
+  reglas_entrada_json        Json?
+  reglas_salida_json         Json?
+  activa                     Boolean @default(true)
+
+  tipo_acto        TipoActo          @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
+  expedienteEtapas ExpedienteEtapa[]
+
+  @@unique([tipo_acto_id, clave])
+  @@map("flujo_etapas")
+}
+
+model FormularioVersion {
+  id             String   @id @default(uuid()) @db.Uuid
+  tipo_acto_id   String   @db.Uuid
+  version        Int      @default(1)
+  secciones_json Json
+  campos_json    Json
+  vigente_desde  DateTime @default(now())
+  creado_por_id  String   @db.Uuid
+
+  tipo_acto   TipoActo     @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
+  creado_por  User         @relation("FormularioVersionCreador", fields: [creado_por_id], references: [id])
+  expedientes Expediente[]
+
+  @@unique([tipo_acto_id, version])
+  @@map("formulario_versiones")
+}
+
+model FlujoVersion {
+  id                 String   @id @default(uuid()) @db.Uuid
+  tipo_acto_id       String   @db.Uuid
+  version            Int      @default(1)
+  etapas_json        Json
+  ponderaciones_json Json?
+  vigente_desde      DateTime @default(now())
+  creado_por_id      String   @db.Uuid
+
+  tipo_acto        TipoActo          @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
+  creado_por       User              @relation("FlujoVersionCreador", fields: [creado_por_id], references: [id])
+  expedientes      Expediente[]
+  expedienteEtapas ExpedienteEtapa[]
+
+  @@unique([tipo_acto_id, version])
+  @@map("flujo_versiones")
+}
+
+model PlantillaDocumentalVersion {
+  id              String   @id @default(uuid()) @db.Uuid
+  tipo_acto_id    String   @db.Uuid
+  notaria_id      String?  @db.Uuid
+  version         Int      @default(1)
+  nombre          String?
+  storage_key     String?
+  mime_type       String?
+  size_bytes      Int?
+  checksum_sha256 String?
+  activa          Boolean  @default(true)
+  requisitos_json Json
+  vigente_desde   DateTime @default(now())
+  creado_por_id   String   @db.Uuid
+
+  tipo_acto   TipoActo     @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
+  notaria     Notaria?     @relation(fields: [notaria_id], references: [id], onDelete: SetNull)
+  creado_por  User         @relation("PlantillaDocumentalVersionCreador", fields: [creado_por_id], references: [id])
+  expedientes Expediente[]
+
+  @@unique([tipo_acto_id, notaria_id, version])
+  @@index([tipo_acto_id, notaria_id, activa])
+  @@map("plantilla_documental_versiones")
+}
+
+model ChecklistItem {
+  id           String       @id @default(uuid()) @db.Uuid
+  tipo_acto_id String       @db.Uuid
+  nombre       String
+  descripcion  String?
+  categoria    DocCategoria @default(PROYECTO)
+  obligatorio  Boolean      @default(true)
+  orden        Int          @default(0)
+
+  tipo_acto TipoActo @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
+
+  @@map("checklist_items")
+}
+
+enum DocCategoria {
+  PROYECTO
+  FIRMA
+  REGISTRO
+  CATASTRO
+  UIF
+  BANCO
+  SAT
+  FIDEICOMISO
+  OTROS
+}
+
+// ═══════════════════════════════════════
+// EXPEDIENTES (CENTRO OPERATIVO DEL SISTEMA)
+// ═══════════════════════════════════════
+
+model Expediente {
+  id             String  @id @default(uuid()) @db.Uuid
+  numero_pravia  String  @unique
+  numero_notaria String?
+
+  version Int @default(1) // Control de Concurrencia Optimista
+
+  tipo_acto_id  String  @db.Uuid
+  subtipo_acto  String?
+  abogado_id    String  @db.Uuid
+  gestor_id     String? @db.Uuid
+  creador_id    String  @db.Uuid
+  cotizacion_id String? @unique @db.Uuid
+  notaria_id    String? @db.Uuid
+
+  formulario_version_id    String? @db.Uuid
+  flujo_version_id         String? @db.Uuid
+  plantilla_doc_version_id String? @db.Uuid
+
+  cliente_alias   String?
+  descripcion     String?
+  valor_operacion Decimal? @db.Decimal(14, 2)
+  datos_operacion Json?
+
+  estatus                    ExpedienteEstatus @default(ABIERTO)
+  expediente_etapa_actual_id String?           @unique @db.Uuid
+  etapa_actual_nombre        String?           @default("Apertura de Expediente")
+
+  avance_documental Int @default(0)
+  avance_operativo  Int @default(0)
+  avance_financiero Int @default(0)
+  avance_general    Int @default(0)
+
+  proxima_accion      String?
+  fecha_limite_accion DateTime?
+
+  fecha_apertura        DateTime  @default(now())
+  fecha_estimada_firma  DateTime?
+  fecha_real_firma      DateTime?
+  fecha_entrega_cliente DateTime?
+
+  archived_at    DateTime?
+  archived_by    String?   @db.Uuid
+  motivo_archivo String?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @default(now()) @updatedAt
+
+  tipo_acto           TipoActo                    @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
+  abogado             User                        @relation("ExpedienteAbogado", fields: [abogado_id], references: [id], onDelete: Restrict)
+  gestor              User?                       @relation("ExpedienteGestor", fields: [gestor_id], references: [id], onDelete: SetNull)
+  creador             User                        @relation("ExpedienteCreador", fields: [creador_id], references: [id], onDelete: Restrict)
+  archived_by_user    User?                       @relation("ExpedienteArchivedBy", fields: [archived_by], references: [id], onDelete: SetNull)
+  cotizacion          Cotizacion?                 @relation(fields: [cotizacion_id], references: [id], onDelete: Restrict)
+  notaria             Notaria?                    @relation(fields: [notaria_id], references: [id], onDelete: SetNull)
+  formularioVersion   FormularioVersion?          @relation(fields: [formulario_version_id], references: [id], onDelete: SetNull)
+  flujoVersion        FlujoVersion?               @relation(fields: [flujo_version_id], references: [id], onDelete: SetNull)
+  plantillaDocVersion PlantillaDocumentalVersion? @relation(fields: [plantilla_doc_version_id], references: [id], onDelete: SetNull)
+  etapaActual         ExpedienteEtapa?            @relation("ExpedienteEtapaActual", fields: [expediente_etapa_actual_id], references: [id], onDelete: SetNull)
+
+  comparecientes             ExpedienteCompareciente[]
+  expedienteRepresentaciones ExpedienteRepresentacion[]
+  requisitos_docs            ExpedienteRequisitoDoc[]
+  documentos                 Documento[]
+  expedienteDocumentos       ExpedienteDocumento[]
+  pagos                      Pago[]
+  movimientosFinancieros     MovimientoFinanciero[]
+  comunicaciones             Comunicacion[]
+  tareas                     Tarea[]
+  actividades                ExpedienteActividad[]
+  comparecienteAltaSessions  ComparecienteAltaSession[] @relation("ComparecienteAltaSessionOrigenExpediente")
+  estatus_logs               ExpedienteEstatus_Log[]
+  etapas                     ExpedienteEtapa[]          @relation("ExpedienteEtapasLista")
+  tareas_externas            TareaExterna[]
+  eventos                    EventoAgenda[]
+  aiUsageLogs                AIUsageLog[]
+  complianceReviews          ComplianceReview[]
+  entrega                    ExpedienteEntrega?
+
+  @@map("expedientes")
+}
+
+enum ExpedienteEstatus {
+  ABIERTO
+  EN_INTEGRACION
+  EN_PROCESO
+  PENDIENTE_CLIENTE
+  PENDIENTE_NOTARIA
+  FIRMA_PROGRAMADA
+  FIRMADO
+  POST_FIRMA
+  LISTO_ENTREGA
+  ENTREGADO
+  SUSPENDIDO
+  CANCELADO
+}
+
+model ExpedienteEstatus_Log {
+  id               String             @id @default(uuid()) @db.Uuid
+  expediente_id    String             @db.Uuid
+  estatus_anterior ExpedienteEstatus?
+  estatus_nuevo    ExpedienteEstatus
+  user_id          String             @db.Uuid
+  fecha            DateTime           @default(now())
+  fecha_efectiva   DateTime?
+  notas            String?
+
+  expediente Expediente @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+
+  @@map("expediente_estatus_log")
+}
+
+// ═══════════════════════════════════════
+// INSTANCIAS DE ETAPAS OPERATIVAS
+// ═══════════════════════════════════════
+
+model ExpedienteEtapa {
+  id               String  @id @default(uuid()) @db.Uuid
+  expediente_id    String  @db.Uuid
+  flujo_etapa_id   String? @db.Uuid
+  flujo_version_id String? @db.Uuid
+
+  clave_snapshot             String
+  nombre_snapshot            String
+  orden_snapshot             Int    @default(1)
+  duracion_esperada_snapshot Int?
+
+  fecha_inicio            DateTime  @default(now())
+  fecha_fin               DateTime?
+  duracion_dias_naturales Float?
+  duracion_horas          Float?
+
+  responsable_id String? @db.Uuid
+  observaciones  String?
+  evidencia_url  String?
+  motivo_retraso String?
+
+  completada Boolean  @default(false)
+  created_at DateTime @default(now())
+
+  expediente          Expediente    @relation("ExpedienteEtapasLista", fields: [expediente_id], references: [id], onDelete: Restrict)
+  flujoEtapa          FlujoEtapa?   @relation(fields: [flujo_etapa_id], references: [id], onDelete: SetNull)
+  flujoVersion        FlujoVersion? @relation(fields: [flujo_version_id], references: [id], onDelete: SetNull)
+  expedienteActualRel Expediente?   @relation("ExpedienteEtapaActual")
+
+  @@map("expediente_etapas")
+}
+
+// ═══════════════════════════════════════
+// DOCUMENTOS MAESTROS Y TABLAS DE VÍNCULO
+// ═══════════════════════════════════════
+
+enum VinculoEstatus {
+  ACTIVO
+  INACTIVO
+  SUSTITUIDO
+  CANCELADO
+}
+
+model Documento {
+  id              String       @id @default(uuid()) @db.Uuid
+  nombre_original String
+  nombre_interno  String       @unique
+  tipo            String
+  categoria       DocCategoria @default(PROYECTO)
+  storage_key     String       @unique
+  mime_type       String
+  size_bytes      Int
+  fecha_carga     DateTime     @default(now())
+  fecha_emision   DateTime?
+  fecha_vigencia  DateTime?
+  observaciones   String?
+  datos_extraidos Json?
+  estatus         DocEstatus   @default(PENDIENTE)
+
+  subido_por_id String @db.Uuid
+  subido_por    User   @relation(fields: [subido_por_id], references: [id], onDelete: Restrict)
+
+  prospecto_id     String? @db.Uuid
+  cotizacion_id    String? @db.Uuid
+  expediente_id    String? @db.Uuid
+  compareciente_id String? @db.Uuid
+
+  prospecto     Prospecto?     @relation(fields: [prospecto_id], references: [id], onDelete: SetNull)
+  cotizacion    Cotizacion?    @relation(fields: [cotizacion_id], references: [id], onDelete: SetNull)
+  expediente    Expediente?    @relation(fields: [expediente_id], references: [id], onDelete: SetNull)
+  compareciente Compareciente? @relation(fields: [compareciente_id], references: [id], onDelete: SetNull)
+
+  expedienteVinculos    ExpedienteDocumento[]
+  cotizacionVinculos    CotizacionDocumento[]
+  comparecienteVinculos ComparecienteDocumento[]
+  prospectoVinculos     ProspectoDocumento[]
+  requisitoVinculos     RequisitoDocumentoVinculo[]
+  datosFuente           ComparecienteDatoFuente[]
+  movimientoVinculos    MovimientoDocumento[]
+  comunicacionVinculos  ComunicacionDocumento[]
+  complianceEvidence    ComplianceEvidence[]
+  entregasEvidencia     ExpedienteEntrega[]         @relation("ExpedienteEntregaEvidencia")
+  tramitesEvidencia     TareaExterna[]              @relation("TareaExternaEvidencia")
+
+  instrumentosMoralSoporte PersonaMoralInstrumento[]
+  identificacionesSoporte  ComparecienteIdentificacion[]
+  matrimoniosSoporte       RelacionConyugal[]
+  domiciliosComprobante    ComparecienteDomicilio[]      @relation("DomicilioDocumentoComprobante")
+
+  @@map("documentos")
+}
+
+enum DocEstatus {
+  PENDIENTE
+  VIGENTE
+  POR_VENCER
+  VENCIDO
+  RECHAZADO
+}
+
+model ExpedienteDocumento {
+  id                  String         @id @default(uuid()) @db.Uuid
+  expediente_id       String         @db.Uuid
+  documento_id        String         @db.Uuid
+  tipo_vinculo        String
+  fecha_vinculo       DateTime       @default(now())
+  creado_por_id       String         @db.Uuid
+  estatus             VinculoEstatus @default(ACTIVO)
+  inactivado_at       DateTime?
+  inactivado_por_id   String?        @db.Uuid
+  motivo_inactivacion String?
+  observaciones       String?
+
+  expediente Expediente @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  documento  Documento  @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  creado_por User       @relation("ExpedienteDocCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+
+  @@unique([expediente_id, documento_id, tipo_vinculo])
+  @@map("expediente_documentos")
+}
+
+model CotizacionDocumento {
+  id                  String         @id @default(uuid()) @db.Uuid
+  cotizacion_id       String         @db.Uuid
+  documento_id        String         @db.Uuid
+  tipo_vinculo        String
+  fecha_vinculo       DateTime       @default(now())
+  creado_por_id       String         @db.Uuid
+  estatus             VinculoEstatus @default(ACTIVO)
+  inactivado_at       DateTime?
+  inactivado_por_id   String?        @db.Uuid
+  motivo_inactivacion String?
+  observaciones       String?
+
+  cotizacion Cotizacion @relation(fields: [cotizacion_id], references: [id], onDelete: Restrict)
+  documento  Documento  @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  creado_por User       @relation("CotizacionDocCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+
+  @@unique([cotizacion_id, documento_id, tipo_vinculo])
+  @@map("cotizacion_documentos")
+}
+
+model ProspectoDocumento {
+  id                  String         @id @default(uuid()) @db.Uuid
+  prospecto_id        String         @db.Uuid
+  documento_id        String         @db.Uuid
+  tipo_vinculo        String
+  fecha_vinculo       DateTime       @default(now())
+  creado_por_id       String         @db.Uuid
+  estatus             VinculoEstatus @default(ACTIVO)
+  inactivado_at       DateTime?
+  inactivado_por_id   String?        @db.Uuid
+  motivo_inactivacion String?
+  observaciones       String?
+
+  prospecto  Prospecto @relation(fields: [prospecto_id], references: [id], onDelete: Restrict)
+  documento  Documento @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  creado_por User      @relation("ProspectoDocCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+
+  @@unique([prospecto_id, documento_id, tipo_vinculo])
+  @@map("prospecto_documentos")
+}
+
+model RequisitoDocumentoVinculo {
+  id                  String         @id @default(uuid()) @db.Uuid
+  requisito_id        String         @db.Uuid
+  documento_id        String         @db.Uuid
+  fecha_vinculo       DateTime       @default(now())
+  creado_por_id       String         @db.Uuid
+  estatus             VinculoEstatus @default(ACTIVO)
+  inactivado_at       DateTime?
+  inactivado_por_id   String?        @db.Uuid
+  motivo_inactivacion String?
+  observaciones       String?
+
+  requisito  ExpedienteRequisitoDoc @relation(fields: [requisito_id], references: [id], onDelete: Restrict)
+  documento  Documento              @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  creado_por User                   @relation("RequisitoDocCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+
+  @@unique([requisito_id, documento_id])
+  @@map("requisito_documento_vinculos")
+}
+
+model MovimientoDocumento {
+  id                  String         @id @default(uuid()) @db.Uuid
+  movimiento_id       String         @db.Uuid
+  documento_id        String         @db.Uuid
+  tipo_vinculo        String
+  fecha_vinculo       DateTime       @default(now())
+  creado_por_id       String         @db.Uuid
+  estatus             VinculoEstatus @default(ACTIVO)
+  inactivado_at       DateTime?
+  inactivado_por_id   String?        @db.Uuid
+  motivo_inactivacion String?
+  observaciones       String?
+
+  movimiento MovimientoFinanciero @relation(fields: [movimiento_id], references: [id], onDelete: Restrict)
+  documento  Documento            @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  creado_por User                 @relation("MovimientoDocCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+
+  @@unique([movimiento_id, documento_id, tipo_vinculo])
+  @@map("movimiento_documentos")
+}
+
+model ComunicacionDocumento {
+  id                  String         @id @default(uuid()) @db.Uuid
+  comunicacion_id     String         @db.Uuid
+  documento_id        String         @db.Uuid
+  tipo_vinculo        String
+  fecha_vinculo       DateTime       @default(now())
+  creado_por_id       String         @db.Uuid
+  estatus             VinculoEstatus @default(ACTIVO)
+  inactivado_at       DateTime?
+  inactivado_por_id   String?        @db.Uuid
+  motivo_inactivacion String?
+  observaciones       String?
+
+  comunicacion Comunicacion @relation(fields: [comunicacion_id], references: [id], onDelete: Restrict)
+  documento    Documento    @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  creado_por   User         @relation("ComunicacionDocCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+
+  @@unique([comunicacion_id, documento_id, tipo_vinculo])
+  @@map("comunicacion_documentos")
+}
+
+// ═══════════════════════════════════════
+// MAESTRO DE COMPARECIENTES Y PARTICIPACIÓN CONTEXTUAL (NORMALIZADO & AUDITABLE)
+// ═══════════════════════════════════════
+
+enum TipoPersona {
+  FISICA
+  MORAL
+}
+
+enum ComparecienteEstatus {
+  ACTIVO
+  INACTIVO
+  SUSPENDIDO
+  ARCHIVADO
+}
+
+enum Sexo {
+  MASCULINO
+  FEMENINO
+  OTRO
+}
+
+enum EstadoCivil {
+  SOLTERO
+  CASADO
+  DIVORCIADO
+  VIUDO
+  UNION_LIBRE
+  OTRO
+}
+
+enum RegimenMatrimonial {
+  SEPARACION_DE_BIENES
+  SOCIEDAD_CONYUGAL
+  SOCIEDAD_LEGAL
+  OTRO
+}
+
+enum TipoDomicilio {
+  PARTICULAR
+  FISCAL
+  SOCIAL
+  CONVENCIONAL
+  OTRO
+}
+
+enum TipoContacto {
+  TELEFONO
+  WHATSAPP
+  CORREO
+  ALTERNO
+}
+
+enum TipoIdentificacion {
+  INE
+  PASAPORTE
+  CEDULA_PROFESIONAL
+  DOCUMENTO_MIGRATORIO
+  LICENCIA
+  OTRA
+}
+
+enum EstatusIdentificacion {
+  VIGENTE
+  POR_VENCER
+  VENCIDO
+  RECHAZADO
+}
+
+enum TipoInstrumentoMoral {
+  CONSTITUCION
+  REFORMA
+  PODER
+  ASAMBLEA
+  FUSION
+  OTRO
+}
+
+enum EstatusInstrumento {
+  HISTORICO
+  VIGENTE_REPRESENTACION
+  SUSTITUIDO
+  REVOCADO
+  PENDIENTE_VALIDACION
+}
+
+enum TipoDocumentoCompareciente {
+  IDENTIFICACION
+  CURP
+  RFC
+  COMPROBANTE_DOMICILIO
+  ACTA_NACIMIENTO
+  ACTA_MATRIMONIO
+  REGIMEN_MATRIMONIAL
+  DOCUMENTO_MIGRATORIO
+  ACTA_CONSTITUTIVA
+  REFORMAS
+  PODERES
+  INSCRIPCION_MERCANTIL
+  CONSTANCIA_FISCAL
+  ORGANIGRAMA
+  ASAMBLEAS
+  OTROS
+}
+
+enum FormaComparecencia {
+  PROPIO_DERECHO
+  EN_REPRESENTACION_PERSONA_MORAL
+  EN_REPRESENTACION_PERSONA_FISICA
+  POR_PROPIO_DERECHO_Y_REPRESENTACION
+  CARACTER_INSTITUCIONAL
+  OTRO
+}
+
+model Compareciente {
+  id              String               @id @default(uuid()) @db.Uuid
+  tipo_persona    TipoPersona          @default(FISICA)
+  nombre_busqueda String // Normalizado sin acentos, mayúsculas para índice rápido
+  estatus         ComparecienteEstatus @default(ACTIVO)
+  creado_por_id   String               @db.Uuid
+  created_at      DateTime             @default(now())
+  updated_at      DateTime             @updatedAt
+  archived_at     DateTime?
+  version         Int                  @default(1)
+
+  creado_por User @relation("ComparecienteCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+
+  personaFisica    PersonaFisica?
+  personaMoral     PersonaMoral?
+  domicilios       ComparecienteDomicilio[]
+  contactos        ComparecienteContacto[]
+  identificaciones ComparecienteIdentificacion[]
+  documentos       ComparecienteDocumento[]
+
+  expedientes                       ExpedienteCompareciente[]
+  representacionesComoRepresentante ExpedienteRepresentacion[] @relation("RepresentanteExpediente")
+  representacionesComoRepresentado  ExpedienteRepresentacion[] @relation("RepresentadoExpediente")
+  documentosDirectos                Documento[]
+
+  datosFuente           ComparecienteDatoFuente[]
+  aliases               ComparecienteAlias[]
+  actividadesEconomicas ComparecienteActividadEconomica[]
+  eventosAgenda         EventoAgenda[]
+
+  @@index([nombre_busqueda])
+  @@index([tipo_persona])
+  @@map("comparecientes")
+}
+
+model PersonaFisica {
+  id                        String              @id @default(uuid()) @db.Uuid
+  compareciente_id          String              @unique @db.Uuid
+  nombre                    String
+  apellido_paterno          String?
+  apellido_materno          String?
+  nombre_completo_calculado String
+  sexo                      Sexo?
+  fecha_nacimiento          DateTime?
+  lugar_nacimiento          String?
+  pais_nacimiento           String?
+  nacionalidad              String              @default("Mexicana")
+  curp                      String?
+  rfc                       String?
+  estado_civil              EstadoCivil?
+  regimen_matrimonial       RegimenMatrimonial?
+  ocupacion                 String?
+  escolaridad               String?
+  calidad_migratoria        String?
+  actividad_economica       String?
+  giro                      String?
+  requiere_interprete       Boolean             @default(false)
+  idioma                    String?             @default("Español")
+  pep                       Boolean             @default(false)
+  pep_estado                PepEstado           @default(PENDIENTE)
+  relacion_pep              String?
+  created_at                DateTime            @default(now())
+  updated_at                DateTime            @updatedAt
+  archived_at               DateTime?
+
+  compareciente Compareciente @relation(fields: [compareciente_id], references: [id], onDelete: Restrict)
+
+  matrimoniosComoPersona1       RelacionConyugal[]          @relation("ConyugePersona1")
+  matrimoniosComoPersona2       RelacionConyugal[]          @relation("ConyugePersona2")
+  representacionesEmpresariales PersonaMoralRepresentante[] @relation("RepresentanteFisico")
+
+  @@index([curp])
+  @@index([rfc])
+  @@index([nombre_completo_calculado])
+  @@map("personas_fisicas")
+}
+
+model RelacionConyugal {
+  id                   String             @id @default(uuid()) @db.Uuid
+  persona_1_id         String             @db.Uuid
+  persona_2_id         String             @db.Uuid
+  regimen_matrimonial  RegimenMatrimonial @default(SOCIEDAD_CONYUGAL)
+  fecha_matrimonio     DateTime?
+  lugar_matrimonio     String?
+  documento_soporte_id String?            @db.Uuid
+  vigente              Boolean            @default(true)
+  created_at           DateTime           @default(now())
+  updated_at           DateTime           @updatedAt
+  archived_at          DateTime?
+
+  persona1         PersonaFisica @relation("ConyugePersona1", fields: [persona_1_id], references: [id], onDelete: Restrict)
+  persona2         PersonaFisica @relation("ConyugePersona2", fields: [persona_2_id], references: [id], onDelete: Restrict)
+  documentoSoporte Documento?    @relation(fields: [documento_soporte_id], references: [id], onDelete: SetNull)
+
+  @@unique([persona_1_id, persona_2_id])
+  @@map("relaciones_conyugales")
+}
+
+model PersonaMoral {
+  id                          String    @id @default(uuid()) @db.Uuid
+  compareciente_id            String    @unique @db.Uuid
+  razon_social                String
+  nombre_comercial            String?
+  tipo_societario             String? // S.A. DE C.V., S. DE R.L. DE C.V., S.C.
+  nacionalidad                String    @default("Mexicana")
+  rfc                         String?
+  fecha_constitucion          DateTime?
+  duracion                    String?   @default("Indefinida")
+  objeto_social_resumido      String?
+  folio_mercantil             String?
+  fecha_inscripcion_mercantil DateTime?
+  estatus_societario          String?   @default("ACTIVA")
+  created_at                  DateTime  @default(now())
+  updated_at                  DateTime  @updatedAt
+  archived_at                 DateTime?
+
+  compareciente  Compareciente               @relation(fields: [compareciente_id], references: [id], onDelete: Restrict)
+  instrumentos   PersonaMoralInstrumento[]
+  representantes PersonaMoralRepresentante[]
+
+  @@index([rfc])
+  @@index([razon_social])
+  @@index([folio_mercantil])
+  @@map("personas_morales")
+}
+
+model PersonaMoralInstrumento {
+  id                          String               @id @default(uuid()) @db.Uuid
+  persona_moral_id            String               @db.Uuid
+  tipo_instrumento            TipoInstrumentoMoral @default(CONSTITUCION)
+  estatus_instrumento         EstatusInstrumento   @default(VIGENTE_REPRESENTACION)
+  numero                      String?
+  fecha                       DateTime?
+  notario_o_corredor          String?
+  numero_notaria_o_correduria String?
+  municipio                   String?
+  estado                      String?
+  folio_mercantil             String?
+  fecha_inscripcion           DateTime?
+  documento_soporte_id        String?              @db.Uuid
+  vigente                     Boolean              @default(true)
+  observaciones               String?
+  creado_por_id               String               @db.Uuid
+  validado_por_id             String?              @db.Uuid
+  validado_at                 DateTime?
+  version                     Int                  @default(1)
+  created_at                  DateTime             @default(now())
+  updated_at                  DateTime             @updatedAt
+  archived_at                 DateTime?
+
+  personaMoral     PersonaMoral @relation(fields: [persona_moral_id], references: [id], onDelete: Restrict)
+  documentoSoporte Documento?   @relation(fields: [documento_soporte_id], references: [id], onDelete: SetNull)
+  creado_por       User         @relation("InstrumentoCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+  validado_por     User?        @relation("InstrumentoValidador", fields: [validado_por_id], references: [id], onDelete: SetNull)
+
+  representantes             PersonaMoralRepresentante[]
+  representacionesExpediente ExpedienteRepresentacion[]
+
+  @@map("persona_moral_instrumentos")
+}
+
+model ComparecienteDomicilio {
+  id                       String        @id @default(uuid()) @db.Uuid
+  compareciente_id         String        @db.Uuid
+  tipo                     TipoDomicilio @default(PARTICULAR)
+  pais                     String        @default("México")
+  estado                   String?
+  municipio                String?
+  localidad                String?
+  colonia                  String?
+  calle                    String?
+  exterior                 String?
+  interior                 String?
+  codigo_postal            String?
+  referencia               String?
+  comprobado               Boolean       @default(false)
+  documento_comprobante_id String?       @db.Uuid
+  principal                Boolean       @default(true)
+  vigente                  Boolean       @default(true)
+  fecha_inicio             DateTime?
+  fecha_terminacion        DateTime?
+  creado_por_id            String        @db.Uuid
+  created_at               DateTime      @default(now())
+  updated_at               DateTime      @updatedAt
+  archived_at              DateTime?
+
+  compareciente        Compareciente @relation(fields: [compareciente_id], references: [id], onDelete: Restrict)
+  creado_por           User          @relation("DomicilioCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+  documentoComprobante Documento?    @relation("DomicilioDocumentoComprobante", fields: [documento_comprobante_id], references: [id], onDelete: SetNull)
+
+  @@map("compareciente_domicilios")
+}
+
+model ComparecienteContacto {
+  id               String       @id @default(uuid()) @db.Uuid
+  compareciente_id String       @db.Uuid
+  tipo             TipoContacto @default(TELEFONO)
+  valor            String
+  principal        Boolean      @default(true)
+  validado         Boolean      @default(false)
+  fecha_validacion DateTime?
+  activo           Boolean      @default(true)
+  creado_por_id    String       @db.Uuid
+  created_at       DateTime     @default(now())
+  updated_at       DateTime     @updatedAt
+  archived_at      DateTime?
+
+  compareciente Compareciente @relation(fields: [compareciente_id], references: [id], onDelete: Restrict)
+  creado_por    User          @relation("ContactoCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+
+  @@map("compareciente_contactos")
+}
+
+model ComparecienteIdentificacion {
+  id                  String                @id @default(uuid()) @db.Uuid
+  compareciente_id    String                @db.Uuid
+  tipo_identificacion TipoIdentificacion    @default(INE)
+  numero              String?
+  autoridad_emisora   String?
+  pais_emisor         String?               @default("México")
+  fecha_expedicion    DateTime?
+  fecha_vencimiento   DateTime?
+  principal           Boolean               @default(true)
+  documento_id        String?               @db.Uuid
+  estatus             EstatusIdentificacion @default(VIGENTE)
+  creado_por_id       String                @db.Uuid
+  validado_por_id     String?               @db.Uuid
+  validado_at         DateTime?
+  created_at          DateTime              @default(now())
+  updated_at          DateTime              @updatedAt
+  archived_at         DateTime?
+
+  compareciente Compareciente @relation(fields: [compareciente_id], references: [id], onDelete: Restrict)
+  documento     Documento?    @relation(fields: [documento_id], references: [id], onDelete: SetNull)
+  creado_por    User          @relation("IdentificacionCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+  validado_por  User?         @relation("IdentificacionValidador", fields: [validado_por_id], references: [id], onDelete: SetNull)
+
+  @@map("compareciente_identificaciones")
+}
+
+model ComparecienteDocumento {
+  id                String                     @id @default(uuid()) @db.Uuid
+  compareciente_id  String                     @db.Uuid
+  documento_id      String                     @db.Uuid
+  categoria         TipoDocumentoCompareciente @default(IDENTIFICACION)
+  subcategoria      String?
+  principal         Boolean                    @default(false)
+  fecha_documento   DateTime?
+  fecha_vencimiento DateTime?
+  fecha_validacion  DateTime?
+  validado_por_id   String?                    @db.Uuid
+  estatus           VinculoEstatus             @default(ACTIVO)
+  observaciones     String?
+  creado_por_id     String                     @db.Uuid
+  created_at        DateTime                   @default(now())
+  updated_at        DateTime                   @updatedAt
+  archived_at       DateTime?
+
+  compareciente Compareciente @relation(fields: [compareciente_id], references: [id], onDelete: Restrict)
+  documento     Documento     @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  creado_por    User          @relation("ComparecienteDocCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+  validado_por  User?         @relation("ComparecienteDocValidador", fields: [validado_por_id], references: [id], onDelete: SetNull)
+
+  @@unique([compareciente_id, documento_id, categoria])
+  @@map("compareciente_documentos")
+}
+
+model PersonaMoralRepresentante {
+  id                              String    @id @default(uuid()) @db.Uuid
+  persona_moral_id                String    @db.Uuid
+  representante_persona_fisica_id String    @db.Uuid
+  caracter_representacion_id      String?   @db.Uuid
+  cargo_descripcion               String // Administrador Único, Apoderado General
+  instrumento_id                  String?   @db.Uuid
+  fecha_inicio                    DateTime?
+  fecha_fin                       DateTime?
+  facultades_resumen              String?
+  vigente                         Boolean   @default(true)
+  principal                       Boolean   @default(true)
+  documento_soporte_id            String?   @db.Uuid
+  observaciones                   String?
+  creado_por_id                   String    @db.Uuid
+  created_at                      DateTime  @default(now())
+  updated_at                      DateTime  @updatedAt
+  archived_at                     DateTime?
+
+  personaMoral               PersonaMoral             @relation(fields: [persona_moral_id], references: [id], onDelete: Restrict)
+  representantePersonaFisica PersonaFisica            @relation("RepresentanteFisico", fields: [representante_persona_fisica_id], references: [id], onDelete: Restrict)
+  caracterRepresentacion     CaracterRepresentacion?  @relation(fields: [caracter_representacion_id], references: [id], onDelete: SetNull)
+  instrumento                PersonaMoralInstrumento? @relation(fields: [instrumento_id], references: [id], onDelete: SetNull)
+  creado_por                 User                     @relation("RepresentanteCorporativoCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+
+  @@map("persona_moral_representantes")
+}
+
+model CaracterRepresentacion {
+  id          String   @id @default(uuid()) @db.Uuid
+  clave       String   @unique
+  nombre      String
+  descripcion String?
+  activo      Boolean  @default(true)
+  created_at  DateTime @default(now())
+
+  representantesCorporativos PersonaMoralRepresentante[]
+  representacionesExpediente ExpedienteRepresentacion[]
+
+  @@map("caracteres_representacion")
+}
+
+model CaracterCompareciente {
+  id          String   @id @default(uuid()) @db.Uuid
+  clave       String   @unique
+  nombre      String
+  descripcion String?
+  activo      Boolean  @default(true)
+  created_at  DateTime @default(now())
+
+  tipoActoCaracteres TipoActoCaracterCompareciente[]
+  expedienteVinculos ExpedienteCompareciente[]
+
+  @@map("caracteres_compareciente")
+}
+
+model TipoActoCaracterCompareciente {
+  id           String  @id @default(uuid()) @db.Uuid
+  tipo_acto_id String  @db.Uuid
+  caracter_id  String  @db.Uuid
+  sugerido     Boolean @default(true)
+  orden        Int     @default(0)
+
+  tipo_acto TipoActo              @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
+  caracter  CaracterCompareciente @relation(fields: [caracter_id], references: [id], onDelete: Restrict)
+
+  @@unique([tipo_acto_id, caracter_id])
+  @@map("tipo_acto_caracteres_compareciente")
+}
+
+model ExpedienteCompareciente {
+  id                  String             @id @default(uuid()) @db.Uuid
+  expediente_id       String             @db.Uuid
+  compareciente_id    String             @db.Uuid
+  caracter_id         String             @db.Uuid
+  forma_comparecencia FormaComparecencia @default(PROPIO_DERECHO)
+  orden_comparecencia Int                @default(1)
+  es_principal        Boolean            @default(true)
+  observaciones       String?
+  estatus             String             @default("ACTIVO")
+  creado_por_id       String             @db.Uuid
+  datos_validados     Boolean            @default(false)
+  validado_por_id     String?            @db.Uuid
+  validado_at         DateTime?
+  created_at          DateTime           @default(now())
+  updated_at          DateTime           @updatedAt
+  archived_at         DateTime?
+
+  expediente    Expediente            @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  compareciente Compareciente         @relation(fields: [compareciente_id], references: [id], onDelete: Restrict)
+  caracter      CaracterCompareciente @relation(fields: [caracter_id], references: [id], onDelete: Restrict)
+  creado_por    User                  @relation("ExpedienteComparecienteCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+  validado_por  User?                 @relation("ExpedienteComparecienteValidador", fields: [validado_por_id], references: [id], onDelete: SetNull)
+
+  representacionesComoRepresentado  ExpedienteRepresentacion[] @relation("ExpedienteRepresentadoVinculo")
+  representacionesComoRepresentante ExpedienteRepresentacion[] @relation("ExpedienteRepresentanteVinculo")
+
+  @@unique([expediente_id, compareciente_id, caracter_id, forma_comparecencia])
+  @@map("expediente_comparecientes")
+}
+
+model ExpedienteRepresentacion {
+  id                                        String    @id @default(uuid()) @db.Uuid
+  expediente_id                             String    @db.Uuid
+  representado_compareciente_id             String    @db.Uuid
+  representante_compareciente_id            String    @db.Uuid
+  expediente_compareciente_representado_id  String?   @db.Uuid
+  expediente_compareciente_representante_id String?   @db.Uuid
+  caracter_representacion_id                String?   @db.Uuid
+  cargo_o_caracter_descripcion              String // Administrador Único, Apoderado General
+  instrumento_representacion_id             String?   @db.Uuid
+  facultades_aplicables                     String?
+  fecha_vigencia                            DateTime?
+  validada                                  Boolean   @default(false)
+  creado_por_id                             String    @db.Uuid
+  validado_por_id                           String?   @db.Uuid
+  observaciones                             String?
+  created_at                                DateTime  @default(now())
+  updated_at                                DateTime  @updatedAt
+  archived_at                               DateTime?
+
+  expediente                           Expediente               @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  representado                         Compareciente            @relation("RepresentadoExpediente", fields: [representado_compareciente_id], references: [id], onDelete: Restrict)
+  representante                        Compareciente            @relation("RepresentanteExpediente", fields: [representante_compareciente_id], references: [id], onDelete: Restrict)
+  expedienteComparecienteRepresentado  ExpedienteCompareciente? @relation("ExpedienteRepresentadoVinculo", fields: [expediente_compareciente_representado_id], references: [id], onDelete: SetNull, map: "fk_exp_rep_compareciente_representado")
+  expedienteComparecienteRepresentante ExpedienteCompareciente? @relation("ExpedienteRepresentanteVinculo", fields: [expediente_compareciente_representante_id], references: [id], onDelete: SetNull, map: "fk_exp_rep_compareciente_representante")
+  caracterRepresentacion               CaracterRepresentacion?  @relation(fields: [caracter_representacion_id], references: [id], onDelete: SetNull)
+  instrumento                          PersonaMoralInstrumento? @relation(fields: [instrumento_representacion_id], references: [id], onDelete: SetNull)
+  creado_por                           User                     @relation("ExpedienteRepresentacionCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+  validado_por                         User?                    @relation("ExpedienteRepresentacionValidador", fields: [validado_por_id], references: [id], onDelete: SetNull)
+
+  @@map("expediente_representaciones")
+}
+
+// ═══════════════════════════════════════
+// CHECKLIST DOCUMENTAL Y FINANZAS POR MOVIMIENTOS
+// ═══════════════════════════════════════
+
+model ExpedienteRequisitoDoc {
+  id                  String              @id @default(uuid()) @db.Uuid
+  expediente_id       String              @db.Uuid
+  nombre              String
+  categoria           DocCategoria        @default(PROYECTO)
+  obligatorio         Boolean             @default(true)
+  estatus             RequisitoDocEstatus @default(PENDIENTE)
+  fecha_vencimiento   DateTime?
+  responsable_entrega String?
+  observaciones       String?
+  created_at          DateTime            @default(now())
+  updated_at          DateTime            @updatedAt
+
+  expediente        Expediente                  @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  documentoVinculos RequisitoDocumentoVinculo[]
+
+  @@map("expediente_requisitos_doc")
+}
+
+enum RequisitoDocEstatus {
+  PENDIENTE
+  RECIBIDO
+  EN_REVISION
+  VALIDADO
+  RECHAZADO
+  VENCIDO
+  OMITIDO_JUSTIFICADO
+}
+
+model MovimientoFinanciero {
+  id               String               @id @default(uuid()) @db.Uuid
+  expediente_id    String?              @db.Uuid
+  cotizacion_id    String?              @db.Uuid
+  tipo_movimiento  TipoMovimiento
+  naturaleza       NaturalezaMovimiento
+  categoria        String
+  concepto         String
+  monto            Decimal              @db.Decimal(14, 2)
+  fecha_movimiento DateTime             @default(now())
+  forma_pago       String?
+  cuenta_receptora String?
+  referencia       String?
+  comprobante_url  String?
+  factura_url      String?
+  estatus          EstatusMovimiento    @default(PENDIENTE)
+  capturado_por_id String               @db.Uuid
+  validado_por_id  String?              @db.Uuid
+  fecha_validacion DateTime?
+
+  movimiento_origen_id String?   @db.Uuid
+  motivo_reversion     String?
+  revertido_por_id     String?   @db.Uuid
+  fecha_reversion      DateTime?
+
+  expediente    Expediente? @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  cotizacion    Cotizacion? @relation(fields: [cotizacion_id], references: [id], onDelete: SetNull)
+  capturado_por User        @relation("MovimientoCapturado", fields: [capturado_por_id], references: [id], onDelete: Restrict)
+  validado_por  User?       @relation("MovimientoValidado", fields: [validado_por_id], references: [id], onDelete: SetNull)
+  revertido_por User?       @relation("MovimientoRevertido", fields: [revertido_por_id], references: [id], onDelete: SetNull)
+
+  movimientoOrigen     MovimientoFinanciero?  @relation("MovimientoReversoRel", fields: [movimiento_origen_id], references: [id], onDelete: Restrict)
+  reversosGenerados    MovimientoFinanciero[] @relation("MovimientoReversoRel")
+  movimientoDocumentos MovimientoDocumento[]
+
+  @@map("movimientos_financieros")
+}
+
+enum TipoMovimiento {
+  PAGO_UNICO
+  ANTICIPO
+  ABONO
+  PAGO_CONTRA_FIRMA
+  PAGO_CONTRA_ENTREGA
+  AJUSTE
+  DEVOLUCION
+  EGRESO_NOTARIA
+  EGRESO_TERCEROS
+}
+
+enum NaturalezaMovimiento {
+  INGRESO
+  EGRESO
+}
+
+enum EstatusMovimiento {
+  PENDIENTE
+  RECIBIDO
+  VALIDADO
+  RECHAZADO
+  REVERTIDO
+  CANCELADO
+}
+
+model Pago {
+  id                String           @id @default(uuid()) @db.Uuid
+  expediente_id     String?          @db.Uuid
+  cotizacion_id     String?          @db.Uuid
+  categoria_ingreso CategoriaIngreso
+  concepto          String
+  monto             Decimal          @db.Decimal(14, 2)
+  fecha_pago        DateTime?
+  fecha_registro    DateTime         @default(now())
+  estatus           PagoEstatus      @default(PENDIENTE)
+  comprobante_url   String?
+  factura_url       String?
+  notas             String?
+  validado_por_id   String?          @db.Uuid
+  fecha_validacion  DateTime?
+
+  expediente Expediente? @relation(fields: [expediente_id], references: [id], onDelete: SetNull)
+  cotizacion Cotizacion? @relation(fields: [cotizacion_id], references: [id], onDelete: SetNull)
+
+  @@map("pagos")
+}
+
+enum CategoriaIngreso {
+  HONORARIOS_ESPERADOS
+  HONORARIOS_RECIBIDOS
+  INGRESO_REAL_RECIBIDO
+  ANTICIPO_NOTARIA
+  PAGO_NOTARIA
+}
+
+enum PagoEstatus {
+  PENDIENTE
+  RECIBIDO
+  VALIDADO
+  RECHAZADO
+  PARCIAL
+  CANCELADO
+}
+
+// ═══════════════════════════════════════
+// ACTIVIDAD Y AUDITORÍA
+// ═══════════════════════════════════════
+
+model ExpedienteActividad {
+  id            String        @id @default(uuid()) @db.Uuid
+  expediente_id String        @db.Uuid
+  usuario_id    String        @db.Uuid
+  tipo          TipoActividad
+  titulo        String
+  descripcion   String
+  metadatos     Json?
+  created_at    DateTime      @default(now())
+
+  expediente Expediente @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  usuario    User       @relation(fields: [usuario_id], references: [id], onDelete: Restrict)
+
+  @@map("expediente_actividades")
+}
+
+enum TipoActividad {
+  CAMBIO_ESTATUS
+  CAMBIO_ETAPA
+  SEGUIMIENTO
+  DOCUMENTO
+  PAGO
+  TAREA
+  COMUNICACION
+  COMPARECIENTE
+  AUDITORIA
+}
+
+model AuditLog {
+  id                 String   @id @default(uuid()) @db.Uuid
+  user_id            String   @db.Uuid
+  accion             String
+  entidad            String
+  entidad_id         String   @db.Uuid
+  valores_anteriores Json?
+  valores_nuevos     Json?
+  correlation_id     String?  @db.Uuid
+  event_id           String?  @db.Uuid
+  session_id         String?
+  ip_address         String?
+  user_agent         String?
+  detalles           Json?
+  created_at         DateTime @default(now())
+
+  usuario User @relation(fields: [user_id], references: [id], onDelete: Restrict)
+
+  @@map("audit_logs")
+}
+
+// ═══════════════════════════════════════
+// OUTBOX, IDEMPOTENCIA Y PROCESAMIENTO
+// ═══════════════════════════════════════
+
+model DomainEventOutbox {
+  id             String        @id @default(uuid()) @db.Uuid
+  event_type     String
+  aggregate_type String        @default("Expediente")
+  aggregate_id   String        @db.Uuid
+  payload        Json
+  actor_user_id  String?       @db.Uuid
+  occurred_at    DateTime      @default(now())
+  processed_at   DateTime?
+  estatus        OutboxEstatus @default(PENDIENTE)
+  attempts       Int           @default(0)
+  last_error     String?
+  available_at   DateTime      @default(now())
+  locked_at      DateTime?
+  locked_by      String?
+  correlation_id String        @default(uuid()) @db.Uuid
+  created_at     DateTime      @default(now())
+
+  actor          User?                      @relation("OutboxActor", fields: [actor_user_id], references: [id], onDelete: SetNull)
+  processingLogs DomainEventProcessingLog[]
+
+  @@map("domain_event_outbox")
+}
+
+enum OutboxEstatus {
+  PENDIENTE
+  PROCESANDO
+  PROCESADO
+  FALLIDO
+}
+
+model DomainEventProcessingLog {
+  id             String               @id @default(uuid()) @db.Uuid
+  event_id       String               @db.Uuid
+  handler_name   String
+  estatus        ProcessingLogEstatus @default(PENDIENTE)
+  attempts       Int                  @default(0)
+  started_at     DateTime?
+  processed_at   DateTime?
+  last_error     String?
+  correlation_id String?              @db.Uuid
+
+  event DomainEventOutbox @relation(fields: [event_id], references: [id], onDelete: Restrict)
+
+  @@unique([event_id, handler_name])
+  @@map("domain_event_processing_logs")
+}
+
+enum ProcessingLogEstatus {
+  PENDIENTE
+  PROCESANDO
+  COMPLETADO
+  FALLIDO
+}
+
+// ═══════════════════════════════════════
+// TAREAS, AGENDA Y COMUNICACIONES CON CLAVES DE IDEMPOTENCIA
+// ═══════════════════════════════════════
+
+model Tarea {
+  id                String         @id @default(uuid()) @db.Uuid
+  expediente_id     String?        @db.Uuid
+  asignado_a_id     String         @db.Uuid
+  creador_id        String         @db.Uuid
+  titulo            String
+  descripcion       String?
+  prioridad         TareaPrioridad @default(MEDIA)
+  estatus           TareaEstatus   @default(PENDIENTE)
+  fecha_limite      DateTime?
+  fecha_completada  DateTime?
+  etapa_relacionada String?
+  event_id          String?        @db.Uuid
+  idempotency_key   String?        @unique
+  created_at        DateTime       @default(now())
+  updated_at        DateTime       @updatedAt
+
+  expediente Expediente? @relation(fields: [expediente_id], references: [id], onDelete: SetNull)
+  asignado_a User        @relation("TareaAsignado", fields: [asignado_a_id], references: [id], onDelete: Restrict)
+  creador    User        @relation("TareaCreador", fields: [creador_id], references: [id], onDelete: Restrict)
+
+  @@map("tareas")
+}
+
+enum TareaPrioridad {
+  BAJA
+  MEDIA
+  ALTA
+  URGENTE
+}
+
+enum TareaEstatus {
+  PENDIENTE
+  EN_PROCESO
+  COMPLETADA
+  CANCELADA
+}
+
+model EventoAgenda {
+  id                 String              @id @default(uuid()) @db.Uuid
+  titulo             String
+  descripcion        String?
+  tipo               TipoEvento
+  fecha_inicio       DateTime
+  fecha_fin          DateTime?
+  todo_el_dia        Boolean             @default(false)
+  user_id            String?             @db.Uuid
+  expediente_id      String?             @db.Uuid
+  compareciente_id   String?             @db.Uuid
+  event_id           String?             @db.Uuid
+  idempotency_key    String?             @unique
+  estatus            EventoAgendaEstatus @default(ACTIVO)
+  recordatorios      Json?
+  cancelado_at       DateTime?
+  cancelado_por_id   String?             @db.Uuid
+  motivo_cancelacion String?
+  created_at         DateTime            @default(now())
+  updated_at         DateTime            @updatedAt
+
+  usuario       User?          @relation("EventoResponsable", fields: [user_id], references: [id])
+  cancelado_por User?          @relation("EventoCanceladoPor", fields: [cancelado_por_id], references: [id])
+  expediente    Expediente?    @relation(fields: [expediente_id], references: [id], onDelete: SetNull)
+  compareciente Compareciente? @relation(fields: [compareciente_id], references: [id], onDelete: SetNull)
+
+  @@map("eventos_agenda")
+}
+
+enum EventoAgendaEstatus {
+  ACTIVO
+  COMPLETADO
+  CANCELADO
+}
+
+enum TipoEvento {
+  PERSONAL
+  DESPACHO
+  FIRMA
+  AUDIENCIA
+  VENCIMIENTO
+  CITA
+  NOTARIA
+  SEGUIMIENTO
+  OTRO
+}
+
+model TareaExterna {
+  id                     String              @id @default(uuid()) @db.Uuid
+  expediente_id          String              @db.Uuid
+  tipo                   TipoTareaExterna
+  descripcion            String
+  institucion            String?
+  estatus                TareaExternaEstatus @default(PENDIENTE)
+  fecha_inicio           DateTime?
+  fecha_limite           DateTime?
+  fecha_completada       DateTime?
+  notas                  String?
+  folio                  String?
+  fecha_ingreso          DateTime?
+  seguimiento            String?
+  prevencion             String?
+  subsanacion            String?
+  resultado              String?
+  evidencia_documento_id String?             @db.Uuid
+  gestionado_por_id      String?             @db.Uuid
+  created_at             DateTime            @default(now())
+  updated_at             DateTime            @updatedAt
+
+  expediente     Expediente @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  gestionado_por User?      @relation("TareaExternaGestor", fields: [gestionado_por_id], references: [id], onDelete: SetNull)
+  evidencia      Documento? @relation("TareaExternaEvidencia", fields: [evidencia_documento_id], references: [id], onDelete: SetNull)
+
+  @@map("tareas_externas")
+}
+
+model ExpedienteEntrega {
+  id                     String   @id @default(uuid()) @db.Uuid
+  expediente_id          String   @unique @db.Uuid
+  receptor_nombre        String
+  receptor_caracter      String
+  fecha_efectiva         DateTime
+  medio                  String
+  items                  Json
+  evidencia_documento_id String   @db.Uuid
+  observaciones          String?
+  registrado_por_id      String   @db.Uuid
+  created_at             DateTime @default(now())
+
+  expediente     Expediente @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  evidencia      Documento  @relation("ExpedienteEntregaEvidencia", fields: [evidencia_documento_id], references: [id], onDelete: Restrict)
+  registrado_por User       @relation("ExpedienteEntregaRegistrador", fields: [registrado_por_id], references: [id], onDelete: Restrict)
+
+  @@map("expediente_entregas")
+}
+
+enum TipoTareaExterna {
+  CATASTRO
+  REGISTRO_PUBLICO
+  BANCO
+  NOTARIA
+  OTRA_GESTION
+}
+
+enum TareaExternaEstatus {
+  PENDIENTE
+  EN_PROCESO
+  COMPLETADA
+  BLOQUEADA
+}
+
+model Comunicacion {
+  id            String    @id @default(uuid()) @db.Uuid
+  expediente_id String?   @db.Uuid
+  user_id       String    @db.Uuid
+  canal         String
+  destinatario  String
+  contenido     String
+  enviado       Boolean   @default(false)
+  fecha_envio   DateTime?
+  created_at    DateTime  @default(now())
+
+  expediente             Expediente?             @relation(fields: [expediente_id], references: [id], onDelete: SetNull)
+  usuario                User                    @relation(fields: [user_id], references: [id], onDelete: Restrict)
+  comunicacionDocumentos ComunicacionDocumento[]
+
+  @@map("comunicaciones")
+}
+
+model Nota {
+  id           String        @id @default(uuid()) @db.Uuid
+  user_id      String        @db.Uuid
+  contenido    String
+  estatus      NotaEstatus   @default(PENDIENTE)
+  prioridad    NotaPrioridad @default(MEDIA)
+  fecha_limite DateTime?
+  created_at   DateTime      @default(now())
+  updated_at   DateTime      @updatedAt
+
+  usuario User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("notas")
+}
+
+enum NotaEstatus {
+  PENDIENTE
+  COMPLETADA
+  POSPUESTA
+}
+
+enum NotaPrioridad {
+  BAJA
+  MEDIA
+  ALTA
+}
+
+model MemoriaDespacho {
+  id          String   @id @default(uuid()) @db.Uuid
+  categoria   String
+  contenido   String
+  tipo_acto   String?
+  institucion String?
+  tags        String[] @default([])
+  created_at  DateTime @default(now())
+
+  @@map("memoria_despacho")
+}
+
+// ═══════════════════════════════════════
+// ALTA DE COMPARECIENTES Y ASISTENCIA CON IA
+// ═══════════════════════════════════════
+
+enum AltaComparecienteEstatus {
+  BORRADOR
+  EN_EXTRACCION
+  PENDIENTE_CONFIRMACION
+  GUARDANDO
+  COMPLETADO
+  CANCELADO
+  EXPIRADO
+  FALLIDO
+}
+
+enum CargaTemporalEstatus {
+  TEMPORAL
+  PROCESADO
+  CONFIRMADO
+  DESCARTADO
+}
+
+enum StorageCompensationEstatus {
+  PENDIENTE
+  PROCESANDO
+  COMPLETADO
+  FALLIDO
+}
+
+enum DatoFuenteEstado {
+  NO_ENCONTRADO
+  DETECTADO
+  PENDIENTE_CONFIRMACION
+  CONFIRMADO
+  EDITADO_MANUALMENTE
+  EN_CONFLICTO
+  DESCARTADO
+}
+
+enum CalidadLectura {
+  LECTURA_CLARA
+  LECTURA_DUDOSA
+  LECTURA_DEFICIENTE
+}
+
+enum PepEstado {
+  PENDIENTE
+  SI
+  NO
+}
+
+model ComparecienteAltaSession {
+  id                   String                   @id @default(uuid()) @db.Uuid
+  usuario_id           String                   @db.Uuid
+  tipo_persona         TipoPersona?
+  estatus              AltaComparecienteEstatus @default(BORRADOR)
+  origen_expediente_id String?                  @db.Uuid
+  idempotency_key      String?
+  correlation_id       String?
+  borrador_json        Json?
+  expires_at           DateTime
+  ultima_actividad_at  DateTime                 @default(now())
+  confirmado_at        DateTime?
+  cancelado_at         DateTime?
+  created_at           DateTime                 @default(now())
+  updated_at           DateTime                 @updatedAt
+  archived_at          DateTime?
+
+  usuario          User                     @relation("ComparecienteAltaSessionUsuario", fields: [usuario_id], references: [id], onDelete: Restrict)
+  origenExpediente Expediente?              @relation("ComparecienteAltaSessionOrigenExpediente", fields: [origen_expediente_id], references: [id], onDelete: SetNull)
+  cargasTemporales CargaTemporalDocumento[]
+  aiUsageLogs      AIUsageLog[]
+
+  @@unique([usuario_id, idempotency_key])
+  @@index([usuario_id, estatus])
+  @@index([expires_at])
+  @@map("compareciente_alta_sessions")
+}
+
+model AIUsageLog {
+  id                            String   @id @default(uuid()) @db.Uuid
+  provider                      String   @default("OPENAI")
+  modelo                        String
+  operacion                     String
+  estatus                       String   @default("COMPLETADO")
+  usuario_id                    String?  @db.Uuid
+  expediente_id                 String?  @db.Uuid
+  compareciente_alta_session_id String?  @db.Uuid
+  input_tokens                  Int      @default(0)
+  cached_input_tokens           Int      @default(0)
+  output_tokens                 Int      @default(0)
+  reasoning_tokens              Int      @default(0)
+  total_tokens                  Int      @default(0)
+  duracion_ms                   Int      @default(0)
+  costo_estimado_usd            Decimal  @default(0) @db.Decimal(12, 6)
+  documentos_enviados           Int      @default(0)
+  escalamiento_utilizado        Boolean  @default(false)
+  escalamiento_motivo           String?
+  error_codigo                  String?
+  metadata                      Json?
+  created_at                    DateTime @default(now())
+
+  usuario                  User?                     @relation(fields: [usuario_id], references: [id], onDelete: SetNull)
+  expediente               Expediente?               @relation(fields: [expediente_id], references: [id], onDelete: SetNull)
+  comparecienteAltaSession ComparecienteAltaSession? @relation(fields: [compareciente_alta_session_id], references: [id], onDelete: SetNull)
+
+  @@index([created_at])
+  @@index([modelo, created_at])
+  @@index([usuario_id, created_at])
+  @@index([expediente_id, created_at])
+  @@map("ai_usage_logs")
+}
+
+model ComplianceRuleSet {
+  id                  String    @id @default(uuid()) @db.Uuid
+  tipo                String
+  clave               String
+  version             String
+  nombre              String
+  estatus             String    @default("BORRADOR")
+  vigencia_desde      DateTime
+  vigencia_hasta      DateTime?
+  fuente_nombre       String
+  fuente_url          String
+  fuente_publicada_at DateTime?
+  parametros          Json
+  cuestionario        Json
+  notas               String?
+  creado_por_id       String    @db.Uuid
+  aprobado_por_id     String?   @db.Uuid
+  aprobado_at         DateTime?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+
+  creado_por   User               @relation("ComplianceRuleCreator", fields: [creado_por_id], references: [id], onDelete: Restrict)
+  aprobado_por User?              @relation("ComplianceRuleApprover", fields: [aprobado_por_id], references: [id], onDelete: SetNull)
+  revisiones   ComplianceReview[]
+
+  @@unique([tipo, clave, version])
+  @@index([tipo, estatus, vigencia_desde])
+  @@map("compliance_rule_sets")
+}
+
+model ComplianceReview {
+  id                    String    @id @default(uuid()) @db.Uuid
+  expediente_id         String    @db.Uuid
+  rule_set_id           String    @db.Uuid
+  tipo                  String
+  estatus               String    @default("BORRADOR")
+  fecha_operacion       DateTime?
+  rule_version_snapshot String
+  cuestionario_json     Json
+  resultado_json        Json?
+  explicacion           String?
+  creado_por_id         String    @db.Uuid
+  revisado_por_id       String?   @db.Uuid
+  revisado_at           DateTime?
+  created_at            DateTime  @default(now())
+  updated_at            DateTime  @updatedAt
+
+  expediente   Expediente           @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  ruleSet      ComplianceRuleSet    @relation(fields: [rule_set_id], references: [id], onDelete: Restrict)
+  creado_por   User                 @relation("ComplianceReviewCreator", fields: [creado_por_id], references: [id], onDelete: Restrict)
+  revisado_por User?                @relation("ComplianceReviewReviewer", fields: [revisado_por_id], references: [id], onDelete: SetNull)
+  evidencias   ComplianceEvidence[]
+
+  @@index([expediente_id, tipo])
+  @@index([estatus, created_at])
+  @@map("compliance_reviews")
+}
+
+model ComplianceEvidence {
+  id              String   @id @default(uuid()) @db.Uuid
+  review_id       String   @db.Uuid
+  documento_id    String   @db.Uuid
+  tipo_evidencia  String
+  observaciones   String?
+  agregado_por_id String   @db.Uuid
+  estatus         String   @default("ACTIVO")
+  created_at      DateTime @default(now())
+
+  review       ComplianceReview @relation(fields: [review_id], references: [id], onDelete: Restrict)
+  documento    Documento        @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  agregado_por User             @relation("ComplianceEvidenceAdder", fields: [agregado_por_id], references: [id], onDelete: Restrict)
+
+  @@unique([review_id, documento_id, tipo_evidencia])
+  @@index([documento_id])
+  @@map("compliance_evidence")
+}
+
+model CargaTemporalDocumento {
+  id                     String               @id @default(uuid()) @db.Uuid
+  alta_session_id        String               @db.Uuid
+  usuario_id             String               @db.Uuid
+  tipo_documento         String
+  nombre_original        String
+  storage_key_temporal   String
+  mime_type              String
+  tamano_bytes           Int
+  sha256                 String
+  estado                 CargaTemporalEstatus @default(TEMPORAL)
+  intentos_limpieza      Int                  @default(0)
+  ultimo_error_limpieza  String?
+  limpieza_programada_at DateTime?
+  eliminado_storage_at   DateTime?
+  expires_at             DateTime
+  created_at             DateTime             @default(now())
+  updated_at             DateTime             @updatedAt
+  archived_at            DateTime?
+
+  altaSession      ComparecienteAltaSession  @relation(fields: [alta_session_id], references: [id], onDelete: Cascade)
+  usuario          User                      @relation("CargaTemporalUsuario", fields: [usuario_id], references: [id], onDelete: Restrict)
+  compensationJobs StorageCompensationJob[]
+  datosFuente      ComparecienteDatoFuente[]
+
+  @@index([alta_session_id])
+  @@index([usuario_id])
+  @@index([estado])
+  @@map("carga_temporal_documentos")
+}
+
+model StorageCompensationJob {
+  id                   String                     @id @default(uuid()) @db.Uuid
+  carga_temporal_id    String?                    @db.Uuid
+  storage_key          String
+  tipo_operacion       String                     @default("ELIMINAR_TEMPORAL")
+  estatus              StorageCompensationEstatus @default(PENDIENTE)
+  intentos             Int                        @default(0)
+  ultimo_error         String?
+  proxima_ejecucion_at DateTime                   @default(now())
+  correlation_id       String?
+  created_at           DateTime                   @default(now())
+  updated_at           DateTime                   @updatedAt
+
+  cargaTemporal CargaTemporalDocumento? @relation(fields: [carga_temporal_id], references: [id], onDelete: SetNull)
+
+  @@index([estatus, proxima_ejecucion_at])
+  @@map("storage_compensation_jobs")
+}
+
+model ComparecienteDatoFuente {
+  id                  String           @id @default(uuid()) @db.Uuid
+  compareciente_id    String           @db.Uuid
+  campo               String
+  entidad_destino     String?
+  registro_destino_id String?
+  valor_detectado     String?
+  valor_confirmado    String?
+  documento_id        String?          @db.Uuid
+  carga_temporal_id   String?          @db.Uuid
+  pagina              Int?
+  fragmento_fuente    String?
+  proveedor_ia        String?
+  modelo_ia           String?
+  confianza           CalidadLectura?
+  estado              DatoFuenteEstado @default(DETECTADO)
+  confirmado_por_id   String?          @db.Uuid
+  confirmado_at       DateTime?
+  correlation_id      String?
+  created_at          DateTime         @default(now())
+  updated_at          DateTime         @updatedAt
+  archived_at         DateTime?
+
+  compareciente  Compareciente           @relation(fields: [compareciente_id], references: [id], onDelete: Restrict)
+  documento      Documento?              @relation(fields: [documento_id], references: [id], onDelete: SetNull)
+  cargaTemporal  CargaTemporalDocumento? @relation(fields: [carga_temporal_id], references: [id], onDelete: SetNull)
+  confirmado_por User?                   @relation("DatoFuenteConfirmador", fields: [confirmado_por_id], references: [id], onDelete: SetNull)
+
+  @@index([compareciente_id])
+  @@index([campo])
+  @@map("compareciente_datos_fuente")
+}
+
+model ComparecienteAlias {
+  id               String    @id @default(uuid()) @db.Uuid
+  compareciente_id String    @db.Uuid
+  alias            String
+  tipo             String?   @default("COMERCIAL_O_CONOCIDO")
+  principal        Boolean   @default(false)
+  activo           Boolean   @default(true)
+  created_at       DateTime  @default(now())
+  archived_at      DateTime?
+
+  compareciente Compareciente @relation(fields: [compareciente_id], references: [id], onDelete: Cascade)
+
+  @@index([compareciente_id])
+  @@index([alias])
+  @@map("compareciente_aliases")
+}
+
+model ActividadEconomica {
+  id          String   @id @default(uuid()) @db.Uuid
+  clave       String   @unique
+  descripcion String
+  sector      String?
+  vigente     Boolean  @default(true)
+  created_at  DateTime @default(now())
+
+  comparecienteActividades ComparecienteActividadEconomica[]
+
+  @@index([clave])
+  @@index([descripcion])
+  @@map("actividades_economicas")
+}
+
+model ComparecienteActividadEconomica {
+  id               String    @id @default(uuid()) @db.Uuid
+  compareciente_id String    @db.Uuid
+  actividad_id     String    @db.Uuid
+  principal        Boolean   @default(true)
+  fecha_inicio     DateTime?
+  fecha_fin        DateTime?
+  fuente           String?
+  vigente          Boolean   @default(true)
+  created_at       DateTime  @default(now())
+
+  compareciente Compareciente      @relation(fields: [compareciente_id], references: [id], onDelete: Cascade)
+  actividad     ActividadEconomica @relation(fields: [actividad_id], references: [id], onDelete: Restrict)
+
+  @@unique([compareciente_id, actividad_id])
+  @@map("compareciente_actividades_economicas")
+}
