@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import { App } from '../app/App';
 import { normalizeMyDay } from '../features/my-day/myDay.service';
 
@@ -66,5 +67,19 @@ describe('Mi Día', () => {
     }));
     render(<MemoryRouter initialEntries={['/mi-dia']}><App /></MemoryRouter>);
     expect((await screen.findAllByRole('status', { name: 'Cargando información' })).length).toBeGreaterThan(3);
+  });
+
+  it('abre la misma experiencia global de PRAVIA IA desde la card de Mi Día', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/auth/me')) return response(session);
+      if (url.endsWith('/dashboard/mi-dia')) return response({ data: baseDashboard });
+      return response({}, 204);
+    }));
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/mi-dia']}><App /></MemoryRouter>);
+    await screen.findByRole('heading', { name: /Usuario/ });
+    await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA para hacer una pregunta' }));
+    expect(screen.getByRole('dialog', { name: 'PRAVIA IA' })).toBeInTheDocument();
   });
 });

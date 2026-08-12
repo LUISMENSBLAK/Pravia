@@ -1,6 +1,6 @@
-# PRAVIA OS — Frontend Fases 1 y 2
+# PRAVIA OS — Frontend Fases 1, 2 y 3
 
-Frontend nuevo construido desde cero. Incluye login, capa de autenticación, rutas protegidas, application shell responsive y el dashboard operativo **Mi Día**.
+Frontend nuevo construido desde cero. Incluye login, capa de autenticación, rutas protegidas, application shell responsive, el dashboard operativo **Mi Día** y el copiloto transversal **PRAVIA IA**.
 
 ## Desarrollo
 
@@ -20,6 +20,12 @@ Mi Día consume un único endpoint configurable con `VITE_MY_DAY_PATH` (por defe
 
 El contrato esperado y la evidencia de validación se documentan en [PHASE_2_REPORT.md](./PHASE_2_REPORT.md).
 
+## Integración de PRAVIA IA
+
+PRAVIA IA se monta una sola vez dentro del shell privado. Su contexto procede de la ruta actual y su red está aislada en un adapter con endpoints opcionales por entorno. Mientras el backend no confirme esas rutas, el frontend no inventa sugerencias, respuestas ni acciones.
+
+La arquitectura, contratos y estados se documentan en [PHASE_3_REPORT.md](./PHASE_3_REPORT.md).
+
 ## Alcance
 
-Los demás módulos operativos continúan como placeholders intencionales. PRAVIA IA se limita a su tarjeta inicial; el drawer conversacional pertenece a una fase posterior.
+Los demás módulos operativos continúan como placeholders intencionales. Sus acciones contextuales de PRAVIA IA solo precargan consultas y no implementan lógica del módulo.

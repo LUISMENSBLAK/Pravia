@@ -1,0 +1,9 @@
+.frame { position: relative; display: block; width: 92px; aspect-ratio: 1; transform-origin: 50% 76%; animation: owl-breathe 7s ease-in-out infinite, owl-tilt 19s ease-in-out infinite; }
+.frame img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.compact { width: 48px; }
+.blink { opacity: 0; animation: owl-blink 9s steps(1, end) infinite; }
+.reduced { animation: none; }
+@keyframes owl-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.012); } }
+@keyframes owl-tilt { 0%, 72%, 100% { rotate: 0deg; } 76% { rotate: -1.2deg; } 80% { rotate: .8deg; } 84% { rotate: 0deg; } }
+@keyframes owl-blink { 0%, 53%, 56%, 100% { opacity: 0; } 54%, 55% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .frame, .blink { animation: none; } .blink { display: none; } }

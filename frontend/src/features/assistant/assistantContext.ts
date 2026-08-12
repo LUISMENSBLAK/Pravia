@@ -1,0 +1,64 @@
+import type { Location } from 'react-router-dom';
+import type { AssistantAction, AssistantContext, AssistantModule } from './assistant.types';
+
+const labels: Record<AssistantModule, string> = {
+  'mi-dia': 'Mi Día', prospectos: 'Prospectos', cotizaciones: 'Cotizaciones', expedientes: 'Expedientes',
+  notarias: 'Notarías', comparecientes: 'Comparecientes', finanzas: 'Finanzas', agenda: 'Agenda',
+  reportes: 'Reportes', riesgos: 'Riesgos / UIF', configuracion: 'Configuración', unknown: 'PRAVIA OS',
+};
+
+const entityRoutes = new Map<string, AssistantContext['entityType']>([
+  ['expedientes', 'expediente'], ['comparecientes', 'compareciente'], ['notarias', 'notaria'],
+  ['prospectos', 'prospecto'], ['cotizaciones', 'cotizacion'],
+]);
+
+export function resolveAssistantContext(location: Pick<Location, 'pathname' | 'hash'>): AssistantContext {
+  const segments = location.pathname.split('/').filter(Boolean);
+  const first = segments[0] ?? '';
+  const module = (first === 'mi-dia' ? 'mi-dia' : first in labels ? first : 'unknown') as AssistantModule;
+  const entityType = segments[1] ? entityRoutes.get(first) : undefined;
+  return {
+    route: location.pathname,
+    module,
+    label: labels[module],
+    ...(entityType && segments[1] ? { entityType, entityId: decodeURIComponent(segments[1]) } : {}),
+    ...(location.hash ? { subview: location.hash.slice(1) } : {}),
+  };
+}
+
+const actions: Partial<Record<AssistantModule, AssistantAction[]>> = {
+  'mi-dia': [
+    { id: 'today-urgent', label: '¿Qué urge hoy?', prompt: '¿Qué requiere mi atención hoy?' },
+    { id: 'today-pending', label: 'Ver pendientes', prompt: 'Muéstrame mis pendientes de hoy.' },
+    { id: 'today-signatures', label: 'Próximas firmas', prompt: '¿Cuáles son mis próximas firmas?' },
+    { id: 'today-finance', label: 'Resumen financiero', prompt: 'Muéstrame el resumen financiero disponible.' },
+  ],
+  expedientes: [
+    { id: 'file-missing', label: '¿Qué falta?', prompt: '¿Qué falta en este expediente?' },
+    { id: 'file-summary', label: 'Resumen', prompt: 'Resume este expediente.' },
+    { id: 'file-documents', label: 'Documentos', prompt: 'Revisa los documentos de este expediente.' },
+    { id: 'file-next', label: 'Próximos pasos', prompt: '¿Cuáles son los próximos pasos?' },
+  ],
+  comparecientes: [
+    { id: 'person-missing', label: '¿Qué falta?', prompt: '¿Qué falta para este compareciente?' },
+    { id: 'person-documents', label: 'Documentos', prompt: 'Revisa sus documentos.' },
+    { id: 'person-files', label: 'Expedientes relacionados', prompt: 'Muéstrame sus expedientes relacionados.' },
+  ],
+  agenda: [
+    { id: 'agenda-today', label: '¿Qué tengo hoy?', prompt: '¿Qué tengo en la agenda hoy?' },
+    { id: 'agenda-next', label: 'Próximos eventos', prompt: 'Muéstrame los próximos eventos.' },
+    { id: 'agenda-space', label: 'Buscar espacio', prompt: 'Ayúdame a buscar un espacio disponible.' },
+  ],
+  finanzas: [
+    { id: 'finance-receivable', label: 'Por cobrar', prompt: 'Muéstrame lo que está por cobrar.' },
+    { id: 'finance-overdue', label: 'Vencidos', prompt: 'Muéstrame los saldos vencidos.' },
+    { id: 'finance-summary', label: 'Resumen', prompt: 'Muéstrame el resumen financiero.' },
+  ],
+};
+
+const fallbackActions: AssistantAction[] = [
+  { id: 'general-summary', label: 'Resumen de esta pantalla', prompt: 'Resume la información disponible en esta pantalla.' },
+  { id: 'general-pending', label: 'Ver pendientes', prompt: '¿Hay pendientes relacionados con esta pantalla?' },
+];
+
+export const getAssistantActions = (context: AssistantContext) => actions[context.module] ?? fallbackActions;

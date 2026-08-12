@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom';
 import { useAuth } from '../../features/auth/AuthProvider';
 import { Sidebar } from './Sidebar';
 import { Topbar } from './Topbar';
+import { AssistantLayer } from '../../features/assistant/components/AssistantLayer';
 import styles from './AppShell.module.css';
 
 const COLLAPSE_KEY = 'pravia.sidebar-collapsed';
@@ -26,6 +27,7 @@ export function AppShell() {
         <Topbar user={user} onOpenMobile={() => setMobileOpen(true)} onLogout={logout} />
         <main className={styles.workspace} id="main-content"><Outlet /></main>
       </div>
+      <AssistantLayer />
     </div>
   );
 }

@@ -7,6 +7,11 @@ interface ImportMetaEnv {
   readonly VITE_AUTH_ME_PATH?: string;
   readonly VITE_AUTH_LOGOUT_PATH?: string;
   readonly VITE_MY_DAY_PATH?: string;
+  readonly VITE_ASSISTANT_MESSAGE_PATH?: string;
+  readonly VITE_ASSISTANT_SUGGESTIONS_PATH?: string;
+  readonly VITE_ASSISTANT_CONFIRM_PATH?: string;
+  readonly VITE_ASSISTANT_DISMISS_PATH?: string;
+  readonly VITE_ASSISTANT_SNOOZE_PATH?: string;
 }
 
 interface ImportMeta {
