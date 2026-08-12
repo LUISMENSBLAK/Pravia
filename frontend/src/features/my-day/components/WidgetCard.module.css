@@ -1,0 +1,19 @@
+.card { min-width: 0; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
+.header { min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); border-bottom: 1px solid var(--color-border); padding: 0 var(--space-4); }
+.titleRow { min-width: 0; display: flex; align-items: center; gap: var(--space-2); }
+.header h2 { margin: 0; overflow: hidden; color: var(--color-text-primary); font-size: var(--text-sm); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.badge { min-width: 20px; height: 20px; display: inline-grid; place-items: center; border-radius: 999px; padding-inline: 6px; color: white; background: var(--color-danger-500); font-size: 11px; font-weight: 700; }
+.action { flex: 0 0 auto; }
+.action a, .action button { border: 0; padding: 5px 0; color: var(--color-gold-700); background: transparent; font: inherit; font-size: 11px; font-weight: 650; text-decoration: none; cursor: pointer; }
+.action a:hover, .action button:hover { color: var(--color-gold-600); text-decoration: underline; }
+.action a:focus-visible, .action button:focus-visible { outline: 3px solid var(--color-focus); border-radius: var(--radius-sm); }
+.content { min-height: 0; }
+.loading { display: grid; gap: var(--space-3); padding: var(--space-4); }
+.loading > span { height: 36px; }
+.loading .shortSkeleton { width: 68%; }
+.empty { min-height: 92px; display: grid; place-content: center; justify-items: center; gap: var(--space-3); padding: var(--space-5); color: var(--color-text-secondary); font-size: var(--text-xs); line-height: 1.5; text-align: center; }
+.empty span { width: 30px; height: 3px; border-radius: 3px; background: var(--color-gold-300); }
+.error { min-height: 104px; display: flex; align-items: flex-start; justify-content: center; gap: var(--space-3); padding: var(--space-5); color: var(--color-danger-700); background: linear-gradient(180deg, var(--color-danger-100), white); }
+.error p { margin: 0 0 var(--space-2); font-size: var(--text-xs); line-height: 1.45; }
+.error button { min-height: 30px; display: inline-flex; align-items: center; gap: var(--space-2); border: 0; border-radius: var(--radius-sm); padding: 0 var(--space-2); color: var(--color-danger-700); background: rgb(184 60 68 / 8%); font: inherit; font-size: 11px; font-weight: 650; cursor: pointer; }
+.error button:focus-visible { outline: 3px solid var(--color-focus); }

@@ -1,0 +1,45 @@
+.compactList, .timeline { margin: 0; padding: 0; list-style: none; }
+.compactList > li { min-height: 57px; display: flex; align-items: center; gap: var(--space-3); border-bottom: 1px solid var(--color-border); padding: var(--space-2) var(--space-3); }
+.compactList > li:last-child { border-bottom: 0; }
+.itemIcon { width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center; border-radius: 50%; }
+.dangerIcon { color: var(--color-danger-600); background: var(--color-danger-100); }
+.infoIcon { color: var(--color-blue-700); background: var(--color-blue-100); }
+.goldIcon { color: var(--color-gold-700); background: var(--color-gold-100); }
+.folderIcon { flex: 0 0 auto; color: var(--color-navy-700); }
+.itemCopy { min-width: 0; flex: 1; display: grid; gap: 2px; color: inherit; text-decoration: none; }
+.itemCopy strong { overflow: hidden; color: var(--color-text-primary); font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.itemCopy p, .itemCopy small { margin: 0; overflow: hidden; color: var(--color-text-secondary); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.due { flex: 0 0 auto; color: var(--color-danger-600); font-size: 10px; font-weight: 650; }
+.itemMeta { flex: 0 0 auto; display: grid; justify-items: end; gap: 3px; }
+.itemMeta span { border-radius: 999px; padding: 3px 7px; color: var(--color-success-700); background: var(--color-success-100); font-size: 9px; }
+.itemMeta time, .reminderDate { color: var(--color-text-muted); font-size: 9px; }
+.rowLink { display: contents; color: inherit; text-decoration: none; }
+.compactList > li:has(.rowLink):hover { background: var(--color-surface-subtle); }
+.rowLink:focus-visible { outline: 3px solid var(--color-focus); outline-offset: -3px; }
+.timeline { position: relative; padding: var(--space-2) var(--space-3); }
+.timeline::before { content: ''; position: absolute; top: 20px; bottom: 20px; left: 66px; width: 1px; background: var(--color-border-strong); }
+.timelineItem { position: relative; min-height: 77px; display: grid; grid-template-columns: 44px 12px minmax(0, 1fr) auto; align-items: start; gap: var(--space-2); padding: var(--space-3) 0; }
+.timelineItem > time { color: var(--color-text-secondary); font-size: 10px; font-variant-numeric: tabular-nums; }
+.timelineDot { position: relative; z-index: 1; width: 9px; height: 9px; margin-top: 2px; border: 2px solid white; border-radius: 50%; box-shadow: 0 0 0 1px currentColor; background: currentColor; }
+.blue { color: #5795e8; } .gold { color: var(--color-gold-500); } .purple { color: var(--color-purple-700); } .green { color: #55a26c; }
+.timelineItem strong { display: block; color: var(--color-text-primary); font-size: 11px; line-height: 1.25; }
+.timelineItem p, .timelineItem small { display: block; margin: 3px 0 0; color: var(--color-text-secondary); font-size: 10px; line-height: 1.3; }
+.status { align-self: center; border-radius: 999px; padding: 3px 7px; color: var(--color-blue-700); background: var(--color-blue-100); font-size: 9px; }
+.aiBadge { border-radius: 999px; padding: 4px 7px; color: var(--color-gold-700); background: var(--color-gold-100); font-size: 9px; font-weight: 700; letter-spacing: .03em; }
+.recommendation { min-height: 180px; display: grid; grid-template-columns: 42px minmax(0, 1fr); align-content: center; gap: var(--space-3); padding: var(--space-4); }
+.recommendationIcon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; color: var(--color-gold-700); background: var(--color-gold-100); }
+.recommendation strong { color: var(--color-text-primary); font-size: 12px; line-height: 1.45; }
+.recommendation p { margin: var(--space-2) 0 0; color: var(--color-text-secondary); font-size: 10px; line-height: 1.45; }
+.recommendation a, .recommendation button { grid-column: 1 / -1; min-height: 36px; display: flex; align-items: center; justify-content: center; gap: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-md); color: var(--color-gold-700); background: white; font: inherit; font-size: 10px; font-weight: 650; text-decoration: none; cursor: pointer; }
+.recommendation button:disabled { color: var(--color-text-muted); background: var(--color-surface-subtle); cursor: not-allowed; }
+.taskList > li { min-height: 72px; align-items: flex-start; padding-block: var(--space-3); }
+.urgentLabel, .pendingLabel { align-self: center; flex: 0 0 auto; font-size: 9px; font-weight: 650; }
+.urgentLabel { color: var(--color-danger-600); } .pendingLabel { color: var(--color-gold-700); }
+@media (max-width: 767px) {
+  .itemCopy strong { font-size: 12px; }
+  .itemCopy p, .itemCopy small { font-size: 11px; }
+  .timelineItem { min-height: 82px; }
+  .recommendation { min-height: 160px; }
+  .taskList > li { display: grid; grid-template-columns: 34px minmax(0, 1fr); align-items: center; }
+  .taskList .urgentLabel, .taskList .pendingLabel { grid-column: 2; justify-self: start; padding-top: 2px; }
+}

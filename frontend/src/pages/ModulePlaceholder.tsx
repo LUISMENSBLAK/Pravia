@@ -10,8 +10,9 @@ const labels: Record<string, string> = {
 
 export function ModulePlaceholder() {
   const { pathname } = useLocation();
+  const title = pathname.startsWith('/expedientes/') ? 'Expedientes' : labels[pathname] ?? 'PRAVIA OS';
   return (
-    <PageContainer title={labels[pathname] ?? 'PRAVIA OS'}>
+    <PageContainer title={title}>
       <section className={styles.placeholder}>
         <span aria-hidden="true" />
         <p>Módulo pendiente de construcción.</p>

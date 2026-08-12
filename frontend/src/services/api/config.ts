@@ -6,6 +6,7 @@ export const apiConfig = {
   refreshPath: import.meta.env.VITE_AUTH_REFRESH_PATH ?? '/auth/refresh',
   mePath: import.meta.env.VITE_AUTH_ME_PATH ?? '/auth/me',
   logoutPath: import.meta.env.VITE_AUTH_LOGOUT_PATH ?? '/auth/logout',
+  myDayPath: import.meta.env.VITE_MY_DAY_PATH ?? '/dashboard/mi-dia',
 };
 
 export const apiUrl = (path: string) => {

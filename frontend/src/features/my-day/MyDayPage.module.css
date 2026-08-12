@@ -1,0 +1,24 @@
+.page { min-width: 0; display: grid; gap: var(--space-3); }
+.dashboardGrid { min-width: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: 250px 250px; grid-template-areas: "agenda signatures recommendation tasks" "agenda recent reminders ai"; gap: var(--space-3); }
+.dashboardGrid > section { min-height: 0; }
+.agenda { grid-area: agenda; }
+.signatures { grid-area: signatures; }
+.recommendation { grid-area: recommendation; }
+.recent { grid-area: recent; }
+.reminders { grid-area: reminders; }
+.tasks { grid-area: tasks; }
+.ai { grid-area: ai; }
+.signatures h2 { font-size: 11px; }
+
+@media (max-width: 1180px) {
+  .dashboardGrid { gap: var(--space-2); }
+}
+
+@media (max-width: 1024px) {
+  .dashboardGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(4, auto); grid-template-areas: "agenda signatures" "agenda tasks" "recommendation recent" "reminders ai"; gap: var(--space-3); }
+}
+
+@media (max-width: 767px) {
+  .page { gap: var(--space-3); }
+  .dashboardGrid { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; grid-template-areas: "tasks" "agenda" "signatures" "recommendation" "recent" "reminders" "ai"; }
+}

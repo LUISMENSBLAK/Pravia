@@ -4,6 +4,7 @@ export type SessionUser = {
   email?: string;
   role?: string;
   notary?: string;
+  permissions?: string[];
 };
 
 export type LoginCredentials = {
@@ -29,12 +30,17 @@ export const normalizeUser = (payload: unknown): SessionUser | null => {
 
   const roleValue = candidate.role ?? candidate.roleName ?? candidate.tipo;
   const notaryValue = candidate.notary ?? candidate.notaryName ?? candidate.notaria;
+  const permissions = Array.isArray(candidate.permissions)
+    ? candidate.permissions.filter((permission): permission is string => typeof permission === 'string')
+    : undefined;
 
-  return {
+  const normalized: SessionUser = {
     id: typeof candidate.id === 'string' ? candidate.id : undefined,
     name,
     email,
     role: typeof roleValue === 'string' ? roleValue : undefined,
     notary: typeof notaryValue === 'string' ? notaryValue : undefined,
   };
+  if (permissions) normalized.permissions = permissions;
+  return normalized;
 };
