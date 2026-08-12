@@ -28,6 +28,7 @@ export type ProspectListQuery = {
   priorities: ProspectoPrioridad[];
   service?: string;
   source?: string;
+  withoutQuote: boolean;
 };
 
 export function parseProspectListQuery(query: Record<string, unknown>): ProspectListQuery {
@@ -51,5 +52,6 @@ export function parseProspectListQuery(query: Record<string, unknown>): Prospect
     priorities: enumList(query.prioridad, Object.values(ProspectoPrioridad)),
     ...(typeof query.servicio === 'string' && query.servicio.trim() ? { service: query.servicio.trim() } : {}),
     ...(typeof query.origen === 'string' && query.origen.trim() ? { source: query.origen.trim() } : {}),
+    withoutQuote: String(query.sinCotizacion ?? query.withoutQuote ?? '') === 'true',
   };
 }

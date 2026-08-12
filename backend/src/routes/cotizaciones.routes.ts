@@ -13,6 +13,7 @@ import {
   convertToExpediente,
   getCotizacionSeguimientos,
   createCotizacionSeguimiento,
+  registerCotizacionDelivery,
   updateParticipacionPravia,
   getCotizacionDocumentos,
   unlinkCotizacionDocumento
@@ -36,6 +37,7 @@ router.post('/pago/:pagoId/validar', requirePermission('finanzas.validate'), val
 router.post('/:id/convertir', requirePermission('expedientes.write'), convertToExpediente);
 router.get('/:id/seguimientos', getCotizacionSeguimientos);
 router.post('/:id/seguimientos', createCotizacionSeguimiento);
+router.post('/:id/registrar-envio', registerCotizacionDelivery);
 router.put('/:id/participacion-pravia', requirePermission('finanzas.write'), updateParticipacionPravia);
 router.patch('/:id/participacion-pravia', requirePermission('finanzas.write'), updateParticipacionPravia);
 

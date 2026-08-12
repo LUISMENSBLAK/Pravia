@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, CalendarDays, FileText, Mail, MapPin, MessageSquarePlus, Phone, UserRound, UsersRound } from 'lucide-react';
-import { Link, useParams } from 'react-router-dom';
+import { ArrowLeft, CalendarDays, FilePlus2, FileText, Mail, MapPin, MessageSquarePlus, Phone, UserRound, UsersRound } from 'lucide-react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { FollowUpForm } from './components/FollowUpForm';
 import { ProspectActivity } from './components/ProspectActivity';
@@ -14,6 +14,7 @@ const formatDate = (value?: string | null) => value ? new Intl.DateTimeFormat('e
 
 export function ProspectDetailPage() {
   const { id = '' } = useParams(); const { user } = useAuth();
+  const navigate = useNavigate();
   const [prospect, setProspect] = useState<Prospect | null>(null); const [documents, setDocuments] = useState<ProspectDocument[]>([]);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading'); const [showFollowUp, setShowFollowUp] = useState(false); const [toast, setToast] = useState('');
   const canWrite = user?.permissions?.includes('prospectos.write') ?? false;
@@ -33,7 +34,7 @@ export function ProspectDetailPage() {
   };
   return <div className={styles.detailPage} data-ai-trigger={!latest?.proxima_accion ? 'SIN_SIGUIENTE_ACCION' : undefined}>
     <Link className={styles.backLink} to="/prospectos"><ArrowLeft size={17} />Prospectos</Link>
-    <header className={styles.detailHeader}><div><div className={styles.detailEyebrow}><span className={`${styles.stateBadge} ${styles[`state${prospect.estado}`]}`}>{STATE_LABELS[prospect.estado]}</span><span>Actualizado {formatDate(prospect.updated_at)}</span></div><h1>{prospect.nombre}</h1><p>{prospect.tipo_acto || 'Servicio por definir'}</p></div>{canWrite && <button className={styles.primaryButton} type="button" onClick={() => setShowFollowUp(true)}><MessageSquarePlus size={18} />Registrar seguimiento</button>}</header>
+    <header className={styles.detailHeader}><div><div className={styles.detailEyebrow}><span className={`${styles.stateBadge} ${styles[`state${prospect.estado}`]}`}>{STATE_LABELS[prospect.estado]}</span><span>Actualizado {formatDate(prospect.updated_at)}</span></div><h1>{prospect.nombre}</h1><p>{prospect.tipo_acto || 'Servicio por definir'}</p></div>{canWrite && <div className={styles.detailHeaderActions}>{!prospect.cotizacion && <button className={styles.secondaryButton} type="button" onClick={() => navigate(`/cotizaciones?new=1&prospecto=${encodeURIComponent(prospect.id)}`)}><FilePlus2 size={18} />Crear cotización</button>}<button className={styles.primaryButton} type="button" onClick={() => setShowFollowUp(true)}><MessageSquarePlus size={18} />Registrar seguimiento</button></div>}</header>
     <section className={styles.detailOverview} aria-label="Resumen del prospecto"><article><span><UserRound size={18} /></span><div><small>Responsable</small><strong>{prospect.atendido_por?.nombre || 'Sin responsable visible'}</strong></div></article><article><span><CalendarDays size={18} /></span><div><small>Última actividad</small><strong>{formatDate(latest?.created_at ?? prospect.updated_at)}</strong></div></article><article><span><FileText size={18} /></span><div><small>Cotización</small><strong>{prospect.cotizacion ? prospect.cotizacion.estado || 'Vinculada' : 'Sin cotización'}</strong></div></article><article><span><MessageSquarePlus size={18} /></span><div><small>Siguiente acción</small><strong>{latest?.proxima_accion || 'Sin siguiente acción'}</strong></div></article></section>
     <div className={styles.detailGrid}>
       <main><section className={styles.detailSection}><header><div><h2>Seguimiento y actividad</h2><p>Historial ordenado por actividad más reciente.</p></div>{canWrite && !showFollowUp && <button type="button" onClick={() => setShowFollowUp(true)}>+ Registrar seguimiento</button>}</header>{showFollowUp && <FollowUpForm prospectId={prospect.id} onCancel={() => setShowFollowUp(false)} onCreated={addFollowUp} />}<ProspectActivity followUps={prospect.seguimientos ?? []} /></section></main>

@@ -6,6 +6,6 @@
 .skipLink:focus { transform: translateY(0); outline: 3px solid white; }
 
 @media (min-width: 768px) and (max-width: 1024px) { .main { margin-left: 76px; } }
-@media (max-width: 767px) { .main { margin-left: 0; } .workspace { border-radius: 0; padding: 24px 20px max(92px, calc(24px + env(safe-area-inset-bottom))); } }
-@media (max-width: 420px) { .workspace { padding: 22px 16px max(90px, calc(22px + env(safe-area-inset-bottom))); } }
+@media (max-width: 767px) { .main { margin-left: 0; } .workspace { border-radius: 0; padding: 24px 20px max(124px, calc(28px + env(safe-area-inset-bottom))); } }
+@media (max-width: 420px) { .workspace { padding: 22px 16px max(120px, calc(26px + env(safe-area-inset-bottom))); } }
 @media (prefers-reduced-motion: reduce) { .main { transition: none; } }

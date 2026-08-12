@@ -1,6 +1,6 @@
-# PRAVIA OS — Frontend Fases 1 a 4
+# PRAVIA OS — Frontend Fases 1 a 5
 
-Frontend nuevo construido desde cero. Incluye login, capa de autenticación, rutas protegidas, application shell responsive, el dashboard operativo **Mi Día**, el copiloto transversal **PRAVIA IA** y el pipeline de **Prospectos**.
+Frontend nuevo construido desde cero. Incluye login, capa de autenticación, rutas protegidas, application shell responsive, el dashboard operativo **Mi Día**, el copiloto transversal **PRAVIA IA**, el pipeline de **Prospectos** y el workspace de **Cotizaciones**.
 
 ## Desarrollo
 
@@ -30,6 +30,10 @@ La arquitectura, contratos y estados se documentan en [PHASE_3_REPORT.md](./PHAS
 
 Prospectos consume el contrato real `GET/POST /prospectos`, `GET /prospectos/:id`, `POST /prospectos/:id/seguimientos` y `GET /prospectos/:id/documentos`. El mapeo visual de estados, las limitaciones de volumen y la evidencia de QA se documentan en [PHASE_4_REPORT.md](./PHASE_4_REPORT.md).
 
+## Integración de Cotizaciones
+
+Cotizaciones usa el contrato real de cotización, versiones, documentos, seguimientos, aceptación y conversión. La lista utiliza búsqueda, filtros, orden y paginación server-side; sus KPIs y su serie mensual se calculan en backend. Los estados, fórmulas, permisos, limitaciones de PDF/envío y evidencia de QA se documentan en [PHASE_5_REPORT.md](./PHASE_5_REPORT.md).
+
 ## Alcance
 
-Cotizaciones, Expedientes y los demás módulos operativos continúan como placeholders intencionales. Sus acciones contextuales de PRAVIA IA solo precargan consultas y no implementan lógica del módulo.
+Expedientes, Comparecientes, Agenda, Finanzas y los demás módulos posteriores continúan como placeholders intencionales. Sus acciones contextuales de PRAVIA IA solo precargan consultas y no implementan lógica del módulo.

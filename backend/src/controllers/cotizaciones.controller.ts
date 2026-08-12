@@ -10,33 +10,85 @@ import {
 } from '../domain/cotizacionWorkflow';
 import { CotizacionConversionService } from '../services/cotizacionConversion.service';
 import { canAccessCotizacion, canAccessDocumento, canAccessProspecto, cotizacionObjectWhere } from '../services/objectAccess.service';
+import { buildQuoteAnalytics, parseQuoteListQuery, quoteAnalyticsRange } from '../domain/quoteQuery';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
 
 export const getCotizaciones = async (req: Request, res: Response) => {
   try {
-    const { estado } = req.query;
-    const where: any = req.user ? cotizacionObjectWhere(req.user) : {};
-    if (estado) {
-      where.estado = estado as string;
+    const parsed = parseQuoteListQuery(req.query as Record<string, unknown>);
+    const scope: any = req.user ? cotizacionObjectWhere(req.user) : {};
+    const where: any = { ...scope };
+    if (parsed.states.length === 1) where.estado = parsed.states[0];
+    else if (parsed.states.length > 1) where.estado = { in: parsed.states };
+    if (parsed.responsible) where.user_id = parsed.responsible;
+    if (parsed.act) where.prospecto = { is: { tipo_acto: { equals: parsed.act, mode: 'insensitive' } } };
+    if (parsed.dateFrom || parsed.dateTo) where.created_at = { ...(parsed.dateFrom ? { gte: parsed.dateFrom } : {}), ...(parsed.dateTo ? { lte: parsed.dateTo } : {}) };
+    if (parsed.search) {
+      where.OR = [
+        ...(parsed.exactId ? [{ id: parsed.exactId }] : []),
+        { numero_solicitud: { contains: parsed.search, mode: 'insensitive' } },
+        { numero_cotizacion: { contains: parsed.search, mode: 'insensitive' } },
+        { prospecto: { is: { nombre: { contains: parsed.search, mode: 'insensitive' } } } },
+        { prospecto: { is: { tipo_acto: { contains: parsed.search, mode: 'insensitive' } } } },
+      ];
     }
 
     const cotizaciones = await prisma.cotizacion.findMany({
       where,
+      ...(parsed.paginated ? { skip: parsed.skip, take: parsed.pageSize } : {}),
       include: {
         prospecto: { select: { nombre: true, tipo_acto: true } },
         notaria: { select: { nombre: true } },
         creada_por: { select: { nombre: true } },
-        versiones: { orderBy: { version: 'desc' } },
+        versiones: { orderBy: { version: 'desc' }, ...(parsed.paginated ? { take: 1 } : {}) },
         pagos: {
           where: { categoria_ingreso: 'ANTICIPO_NOTARIA' },
           select: { id: true, monto: true, estatus: true, categoria_ingreso: true, fecha_pago: true },
         },
-        expediente: true
+        expediente: parsed.paginated ? { select: { id: true, numero_pravia: true } } : true,
+        ...(parsed.paginated ? { seguimientos: { orderBy: { created_at: 'desc' as const }, take: 1 } } : {}),
       },
-      orderBy: { created_at: 'desc' }
+      orderBy: { [parsed.sortBy]: parsed.sortOrder },
     });
-    res.json(cotizaciones);
+    if (!parsed.paginated) return res.json(cotizaciones);
+
+    const analyticsRange = quoteAnalyticsRange(parsed.period);
+    const [total, sent, accepted, amount, stateCounts, facetRows, analyticsRows] = await Promise.all([
+      prisma.cotizacion.count({ where }),
+      prisma.cotizacion.count({ where: { ...where, fecha_enviada_cliente: { not: null } } }),
+      prisma.cotizacion.count({ where: { ...where, fecha_aceptacion_cliente: { not: null } } }),
+      prisma.cotizacion.aggregate({ where, _sum: { total_cliente: true } }),
+      prisma.cotizacion.groupBy({ by: ['estado'], where, _count: { _all: true } }),
+      prisma.cotizacion.findMany({ where: scope, select: { prospecto: { select: { tipo_acto: true } }, creada_por: { select: { id: true, nombre: true, apellido: true } } } }),
+      prisma.cotizacion.findMany({
+        where: { ...where, fecha_enviada_cliente: { gte: analyticsRange.start, lt: analyticsRange.end } },
+        select: { fecha_enviada_cliente: true, fecha_aceptacion_cliente: true, total_cliente: true },
+      }),
+    ]);
+    const totalPages = Math.max(1, Math.ceil(total / parsed.pageSize));
+    const responsibles = Array.from(new Map(facetRows.map((item) => [item.creada_por.id, { id: item.creada_por.id, name: `${item.creada_por.nombre}${item.creada_por.apellido ? ` ${item.creada_por.apellido}` : ''}` }])).values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    const acts = Array.from(new Set(facetRows.map((item) => item.prospecto?.tipo_acto).filter((item): item is string => Boolean(item)))).sort((a, b) => a.localeCompare(b, 'es'));
+    return res.json({
+      data: cotizaciones,
+      meta: {
+        page: parsed.page,
+        pageSize: parsed.pageSize,
+        total,
+        totalPages,
+        hasNextPage: parsed.page < totalPages,
+        hasPreviousPage: parsed.page > 1,
+        countsByState: Object.fromEntries(stateCounts.map((item) => [item.estado, item._count._all])),
+        metrics: {
+          sent,
+          accepted,
+          totalAmount: Number(amount._sum.total_cliente ?? 0),
+          conversionRate: sent ? Number(((accepted / sent) * 100).toFixed(1)) : null,
+        },
+      },
+      facets: { acts, responsibles },
+      analytics: buildQuoteAnalytics(analyticsRows, parsed.period),
+    });
   } catch (error: any) {
     res.status(500).json({ error: 'Error al obtener cotizaciones', detail: error.message });
   }
@@ -625,6 +677,65 @@ export const createCotizacionSeguimiento = async (req: Request, res: Response) =
     res.status(201).json(seguimiento);
   } catch (error: any) {
     res.status(500).json({ error: 'Error al registrar seguimiento', detail: error.message });
+  }
+};
+
+export const registerCotizacionDelivery = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { destino, canal, destinatario, resumen } = req.body;
+    const actorUserId = req.user?.id;
+    if (!actorUserId) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
+    if (!['NOTARIA', 'CLIENTE'].includes(String(destino))) {
+      return res.status(400).json({ error: 'El destino debe ser NOTARIA o CLIENTE.', code: 'DELIVERY_TARGET_INVALID' });
+    }
+    if (!String(canal || '').trim() || !String(destinatario || '').trim() || !String(resumen || '').trim()) {
+      return res.status(400).json({ error: 'Canal, destinatario y evidencia/resumen son obligatorios.', code: 'DELIVERY_EVIDENCE_REQUIRED' });
+    }
+    const nextState = destino === 'NOTARIA' ? CotizacionEstado.ENVIADA_NOTARIA : CotizacionEstado.ENVIADA_CLIENTE;
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:cotizacion-state:${id}`}))`);
+      const current = await tx.cotizacion.findUnique({ where: { id }, include: { versiones: { select: { aprobada: true } } } });
+      if (!current) throw new CotizacionBusinessError('Cotización no encontrada.', 'COTIZACION_NOT_FOUND', 404);
+      validateCotizacionTransition({
+        current: current.estado,
+        next: nextState,
+        hasNotaria: Boolean(current.notaria_id),
+        hasApprovedVersion: current.versiones.some((version) => version.aprobada),
+      });
+      const now = new Date();
+      const followUp = await tx.cotizacionSeguimiento.create({
+        data: {
+          cotizacion_id: id,
+          usuario_id: actorUserId,
+          tipo: `envio_manual_${String(canal).trim().toLowerCase()}`,
+          destinatario: String(destinatario).trim(),
+          resumen: String(resumen).trim(),
+          resultado: 'ENVIO_REGISTRADO_POR_USUARIO',
+        },
+        include: { usuario: { select: { nombre: true, apellido: true } } },
+      });
+      const data: Prisma.CotizacionUpdateInput = { estado: nextState };
+      if (nextState === CotizacionEstado.ENVIADA_NOTARIA) {
+        const limit = new Date(now);
+        limit.setDate(limit.getDate() + 5);
+        data.fecha_solicitud_notaria = now;
+        data.fecha_limite_respuesta_notaria = limit;
+      } else {
+        data.fecha_enviada_cliente = now;
+      }
+      const cotizacion = await tx.cotizacion.update({ where: { id }, data });
+      return { cotizacion, followUp };
+    });
+    await logAudit(actorUserId, 'REGISTER_DELIVERY', 'Cotizacion', id, { destino, canal, destinatario, nuevo_estado: nextState });
+    return res.status(201).json({
+      ...result,
+      transiciones_permitidas: getAllowedCotizacionTransitions(result.cotizacion.estado),
+      deliveryConfirmedByProvider: false,
+    });
+  } catch (error: any) {
+    if (error instanceof CotizacionBusinessError) return res.status(error.status).json({ error: error.message, code: error.code });
+    return res.status(500).json({ error: 'No fue posible registrar el envío.', code: 'DELIVERY_REGISTRATION_FAILED' });
   }
 };
 

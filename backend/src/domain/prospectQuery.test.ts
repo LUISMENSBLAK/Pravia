@@ -18,4 +18,8 @@ describe('parseProspectListQuery', () => {
       search: id, exactId: id, service: 'Compraventa', source: 'Referido', sortBy: 'nombre', sortOrder: 'asc',
     });
   });
+
+  it('permite solicitar únicamente prospectos sin cotización', () => {
+    expect(parseProspectListQuery({ page: '1', sinCotizacion: 'true' }).withoutQuote).toBe(true);
+  });
 });

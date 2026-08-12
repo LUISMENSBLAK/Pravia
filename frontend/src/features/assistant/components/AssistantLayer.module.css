@@ -23,8 +23,9 @@
 @keyframes suggestion-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 767px) {
   .layer { inset: 0; }
-  .launcher { right: 14px; bottom: calc(14px + env(safe-area-inset-bottom)); width: 56px; height: 56px; border-radius: 18px; }
-  .suggestion { right: 14px; bottom: calc(82px + env(safe-area-inset-bottom)); }
+  .launcher { right: 4px; bottom: calc(4px + env(safe-area-inset-bottom)); width: 44px; height: 44px; border-radius: 14px; padding: 4px; }
+  .launcherStatus { top: 4px; right: 4px; width: 7px; height: 7px; }
+  .suggestion { right: 10px; bottom: calc(60px + env(safe-area-inset-bottom)); }
   .suggestion header > button { width: 44px; height: 44px; flex-basis: 44px; }
   .suggestion footer button { min-height: 44px; }
 }

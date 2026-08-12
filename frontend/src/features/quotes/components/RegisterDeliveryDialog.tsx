@@ -1,0 +1,13 @@
+import { useState, type FormEvent } from 'react';
+import { LoaderCircle } from 'lucide-react';
+import { quotesService } from '../quotes.service';
+import type { Quote } from '../quotes.types';
+import { QuoteActionDialog } from './QuoteActionDialog';
+import styles from '../Quotes.module.css';
+
+export function RegisterDeliveryDialog({ quote, target, onClose, onDone }: { quote: Quote; target: 'NOTARIA' | 'CLIENTE'; onClose: () => void; onDone: () => void }) {
+  const defaultRecipient = target === 'CLIENTE' ? quote.prospecto?.email || '' : quote.notaria?.correo_proyectos || quote.notaria?.correo_general || '';
+  const [channel, setChannel] = useState('correo'); const [recipient, setRecipient] = useState(defaultRecipient); const [summary, setSummary] = useState(''); const [saving, setSaving] = useState(false); const [error, setError] = useState('');
+  const submit = async (event: FormEvent) => { event.preventDefault(); if (!recipient.trim() || !summary.trim()) return setError('Destinatario y evidencia/resumen son obligatorios.'); setSaving(true); setError(''); try { await quotesService.registerDelivery(quote.id, { destino: target, canal: channel, destinatario: recipient, resumen: summary }); onDone(); } catch { setError('No pudimos registrar el envío. Revisa que la cotización esté lista para enviarse.'); setSaving(false); } };
+  return <QuoteActionDialog title={`Registrar envío a ${target === 'CLIENTE' ? 'cliente' : 'notaría'}`} description="Guarda el canal, destinatario y evidencia del envío. Este registro no garantiza que el destinatario haya recibido el mensaje." onClose={onClose} footer={<><button type="button" className={styles.secondaryButton} onClick={onClose}>Cancelar</button><button type="submit" form="delivery-form" className={styles.primaryButton} disabled={saving}>{saving && <LoaderCircle className={styles.spin} size={17} />}Registrar envío</button></>}><form id="delivery-form" className={styles.dialogForm} onSubmit={submit}>{error && <div className={styles.formError} role="alert">{error}</div>}<label><span>Canal</span><select value={channel} onChange={(event) => setChannel(event.target.value)}><option value="correo">Correo externo</option><option value="whatsapp">WhatsApp</option><option value="presencial">Entrega presencial</option><option value="otro">Otro</option></select></label><label><span>Destinatario</span><input value={recipient} onChange={(event) => setRecipient(event.target.value)} /></label><label><span>Evidencia / nota de entrega</span><textarea rows={4} value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="Ej. Enviado desde Outlook; asunto y hora del mensaje." /></label></form></QuoteActionDialog>;
+}

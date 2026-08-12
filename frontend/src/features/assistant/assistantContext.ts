@@ -50,6 +50,12 @@ const actions: Partial<Record<AssistantModule, AssistantAction[]>> = {
     { id: 'prospects-quotes', label: 'Cotizaciones pendientes', prompt: 'Muéstrame los prospectos con cotización pendiente.' },
     { id: 'prospects-search', label: 'Buscar prospecto', prompt: 'Ayúdame a buscar un prospecto.' },
   ],
+  cotizaciones: [
+    { id: 'quotes-expiring', label: 'Por vencer', prompt: 'Muéstrame las cotizaciones próximas a vencer.' },
+    { id: 'quotes-follow-up', label: 'Sin seguimiento', prompt: 'Muéstrame las cotizaciones sin seguimiento.' },
+    { id: 'quotes-accepted', label: 'Aceptadas este mes', prompt: 'Muéstrame las cotizaciones aceptadas este mes.' },
+    { id: 'quotes-search', label: 'Buscar cotización', prompt: 'Ayúdame a buscar una cotización.' },
+  ],
   agenda: [
     { id: 'agenda-today', label: '¿Qué tengo hoy?', prompt: '¿Qué tengo en la agenda hoy?' },
     { id: 'agenda-next', label: 'Próximos eventos', prompt: 'Muéstrame los próximos eventos.' },
@@ -74,6 +80,15 @@ const prospectDetailActions: AssistantAction[] = [
   { id: 'prospect-follow-up', label: 'Preparar seguimiento', prompt: 'Ayúdame a preparar el seguimiento de este prospecto.' },
 ];
 
+const quoteDetailActions: AssistantAction[] = [
+  { id: 'quote-summary', label: 'Resumir cotización', prompt: 'Resume esta cotización.' },
+  { id: 'quote-concepts', label: 'Explicar conceptos', prompt: 'Explica los conceptos de esta cotización.' },
+  { id: 'quote-state', label: 'Estado actual', prompt: '¿Cuál es el estado actual de esta cotización?' },
+  { id: 'quote-next', label: 'Próximo paso', prompt: '¿Cuál es el próximo paso para esta cotización?' },
+];
+
 export const getAssistantActions = (context: AssistantContext) => context.entityType === 'prospecto'
   ? prospectDetailActions
-  : actions[context.module] ?? fallbackActions;
+  : context.entityType === 'cotizacion'
+    ? quoteDetailActions
+    : actions[context.module] ?? fallbackActions;

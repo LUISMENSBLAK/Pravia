@@ -16,6 +16,7 @@ export const getProspectos = async (req: Request, res: Response) => {
     else if (parsed.priorities.length > 1) where.prioridad = { in: parsed.priorities };
     if (parsed.service) where.tipo_acto = { equals: parsed.service, mode: 'insensitive' };
     if (parsed.source) where.fuente = { equals: parsed.source, mode: 'insensitive' };
+    if (parsed.withoutQuote) where.cotizacion = { is: null };
     if (parsed.search) {
       where.OR = [
         ...(parsed.exactId ? [{ id: parsed.exactId }] : []),
