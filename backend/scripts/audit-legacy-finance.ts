@@ -17,6 +17,8 @@ async function main() {
     return {
       legacy_pago_id: payment.id,
       importe: Number(payment.monto),
+      fecha: payment.fecha_registro,
+      referencia: `legacy:pago:${payment.id}`,
       origen: `Pago.${payment.categoria_ingreso}`,
       expediente_id: payment.expediente_id,
       cotizacion_id: payment.cotizacion_id,
@@ -37,11 +39,11 @@ async function main() {
     const outputDir = path.resolve(outputArg.split('=').slice(1).join('='));
     fs.mkdirSync(outputDir, { recursive: true });
     fs.writeFileSync(path.join(outputDir, 'legacy-finance.json'), `${JSON.stringify(report, null, 2)}\n`);
-    const mdRows = rows.map((row) => `| ${row.legacy_pago_id} | ${row.clasificacion} | ${row.importe.toFixed(2)} | ${String(row.razon).replace(/\|/g, '\\|')} |`).join('\n');
-    fs.writeFileSync(path.join(outputDir, 'legacy-finance.md'), `# Auditoría financiera legacy\n\nModo: **DRY_RUN_READ_ONLY**\n\n| Pago | Clasificación | Importe | Razón |\n| --- | --- | ---: | --- |\n${mdRows}\n`);
+    const mdRows = rows.map((row) => `| ${row.legacy_pago_id} | ${new Date(row.fecha).toISOString()} | ${row.referencia} | ${row.expediente_id || '—'} | ${row.clasificacion} | ${row.importe.toFixed(2)} | ${String(row.razon).replace(/\|/g, '\\|')} |`).join('\n');
+    fs.writeFileSync(path.join(outputDir, 'legacy-finance.md'), `# Auditoría financiera legacy\n\nModo: **DRY_RUN_READ_ONLY**\n\n| Pago | Fecha | Referencia | Expediente | Clasificación | Importe | Razón |\n| --- | --- | --- | --- | --- | ---: | --- |\n${mdRows}\n`);
     const csvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-    const csvRows = rows.map((row) => [row.legacy_pago_id, row.clasificacion, row.importe, row.expediente_id, row.cotizacion_id, row.posibles_duplicados.join('|'), row.razon].map(csvCell).join(',')).join('\n');
-    fs.writeFileSync(path.join(outputDir, 'legacy-finance.csv'), `legacy_pago_id,clasificacion,importe,expediente_id,cotizacion_id,posibles_duplicados,razon\n${csvRows}\n`);
+    const csvRows = rows.map((row) => [row.legacy_pago_id, row.fecha, row.referencia, row.clasificacion, row.importe, row.expediente_id, row.cotizacion_id, row.posibles_duplicados.join('|'), JSON.stringify(row.destino_propuesto), row.razon].map(csvCell).join(',')).join('\n');
+    fs.writeFileSync(path.join(outputDir, 'legacy-finance.csv'), `legacy_pago_id,fecha,referencia,clasificacion,importe,expediente_id,cotizacion_id,posibles_duplicados,destino_propuesto,razon\n${csvRows}\n`);
   }
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 }

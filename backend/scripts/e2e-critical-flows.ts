@@ -1,14 +1,18 @@
 import 'dotenv/config';
 import { basename } from 'node:path';
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import bcrypt from 'bcryptjs';
+import { PrismaClient } from '@prisma/client';
 
 const base = (process.env.E2E_API_URL || 'http://127.0.0.1:3001/api').replace(/\/$/, '');
-const email = process.env.PRAVIA_E2E_EMAIL || '';
-const password = process.env.PRAVIA_E2E_PASSWORD || '';
+let email = process.env.PRAVIA_E2E_EMAIL || '';
+let password = process.env.PRAVIA_E2E_PASSWORD || '';
 const allowed = process.env.E2E_ALLOW_MUTATIONS === 'isolated-database-confirmed';
 const targetKind = process.env.E2E_TARGET_KIND || 'local';
+const syntheticIdentity = process.env.E2E_CREATE_SYNTHETIC_USER === 'true';
 
-if (!email || !password) {
+if ((!email || !password) && !syntheticIdentity) {
   console.log(JSON.stringify({ ok: true, skipped: true, reason: 'Faltan PRAVIA_E2E_EMAIL/PRAVIA_E2E_PASSWORD; no se creó ni restableció ninguna cuenta.' }, null, 2));
   process.exit(0);
 }
@@ -21,6 +25,7 @@ if (!['localhost', '127.0.0.1', '::1'].includes(hostname) && targetKind !== 'eph
 const created: Record<string, string> = {};
 const steps: string[] = [];
 let accessToken = '';
+const prisma = new PrismaClient();
 
 async function request(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
@@ -88,6 +93,22 @@ async function runOptionalPaidAI(expedienteId: string) {
 }
 
 async function main() {
+  if (syntheticIdentity) {
+    if (!['localhost', '127.0.0.1', '::1'].includes(hostname)) throw new Error('La identidad sintética E2E solo puede crearse en localhost.');
+    const identitySuffix = randomUUID().slice(0, 8);
+    email = `e2e-critical-${identitySuffix}@example.invalid`;
+    password = `Pravia!Critical-${identitySuffix}-Q7`;
+    await prisma.user.create({ data: {
+      email,
+      password_hash: await bcrypt.hash(password, 12),
+      nombre: 'E2E Dirección',
+      apellido: identitySuffix,
+      rol: 'DIRECCION',
+      activo: true,
+      requires_password_change: false,
+      password_changed_at: new Date(),
+    } });
+  }
   const login = await request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
   accessToken = login.access_token;
   if (!accessToken || login.user?.requires_password_change) throw new Error('La cuenta E2E debe estar activa y con contraseña definitiva.');
@@ -175,6 +196,20 @@ async function main() {
   if (!document.documento?.storage_key) throw new Error('El documento no conservó storage_key.');
   steps.push('documento:subido-privado');
 
+  const requirementState = await request(`/expedientes/${expediente.id}`);
+  const mandatoryRequirements = (requirementState.requisitos_docs || []).filter((item: any) => item.obligatorio);
+  for (const [index, requirement] of mandatoryRequirements.entries()) {
+    const evidence = new FormData();
+    evidence.set('file', new Blob([pdf], { type: 'application/pdf' }), `requisito-firma-${index + 1}-${suffix}.pdf`);
+    evidence.set('categoria', requirement.categoria);
+    evidence.set('carpeta', requirement.categoria === 'FIRMA' ? 'Firma' : 'Administrativo');
+    evidence.set('requisito_id', requirement.id);
+    const uploaded = await request(`/expedientes/${expediente.id}/documentos`, { method: 'POST', body: evidence });
+    if (uploaded.documento?.requisito_id !== requirement.id) throw new Error('El documento no quedó vinculado al requisito de firma.');
+    await patch(`/expedientes/${expediente.id}/requisitos/${requirement.id}`, { estatus: 'VALIDADO', observaciones: 'Validación humana sintética E2E en entorno aislado.' });
+  }
+  steps.push('documentos:obligatorios-vinculados-validados');
+
   const beforeSave = await request(`/expedientes/${expediente.id}`);
   await patch(`/expedientes/${expediente.id}`, {
     version: beforeSave.version,
@@ -203,10 +238,36 @@ async function main() {
   await transition(expediente.id, 'FIRMA_PROGRAMADA', {
     datos_firma: { fecha_firma: new Date(Date.now() + 86_400_000).toISOString(), lugar: 'Sala E2E', autoriza_saldo_pendiente: true },
   });
-  await transition(expediente.id, 'FIRMADO');
+  await transition(expediente.id, 'FIRMADO', { fecha_efectiva: new Date().toISOString() });
   await transition(expediente.id, 'POST_FIRMA');
+  const postfirmaTask = await post(`/expedientes/${expediente.id}/postfirma/tramites`, {
+    tipo: 'REGISTRO_PUBLICO',
+    descripcion: 'Inscripción sintética E2E',
+    institucion: 'Registro Público QA',
+    folio: `RPP-${suffix}`,
+    fecha_ingreso: new Date().toISOString(),
+    evidencia_documento_id: document.documento.id,
+  });
+  await patch(`/expedientes/${expediente.id}/postfirma/tramites/${postfirmaTask.id}`, {
+    estatus: 'COMPLETADA',
+    resultado: 'Inscripción sintética concluida en entorno aislado.',
+    evidencia_documento_id: document.documento.id,
+  });
+  steps.push('postfirma:tramite-concluido-con-evidencia');
   await transition(expediente.id, 'LISTO_ENTREGA');
-  await transition(expediente.id, 'ENTREGADO');
+  const readyForDelivery = await request(`/expedientes/${expediente.id}`);
+  const delivery = await post(`/expedientes/${expediente.id}/entrega`, {
+    expected_version: readyForDelivery.version,
+    receptor_nombre: 'Persona Receptora E2E',
+    receptor_caracter: 'Titular',
+    fecha_efectiva: new Date().toISOString(),
+    medio: 'PRESENCIAL',
+    evidencia_documento_id: document.documento.id,
+    items: [{ documento_id: document.documento.id, tipo: 'TESTIMONIO', cantidad: 1 }],
+    observaciones: 'Entrega sintética verificada en entorno local aislado.',
+  });
+  if ((delivery.expediente || delivery).estatus !== 'ENTREGADO') throw new Error('La entrega final no cerró el expediente.');
+  steps.push('expediente:ENTREGADO');
 
   const final = await request(`/expedientes/${expediente.id}`);
   if (final.estatus !== 'ENTREGADO' || !final.fecha_real_firma || !final.fecha_entrega_cliente) {
@@ -216,7 +277,9 @@ async function main() {
   console.log(JSON.stringify({ ok: true, target_kind: targetKind, created, steps, paid_ai: ai }, null, 2));
 }
 
-main().catch((error: any) => {
-  console.error(JSON.stringify({ ok: false, created, steps, error: error.message }, null, 2));
-  process.exitCode = 1;
-});
+main()
+  .catch((error: any) => {
+    console.error(JSON.stringify({ ok: false, created, steps, error: error.message }, null, 2));
+    process.exitCode = 1;
+  })
+  .finally(async () => prisma.$disconnect());

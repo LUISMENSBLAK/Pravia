@@ -4,6 +4,7 @@ type TokenPayload = Record<string, unknown> | null;
 
 const ACCESS_TOKEN_KEY = 'pravia.access-token';
 let refreshInFlight: Promise<string | null> | null = null;
+let accessToken: string | null = null;
 
 const extractToken = (payload: TokenPayload): string | null => {
   if (!payload) return null;
@@ -13,13 +14,15 @@ const extractToken = (payload: TokenPayload): string | null => {
 };
 
 export const tokenStore = {
-  get: () => localStorage.getItem(ACCESS_TOKEN_KEY) ?? sessionStorage.getItem(ACCESS_TOKEN_KEY),
-  set: (token: string, remember: boolean) => {
+  get: () => accessToken,
+  set: (token: string, _remember = false) => {
+    accessToken = token;
+    // Retira versiones anteriores: el access token vive solo en memoria.
     localStorage.removeItem(ACCESS_TOKEN_KEY);
     sessionStorage.removeItem(ACCESS_TOKEN_KEY);
-    (remember ? localStorage : sessionStorage).setItem(ACCESS_TOKEN_KEY, token);
   },
   clear: () => {
+    accessToken = null;
     localStorage.removeItem(ACCESS_TOKEN_KEY);
     sessionStorage.removeItem(ACCESS_TOKEN_KEY);
   },
@@ -59,8 +62,7 @@ const rawRefresh = async (): Promise<string | null> => {
   const payload = await parseResponse(response) as TokenPayload;
   const token = extractToken(payload);
   if (token) {
-    const remember = Boolean(localStorage.getItem(ACCESS_TOKEN_KEY));
-    tokenStore.set(token, remember);
+    tokenStore.set(token);
   }
   return token;
 };

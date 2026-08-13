@@ -3,14 +3,16 @@ import prisma from '../config/prisma';
 export async function seedExpedientesConfig() {
   console.log('🌱 Inicializando seeders idempotentes para el Motor de Expedientes...');
 
-  // Usuario creador por defecto (Administración / Dirección)
-  const defaultAdmin = await prisma.user.findFirst({
-    where: { rol: { in: ['DIRECCION', 'ADMINISTRACION'] } }
+  const seedActorId = String(process.env.PRAVIA_SEED_ACTOR_USER_ID || '').trim();
+  if (!seedActorId) {
+    throw new Error('PRAVIA_SEED_ACTOR_USER_ID es obligatorio para versionar el motor sin elegir un usuario por defecto.');
+  }
+  const seedActor = await prisma.user.findFirst({
+    where: { id: seedActorId, activo: true, rol: { in: ['DIRECCION', 'ADMINISTRACION'] } },
   });
 
-  if (!defaultAdmin) {
-    console.error('❌ No se encontró ningún usuario administrador en la base de datos para asignar las versiones del motor.');
-    return;
+  if (!seedActor) {
+    throw new Error('PRAVIA_SEED_ACTOR_USER_ID debe identificar una cuenta activa de Dirección o Administración.');
   }
 
   const tiposActoDefinidos = [
@@ -49,7 +51,7 @@ export async function seedExpedientesConfig() {
       create: {
         tipo_acto_id: tipoActo.id,
         version: 1,
-        creado_por_id: defaultAdmin.id,
+        creado_por_id: seedActor.id,
         secciones_json: [
           { clave: 'DATOS_GENERALES', titulo: 'Datos Generales del Acto', orden: 1 },
           { clave: 'DATOS_INMUEBLE', titulo: 'Datos del Inmueble / Objeto', orden: 2 },
@@ -93,7 +95,7 @@ export async function seedExpedientesConfig() {
       create: {
         tipo_acto_id: tipoActo.id,
         version: 1,
-        creado_por_id: defaultAdmin.id,
+        creado_por_id: seedActor.id,
         ponderaciones_json: { operativo: 0.40, documental: 0.40, financiero: 0.20 },
         etapas_json: etapasEstandar
       }
@@ -134,7 +136,7 @@ export async function seedExpedientesConfig() {
       await prisma.plantillaDocumentalVersion.create({ data: {
         tipo_acto_id: tipoActo.id,
         version: 1,
-        creado_por_id: defaultAdmin.id,
+        creado_por_id: seedActor.id,
         requisitos_json: [
           { nombre: 'Identificación Oficial Vigente (INE/Pasaporte)', categoria: 'FIRMA', obligatorio: true },
           { nombre: 'CURP y Constancia de Situación Fiscal (RFC)', categoria: 'FIRMA', obligatorio: true },

@@ -23,4 +23,11 @@ describe('enrutamiento de capacidades de expediente', () => {
       { tareas_externas: { some: { gestionado_por_id: 'user-1' } } },
     ] });
   });
+
+  it('acota abogado por responsabilidad o creación real del expediente', () => {
+    expect(expedienteAccessWhere(user('ABOGADO') as any)).toEqual({ OR: [
+      { abogado_id: 'user-1' },
+      { creador_id: 'user-1' },
+    ] });
+  });
 });

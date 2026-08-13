@@ -12,6 +12,27 @@ const oneOf = <T extends string>(value: string | undefined, allowed: readonly T[
 
 const first = (...values: (string | undefined)[]) => values.find((value) => value?.trim())?.trim();
 
+export function supabaseProjectRefFromDatabaseUrl(rawUrl?: string): string | undefined {
+  if (!rawUrl) return undefined;
+  try {
+    const url = new URL(rawUrl);
+    const direct = url.hostname.match(/^db\.([^.]+)\.supabase\.co$/i)?.[1];
+    const pooler = decodeURIComponent(url.username).match(/^postgres\.([^.]+)$/i)?.[1];
+    return direct || pooler;
+  } catch {
+    return undefined;
+  }
+}
+
+export function supabaseProjectRefFromStorageUrl(rawUrl?: string): string | undefined {
+  if (!rawUrl) return undefined;
+  try {
+    return new URL(rawUrl).hostname.match(/^([^.]+)\.supabase\.co$/i)?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
 export interface RuntimeInfrastructureConfig {
   database: {
     mode: DatabaseMode;
@@ -68,6 +89,13 @@ export function validateRuntimeConfig(config: RuntimeInfrastructureConfig, env: 
   }
   if (config.storage.primary === 'cloud' && (!env.SUPABASE_URL?.trim() || !env.SUPABASE_SERVICE_ROLE_KEY?.trim())) {
     errors.push('El almacenamiento cloud requiere SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY.');
+  }
+  if (config.database.primary === 'cloud' && config.storage.primary === 'cloud') {
+    const databaseRef = supabaseProjectRefFromDatabaseUrl(config.database.url);
+    const storageRef = supabaseProjectRefFromStorageUrl(env.SUPABASE_URL);
+    if (databaseRef && storageRef && databaseRef !== storageRef) {
+      errors.push('La base de datos y Storage pertenecen a proyectos Supabase distintos.');
+    }
   }
   if (config.storage.primary === 'local') {
     if (!config.storage.localPath) errors.push('El almacenamiento local requiere LOCAL_STORAGE_PATH.');

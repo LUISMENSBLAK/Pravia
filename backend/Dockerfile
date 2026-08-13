@@ -9,7 +9,7 @@ COPY src ./src
 RUN npx prisma generate && npm run build
 
 FROM build AS migrate
-CMD ["npx", "prisma", "migrate", "deploy"]
+CMD ["node", "dist/cli/prismaSafe.js", "migrate", "deploy"]
 
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production

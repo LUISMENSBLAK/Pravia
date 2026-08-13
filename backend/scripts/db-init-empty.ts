@@ -67,6 +67,7 @@ async function main() {
 
   const temporaryDirectory = await mkdtemp(path.join(tmpdir(), 'pravia-baseline-'));
   const baselineFile = path.join(temporaryDirectory, 'baseline.sql');
+  const artifactsFile = path.join(temporaryDirectory, 'operational-artifacts.sql');
   try {
     prisma([
       'migrate', 'diff',
@@ -78,6 +79,60 @@ async function main() {
     const baselineSql = await readFile(baselineFile, 'utf8');
     await writeFile(baselineFile, `BEGIN;\n${baselineSql}\nCOMMIT;\n`, { mode: 0o600 });
     prisma(['db', 'execute', '--file', baselineFile, '--schema', 'prisma/schema.prisma'], url);
+
+    const indexMigrationNames = [
+      '20260811050000_add_operational_fk_indexes',
+      '20260811051000_complete_operational_fk_indexes',
+      '20260811052000_add_compareciente_link_validation',
+    ];
+    const indexStatements: string[] = [];
+    for (const migrationName of indexMigrationNames) {
+      const sql = await readFile(path.join(migrationsRoot, migrationName, 'migration.sql'), 'utf8');
+      indexStatements.push(...(sql.match(/CREATE INDEX IF NOT EXISTS[\s\S]*?;/g) || []));
+    }
+    if (indexStatements.length < 100) throw new Error('No se recuperó el inventario completo de índices operativos para la línea base.');
+    await writeFile(artifactsFile, [
+      'BEGIN;',
+      'SET search_path TO pravia_os, public;',
+      'CREATE SEQUENCE IF NOT EXISTS pravia_os.finance_movement_folio_seq START 1;',
+      'CREATE SEQUENCE IF NOT EXISTS pravia_os.finance_receipt_folio_seq START 1;',
+      ...indexStatements,
+      `DO $$
+      DECLARE fk record;
+      BEGIN
+        FOR fk IN
+          SELECT
+            c.conname,
+            t.relname AS table_name,
+            string_agg(quote_ident(a.attname), ', ' ORDER BY keys.ordinality) AS columns_sql
+          FROM pg_constraint c
+          JOIN pg_namespace n ON n.oid = c.connamespace
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN unnest(c.conkey) WITH ORDINALITY AS keys(attnum, ordinality) ON true
+          JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = keys.attnum
+          WHERE c.contype = 'f'
+            AND n.nspname = 'pravia_os'
+            AND NOT EXISTS (
+              SELECT 1 FROM pg_index i
+              WHERE i.indrelid = c.conrelid
+                AND i.indisvalid
+                AND i.indisready
+                AND c.conkey <@ i.indkey::smallint[]
+            )
+          GROUP BY c.conname, t.relname
+        LOOP
+          EXECUTE format(
+            'CREATE INDEX IF NOT EXISTS %I ON pravia_os.%I (%s)',
+            left('idx_fk_' || fk.table_name || '_' || substr(md5(fk.conname), 1, 8), 63),
+            fk.table_name,
+            fk.columns_sql
+          );
+        END LOOP;
+      END $$;`,
+      'COMMIT;',
+      '',
+    ].join('\n'), { mode: 0o600 });
+    prisma(['db', 'execute', '--file', artifactsFile, '--schema', 'prisma/schema.prisma'], url);
     for (const migrationName of migrationNames) {
       prisma(['migrate', 'resolve', '--applied', migrationName, '--schema', 'prisma/schema.prisma'], url);
     }

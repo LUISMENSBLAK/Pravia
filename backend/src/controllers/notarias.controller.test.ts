@@ -17,17 +17,17 @@ describe('Notarías endpoints', () => {
     service.listPortfolio.mockResolvedValue({ data: [], metrics: {}, distribution: {}, meta: {} });
     const req: any = { query: { portfolio: 'true', page: '2', pageSize: '10', search: '12', estado: 'Nayarit', ciudad: 'Tepic', estatus: 'ACTIVA', con_expedientes_activos: 'true', sort: 'titular:desc' }, user };
     const res = response(); await getNotarias(req, res);
-    expect(service.listPortfolio).toHaveBeenCalledWith(expect.objectContaining({ page: 2, pageSize: 10, search: '12', estado: 'Nayarit', ciudad: 'Tepic', estatus: 'ACTIVA', conExpedientesActivos: true, sort: 'titular:desc', expedienteScope: { OR: [{ abogado_id: 'user-1' }, { creado_por_id: 'user-1' }] } }));
+    expect(service.listPortfolio).toHaveBeenCalledWith(expect.objectContaining({ page: 2, pageSize: 10, search: '12', estado: 'Nayarit', ciudad: 'Tepic', estatus: 'ACTIVA', conExpedientesActivos: true, sort: 'titular:desc', expedienteScope: { OR: [{ abogado_id: 'user-1' }, { creador_id: 'user-1' }] } }));
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
   it('carga detalle y expedientes relacionados con el alcance real del usuario', async () => {
     service.detail.mockResolvedValue({ id: 'notaria-1' });
     const detailReq: any = { params: { id: 'notaria-1' }, user }; const detailRes = response(); await getNotariaById(detailReq, detailRes);
-    expect(service.detail).toHaveBeenCalledWith('notaria-1', { OR: [{ abogado_id: 'user-1' }, { creado_por_id: 'user-1' }] });
+    expect(service.detail).toHaveBeenCalledWith('notaria-1', { OR: [{ abogado_id: 'user-1' }, { creador_id: 'user-1' }] });
     db.notaria.findFirst.mockResolvedValue({ id: 'notaria-1' }); service.listCases.mockResolvedValue({ data: [], meta: {} });
     const listReq: any = { params: { id: 'notaria-1' }, query: { page: '2', pageSize: '8' }, user }; const listRes = response(); await getNotariaExpedientes(listReq, listRes);
-    expect(service.listCases).toHaveBeenCalledWith('notaria-1', expect.objectContaining({ page: 2, pageSize: 8, expedienteScope: { OR: [{ abogado_id: 'user-1' }, { creado_por_id: 'user-1' }] } }));
+    expect(service.listCases).toHaveBeenCalledWith('notaria-1', expect.objectContaining({ page: 2, pageSize: 8, expedienteScope: { OR: [{ abogado_id: 'user-1' }, { creador_id: 'user-1' }] } }));
   });
 
   it('impide duplicar número dentro de la misma entidad y demarcación', async () => {

@@ -15,7 +15,7 @@ export const authService = {
   async login(credentials: LoginCredentials): Promise<SessionUser> {
     const payload = await apiRequest<AuthPayload>(apiConfig.loginPath, {
       method: 'POST',
-      body: JSON.stringify({ email: credentials.email, password: credentials.password }),
+      body: JSON.stringify({ email: credentials.email, password: credentials.password, remember: credentials.remember }),
       retryOnUnauthorized: false,
     });
 

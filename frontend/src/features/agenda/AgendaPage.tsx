@@ -90,7 +90,7 @@ export function AgendaPage() {
   const upcoming = useMemo(() => visibleEvents
     .filter((event) => event.estatus === 'ACTIVO' && new Date(event.fecha_inicio) >= new Date())
     .sort((left, right) => +new Date(left.fecha_inicio) - +new Date(right.fecha_inicio)), [visibleEvents]);
-  const currentUserId = user?.id || catalogs?.usuarios[0]?.id || '';
+  const currentUserId = user?.id || '';
   const canWrite = Boolean(catalogs?.permisos.escribir);
 
   const openEvent = (event: AgendaEvent) => navigate({ pathname: '/agenda', search: location.search, hash: `evento=${event.id}` }, { replace: true });

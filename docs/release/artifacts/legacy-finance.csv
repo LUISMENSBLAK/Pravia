@@ -1,0 +1,7 @@
+legacy_pago_id,clasificacion,importe,expediente_id,cotizacion_id,posibles_duplicados,razon
+"2e34ec5e-0ebb-420c-90e3-6dc6b070cd2f","MIGRACION_SEGURA","1000","691335ab-21cc-4449-8c89-384a7b53d11b","92d3048a-9575-41e8-bade-b5528c5369be","","Pago validado, vinculado, sin duplicado aparente y con equivalencia contable determinista."
+"36e7d7f0-d6e2-4e3b-85b8-8630e0d85241","MIGRACION_SEGURA","1000","ec5b0e09-f6a5-43e5-9c20-6ac2176cabaa","4384aa21-52e3-46d1-9139-fdd4d75ca0d8","","Pago validado, vinculado, sin duplicado aparente y con equivalencia contable determinista."
+"1ccf8930-fcc6-40be-810b-6002371a2ad2","MIGRACION_SEGURA","1000","2b75613f-6c69-48ba-a7ab-62adb7f1527f","313d8b4f-1616-47b1-8687-4efc36cfc2f8","","Pago validado, vinculado, sin duplicado aparente y con equivalencia contable determinista."
+"9d0b0463-1818-4c03-9274-dfd64e63b9e5","MIGRACION_SEGURA","1000","e8b3337e-6ca9-459f-aecb-ffa9915b80b9","649d4648-9388-4707-aaf3-6fde3b6eebee","","Pago validado, vinculado, sin duplicado aparente y con equivalencia contable determinista."
+"a8275d21-7827-4b89-afb5-e45caafadc9c","MIGRACION_SEGURA","1000","d5330dd7-2ddd-4650-ad4c-b53ea810d492","d28ee4a8-1264-4966-b6b4-1b29216b2db7","","Pago validado, vinculado, sin duplicado aparente y con equivalencia contable determinista."
+"35c6cc53-ebff-41c5-830f-7968934be5dc","MIGRACION_SEGURA","1000","848e45c1-57e4-43da-b2b0-25f527da00d5","658ed69c-98ec-44f2-97bf-49f4cd22350d","","Pago validado, vinculado, sin duplicado aparente y con equivalencia contable determinista."

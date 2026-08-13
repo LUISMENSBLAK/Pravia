@@ -5,6 +5,7 @@ import { AuthProvider } from '../features/auth/AuthProvider';
 import { LoginPage } from '../features/auth/LoginPage';
 import { ProtectedRoute } from '../features/auth/ProtectedRoute';
 import { AssistantProvider } from '../features/assistant/AssistantProvider';
+import { UpdatePrompt } from '../components/system/UpdatePrompt';
 
 const MyDayPage = lazy(() => import('../features/my-day/MyDayPage').then((module) => ({ default: module.MyDayPage })));
 const ProspectsPage = lazy(() => import('../features/prospects/ProspectsPage').then((module) => ({ default: module.ProspectsPage })));
@@ -29,6 +30,7 @@ const ActivationPage = lazy(() => import('../features/settings/ActivationPage').
 export function App() {
   return (
     <AuthProvider>
+      <UpdatePrompt />
       <Suspense fallback={<div role="status" aria-live="polite">Cargando módulo…</div>}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />

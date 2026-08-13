@@ -18,6 +18,7 @@ import {
   addExpedienteDocumento,
   deleteExpedienteDocumento,
   updateExpedienteDocumento,
+  updateExpedienteRequisito,
   streamExpedienteDocumento,
   downloadExpedienteDocumento,
   getTiposActo,
@@ -71,6 +72,7 @@ router.post('/:id/archivar', requirePermission('expedientes.archive'), archiveEx
 router.get('/:id/documentos/descargar-zip', downloadCarpetaZip);
 router.get('/:id/carpetas/:carpeta/zip', downloadCarpetaZip);
 router.post('/:id/documentos', uploadDocumentoMulter.single('file'), addExpedienteDocumento);
+router.patch('/:id/requisitos/:requisitoId', updateExpedienteRequisito);
 router.patch('/:id/documentos/:documentoId', updateExpedienteDocumento);
 router.delete('/:id/documentos/:documentoId', deleteExpedienteDocumento);
 router.get('/:id/documentos/:documentoId/visualizar', streamExpedienteDocumento);

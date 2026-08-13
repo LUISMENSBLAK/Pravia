@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#06172f" />
+    <title>PRAVIA OS — Sin conexión</title>
+    <style>
+      :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f7f8fb; color: #0a1d3a; }
+      main { width: min(32rem, calc(100% - 2rem)); padding: 2.5rem; box-sizing: border-box; border: 1px solid #dfe4ec; border-radius: 1rem; background: white; box-shadow: 0 1rem 3rem rgba(6, 23, 47, .08); text-align: center; }
+      h1 { margin: 0 0 .75rem; font-size: 1.75rem; }
+      p { margin: 0 0 1.5rem; line-height: 1.6; color: #52627a; }
+      button { border: 0; border-radius: .65rem; padding: .8rem 1.1rem; background: #b9872d; color: white; font: inherit; font-weight: 700; cursor: pointer; }
+      button:focus-visible { outline: 3px solid #265da8; outline-offset: 3px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Sin conexión</h1>
+      <p>PRAVIA OS necesita conexión para consultar datos privados y confirmar operaciones. Vuelve a intentarlo cuando recuperes la red.</p>
+      <button type="button" onclick="location.reload()">Reintentar</button>
+    </main>
+  </body>
+</html>

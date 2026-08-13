@@ -17,6 +17,7 @@ const BCRYPT_PATTERN = /^\$2[aby]\$\d{2}\$.{53}$/;
 const COOKIE_PATH = '/api/auth';
 const MAX_FAILED_LOGINS = 5;
 const LOCKOUT_MS = 15 * 60 * 1000;
+const SESSION_REFRESH_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 
 const requestContext = (req: Request) => ({
   ip: String(req.ip || req.socket.remoteAddress || '').slice(0, 100) || null,
@@ -35,12 +36,12 @@ const publicUser = (user: { id: string; email: string; nombre: string; apellido:
   permissions: permissionsForRole(user.rol),
 });
 
-const setRefreshCookie = (res: Response, token: string) => res.cookie(REFRESH_COOKIE, token, {
+const setRefreshCookie = (res: Response, token: string, persistent: boolean) => res.cookie(REFRESH_COOKIE, token, {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
   sameSite: 'strict',
   path: COOKIE_PATH,
-  maxAge: REFRESH_TOKEN_TTL_MS,
+  ...(persistent ? { maxAge: REFRESH_TOKEN_TTL_MS } : {}),
 });
 
 const clearRefreshCookie = (res: Response) => res.clearCookie(REFRESH_COOKIE, {
@@ -50,11 +51,11 @@ const clearRefreshCookie = (res: Response) => res.clearCookie(REFRESH_COOKIE, {
   path: COOKIE_PATH,
 });
 
-async function issueSession(req: Request, res: Response, user: any, rotatedFromId?: string) {
+async function issueSession(req: Request, res: Response, user: any, persistent = false, rotatedFromId?: string) {
   getJwtSecret();
   const refreshToken = newOpaqueToken();
   const context = requestContext(req);
-  const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_MS);
+  const expiresAt = new Date(Date.now() + (persistent ? REFRESH_TOKEN_TTL_MS : SESSION_REFRESH_TOKEN_TTL_MS));
   const session = await prisma.authSession.create({
     data: {
       user_id: user.id,
@@ -63,10 +64,11 @@ async function issueSession(req: Request, res: Response, user: any, rotatedFromI
       ip_address: context.ip,
       expires_at: expiresAt,
       rotated_from_id: rotatedFromId,
+      persistent,
     },
   });
   const accessToken = signAccessToken({ sub: user.id, sid: session.id, role: user.rol });
-  setRefreshCookie(res, refreshToken);
+  setRefreshCookie(res, refreshToken, persistent);
   return { access_token: accessToken, expires_in: ACCESS_TOKEN_TTL_SECONDS, user: publicUser(user) };
 }
 
@@ -140,7 +142,7 @@ export class AuthController {
         });
         return updated;
       });
-      const session = await issueSession(req, res, payload);
+      const session = await issueSession(req, res, payload, req.body?.remember === true);
       const context = requestContext(req);
       await prisma.auditLog.create({ data: {
         user_id: user.id, accion: 'AUTH_LOGIN', entidad: 'User', entidad_id: user.id,
@@ -176,7 +178,7 @@ export class AuthController {
         clearRefreshCookie(res);
         return res.status(401).json({ code: 'REFRESH_ALREADY_USED', error: 'La sesión ya fue renovada. Inicia sesión nuevamente.' });
       }
-      const session = await issueSession(req, res, current.user, current.id);
+      const session = await issueSession(req, res, current.user, current.persistent, current.id);
       return res.json({ success: true, ...session });
     } catch (error: any) {
       clearRefreshCookie(res);

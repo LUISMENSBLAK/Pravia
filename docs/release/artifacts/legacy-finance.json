@@ -1,0 +1,138 @@
+{
+  "mode": "DRY_RUN_READ_ONLY",
+  "generated_at": "2026-08-13T11:28:15.919Z",
+  "summary": {
+    "MIGRACION_SEGURA": {
+      "registros": 6,
+      "importe": 6000
+    }
+  },
+  "rows": [
+    {
+      "legacy_pago_id": "2e34ec5e-0ebb-420c-90e3-6dc6b070cd2f",
+      "importe": 1000,
+      "origen": "Pago.ANTICIPO_NOTARIA",
+      "expediente_id": "691335ab-21cc-4449-8c89-384a7b53d11b",
+      "cotizacion_id": "92d3048a-9575-41e8-bade-b5528c5369be",
+      "clasificacion": "MIGRACION_SEGURA",
+      "destino_propuesto": {
+        "tipo_movimiento": "ANTICIPO",
+        "naturaleza": "INGRESO",
+        "categoria": "ANTICIPO_NOTARIA",
+        "concepto": "Anticipo de cliente para trámite notarial",
+        "monto": 1000,
+        "fecha_movimiento": "2026-08-13T11:06:11.656Z",
+        "expediente_id": "691335ab-21cc-4449-8c89-384a7b53d11b",
+        "cotizacion_id": "92d3048a-9575-41e8-bade-b5528c5369be",
+        "referencia": "legacy:pago:2e34ec5e-0ebb-420c-90e3-6dc6b070cd2f"
+      },
+      "posibles_duplicados": [],
+      "razon": "Pago validado, vinculado, sin duplicado aparente y con equivalencia contable determinista."
+    },
+    {
+      "legacy_pago_id": "36e7d7f0-d6e2-4e3b-85b8-8630e0d85241",
+      "importe": 1000,
+      "origen": "Pago.ANTICIPO_NOTARIA",
+      "expediente_id": "ec5b0e09-f6a5-43e5-9c20-6ac2176cabaa",
+      "cotizacion_id": "4384aa21-52e3-46d1-9139-fdd4d75ca0d8",
+      "clasificacion": "MIGRACION_SEGURA",
+      "destino_propuesto": {
+        "tipo_movimiento": "ANTICIPO",
+        "naturaleza": "INGRESO",
+        "categoria": "ANTICIPO_NOTARIA",
+        "concepto": "Anticipo de cliente para trámite notarial",
+        "monto": 1000,
+        "fecha_movimiento": "2026-08-13T11:07:28.515Z",
+        "expediente_id": "ec5b0e09-f6a5-43e5-9c20-6ac2176cabaa",
+        "cotizacion_id": "4384aa21-52e3-46d1-9139-fdd4d75ca0d8",
+        "referencia": "legacy:pago:36e7d7f0-d6e2-4e3b-85b8-8630e0d85241"
+      },
+      "posibles_duplicados": [],
+      "razon": "Pago validado, vinculado, sin duplicado aparente y con equivalencia contable determinista."
+    },
+    {
+      "legacy_pago_id": "1ccf8930-fcc6-40be-810b-6002371a2ad2",
+      "importe": 1000,
+      "origen": "Pago.ANTICIPO_NOTARIA",
+      "expediente_id": "2b75613f-6c69-48ba-a7ab-62adb7f1527f",
+      "cotizacion_id": "313d8b4f-1616-47b1-8687-4efc36cfc2f8",
+      "clasificacion": "MIGRACION_SEGURA",
+      "destino_propuesto": {
+        "tipo_movimiento": "ANTICIPO",
+        "naturaleza": "INGRESO",
+        "categoria": "ANTICIPO_NOTARIA",
+        "concepto": "Anticipo de cliente para trámite notarial",
+        "monto": 1000,
+        "fecha_movimiento": "2026-08-13T11:08:07.497Z",
+        "expediente_id": "2b75613f-6c69-48ba-a7ab-62adb7f1527f",
+        "cotizacion_id": "313d8b4f-1616-47b1-8687-4efc36cfc2f8",
+        "referencia": "legacy:pago:1ccf8930-fcc6-40be-810b-6002371a2ad2"
+      },
+      "posibles_duplicados": [],
+      "razon": "Pago validado, vinculado, sin duplicado aparente y con equivalencia contable determinista."
+    },
+    {
+      "legacy_pago_id": "9d0b0463-1818-4c03-9274-dfd64e63b9e5",
+      "importe": 1000,
+      "origen": "Pago.ANTICIPO_NOTARIA",
+      "expediente_id": "e8b3337e-6ca9-459f-aecb-ffa9915b80b9",
+      "cotizacion_id": "649d4648-9388-4707-aaf3-6fde3b6eebee",
+      "clasificacion": "MIGRACION_SEGURA",
+      "destino_propuesto": {
+        "tipo_movimiento": "ANTICIPO",
+        "naturaleza": "INGRESO",
+        "categoria": "ANTICIPO_NOTARIA",
+        "concepto": "Anticipo de cliente para trámite notarial",
+        "monto": 1000,
+        "fecha_movimiento": "2026-08-13T11:08:49.655Z",
+        "expediente_id": "e8b3337e-6ca9-459f-aecb-ffa9915b80b9",
+        "cotizacion_id": "649d4648-9388-4707-aaf3-6fde3b6eebee",
+        "referencia": "legacy:pago:9d0b0463-1818-4c03-9274-dfd64e63b9e5"
+      },
+      "posibles_duplicados": [],
+      "razon": "Pago validado, vinculado, sin duplicado aparente y con equivalencia contable determinista."
+    },
+    {
+      "legacy_pago_id": "a8275d21-7827-4b89-afb5-e45caafadc9c",
+      "importe": 1000,
+      "origen": "Pago.ANTICIPO_NOTARIA",
+      "expediente_id": "d5330dd7-2ddd-4650-ad4c-b53ea810d492",
+      "cotizacion_id": "d28ee4a8-1264-4966-b6b4-1b29216b2db7",
+      "clasificacion": "MIGRACION_SEGURA",
+      "destino_propuesto": {
+        "tipo_movimiento": "ANTICIPO",
+        "naturaleza": "INGRESO",
+        "categoria": "ANTICIPO_NOTARIA",
+        "concepto": "Anticipo de cliente para trámite notarial",
+        "monto": 1000,
+        "fecha_movimiento": "2026-08-13T11:09:19.385Z",
+        "expediente_id": "d5330dd7-2ddd-4650-ad4c-b53ea810d492",
+        "cotizacion_id": "d28ee4a8-1264-4966-b6b4-1b29216b2db7",
+        "referencia": "legacy:pago:a8275d21-7827-4b89-afb5-e45caafadc9c"
+      },
+      "posibles_duplicados": [],
+      "razon": "Pago validado, vinculado, sin duplicado aparente y con equivalencia contable determinista."
+    },
+    {
+      "legacy_pago_id": "35c6cc53-ebff-41c5-830f-7968934be5dc",
+      "importe": 1000,
+      "origen": "Pago.ANTICIPO_NOTARIA",
+      "expediente_id": "848e45c1-57e4-43da-b2b0-25f527da00d5",
+      "cotizacion_id": "658ed69c-98ec-44f2-97bf-49f4cd22350d",
+      "clasificacion": "MIGRACION_SEGURA",
+      "destino_propuesto": {
+        "tipo_movimiento": "ANTICIPO",
+        "naturaleza": "INGRESO",
+        "categoria": "ANTICIPO_NOTARIA",
+        "concepto": "Anticipo de cliente para trámite notarial",
+        "monto": 1000,
+        "fecha_movimiento": "2026-08-13T11:27:03.998Z",
+        "expediente_id": "848e45c1-57e4-43da-b2b0-25f527da00d5",
+        "cotizacion_id": "658ed69c-98ec-44f2-97bf-49f4cd22350d",
+        "referencia": "legacy:pago:35c6cc53-ebff-41c5-830f-7968934be5dc"
+      },
+      "posibles_duplicados": [],
+      "razon": "Pago validado, vinculado, sin duplicado aparente y con equivalencia contable determinista."
+    }
+  ]
+}

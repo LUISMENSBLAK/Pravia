@@ -65,7 +65,7 @@ export const authorizeExpedienteRequest = (req: Request, res: Response, next: Ne
 
 export function expedienteAccessWhere(user: NonNullable<Request['user']>) {
   if (['DIRECCION', 'ADMINISTRACION', 'CONSULTA'].includes(user.rol)) return {};
-  if (user.rol === 'ABOGADO') return { OR: [{ abogado_id: user.id }, { creado_por_id: user.id }] };
+  if (user.rol === 'ABOGADO') return { OR: [{ abogado_id: user.id }, { creador_id: user.id }] };
   if (user.rol === 'GESTORIA') return {
     OR: [
       { gestor_id: user.id },
@@ -78,20 +78,24 @@ export function expedienteAccessWhere(user: NonNullable<Request['user']>) {
 }
 
 export async function requireExpedienteAccess(req: Request, res: Response, next: NextFunction) {
-  if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
-  if (['DIRECCION', 'ADMINISTRACION', 'CONSULTA'].includes(req.user.rol)) return next();
-  if (!['ABOGADO', 'GESTORIA', 'RECEPCION'].includes(req.user.rol)) {
-    return res.status(403).json({ code: 'EXPEDIENTE_ACCESS_DENIED', error: 'No tienes acceso a este expediente.' });
+  try {
+    if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
+    if (['DIRECCION', 'ADMINISTRACION', 'CONSULTA'].includes(req.user.rol)) return next();
+    if (!['ABOGADO', 'GESTORIA', 'RECEPCION'].includes(req.user.rol)) {
+      return res.status(403).json({ code: 'EXPEDIENTE_ACCESS_DENIED', error: 'No tienes acceso a este expediente.' });
+    }
+    const expedienteId = req.params.id || req.body?.expediente_id;
+    if (!expedienteId) return next();
+    const expediente = await prisma.expediente.findFirst({
+      where: {
+        id: String(expedienteId), archived_at: null,
+        ...expedienteAccessWhere(req.user),
+      },
+      select: { id: true },
+    });
+    if (!expediente) return res.status(403).json({ code: 'EXPEDIENTE_ACCESS_DENIED', error: 'No tienes acceso a este expediente.' });
+    return next();
+  } catch (error) {
+    return next(error);
   }
-  const expedienteId = req.params.id || req.body?.expediente_id;
-  if (!expedienteId) return next();
-  const expediente = await prisma.expediente.findFirst({
-    where: {
-      id: String(expedienteId), archived_at: null,
-      ...expedienteAccessWhere(req.user),
-    },
-    select: { id: true },
-  });
-  if (!expediente) return res.status(403).json({ code: 'EXPEDIENTE_ACCESS_DENIED', error: 'No tienes acceso a este expediente.' });
-  return next();
 }

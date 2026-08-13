@@ -35,7 +35,7 @@ describe('Mi Día', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith('/auth/me')) return response(session);
-      if (url.endsWith('/dashboard/mi-dia')) return response({ data: baseDashboard });
+      if (url.endsWith('/mi-dia')) return response({ data: baseDashboard });
       return response({}, 204);
     }));
     render(<MemoryRouter initialEntries={['/mi-dia']}><App /></MemoryRouter>);
@@ -49,7 +49,7 @@ describe('Mi Día', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith('/auth/me')) return response(session);
-      if (url.endsWith('/dashboard/mi-dia')) return response({ data: { ...baseDashboard, errors: { agenda: 'Agenda unavailable' } } });
+      if (url.endsWith('/mi-dia')) return response({ data: { ...baseDashboard, errors: { agenda: 'Agenda unavailable' } } });
       return response({}, 204);
     }));
     render(<MemoryRouter initialEntries={['/mi-dia']}><App /></MemoryRouter>);
@@ -62,7 +62,7 @@ describe('Mi Día', () => {
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith('/auth/me')) return Promise.resolve(response(session));
-      if (url.endsWith('/dashboard/mi-dia')) return new Promise<Response>(() => undefined);
+      if (url.endsWith('/mi-dia')) return new Promise<Response>(() => undefined);
       return Promise.resolve(response({}, 204));
     }));
     render(<MemoryRouter initialEntries={['/mi-dia']}><App /></MemoryRouter>);
@@ -73,7 +73,7 @@ describe('Mi Día', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith('/auth/me')) return response(session);
-      if (url.endsWith('/dashboard/mi-dia')) return response({ data: baseDashboard });
+      if (url.endsWith('/mi-dia')) return response({ data: baseDashboard });
       return response({}, 204);
     }));
     const user = userEvent.setup();

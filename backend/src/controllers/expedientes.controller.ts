@@ -999,6 +999,7 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
     const { id } = req.params;
     const file = req.file;
     const { nombre, categoria, carpeta, observaciones } = req.body;
+    const requisitoId = String(req.body.requisito_id || '').trim() || null;
     
     const userId = req.user?.id;
     if (!userId) {
@@ -1015,6 +1016,13 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
         error: 'Se requiere seleccionar un archivo real.',
         detail: 'No se crearán registros documentales sin contenido binario porque después no pueden visualizarse ni descargarse.'
       });
+    }
+
+    const requisito = requisitoId
+      ? await prisma.expedienteRequisitoDoc.findFirst({ where: { id: requisitoId, expediente_id: id } })
+      : null;
+    if (requisitoId && !requisito) {
+      return res.status(404).json({ code: 'EXPEDIENTE_REQUIREMENT_NOT_FOUND', error: 'El requisito documental no pertenece al expediente.' });
     }
 
     const originalName = file.originalname;
@@ -1078,6 +1086,20 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
           }
         });
 
+        if (requisito) {
+          await tx.requisitoDocumentoVinculo.create({
+            data: {
+              requisito_id: requisito.id,
+              documento_id: doc.id,
+              creado_por_id: userId,
+              observaciones: 'Evidencia documental vinculada desde el expediente.',
+            },
+          });
+          if (requisito.estatus !== 'VALIDADO') {
+            await tx.expedienteRequisitoDoc.update({ where: { id: requisito.id }, data: { estatus: 'RECIBIDO' } });
+          }
+        }
+
         // Registrar Actividad Documental Auditoría
         await tx.expedienteActividad.create({
           data: {
@@ -1100,7 +1122,8 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
           storage_key: result.doc.storage_key,
           carpeta: result.expDoc.tipo_vinculo,
           estatus: result.doc.estatus,
-          expediente_documento_id: result.expDoc.id
+          expediente_documento_id: result.expDoc.id,
+          requisito_id: requisito?.id || null,
         }
       });
     } catch (txError: any) {
@@ -1118,6 +1141,37 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
     }
     res.status(500).json({ error: 'No se pudo vincular el documento al expediente.', detail: error.message });
   }
+};
+
+export const updateExpedienteRequisito = async (req: Request, res: Response) => {
+  const userId = req.user?.id;
+  if (!userId) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Tu sesión no es válida.' });
+  const estatus = String(req.body.estatus || '').toUpperCase();
+  const allowed = ['PENDIENTE', 'RECIBIDO', 'EN_REVISION', 'VALIDADO', 'RECHAZADO', 'VENCIDO', 'OMITIDO_JUSTIFICADO'];
+  if (!allowed.includes(estatus)) return res.status(400).json({ code: 'REQUIREMENT_STATUS_INVALID', error: 'El estado documental no es válido.' });
+  const observaciones = String(req.body.observaciones || '').trim();
+  if (['RECHAZADO', 'OMITIDO_JUSTIFICADO'].includes(estatus) && observaciones.length < 5) {
+    return res.status(400).json({ code: 'REQUIREMENT_REASON_REQUIRED', error: 'Explica el rechazo o la omisión justificada.' });
+  }
+  const current = await prisma.expedienteRequisitoDoc.findFirst({ where: { id: req.params.requisitoId, expediente_id: req.params.id } });
+  if (!current) return res.status(404).json({ code: 'EXPEDIENTE_REQUIREMENT_NOT_FOUND', error: 'Requisito documental no encontrado.' });
+  const updated = await prisma.$transaction(async (tx) => {
+    const requirement = await tx.expedienteRequisitoDoc.update({
+      where: { id: current.id },
+      data: { estatus: estatus as any, observaciones: observaciones || current.observaciones },
+    });
+    await tx.auditLog.create({ data: {
+      user_id: userId,
+      accion: 'UPDATE_EXPEDIENTE_REQUIREMENT',
+      entidad: 'ExpedienteRequisitoDoc',
+      entidad_id: current.id,
+      valores_anteriores: { estatus: current.estatus, observaciones: current.observaciones },
+      valores_nuevos: { estatus, observaciones: observaciones || current.observaciones },
+      correlation_id: req.correlationId,
+    } });
+    return requirement;
+  });
+  return res.json({ success: true, requisito: updated });
 };
 
 // 11. Eliminar Documento del Archivo (Soft Delete / Inactivar con Bitácora y Transacción Segura)

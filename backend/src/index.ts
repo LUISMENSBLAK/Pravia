@@ -26,6 +26,20 @@ import settingsRoutes from './routes/settings.routes';
 import { authenticate, authorizeByMethod, authorizeExpedienteRequest, requirePasswordReady, requirePermission } from './middleware/auth.middleware';
 import { errorLogLevel, normalizeErrorBody } from './utils/httpError';
 import { getStorageCompensationHealth, storageCompensationWorker } from './workers/storageCompensation.worker';
+import { resolveRuntimeConfig, validateRuntimeConfig } from './config/runtime';
+
+const startupErrors = validateRuntimeConfig(resolveRuntimeConfig());
+if ((process.env.AUTH_JWT_SECRET || '').length < 32) startupErrors.push('AUTH_JWT_SECRET debe tener al menos 32 caracteres aleatorios.');
+if (process.env.NODE_ENV === 'production') {
+  const origins = String(process.env.CORS_ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean);
+  if (!origins.length || origins.some((value) => value === '*' || /localhost|127\.0\.0\.1/i.test(value))) {
+    startupErrors.push('CORS_ALLOWED_ORIGINS debe contener únicamente orígenes productivos explícitos.');
+  }
+  if (process.env.AUTH_ALLOW_DEV_RECOVERY_TOKEN === 'true' || process.env.AUTH_ALLOW_DEV_INVITATION_LINK === 'true') {
+    startupErrors.push('Los enlaces/tokens de autenticación de desarrollo deben estar desactivados en producción.');
+  }
+}
+if (startupErrors.length) throw new Error(`Configuración de arranque inválida: ${startupErrors.join(' ')}`);
 
 const app = express();
 app.disable('etag');
@@ -258,7 +272,8 @@ app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
 const server = app.listen(PORT, () => {
   console.log(`✅ PRAVIA OS Backend running on port ${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/api/health`);
-  console.log(`   Supabase Storage: ${process.env.SUPABASE_URL ? '✅ configured' : '❌ NOT configured'}`);
+  const storage = getStorageInfo();
+  console.log(`   Storage: ${storage.provider} (${storage.mode}, primary=${storage.primary})`);
 });
 
 if (String(process.env.STORAGE_COMPENSATION_WORKER_ENABLED || 'false').toLowerCase() === 'true') {

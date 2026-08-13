@@ -114,6 +114,7 @@ export class MiDiaController {
         success: true,
         generado_en: now,
         usuario_id: userId,
+        permissions: { canViewFinance: canReadFinance },
         metricas: {
           tareas_hoy: todayTasks.length,
           tareas_vencidas: overdueTasks.length,
@@ -138,6 +139,7 @@ export class MiDiaController {
           documentos_faltantes: missingDocs,
           cotizaciones_seguimiento: quoteFollowups,
           cobranza: collection,
+          recientes: expedientes.slice(0, 8),
         },
         alertas: alerts,
       });
