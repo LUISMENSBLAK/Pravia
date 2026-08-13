@@ -1,6 +1,10 @@
 import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import prisma from '../config/prisma';
+import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { NotariasService } from '../services/notarias.service';
+
+const notariasService = new NotariasService(prisma);
 
 const optionalText = (value: unknown) => {
   if (typeof value !== 'string') return null;
@@ -27,6 +31,25 @@ const normalizeEmail = (value: unknown, field: string) => {
 // 1. GET ALL NOTARIAS WITH SEARCH & FILTER
 export const getNotarias = async (req: Request, res: Response) => {
   try {
+    if (String(req.query.portfolio) === 'true') {
+      const page = Math.max(1, Number.parseInt(String(req.query.page || '1'), 10) || 1);
+      const pageSize = Math.min(100, Math.max(1, Number.parseInt(String(req.query.pageSize || req.query.limit || '20'), 10) || 20));
+      const status = String(req.query.estatus || '').toUpperCase();
+      const sortOptions = ['numero:asc', 'numero:desc', 'titular:asc', 'titular:desc', 'updated_at:asc', 'updated_at:desc'] as const;
+      const requestedSort = String(req.query.sort || 'numero:asc') as typeof sortOptions[number];
+      const result = await notariasService.listPortfolio({
+        page,
+        pageSize,
+        search: optionalText(req.query.search) || undefined,
+        estado: optionalText(req.query.estado) || undefined,
+        ciudad: optionalText(req.query.ciudad) || undefined,
+        estatus: status === 'ACTIVA' || status === 'INACTIVA' ? status : undefined,
+        conExpedientesActivos: String(req.query.con_expedientes_activos) === 'true',
+        sort: sortOptions.includes(requestedSort) ? requestedSort : 'numero:asc',
+        expedienteScope: req.user ? expedienteAccessWhere(req.user) : {},
+      });
+      return res.status(200).json(result);
+    }
     const { search, activa, predeterminada, paginated } = req.query;
     const page = Math.max(1, Number.parseInt(String(req.query.page || '1'), 10) || 1);
     const limit = Math.min(100, Math.max(1, Number.parseInt(String(req.query.limit || req.query.pageSize || '25'), 10) || 25));
@@ -84,18 +107,7 @@ export const getNotarias = async (req: Request, res: Response) => {
 export const getNotariaById = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const notaria = await prisma.notaria.findUnique({
-      where: { id },
-      include: {
-        contactos: true,
-        _count: {
-          select: {
-            cotizaciones: true,
-            expedientes: true
-          }
-        }
-      }
-    });
+    const notaria = await notariasService.detail(id, req.user ? expedienteAccessWhere(req.user) : {});
 
     if (!notaria) {
       return res.status(404).json({ error: 'Notaría no encontrada' });
@@ -104,6 +116,55 @@ export const getNotariaById = async (req: Request, res: Response) => {
     res.json(notaria);
   } catch (error: any) {
     res.status(500).json({ error: 'Error al consultar notaría', detail: error.message });
+  }
+};
+
+export const getNotariaExpedientes = async (req: Request, res: Response) => {
+  try {
+    const page = Math.max(1, Number.parseInt(String(req.query.page || '1'), 10) || 1);
+    const pageSize = Math.min(50, Math.max(1, Number.parseInt(String(req.query.pageSize || '10'), 10) || 10));
+    const sort = String(req.query.sort) === 'updated_at:asc' ? 'updated_at:asc' : 'updated_at:desc';
+    const exists = await prisma.notaria.findFirst({ where: { id: req.params.id, archived_at: null }, select: { id: true } });
+    if (!exists) return res.status(404).json({ error: 'Notaría no encontrada' });
+    const result = await notariasService.listCases(req.params.id, { page, pageSize, sort, expedienteScope: req.user ? expedienteAccessWhere(req.user) : {} });
+    return res.status(200).json(result);
+  } catch (error: any) {
+    return res.status(500).json({ error: 'Error al consultar expedientes de la notaría', detail: error.message });
+  }
+};
+
+export const addNotariaContacto = async (req: Request, res: Response) => {
+  try {
+    const nombre = optionalText(req.body.nombre);
+    const cargo = optionalText(req.body.cargo);
+    if (!nombre || !cargo) return res.status(400).json({ error: 'Nombre y cargo del contacto son obligatorios.' });
+    const notaria = await prisma.notaria.findFirst({ where: { id: req.params.id, archived_at: null }, select: { id: true } });
+    if (!notaria) return res.status(404).json({ error: 'Notaría no encontrada' });
+    const contacto = await prisma.$transaction(async (tx) => {
+      const created = await tx.notariaContacto.create({ data: {
+        notaria_id: notaria.id,
+        nombre,
+        cargo,
+        telefono: optionalText(req.body.telefono),
+        whatsapp: optionalText(req.body.whatsapp),
+        correo: normalizeEmail(req.body.correo, 'El correo del contacto'),
+        observaciones: optionalText(req.body.observaciones),
+        activo: true,
+      } });
+      await tx.auditLog.create({ data: {
+        user_id: req.user!.id,
+        accion: 'AGREGAR_CONTACTO_NOTARIA',
+        entidad: 'Notaria',
+        entidad_id: notaria.id,
+        valores_nuevos: { contacto_id: created.id, nombre: created.nombre, cargo: created.cargo },
+        correlation_id: req.correlationId,
+      } });
+      return created;
+    });
+    return res.status(201).json(contacto);
+  } catch (error: any) {
+    const validationError = /obligatorios|válido/.test(error.message || '');
+    return res.status(validationError ? 400 : 500).json({ error: validationError ? error.message : 'Error al agregar contacto', detail: error.message });
   }
 };
 
@@ -242,6 +303,15 @@ export const createNotaria = async (req: Request, res: Response) => {
           }
         }
       }
+
+      await tx.auditLog.create({ data: {
+        user_id: req.user!.id,
+        accion: 'CREAR_NOTARIA',
+        entidad: 'Notaria',
+        entidad_id: notaria.id,
+        valores_nuevos: { numero_notaria: notaria.numero_notaria, nombre: notaria.nombre, entidad_federativa: notaria.entidad_federativa, demarcacion: notaria.demarcacion },
+        correlation_id: req.correlationId,
+      } });
 
       return notaria;
     });
@@ -401,6 +471,16 @@ export const updateNotaria = async (req: Request, res: Response) => {
           }
         }
       }
+
+      await tx.auditLog.create({ data: {
+        user_id: req.user!.id,
+        accion: 'EDITAR_NOTARIA',
+        entidad: 'Notaria',
+        entidad_id: id,
+        valores_anteriores: { updated_at: existingNotaria.updated_at },
+        valores_nuevos: { campos: Object.keys(req.body) },
+        correlation_id: req.correlationId,
+      } });
 
       return updated;
     });

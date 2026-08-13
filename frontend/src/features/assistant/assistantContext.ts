@@ -57,6 +57,12 @@ const actions: Partial<Record<AssistantModule, AssistantAction[]>> = {
     { id: 'quotes-accepted', label: 'Aceptadas este mes', prompt: 'Muéstrame las cotizaciones aceptadas este mes.' },
     { id: 'quotes-search', label: 'Buscar cotización', prompt: 'Ayúdame a buscar una cotización.' },
   ],
+  notarias: [
+    { id: 'notaries-search', label: 'Buscar notaría', prompt: 'Ayúdame a buscar una notaría.' },
+    { id: 'notaries-active-cases', label: 'Con más expedientes activos', prompt: 'Muéstrame las notarías con más expedientes activos.' },
+    { id: 'notaries-activity', label: 'Actividad reciente', prompt: 'Muéstrame la actividad reciente de notarías.' },
+    { id: 'notaries-contacts', label: 'Contactos pendientes', prompt: 'Muéstrame notarías sin contacto registrado.' },
+  ],
   agenda: [
     { id: 'agenda-today', label: '¿Qué tengo hoy?', prompt: '¿Qué tengo en la agenda hoy?' },
     { id: 'agenda-next', label: 'Próximos eventos', prompt: 'Muéstrame los próximos eventos.' },
@@ -102,8 +108,17 @@ const comparecienteDetailActions: AssistantAction[] = [
   { id: 'person-files', label: 'Expedientes relacionados', prompt: 'Muéstrame sus expedientes relacionados.' },
 ];
 
+const notariaDetailActions: AssistantAction[] = [
+  { id: 'notary-summary', label: 'Resumen de notaría', prompt: 'Resume esta notaría.' },
+  { id: 'notary-cases', label: 'Expedientes activos', prompt: 'Muéstrame los expedientes activos de esta notaría.' },
+  { id: 'notary-signatures', label: 'Próximas firmas', prompt: 'Muéstrame las próximas firmas de esta notaría.' },
+  { id: 'notary-contacts', label: 'Contactos', prompt: 'Muéstrame los contactos de esta notaría.' },
+];
+
 export const getAssistantActions = (context: AssistantContext) => context.entityType === 'expediente'
   ? expedienteDetailActions
+  : context.entityType === 'notaria'
+  ? notariaDetailActions
   : context.entityType === 'compareciente'
   ? comparecienteDetailActions
   : context.entityType === 'prospecto'

@@ -1,0 +1,5 @@
+import { Mail, MessageCircle, Phone, UserRound } from 'lucide-react';
+import type { NotariaDetail } from '../notarias.types';
+import styles from '../Notarias.module.css';
+
+export function NotariaContacts({item}:{item:NotariaDetail}){const contacts=item.contactos.filter((value)=>value.activo);return <section className={styles.sectionCard}><header><div><h2>Contactos operativos</h2><p>Personas y canales registrados para la atención de asuntos.</p></div></header>{contacts.length?<div className={styles.contactsGrid}>{contacts.map((contact)=><article key={contact.id}><header><span><UserRound size={17}/></span><div><strong>{contact.nombre}</strong><small>{contact.cargo}</small></div>{item.contacto_principal===contact.nombre&&<b>Principal</b>}</header><ul>{contact.telefono&&<li><Phone size={14}/>{contact.telefono}</li>}{contact.whatsapp&&<li><MessageCircle size={14}/>{contact.whatsapp}</li>}{contact.correo&&<li><Mail size={14}/>{contact.correo}</li>}</ul>{contact.observaciones&&<p>{contact.observaciones}</p>}</article>)}</div>:<p className={styles.sectionEmpty}>No hay contactos operativos registrados.</p>}</section>}
