@@ -40,9 +40,10 @@ const actions: Partial<Record<AssistantModule, AssistantAction[]>> = {
     { id: 'files-search', label: 'Buscar expediente', prompt: 'Ayúdame a buscar un expediente.' },
   ],
   comparecientes: [
-    { id: 'person-missing', label: '¿Qué falta?', prompt: '¿Qué falta para este compareciente?' },
-    { id: 'person-documents', label: 'Documentos', prompt: 'Revisa sus documentos.' },
-    { id: 'person-files', label: 'Expedientes relacionados', prompt: 'Muéstrame sus expedientes relacionados.' },
+    { id: 'people-search', label: 'Buscar compareciente', prompt: 'Ayúdame a buscar un compareciente.' },
+    { id: 'people-documents', label: 'Documentos pendientes', prompt: 'Muéstrame comparecientes con documentos pendientes.' },
+    { id: 'people-observed', label: 'Con observaciones', prompt: 'Muéstrame comparecientes con observaciones.' },
+    { id: 'people-duplicates', label: 'Duplicados posibles', prompt: 'Busca posibles comparecientes duplicados.' },
   ],
   prospectos: [
     { id: 'prospects-stale', label: 'Sin seguimiento', prompt: 'Muéstrame los prospectos sin seguimiento reciente.' },
@@ -94,8 +95,17 @@ const expedienteDetailActions: AssistantAction[] = [
   { id: 'file-next', label: 'Próximos pasos', prompt: '¿Cuáles son los próximos pasos de este expediente?' },
 ];
 
+const comparecienteDetailActions: AssistantAction[] = [
+  { id: 'person-missing', label: '¿Qué falta?', prompt: '¿Qué falta para este compareciente?' },
+  { id: 'person-summary', label: 'Resumen', prompt: 'Resume este compareciente.' },
+  { id: 'person-documents', label: 'Documentos', prompt: 'Revisa sus documentos.' },
+  { id: 'person-files', label: 'Expedientes relacionados', prompt: 'Muéstrame sus expedientes relacionados.' },
+];
+
 export const getAssistantActions = (context: AssistantContext) => context.entityType === 'expediente'
   ? expedienteDetailActions
+  : context.entityType === 'compareciente'
+  ? comparecienteDetailActions
   : context.entityType === 'prospecto'
   ? prospectDetailActions
   : context.entityType === 'cotizacion'

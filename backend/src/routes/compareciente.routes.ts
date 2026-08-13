@@ -12,9 +12,12 @@ router.get('/duplicados', ComparecienteController.buscarDuplicados);
 router.get('/catalogos', ComparecienteController.obtenerCatalogos);
 router.get('/', ComparecienteController.listarMaster);
 router.get('/:id', ComparecienteController.obtenerPorId);
+router.patch('/:id', ComparecienteController.actualizarMaster);
+router.patch('/:id/provenance/:sourceId/resolve', ComparecienteController.resolverConflictoDato);
 
 // Archivo Documental del Compareciente
 router.get('/:id/documentos', ComparecienteController.obtenerArchivoDocumental);
+router.get('/:id/documentos/:documentoId/descargar', ComparecienteController.descargarDocumentoMaster);
 router.post('/:id/documentos', upload.single('file'), ComparecienteController.subirDocumentoMaster);
 
 // Endpoints de creación

@@ -12,41 +12,77 @@ function authenticatedActor(req: Request) {
 export class ComparecienteController {
   public static async buscarDuplicados(req: Request, res: Response) {
     try {
-      const { rfc, curp, nombre } = req.query;
+      const { rfc, curp, nombre, correo, telefono } = req.query;
       const resultados = await comparecienteService.buscarDuplicados({
         rfc: rfc as string,
         curp: curp as string,
-        nombre: nombre as string
+        nombre: nombre as string,
+        correo: correo as string,
+        telefono: telefono as string,
+        accessWhere: req.user ? comparecienteObjectWhere(req.user) : undefined,
       });
       return res.status(200).json({ success: true, data: resultados });
     } catch (err: any) {
-      return res.status(400).json({ success: false, error: err.message });
+      return res.status(400).json({ success: false, error: 'No pudimos buscar coincidencias en este momento.' });
     }
   }
 
   public static async listarMaster(req: Request, res: Response) {
     try {
-      const { tipo_persona, search, page, limit } = req.query;
+      const { tipo_persona, search, page, pageSize, limit, identidad, cumplimiento, actualizacion, sort } = req.query;
       const result = await comparecienteService.listarMaster({
         tipo_persona: tipo_persona as any,
         search: search as string,
         page: page ? parseInt(page as string, 10) : 1,
-        limit: limit ? parseInt(limit as string, 10) : 25,
+        limit: pageSize ? parseInt(pageSize as string, 10) : limit ? parseInt(limit as string, 10) : 25,
+        identidad: identidad as any,
+        cumplimiento: cumplimiento as any,
+        actualizacion: actualizacion as any,
+        sort: sort as string,
         accessWhere: req.user ? comparecienteObjectWhere(req.user) : undefined,
       });
       return res.status(200).json({ success: true, ...result });
     } catch (err: any) {
-      return res.status(400).json({ success: false, error: err.message });
+      return res.status(400).json({ success: false, error: 'No pudimos cargar los comparecientes.' });
     }
   }
 
   public static async obtenerPorId(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const data = await comparecienteService.obtenerPorId(id);
+      const data: any = await comparecienteService.obtenerPorId(id);
+      if (!req.user?.permissions?.includes('cumplimiento.read')) {
+        data.complianceSnapshots = [];
+        data.cumplimiento = 'NO_CONFIGURADO';
+        data.health = data.health.map((item: any) => item.key === 'CUMPLIMIENTO' ? { ...item, state: 'NO_CONFIGURADO' } : item);
+        data.expedientes = data.expedientes.map((link: any) => ({ ...link, expediente: { ...link.expediente, complianceReviews: [] } }));
+      }
       return res.status(200).json({ success: true, data });
     } catch (err: any) {
-      return res.status(404).json({ success: false, error: err.message });
+      return res.status(404).json({ success: false, error: 'No pudimos cargar este compareciente.' });
+    }
+  }
+
+  public static async actualizarMaster(req: Request, res: Response) {
+    try {
+      const actor = authenticatedActor(req);
+      if (!actor) return res.status(401).json({ success: false, error: 'Tu sesión no es válida.' });
+      const data = await comparecienteService.actualizarMaster(req.params.id, req.body, actor.id);
+      return res.status(200).json({ success: true, data });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, error: err.message || 'No pudimos actualizar este compareciente.' });
+    }
+  }
+
+  public static async resolverConflictoDato(req: Request, res: Response) {
+    try {
+      const actor = authenticatedActor(req);
+      if (!actor) return res.status(401).json({ success: false, error: 'Tu sesión no es válida.' });
+      if (!['CONSERVAR_ACTUAL', 'ACTUALIZAR'].includes(req.body.action)) return res.status(400).json({ success: false, error: 'Selecciona una decisión válida.' });
+      const data = await comparecienteService.resolverConflictoDato(req.params.id, req.params.sourceId, req.body.action, actor.id);
+      return res.status(200).json({ success: true, data });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, error: err.message || 'No pudimos resolver este conflicto.' });
     }
   }
 
@@ -186,6 +222,20 @@ export class ComparecienteController {
       return res.status(201).json({ success: true, data: result });
     } catch (err: any) {
       return res.status(400).json({ success: false, error: err.message });
+    }
+  }
+
+  public static async descargarDocumentoMaster(req: Request, res: Response) {
+    try {
+      const data = await comparecienteService.descargarDocumento(req.params.id, req.params.documentoId);
+      res.set('Content-Type', data.mimeType || 'application/octet-stream');
+      res.set('Content-Disposition', `attachment; filename="${encodeURIComponent(data.fileName)}"`);
+      res.set('Content-Length', String(data.buffer.length));
+      res.set('Cache-Control', 'private, no-store');
+      res.set('X-Content-Type-Options', 'nosniff');
+      return res.status(200).send(data.buffer);
+    } catch {
+      return res.status(404).json({ success: false, error: 'El documento no está disponible.' });
     }
   }
 

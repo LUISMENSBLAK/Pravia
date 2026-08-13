@@ -1,0 +1,6 @@
+import { ChevronRight, FolderOpen } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import type { ComparecienteDetail } from '../comparecientes.types';
+import { Empty, SectionCard } from './SectionCard';
+import styles from '../Comparecientes.module.css';
+export function ExpedientesTab({ item }: { item: ComparecienteDetail }) { return <SectionCard title="Expedientes relacionados" subtitle="El carácter se conserva en cada relación, no como atributo global de la persona.">{item.expedientes.length ? <div className={styles.expedienteList}>{item.expedientes.map((link: any) => <Link to={`/expedientes/${link.expediente.id}`} key={link.id}><span><FolderOpen /></span><div><strong>{link.expediente.numero_pravia}</strong><small>{link.expediente.tipo_acto?.nombre || 'Acto pendiente'} · {link.caracter?.nombre || 'Sin carácter'}</small><p>{link.expediente.notaria?.nombre || link.expediente.numero_notaria || 'Sin notaría'} · Responsable: {[link.expediente.abogado?.nombre,link.expediente.abogado?.apellido].filter(Boolean).join(' ')}</p></div><b>{link.expediente.estatus.replaceAll('_',' ')}</b><ChevronRight /></Link>)}</div> : <Empty>No participa en expedientes activos visibles para tu perfil.</Empty>}</SectionCard>; }

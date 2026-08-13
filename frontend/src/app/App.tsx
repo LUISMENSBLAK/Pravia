@@ -12,8 +12,10 @@ import { QuotesPage } from '../features/quotes/QuotesPage';
 import { QuoteDetailPage } from '../features/quotes/QuoteDetailPage';
 import { ExpedientesPage } from '../features/cases/ExpedientesPage';
 import { ExpedienteWorkspace } from '../features/cases/ExpedienteWorkspace';
+import { ComparecientesPage } from '../features/comparecientes/ComparecientesPage';
+import { ComparecienteWorkspace } from '../features/comparecientes/ComparecienteWorkspace';
 
-const modulePaths = ['notarias', 'comparecientes', 'finanzas', 'agenda', 'reportes', 'riesgos', 'configuracion'];
+const modulePaths = ['notarias', 'finanzas', 'agenda', 'reportes', 'riesgos', 'configuracion'];
 
 export function App() {
   return (
@@ -30,6 +32,8 @@ export function App() {
             <Route path="/cotizaciones/:id" element={<QuoteDetailPage />} />
             <Route path="/expedientes" element={<ExpedientesPage />} />
             <Route path="/expedientes/:id" element={<ExpedienteWorkspace />} />
+            <Route path="/comparecientes" element={<ComparecientesPage />} />
+            <Route path="/comparecientes/:id" element={<ComparecienteWorkspace />} />
             {modulePaths.map((path) => <Route key={path} path={`/${path}`} element={<ModulePlaceholder />} />)}
           </Route>
         </Route>

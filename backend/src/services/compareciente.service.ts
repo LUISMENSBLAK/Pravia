@@ -2,6 +2,41 @@ import { Prisma, PrismaClient, TipoPersona, FormaComparecencia, TipoDocumentoCom
 import * as crypto from 'crypto';
 import { validateCurp, validateOptionalDate, validateRfc } from '../domain/mexicanIdentity';
 
+type IdentityState = 'VERIFICADA' | 'PENDIENTE' | 'OBSERVACION';
+type HealthState = 'COMPLETO' | 'PENDIENTE' | 'OBSERVACION' | 'NO_APLICA' | 'NO_CONFIGURADO';
+
+const VERIFIED_IDENTIFICATION = {
+  archived_at: null,
+  validado_at: { not: null },
+  estatus: { in: ['VIGENTE', 'POR_VENCER'] },
+} as const;
+
+const OBSERVED_IDENTIFICATION = {
+  archived_at: null,
+  estatus: { in: ['VENCIDO', 'RECHAZADO'] },
+} as const;
+
+function newestDate(values: Array<Date | string | null | undefined>, fallback: Date | string) {
+  return values.reduce<Date>((latest, value) => {
+    const candidate = value ? new Date(value) : latest;
+    return candidate.getTime() > latest.getTime() ? candidate : latest;
+  }, new Date(fallback));
+}
+
+function identityState(record: any): IdentityState {
+  if (record.identificaciones?.some((item: any) => item.validado_at && ['VIGENTE', 'POR_VENCER'].includes(item.estatus))) return 'VERIFICADA';
+  if (record.identificaciones?.some((item: any) => ['VENCIDO', 'RECHAZADO'].includes(item.estatus)) || record.datosFuente?.some((item: any) => item.estado === 'EN_CONFLICTO')) return 'OBSERVACION';
+  return 'PENDIENTE';
+}
+
+function complianceState(record: any): HealthState {
+  const reviews = (record.expedientes || []).flatMap((link: any) => link.expediente?.complianceReviews || []);
+  if (!reviews.length) return 'NO_CONFIGURADO';
+  if (reviews.some((review: any) => review.estatus === 'REQUIERE_AJUSTES')) return 'OBSERVACION';
+  if (reviews.some((review: any) => review.estatus === 'CONFIRMADO')) return 'COMPLETO';
+  return 'PENDIENTE';
+}
+
 export class ComparecienteService {
   private prisma: PrismaClient;
 
@@ -23,63 +58,59 @@ export class ComparecienteService {
   /**
    * Búsqueda general y duplicados
    */
-  public async buscarDuplicados(query: { rfc?: string; curp?: string; nombre?: string }) {
-    const matches: any[] = [];
+  public async buscarDuplicados(query: { rfc?: string; curp?: string; nombre?: string; correo?: string; telefono?: string; accessWhere?: Record<string, unknown> }) {
+    const cleanRfc = query.rfc?.trim().toUpperCase();
+    const cleanCurp = query.curp?.trim().toUpperCase();
+    const cleanNombre = query.nombre?.trim() ? this.normalizeSearchString(query.nombre) : '';
+    const cleanCorreo = query.correo?.trim().toLowerCase();
+    const telefonoOriginal = query.telefono?.trim();
+    const cleanTelefono = telefonoOriginal?.replace(/\D/g, '');
+    const matchers: any[] = [];
+    if (cleanCurp) matchers.push({ personaFisica: { curp: { equals: cleanCurp, mode: 'insensitive' } } });
+    if (cleanRfc) matchers.push({ OR: [{ personaFisica: { rfc: { equals: cleanRfc, mode: 'insensitive' } } }, { personaMoral: { rfc: { equals: cleanRfc, mode: 'insensitive' } } }] });
+    if (cleanNombre) matchers.push({ nombre_busqueda: { contains: cleanNombre, mode: 'insensitive' } });
+    if (cleanCorreo) matchers.push({ contactos: { some: { archived_at: null, activo: true, tipo: 'CORREO', valor: { equals: cleanCorreo, mode: 'insensitive' } } } });
+    if (cleanTelefono) matchers.push({ contactos: { some: { archived_at: null, activo: true, tipo: { in: ['TELEFONO', 'WHATSAPP', 'ALTERNO'] }, valor: { contains: telefonoOriginal } } } });
+    if (!matchers.length) return [];
 
-    if (query.curp && query.curp.trim().length > 0) {
-      const cleanCurp = query.curp.trim().toUpperCase();
-      const pf = await this.prisma.personaFisica.findFirst({
-        where: {
-          curp: { equals: cleanCurp, mode: 'insensitive' },
-          archived_at: null
-        },
-        include: { compareciente: true }
-      });
-      if (pf) {
-        matches.push({ tipo: 'CURP_COINCIDENCIA_EXACTA', record: pf });
-      }
-    }
+    const candidates = await this.prisma.compareciente.findMany({
+      where: {
+        archived_at: null,
+        AND: [
+          ...(query.accessWhere && Object.keys(query.accessWhere).length ? [query.accessWhere] : []),
+          { OR: matchers },
+        ],
+      },
+      select: {
+        id: true, tipo_persona: true, nombre_busqueda: true, updated_at: true,
+        personaFisica: { select: { nombre_completo_calculado: true, rfc: true, curp: true } },
+        personaMoral: { select: { razon_social: true, rfc: true } },
+        contactos: { where: { archived_at: null, activo: true }, select: { tipo: true, valor: true } },
+      },
+      orderBy: { updated_at: 'desc' },
+      take: 10,
+    });
 
-    if (query.rfc && query.rfc.trim().length > 0) {
-      const cleanRfc = query.rfc.trim().toUpperCase();
-      const pf = await this.prisma.personaFisica.findFirst({
-        where: {
-          rfc: { equals: cleanRfc, mode: 'insensitive' },
-          archived_at: null
-        },
-        include: { compareciente: true }
-      });
-      if (pf) matches.push({ tipo: 'RFC_FISICA_EXACTO', record: pf });
-
-      const pm = await this.prisma.personaMoral.findFirst({
-        where: {
-          rfc: { equals: cleanRfc, mode: 'insensitive' },
-          archived_at: null
-        },
-        include: { compareciente: true }
-      });
-      if (pm) matches.push({ tipo: 'RFC_MORAL_EXACTO', record: pm });
-    }
-
-    if (query.nombre && query.nombre.trim().length > 0) {
-      const cleanNombre = this.normalizeSearchString(query.nombre);
-      const candidates = await this.prisma.compareciente.findMany({
-        where: {
-          nombre_busqueda: { contains: cleanNombre, mode: 'insensitive' },
-          archived_at: null
-        },
-        include: {
-          personaFisica: true,
-          personaMoral: true
-        },
-        take: 10
-      });
-      for (const c of candidates) {
-        matches.push({ tipo: 'NOMBRE_SIMILAR', record: c });
-      }
-    }
-
-    return matches;
+    return candidates.map((candidate) => {
+      const reasons: string[] = [];
+      if (cleanCurp && candidate.personaFisica?.curp?.toUpperCase() === cleanCurp) reasons.push('CURP_EXACTA');
+      const candidateRfc = candidate.personaFisica?.rfc || candidate.personaMoral?.rfc;
+      if (cleanRfc && candidateRfc?.toUpperCase() === cleanRfc) reasons.push('RFC_EXACTO');
+      if (cleanCorreo && candidate.contactos.some((contact) => contact.tipo === 'CORREO' && contact.valor.toLowerCase() === cleanCorreo)) reasons.push('CORREO_EXACTO');
+      if (cleanTelefono && candidate.contactos.some((contact) => contact.valor.replace(/\D/g, '').includes(cleanTelefono))) reasons.push('TELEFONO_COINCIDENTE');
+      if (cleanNombre && candidate.nombre_busqueda.includes(cleanNombre)) reasons.push('NOMBRE_SIMILAR');
+      const blocking = reasons.some((reason) => ['CURP_EXACTA', 'RFC_EXACTO'].includes(reason));
+      return {
+        id: candidate.id,
+        tipo_persona: candidate.tipo_persona,
+        nombre: candidate.personaFisica?.nombre_completo_calculado || candidate.personaMoral?.razon_social || candidate.nombre_busqueda,
+        rfc: candidateRfc || null,
+        curp: candidate.personaFisica?.curp || null,
+        razones: reasons,
+        bloqueo_alta: blocking,
+        updated_at: candidate.updated_at,
+      };
+    });
   }
 
   /**
@@ -90,10 +121,14 @@ export class ComparecienteService {
     search?: string;
     page?: number;
     limit?: number;
+    identidad?: IdentityState;
+    cumplimiento?: HealthState;
+    actualizacion?: 'HOY' | '7_DIAS' | '30_DIAS';
+    sort?: string;
     accessWhere?: Record<string, unknown>;
   }) {
-    const page = params.page || 1;
-    const limit = params.limit || 25;
+    const page = Math.max(1, params.page || 1);
+    const limit = Math.min(100, Math.max(1, params.limit || 25));
     const skip = (page - 1) * limit;
 
     const whereClause: any = {
@@ -111,39 +146,99 @@ export class ComparecienteService {
         { nombre_busqueda: { contains: cleanSearch, mode: 'insensitive' } },
         { personaFisica: { curp: { contains: cleanSearch, mode: 'insensitive' } } },
         { personaFisica: { rfc: { contains: cleanSearch, mode: 'insensitive' } } },
-        { personaMoral: { rfc: { contains: cleanSearch, mode: 'insensitive' } } }
+        { personaMoral: { rfc: { contains: cleanSearch, mode: 'insensitive' } } },
+        { contactos: { some: { archived_at: null, activo: true, valor: { contains: params.search.trim(), mode: 'insensitive' } } } }
       ];
     }
 
-    const [total, data] = await Promise.all([
+    const observationWhere: any = { OR: [{ identificaciones: { some: OBSERVED_IDENTIFICATION } }, { datosFuente: { some: { archived_at: null, estado: 'EN_CONFLICTO' } } }] };
+    if (params.identidad === 'VERIFICADA') whereClause.identificaciones = { some: VERIFIED_IDENTIFICATION };
+    if (params.identidad === 'OBSERVACION') (whereClause.AND ||= []).push(observationWhere);
+    if (params.identidad === 'PENDIENTE') (whereClause.AND ||= []).push({ identificaciones: { none: VERIFIED_IDENTIFICATION } }, { NOT: observationWhere });
+
+    if (params.cumplimiento && params.cumplimiento !== 'NO_APLICA') {
+      const reviewState = params.cumplimiento === 'COMPLETO' ? 'CONFIRMADO' : params.cumplimiento === 'OBSERVACION' ? 'REQUIERE_AJUSTES' : undefined;
+      if (reviewState) whereClause.expedientes = { some: { archived_at: null, estatus: 'ACTIVO', expediente: { complianceReviews: { some: { estatus: reviewState } } } } };
+      if (params.cumplimiento === 'PENDIENTE') whereClause.expedientes = { some: { archived_at: null, estatus: 'ACTIVO', expediente: { complianceReviews: { some: { estatus: { in: ['BORRADOR', 'PENDIENTE_REVISION'] } } } } } };
+      if (params.cumplimiento === 'NO_CONFIGURADO') whereClause.expedientes = { none: { archived_at: null, estatus: 'ACTIVO', expediente: { complianceReviews: { some: {} } } } };
+    }
+
+    if (params.actualizacion) {
+      const days = params.actualizacion === 'HOY' ? 1 : params.actualizacion === '7_DIAS' ? 7 : 30;
+      whereClause.updated_at = { gte: new Date(Date.now() - days * 86_400_000) };
+    }
+
+    const baseWhere: any = { archived_at: null, ...(params.accessWhere && Object.keys(params.accessWhere).length ? { AND: [params.accessWhere] } : {}) };
+    const verifiedWhere: any = { ...baseWhere, identificaciones: { some: VERIFIED_IDENTIFICATION } };
+    const observedWhere: any = { ...baseWhere, ...observationWhere };
+    const pendingWhere: any = { ...baseWhere, AND: [...(baseWhere.AND || []), { identificaciones: { none: VERIFIED_IDENTIFICATION } }, { NOT: observationWhere }] };
+
+    const [total, data, totalScoped, verified, observed, pending] = await Promise.all([
       this.prisma.compareciente.count({ where: whereClause }),
       this.prisma.compareciente.findMany({
         where: whereClause,
-        include: {
-          personaFisica: true,
-          personaMoral: true,
-          domicilios: { where: { principal: true, vigente: true, archived_at: null } },
-          contactos: { where: { principal: true, activo: true, archived_at: null } },
-          aliases: { where: { activo: true, archived_at: null }, orderBy: { principal: 'desc' } },
-          expedientes: {
-            where: { estatus: 'ACTIVO', archived_at: null },
-            include: { expediente: true, caracter: true }
-          }
+        select: {
+          id: true, tipo_persona: true, nombre_busqueda: true, estatus: true, created_at: true, updated_at: true,
+          personaFisica: { select: { nombre_completo_calculado: true, rfc: true, curp: true, updated_at: true, pep_estado: true } },
+          personaMoral: { select: { razon_social: true, nombre_comercial: true, rfc: true, updated_at: true } },
+          identificaciones: { where: { archived_at: null }, select: { estatus: true, validado_at: true, updated_at: true } },
+          datosFuente: { where: { archived_at: null, estado: 'EN_CONFLICTO' }, select: { estado: true, updated_at: true } },
+          documentos: { where: { archived_at: null, estatus: 'ACTIVO' }, select: { updated_at: true, documento: { select: { fecha_carga: true, estatus: true } } } },
+          expedientes: { where: { archived_at: null, estatus: 'ACTIVO' }, select: { updated_at: true, expediente: { select: { complianceReviews: { orderBy: { updated_at: 'desc' }, take: 1, select: { estatus: true, updated_at: true } } } } } },
         },
-        orderBy: { created_at: 'desc' },
+        orderBy: params.sort?.startsWith('nombre')
+          ? { nombre_busqueda: params.sort.endsWith(':desc') ? 'desc' : 'asc' }
+          : { updated_at: params.sort?.endsWith(':asc') ? 'asc' : 'desc' },
         skip,
-        take: limit
-      })
+        take: limit,
+      }),
+      this.prisma.compareciente.count({ where: baseWhere }),
+      this.prisma.compareciente.count({ where: verifiedWhere }),
+      this.prisma.compareciente.count({ where: observedWhere }),
+      this.prisma.compareciente.count({ where: pendingWhere }),
     ]);
 
+    const rows = data.map((record: any) => {
+      const lastMaterialUpdate = newestDate([
+        record.updated_at, record.personaFisica?.updated_at, record.personaMoral?.updated_at,
+        ...record.identificaciones.map((item: any) => item.updated_at),
+        ...record.datosFuente.map((item: any) => item.updated_at),
+        ...record.documentos.flatMap((item: any) => [item.updated_at, item.documento.fecha_carga]),
+        ...record.expedientes.map((item: any) => item.updated_at),
+      ], record.updated_at);
+      return {
+        id: record.id,
+        tipo_persona: record.tipo_persona,
+        nombre: record.personaFisica?.nombre_completo_calculado || record.personaMoral?.razon_social || record.nombre_busqueda,
+        rfc: record.personaFisica?.rfc || record.personaMoral?.rfc || null,
+        curp: record.personaFisica?.curp || null,
+        expedientes_vinculados: record.expedientes.length,
+        identidad: identityState(record),
+        documentos: { total: record.documentos.length, vigentes: record.documentos.filter((item: any) => ['VIGENTE', 'POR_VENCER'].includes(item.documento.estatus)).length, con_observacion: record.documentos.filter((item: any) => ['VENCIDO', 'RECHAZADO'].includes(item.documento.estatus)).length },
+        cumplimiento: complianceState(record),
+        updated_at: lastMaterialUpdate.toISOString(),
+      };
+    });
+
     return {
-      data,
+      data: rows,
+      metrics: { total: totalScoped, verified, pending, observed },
       meta: {
         total,
         page,
         limit,
-        totalPages: Math.ceil(total / limit)
-      }
+        pageSize: limit,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
+        hasPreviousPage: page > 1,
+        hasNextPage: page * limit < total,
+      },
+      definitions: {
+        verified: 'Identificación vigente o por vencer con confirmación humana registrada.',
+        pending: 'Sin identificación validada y sin conflicto o documento rechazado/vencido.',
+        observed: 'Identificación vencida/rechazada o dato documental en conflicto.',
+        documents: 'Conteo descriptivo de documentos vinculados; no existe catálogo global de requeridos por persona.',
+        materialUpdate: 'Máxima fecha disponible entre ficha, identidad, procedencia, documentos y vínculos visibles.',
+      },
     };
   }
 
@@ -154,6 +249,7 @@ export class ComparecienteService {
     const compareciente = await this.prisma.compareciente.findUnique({
       where: { id },
       include: {
+        creado_por: { select: { id: true, nombre: true, apellido: true } },
         personaFisica: {
           include: {
             matrimoniosComoPersona1: {
@@ -168,7 +264,7 @@ export class ComparecienteService {
         },
         personaMoral: {
           include: {
-            instrumentos: { where: { archived_at: null } },
+            instrumentos: { where: { archived_at: null }, include: { documentoSoporte: { select: { id: true, nombre_original: true, estatus: true } }, validado_por: { select: { id: true, nombre: true, apellido: true } } } },
             representantes: {
               where: { vigente: true, archived_at: null },
               include: {
@@ -179,9 +275,9 @@ export class ComparecienteService {
             }
           }
         },
-        domicilios: { where: { archived_at: null } },
+        domicilios: { where: { archived_at: null }, include: { documentoComprobante: { select: { id: true, nombre_original: true, estatus: true } } } },
         contactos: { where: { archived_at: null } },
-        identificaciones: { where: { archived_at: null } },
+        identificaciones: { where: { archived_at: null }, include: { documento: { select: { id: true, nombre_original: true, estatus: true } }, validado_por: { select: { id: true, nombre: true, apellido: true } } } },
         aliases: { where: { activo: true, archived_at: null }, orderBy: [{ principal: 'desc' }, { created_at: 'asc' }] },
         actividadesEconomicas: {
           where: { vigente: true },
@@ -189,16 +285,38 @@ export class ComparecienteService {
           orderBy: [{ principal: 'desc' }, { created_at: 'asc' }],
         },
         documentos: {
+          where: { archived_at: null, estatus: 'ACTIVO' },
+          include: {
+            documento: { select: { id: true, nombre_original: true, tipo: true, categoria: true, mime_type: true, size_bytes: true, fecha_carga: true, fecha_emision: true, fecha_vigencia: true, observaciones: true, estatus: true } },
+            validado_por: { select: { id: true, nombre: true, apellido: true } },
+          }
+        },
+        datosFuente: {
           where: { archived_at: null },
-          include: { documento: true }
+          include: { documento: { select: { id: true, nombre_original: true, tipo: true, estatus: true } }, confirmado_por: { select: { id: true, nombre: true, apellido: true } } },
+          orderBy: { updated_at: 'desc' },
         },
         expedientes: {
-          where: { archived_at: null },
+          where: { archived_at: null, estatus: 'ACTIVO' },
           include: {
-            expediente: true,
+            expediente: {
+              select: {
+                id: true, numero_pravia: true, numero_notaria: true, cliente_alias: true, estatus: true, etapa_actual_nombre: true, updated_at: true,
+                tipo_acto: { select: { id: true, nombre: true } },
+                notaria: { select: { id: true, nombre: true, numero_notaria: true } },
+                abogado: { select: { id: true, nombre: true, apellido: true } },
+                complianceReviews: {
+                  orderBy: { updated_at: 'desc' },
+                  take: 1,
+                  select: { id: true, tipo: true, estatus: true, resultado_json: true, explicacion: true, rule_version_snapshot: true, revisado_at: true, updated_at: true },
+                },
+              },
+            },
             caracter: true
           }
-        }
+        },
+        representacionesComoRepresentante: { include: { expediente: { select: { id: true, numero_pravia: true, estatus: true } }, representado: { select: { id: true, nombre_busqueda: true } }, caracterRepresentacion: true, instrumento: true } },
+        representacionesComoRepresentado: { include: { expediente: { select: { id: true, numero_pravia: true, estatus: true } }, representante: { select: { id: true, nombre_busqueda: true } }, caracterRepresentacion: true, instrumento: true } },
       }
     });
 
@@ -206,7 +324,70 @@ export class ComparecienteService {
       throw new Error(`Compareciente con ID '${id}' no fue encontrado o está archivado.`);
     }
 
-    return compareciente;
+    const audit = await this.prisma.auditLog.findMany({
+      where: { entidad_id: id },
+      include: { usuario: { select: { id: true, nombre: true, apellido: true } } },
+      orderBy: { created_at: 'desc' },
+      take: 100,
+    });
+    const currentIdentity = identityState(compareciente);
+    const currentCompliance = complianceState(compareciente);
+    const activeAddresses = compareciente.domicilios.filter((item) => item.vigente);
+    const addressConflict = compareciente.datosFuente.some((item) => item.estado === 'EN_CONFLICTO' && /DOMICILIO|CALLE|COLONIA|CODIGO_POSTAL|MUNICIPIO|ESTADO/i.test(item.campo));
+    const currentRepresentatives = compareciente.personaMoral?.representantes || [];
+    const representationState: HealthState = compareciente.tipo_persona === 'FISICA'
+      ? 'NO_APLICA'
+      : !currentRepresentatives.length
+        ? 'PENDIENTE'
+        : currentRepresentatives.some((item) => item.fecha_fin && item.fecha_fin < new Date())
+          ? 'OBSERVACION'
+          : currentRepresentatives.every((item) => item.instrumento_id || item.documento_soporte_id)
+            ? 'COMPLETO'
+            : 'PENDIENTE';
+    const activeDocuments = compareciente.documentos;
+    const documentState: HealthState = activeDocuments.some((item) => ['VENCIDO', 'RECHAZADO'].includes(item.documento.estatus))
+      ? 'OBSERVACION'
+      : activeDocuments.length
+        ? 'COMPLETO'
+        : 'PENDIENTE';
+    const rfc = compareciente.personaFisica?.rfc || compareciente.personaMoral?.rfc;
+    const lastMaterialUpdate = newestDate([
+      compareciente.updated_at,
+      compareciente.personaFisica?.updated_at,
+      compareciente.personaMoral?.updated_at,
+      ...compareciente.domicilios.map((item) => item.updated_at),
+      ...compareciente.contactos.map((item) => item.updated_at),
+      ...compareciente.identificaciones.map((item) => item.updated_at),
+      ...compareciente.documentos.flatMap((item) => [item.updated_at, item.documento.fecha_carga]),
+      ...compareciente.datosFuente.map((item) => item.updated_at),
+      ...compareciente.expedientes.map((item) => item.updated_at),
+    ], compareciente.updated_at);
+
+    return {
+      ...compareciente,
+      nombre: compareciente.personaFisica?.nombre_completo_calculado || compareciente.personaMoral?.razon_social || compareciente.nombre_busqueda,
+      rfc: rfc || null,
+      curp: compareciente.personaFisica?.curp || null,
+      identidad: currentIdentity,
+      cumplimiento: currentCompliance,
+      updated_at_material: lastMaterialUpdate.toISOString(),
+      health: [
+        { key: 'IDENTIDAD', label: 'Identidad', state: currentIdentity === 'VERIFICADA' ? 'COMPLETO' : currentIdentity },
+        { key: 'FISCAL', label: 'Fiscal', state: rfc ? 'COMPLETO' : 'PENDIENTE' },
+        { key: 'DOMICILIO', label: 'Domicilio', state: addressConflict ? 'OBSERVACION' : activeAddresses.some((item) => item.comprobado) ? 'COMPLETO' : 'PENDIENTE' },
+        { key: 'REPRESENTACION', label: 'Representación', state: representationState },
+        { key: 'CUMPLIMIENTO', label: 'Cumplimiento', state: currentCompliance },
+        { key: 'DOCUMENTOS', label: 'Documentos', state: documentState },
+      ],
+      complianceSnapshots: compareciente.expedientes.flatMap((link) => link.expediente.complianceReviews.map((review) => ({ ...review, expediente: { id: link.expediente.id, numero_pravia: link.expediente.numero_pravia } }))),
+      actividad: audit,
+      capabilities: {
+        canUploadDocuments: true,
+        canArchive: compareciente.estatus === 'ACTIVO',
+        allowsSoftDuplicateOverride: true,
+        blocksExactIdentityDuplicate: true,
+      },
+    };
   }
 
   /**
@@ -341,7 +522,24 @@ export class ComparecienteService {
         });
       }
 
-      // 5. Registrar Evento de Auditoría y Outbox
+      // 5. La identificación existe como registro pendiente hasta que una persona la valide.
+      if (dto.identificacion_principal?.numero || dto.identificacion_principal?.tipo_identificacion) {
+        await tx.comparecienteIdentificacion.create({
+          data: {
+            compareciente_id: compareciente.id,
+            tipo_identificacion: dto.identificacion_principal.tipo_identificacion || 'INE',
+            numero: dto.identificacion_principal.numero || null,
+            autoridad_emisora: dto.identificacion_principal.autoridad_emisora || null,
+            pais_emisor: dto.identificacion_principal.pais_emisor || 'México',
+            fecha_expedicion: validateOptionalDate(dto.identificacion_principal.fecha_expedicion, 'La fecha de expedición'),
+            fecha_vencimiento: validateOptionalDate(dto.identificacion_principal.fecha_vencimiento, 'La fecha de vencimiento'),
+            principal: true,
+            creado_por_id: dto.creado_por_id,
+          },
+        });
+      }
+
+      // 6. Registrar Evento de Auditoría y Outbox
       const correlationId = crypto.randomUUID();
       await tx.auditLog.create({
         data: {
@@ -386,6 +584,8 @@ export class ComparecienteService {
     fecha_constitucion?: string;
     folio_mercantil?: string;
     objeto_social_resumido?: string;
+    domicilio_principal?: any;
+    contacto_principal?: any;
     creado_por_id: string;
   }) {
     const nombreBusqueda = this.normalizeSearchString(dto.razon_social);
@@ -428,6 +628,37 @@ export class ComparecienteService {
         }
       });
 
+      if (dto.domicilio_principal) {
+        await tx.comparecienteDomicilio.create({
+          data: {
+            compareciente_id: compareciente.id,
+            tipo: dto.domicilio_principal.tipo || 'FISCAL',
+            pais: dto.domicilio_principal.pais || 'México',
+            estado: dto.domicilio_principal.estado || null,
+            municipio: dto.domicilio_principal.municipio || null,
+            localidad: dto.domicilio_principal.localidad || null,
+            colonia: dto.domicilio_principal.colonia || null,
+            calle: dto.domicilio_principal.calle || null,
+            exterior: dto.domicilio_principal.exterior || null,
+            interior: dto.domicilio_principal.interior || null,
+            codigo_postal: dto.domicilio_principal.codigo_postal || null,
+            principal: true,
+            creado_por_id: dto.creado_por_id,
+          },
+        });
+      }
+      if (dto.contacto_principal?.valor) {
+        await tx.comparecienteContacto.create({
+          data: {
+            compareciente_id: compareciente.id,
+            tipo: dto.contacto_principal.tipo || 'CORREO',
+            valor: String(dto.contacto_principal.valor).trim(),
+            principal: true,
+            creado_por_id: dto.creado_por_id,
+          },
+        });
+      }
+
       // 3. Registrar Evento de Auditoría y Outbox
       const correlationId = crypto.randomUUID();
       await tx.auditLog.create({
@@ -458,6 +689,69 @@ export class ComparecienteService {
       });
 
       return { compareciente, personaMoral };
+    });
+  }
+
+  /** Edición explícita del dato maestro. No altera snapshots de cumplimiento ni relaciones históricas. */
+  public async actualizarMaster(id: string, dto: Record<string, any>, actorUserId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.compareciente.findFirst({ where: { id, archived_at: null }, include: { personaFisica: true, personaMoral: true } });
+      if (!current) throw new Error('Compareciente no encontrado.');
+      let nombreBusqueda = current.nombre_busqueda;
+      if (current.tipo_persona === 'FISICA' && current.personaFisica) {
+        const nombre = String(dto.nombre ?? current.personaFisica.nombre).trim();
+        const apellidoPaterno = dto.apellido_paterno === undefined ? current.personaFisica.apellido_paterno : String(dto.apellido_paterno || '').trim() || null;
+        const apellidoMaterno = dto.apellido_materno === undefined ? current.personaFisica.apellido_materno : String(dto.apellido_materno || '').trim() || null;
+        if (!nombre) throw new Error('El nombre es obligatorio.');
+        const completo = [nombre, apellidoPaterno, apellidoMaterno].filter(Boolean).join(' ');
+        nombreBusqueda = this.normalizeSearchString(completo);
+        await tx.personaFisica.update({ where: { compareciente_id: id }, data: {
+          nombre, apellido_paterno: apellidoPaterno, apellido_materno: apellidoMaterno, nombre_completo_calculado: completo,
+          rfc: dto.rfc === undefined ? current.personaFisica.rfc : validateRfc(dto.rfc, 'FISICA'),
+          curp: dto.curp === undefined ? current.personaFisica.curp : validateCurp(dto.curp),
+          nacionalidad: dto.nacionalidad === undefined ? current.personaFisica.nacionalidad : String(dto.nacionalidad || 'Mexicana'),
+          ocupacion: dto.ocupacion === undefined ? current.personaFisica.ocupacion : String(dto.ocupacion || '').trim() || null,
+          pep_estado: dto.pep_estado === undefined ? current.personaFisica.pep_estado : dto.pep_estado,
+          pep: dto.pep_estado === undefined ? current.personaFisica.pep : dto.pep_estado === 'SI',
+        } });
+      }
+      if (current.tipo_persona === 'MORAL' && current.personaMoral) {
+        const razonSocial = String(dto.razon_social ?? current.personaMoral.razon_social).trim();
+        if (!razonSocial) throw new Error('La razón social es obligatoria.');
+        nombreBusqueda = this.normalizeSearchString(razonSocial);
+        await tx.personaMoral.update({ where: { compareciente_id: id }, data: {
+          razon_social: razonSocial,
+          nombre_comercial: dto.nombre_comercial === undefined ? current.personaMoral.nombre_comercial : String(dto.nombre_comercial || '').trim() || null,
+          tipo_societario: dto.tipo_societario === undefined ? current.personaMoral.tipo_societario : String(dto.tipo_societario || '').trim() || null,
+          rfc: dto.rfc === undefined ? current.personaMoral.rfc : validateRfc(dto.rfc, 'MORAL'),
+          folio_mercantil: dto.folio_mercantil === undefined ? current.personaMoral.folio_mercantil : String(dto.folio_mercantil || '').trim() || null,
+          objeto_social_resumido: dto.objeto_social_resumido === undefined ? current.personaMoral.objeto_social_resumido : String(dto.objeto_social_resumido || '').trim() || null,
+        } });
+      }
+      const header = await tx.compareciente.update({ where: { id }, data: { nombre_busqueda: nombreBusqueda, version: { increment: 1 } } });
+      await tx.auditLog.create({ data: { user_id: actorUserId, accion: 'EDITAR_COMPARECIENTE', entidad: 'Compareciente', entidad_id: id, valores_anteriores: { version: current.version }, valores_nuevos: { version: header.version, campos: Object.keys(dto) }, detalles: { modulo: 'COMPARECIENTES' }, correlation_id: crypto.randomUUID() } });
+      return header;
+    });
+  }
+
+  /** Resuelve de forma auditable un conflicto documental de RFC/CURP. */
+  public async resolverConflictoDato(comparecienteId: string, sourceId: string, action: 'CONSERVAR_ACTUAL' | 'ACTUALIZAR', actorUserId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const source = await tx.comparecienteDatoFuente.findFirst({ where: { id: sourceId, compareciente_id: comparecienteId, archived_at: null, estado: 'EN_CONFLICTO' }, include: { compareciente: { include: { personaFisica: true, personaMoral: true } } } });
+      if (!source) throw new Error('El conflicto ya no está disponible.');
+      const field = source.campo.toLowerCase();
+      if (!['rfc', 'curp'].includes(field)) throw new Error('Este dato requiere revisión desde la edición de ficha.');
+      const detected = String(source.valor_detectado || '').trim();
+      const currentValue = field === 'curp' ? source.compareciente.personaFisica?.curp : source.compareciente.personaFisica?.rfc || source.compareciente.personaMoral?.rfc;
+      if (action === 'ACTUALIZAR') {
+        if (field === 'curp' && source.compareciente.personaFisica) await tx.personaFisica.update({ where: { compareciente_id: comparecienteId }, data: { curp: validateCurp(detected) } });
+        if (field === 'rfc' && source.compareciente.personaFisica) await tx.personaFisica.update({ where: { compareciente_id: comparecienteId }, data: { rfc: validateRfc(detected, 'FISICA') } });
+        if (field === 'rfc' && source.compareciente.personaMoral) await tx.personaMoral.update({ where: { compareciente_id: comparecienteId }, data: { rfc: validateRfc(detected, 'MORAL') } });
+        await tx.compareciente.update({ where: { id: comparecienteId }, data: { version: { increment: 1 } } });
+      }
+      const updated = await tx.comparecienteDatoFuente.update({ where: { id: source.id }, data: { estado: action === 'ACTUALIZAR' ? 'CONFIRMADO' : 'DESCARTADO', valor_confirmado: action === 'ACTUALIZAR' ? detected : currentValue || null, confirmado_por_id: actorUserId, confirmado_at: new Date() } });
+      await tx.auditLog.create({ data: { user_id: actorUserId, accion: action === 'ACTUALIZAR' ? 'ACTUALIZAR_DATO_DESDE_DOCUMENTO' : 'CONSERVAR_DATO_MAESTRO', entidad: 'Compareciente', entidad_id: comparecienteId, valores_anteriores: { campo: source.campo, actual: currentValue, detectado: detected }, valores_nuevos: { campo: source.campo, valor: updated.valor_confirmado, estado: updated.estado }, detalles: { modulo: 'COMPARECIENTES', fuente_id: source.id }, correlation_id: crypto.randomUUID() } });
+      return updated;
     });
   }
 
@@ -718,16 +1012,6 @@ export class ComparecienteService {
     const items: any[] = [];
     for (const link of compareciente.documentos) {
       const doc = link.documento;
-      let urlFirmada = '';
-      try {
-        if (doc.storage_key) {
-          const { getSignedUrl } = await import('./supabase.service');
-          urlFirmada = await getSignedUrl(doc.storage_key);
-        }
-      } catch (err) {
-        console.warn(`[ArchivoDocumental] No se pudo obtener URL firmada para ${doc.id}`);
-      }
-
       items.push({
         id: doc.id,
         link_id: link.id,
@@ -739,7 +1023,7 @@ export class ComparecienteService {
         fecha_carga: doc.fecha_carga,
         estatus: doc.estatus,
         principal: link.principal,
-        url_firmada: urlFirmada
+        download_path: `/comparecientes/${comparecienteId}/documentos/${doc.id}/descargar`,
       });
     }
 
@@ -749,6 +1033,18 @@ export class ComparecienteService {
       carpetas_sugeridas: carpetasBase,
       documentos: items
     };
+  }
+
+  /** Descarga autenticada: nunca expone storage_key ni URL interna al cliente. */
+  public async descargarDocumento(comparecienteId: string, documentoId: string) {
+    const link = await this.prisma.comparecienteDocumento.findFirst({
+      where: { compareciente_id: comparecienteId, documento_id: documentoId, archived_at: null, estatus: 'ACTIVO' },
+      include: { documento: true },
+    });
+    if (!link) throw new Error('El documento no está disponible para este compareciente.');
+    const { downloadFile } = await import('./supabase.service');
+    const buffer = await downloadFile(link.documento.storage_key);
+    return { buffer, mimeType: link.documento.mime_type, fileName: link.documento.nombre_original };
   }
 
   /**
