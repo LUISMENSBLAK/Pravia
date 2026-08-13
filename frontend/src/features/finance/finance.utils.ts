@@ -1,0 +1,5 @@
+export const money = (value:number|string|undefined|null) => new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN',maximumFractionDigits:2}).format(Number(value||0));
+export const shortMoney = (value:number) => new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN',notation:'compact',maximumFractionDigits:1}).format(value);
+export const financeDate = (value:string|Date) => new Intl.DateTimeFormat('es-MX',{day:'2-digit',month:'short',year:'numeric'}).format(new Date(value));
+export const statusLabel=(value:string)=>({BORRADOR:'Borrador',PENDIENTE:'Pendiente',PENDIENTE_COMPROBANTE:'Falta comprobante',LISTO_APLICAR:'Listo para aplicar',APLICADO:'Aplicado',RECIBIDO:'Aplicado (legacy)',VALIDADO:'Aplicado (legacy)',REVERTIDO:'Revertido',CANCELADO:'Cancelado',VIGENTE:'Vigente',ANULADO:'Anulado',CONCILIADA:'Conciliada'}[value]||value.toLocaleLowerCase('es-MX'));
+export const accountLabel=(account?:{institucion:string;alias:string;ultimos_cuatro?:string|null}|null)=>account?`${account.alias} · ${account.institucion}${account.ultimos_cuatro?` •••• ${account.ultimos_cuatro}`:''}`:'Sin cuenta';

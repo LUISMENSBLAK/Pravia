@@ -96,7 +96,7 @@ export class FinanzasController {
       let itemsFinancieros = expedientes.map((exp) => {
         const { totalPresupuestado, totalNotaria, participacionPravia } = getOperationalBudget(exp);
 
-        const activeMovements = exp.movimientosFinancieros.filter((m) => ['VALIDADO', 'RECIBIDO'].includes(m.estatus));
+        const activeMovements = exp.movimientosFinancieros.filter((m) => ['APLICADO', 'VALIDADO', 'RECIBIDO'].includes(m.estatus));
         const ledgerMovements = activeMovements.length > 0
           ? activeMovements.map((movement) => ({ ...movement, monto: Number(movement.monto) }))
           : exp.pagos
@@ -446,7 +446,7 @@ export class FinanzasController {
         .map((exp) => {
           const { totalPresupuestado, participacionPravia } = getOperationalBudget(exp);
           const activeMovements = exp.movimientosFinancieros.filter((m) =>
-            ['VALIDADO', 'RECIBIDO'].includes(m.estatus),
+            ['APLICADO', 'VALIDADO', 'RECIBIDO'].includes(m.estatus),
           );
           const ledgerMovements = activeMovements.length > 0
             ? activeMovements.map((movement) => ({ ...movement, monto: Number(movement.monto) }))
@@ -562,7 +562,7 @@ export class FinanzasController {
       const egresosMovs = await prisma.movimientoFinanciero.findMany({
         where: {
           naturaleza: 'EGRESO',
-          estatus: { in: ['VALIDADO', 'RECIBIDO'] },
+          estatus: { in: ['APLICADO', 'VALIDADO', 'RECIBIDO'] },
           ...(categoria && typeof categoria === 'string' && categoria !== 'TODOS' ? { categoria } : {})
         },
         include: {
@@ -650,7 +650,7 @@ export class FinanzasController {
           notaria: true,
           abogado: { select: { id: true, nombre: true, apellido: true } },
           cotizacion: true,
-          movimientosFinancieros: { where: { naturaleza: 'INGRESO', estatus: { in: ['VALIDADO', 'RECIBIDO'] } } }
+          movimientosFinancieros: { where: { naturaleza: 'INGRESO', estatus: { in: ['APLICADO', 'VALIDADO', 'RECIBIDO'] } } }
         }
       });
 

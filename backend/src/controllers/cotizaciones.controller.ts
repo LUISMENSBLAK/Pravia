@@ -11,6 +11,7 @@ import {
 import { CotizacionConversionService } from '../services/cotizacionConversion.service';
 import { canAccessCotizacion, canAccessDocumento, canAccessProspecto, cotizacionObjectWhere } from '../services/objectAccess.service';
 import { buildQuoteAnalytics, parseQuoteListQuery, quoteAnalyticsRange } from '../domain/quoteQuery';
+import { recognizeAcceptedQuote } from '../services/honorarioRecognition.service';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
 
@@ -281,6 +282,9 @@ export const updateCotizacionEstado = async (req: Request, res: Response) => {
       }
 
       const cotizacion = await tx.cotizacion.update({ where: { id }, data: dataToUpdate });
+      if (estado === CotizacionEstado.ACEPTADA) {
+        await recognizeAcceptedQuote(tx, { cotizacionId: id, actorUserId, recognizedAt: dataToUpdate.fecha_aceptacion_cliente });
+      }
       return { cotizacion, changed: true };
     });
 

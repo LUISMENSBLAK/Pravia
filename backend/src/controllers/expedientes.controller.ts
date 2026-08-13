@@ -659,7 +659,10 @@ export const addMovimientoFinanciero = async (req: Request, res: Response) => {
       });
       if (recentDuplicate) return { movimiento: recentDuplicate, idempotent: true };
 
-      const estatus = normNat === 'INGRESO' ? 'RECIBIDO' : 'VALIDADO';
+      // Compatibilidad: la ruta histórica ya no puede autoaplicar efectivo.
+      // El movimiento queda pendiente hasta distribuirse y generar comprobante
+      // mediante el servicio financiero canónico.
+      const estatus = 'PENDIENTE_COMPROBANTE';
       const movimiento = await tx.movimientoFinanciero.create({
         data: {
           expediente_id: id,
@@ -672,8 +675,6 @@ export const addMovimientoFinanciero = async (req: Request, res: Response) => {
           forma_pago: String(forma_pago || 'TRANSFERENCIA').trim(),
           referencia: cleanReference,
           capturado_por_id: actor.id,
-          validado_por_id: actor.id,
-          fecha_validacion: new Date(),
           estatus,
         },
       });
@@ -681,7 +682,7 @@ export const addMovimientoFinanciero = async (req: Request, res: Response) => {
         data: {
           expediente_id: id,
           tipo: 'PAGO',
-          titulo: `${normNat === 'INGRESO' ? 'Ingreso recibido' : 'Egreso validado'} (${normalizedCategory})`,
+          titulo: `${normNat === 'INGRESO' ? 'Ingreso registrado' : 'Egreso registrado'} (${normalizedCategory})`,
           descripcion: `${cleanConcept}: $${numericAmount.toFixed(2)} MXN`,
           usuario_id: actor.id,
         },
@@ -729,7 +730,7 @@ export const reverseMovimientoFinanciero = async (req: Request, res: Response) =
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:movimiento-reverso:${movimientoId}`}))`);
       const original = await tx.movimientoFinanciero.findFirst({ where: { id: movimientoId, expediente_id: id } });
       if (!original) throw new FinancialLedgerError('Movimiento original no encontrado.', 'MOVEMENT_NOT_FOUND', 404);
-      if (!['VALIDADO', 'RECIBIDO'].includes(original.estatus)) {
+      if (!['APLICADO', 'VALIDADO', 'RECIBIDO'].includes(original.estatus)) {
         throw new FinancialLedgerError('Solo se pueden revertir movimientos activos y validados.', 'MOVEMENT_NOT_REVERSIBLE');
       }
       if (original.categoria === 'REVERSO' || original.movimiento_origen_id) {

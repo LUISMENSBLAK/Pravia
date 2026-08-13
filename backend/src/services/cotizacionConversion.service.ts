@@ -1,6 +1,7 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import { CotizacionBusinessError, evaluateConversionEligibility } from '../domain/cotizacionWorkflow';
 import { ExpedienteOpeningService } from './expedienteOpening.service';
+import { attachGeneratedFeeToExpediente } from './honorarioRecognition.service';
 
 export interface ConvertCotizacionInput {
   cotizacionId: string;
@@ -127,6 +128,7 @@ export class CotizacionConversionService {
         where: { cotizacion_id: cotizacion.id },
         data: { expediente_id: expediente.id },
       });
+      await attachGeneratedFeeToExpediente(tx, { cotizacionId: cotizacion.id, expedienteId: expediente.id });
 
       await tx.cotizacion.update({
         where: { id: cotizacion.id },

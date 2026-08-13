@@ -7,6 +7,7 @@ import { NavLink } from 'react-router-dom';
 import { BrandLogo } from './BrandLogo';
 import { Tooltip } from '../ui/Tooltip';
 import styles from './Sidebar.module.css';
+import type { SessionUser } from '../../features/auth/auth.types';
 
 type NavItem = { label: string; to: string; icon: LucideIcon };
 
@@ -44,9 +45,11 @@ type SidebarProps = {
   mobileOpen: boolean;
   onToggle: () => void;
   onCloseMobile: () => void;
+  user?: SessionUser | null;
 };
 
-export function Sidebar({ collapsed, mobileOpen, onToggle, onCloseMobile }: SidebarProps) {
+export function Sidebar({ collapsed, mobileOpen, onToggle, onCloseMobile, user }: SidebarProps) {
+  const visibleNavigation = navigation.filter((item) => item.to !== '/finanzas' || !user?.permissions || user.permissions.includes('finanzas.read'));
   return (
     <>
       <button
@@ -62,7 +65,7 @@ export function Sidebar({ collapsed, mobileOpen, onToggle, onCloseMobile }: Side
         </div>
 
         <nav className={styles.nav}>
-          {navigation.map((item) => <SidebarLink key={item.to} item={item} collapsed={collapsed} onNavigate={onCloseMobile} />)}
+          {visibleNavigation.map((item) => <SidebarLink key={item.to} item={item} collapsed={collapsed} onNavigate={onCloseMobile} />)}
         </nav>
 
         <div className={styles.footer}>

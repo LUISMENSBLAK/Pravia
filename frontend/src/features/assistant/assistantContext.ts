@@ -71,9 +71,11 @@ const actions: Partial<Record<AssistantModule, AssistantAction[]>> = {
     { id: 'agenda-week', label: 'Eventos esta semana', prompt: 'Muéstrame los eventos de esta semana.' },
   ],
   finanzas: [
-    { id: 'finance-receivable', label: 'Por cobrar', prompt: 'Muéstrame lo que está por cobrar.' },
-    { id: 'finance-overdue', label: 'Vencidos', prompt: 'Muéstrame los saldos vencidos.' },
-    { id: 'finance-summary', label: 'Resumen', prompt: 'Muéstrame el resumen financiero.' },
+    { id: 'finance-month', label: 'Cobrado este mes', prompt: '¿Cuánto hemos cobrado este mes? Indica el periodo y usa únicamente cifras del backend.' },
+    { id: 'finance-office', label: 'Del despacho', prompt: '¿Cuánto corresponde al despacho? Indica el periodo.' },
+    { id: 'finance-receivable', label: 'Por cobrar', prompt: '¿Cuánto está por cobrar? Usa honorarios generados menos honorarios cobrados.' },
+    { id: 'finance-receipts', label: 'Sin comprobante', prompt: 'Muéstrame los movimientos sin comprobante.' },
+    { id: 'finance-reconcile', label: 'Conciliación pendiente', prompt: 'Muéstrame las conciliaciones pendientes.' },
   ],
 };
 

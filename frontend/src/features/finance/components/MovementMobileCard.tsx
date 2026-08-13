@@ -1,0 +1,6 @@
+import { FileCheck2, FileWarning } from 'lucide-react';
+import type { FinanceMovement } from '../finance.types';
+import { accountLabel, financeDate, money, statusLabel } from '../finance.utils';
+import styles from '../Finance.module.css';
+
+export function MovementMobileCard({item,onSelect}:{item:FinanceMovement;onSelect:(item:FinanceMovement)=>void}){return <button type="button" className={styles.mobileMovement} onClick={()=>onSelect(item)}><header><span className={styles.movementType} data-kind={item.naturaleza}>{item.naturaleza==='INGRESO'?'Ingreso':'Egreso'}</span><strong className={item.naturaleza==='INGRESO'?styles.positive:styles.negative}>{item.naturaleza==='EGRESO'?'−':'+'}{money(item.monto)}</strong></header><b>{item.concepto}</b><p>{financeDate(item.fecha_movimiento)} · {item.expediente?.numero_pravia||'Movimiento general'}</p><p>{accountLabel(item.cuenta)}</p><footer><span className={styles.statusPill} data-status={item.estatus}>{statusLabel(item.estatus)}</span>{item.comprobanteInterno?<span className={styles.receiptOk}><FileCheck2 size={14}/>{item.comprobanteInterno.folio}</span>:<span className={styles.receiptMissing}><FileWarning size={14}/>Sin comprobante</span>}</footer></button>}

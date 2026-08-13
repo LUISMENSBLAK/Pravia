@@ -22,7 +22,7 @@ export function AppShell() {
   return (
     <div className={`${styles.shell} ${collapsed ? styles.collapsed : ''}`}>
       <a className={styles.skipLink} href="#main-content">Saltar al contenido</a>
-      <Sidebar collapsed={collapsed} mobileOpen={mobileOpen} onToggle={() => setCollapsed((value) => !value)} onCloseMobile={() => setMobileOpen(false)} />
+      <Sidebar user={user} collapsed={collapsed} mobileOpen={mobileOpen} onToggle={() => setCollapsed((value) => !value)} onCloseMobile={() => setMobileOpen(false)} />
       <div className={styles.main}>
         <Topbar user={user} onOpenMobile={() => setMobileOpen(true)} onLogout={logout} />
         <main className={styles.workspace} id="main-content"><Outlet /></main>

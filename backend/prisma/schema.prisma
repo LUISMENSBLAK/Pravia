@@ -60,6 +60,16 @@ model User {
   movimientosCapturados        MovimientoFinanciero[]       @relation("MovimientoCapturado")
   movimientosValidados         MovimientoFinanciero[]       @relation("MovimientoValidado")
   movimientosRevertidos        MovimientoFinanciero[]       @relation("MovimientoRevertido")
+  movimientosAplicados         MovimientoFinanciero[]       @relation("MovimientoAplicado")
+  movimientosCancelados        MovimientoFinanciero[]       @relation("MovimientoCancelado")
+  movimientosResponsable       MovimientoFinanciero[]       @relation("MovimientoResponsable")
+  cuentasFinancierasCreadas    CuentaFinanciera[]           @relation("CuentaFinancieraCreador")
+  honorariosReconocidos        HonorarioGenerado[]          @relation("HonorarioGeneradoActor")
+  honorariosResponsable        HonorarioGenerado[]          @relation("HonorarioGeneradoResponsable")
+  comprobantesRegistrados      ComprobanteFinanciero[]      @relation("ComprobanteRegistrador")
+  comprobantesAnulados         ComprobanteFinanciero[]      @relation("ComprobanteAnulador")
+  transaccionesBancoImportadas TransaccionEstadoCuenta[]    @relation("TransaccionBancoImportador")
+  conciliacionesRegistradas    ConciliacionFinanciera[]     @relation("ConciliacionActor")
   expedienteActividades        ExpedienteActividad[]
   tareasAsignadas              Tarea[]                      @relation("TareaAsignado")
   tareasCreadas                Tarea[]                      @relation("TareaCreador")
@@ -256,10 +266,12 @@ model Notaria {
   created_at  DateTime  @default(now())
   updated_at  DateTime  @updatedAt
 
-  contactos             NotariaContacto[]
-  cotizaciones          Cotizacion[]
-  expedientes           Expediente[]
-  plantillaDocumentales PlantillaDocumentalVersion[]
+  contactos              NotariaContacto[]
+  cotizaciones           Cotizacion[]
+  expedientes            Expediente[]
+  plantillaDocumentales  PlantillaDocumentalVersion[]
+  movimientosFinancieros MovimientoFinanciero[]
+  honorariosGenerados    HonorarioGenerado[]
 
   @@map("notarias")
 }
@@ -322,6 +334,7 @@ model Cotizacion {
   cotizacionDocumentos   CotizacionDocumento[]
   pagos                  Pago[]
   movimientosFinancieros MovimientoFinanciero[]
+  honorariosGenerados    HonorarioGenerado[]
   seguimientos           CotizacionSeguimiento[]
 
   @@map("cotizaciones")
@@ -356,7 +369,8 @@ model CotizacionVersion {
   created_at          DateTime @default(now())
   creada_por_id       String?  @db.Uuid
 
-  cotizacion Cotizacion @relation(fields: [cotizacion_id], references: [id], onDelete: Cascade)
+  cotizacion          Cotizacion          @relation(fields: [cotizacion_id], references: [id], onDelete: Cascade)
+  honorariosGenerados HonorarioGenerado[]
 
   @@unique([cotizacion_id, version])
   @@map("cotizacion_versiones")
@@ -622,6 +636,7 @@ model Expediente {
   expedienteDocumentos       ExpedienteDocumento[]
   pagos                      Pago[]
   movimientosFinancieros     MovimientoFinanciero[]
+  honorariosGenerados        HonorarioGenerado[]
   comunicaciones             Comunicacion[]
   tareas                     Tarea[]
   actividades                ExpedienteActividad[]
@@ -1035,10 +1050,11 @@ model Compareciente {
   representacionesComoRepresentado  ExpedienteRepresentacion[] @relation("RepresentadoExpediente")
   documentosDirectos                Documento[]
 
-  datosFuente           ComparecienteDatoFuente[]
-  aliases               ComparecienteAlias[]
-  actividadesEconomicas ComparecienteActividadEconomica[]
-  eventosAgenda         EventoAgenda[]
+  datosFuente            ComparecienteDatoFuente[]
+  aliases                ComparecienteAlias[]
+  actividadesEconomicas  ComparecienteActividadEconomica[]
+  eventosAgenda          EventoAgenda[]
+  movimientosFinancieros MovimientoFinanciero[]
 
   @@index([nombre_busqueda])
   @@index([tipo_persona])
@@ -1446,17 +1462,26 @@ enum RequisitoDocEstatus {
 
 model MovimientoFinanciero {
   id               String               @id @default(uuid()) @db.Uuid
+  folio            String?              @unique
   expediente_id    String?              @db.Uuid
   cotizacion_id    String?              @db.Uuid
+  compareciente_id String?              @db.Uuid
+  notaria_id       String?              @db.Uuid
+  responsable_id   String?              @db.Uuid
+  cuenta_id        String?              @db.Uuid
   tipo_movimiento  TipoMovimiento
   naturaleza       NaturalezaMovimiento
   categoria        String
   concepto         String
+  descripcion      String?
   monto            Decimal              @db.Decimal(14, 2)
   fecha_movimiento DateTime             @default(now())
+  fecha_registro   DateTime             @default(now())
+  updated_at       DateTime             @default(now()) @updatedAt
   forma_pago       String?
   cuenta_receptora String?
   referencia       String?
+  idempotency_key  String?              @unique
   comprobante_url  String?
   factura_url      String?
   estatus          EstatusMovimiento    @default(PENDIENTE)
@@ -1468,17 +1493,37 @@ model MovimientoFinanciero {
   motivo_reversion     String?
   revertido_por_id     String?   @db.Uuid
   fecha_reversion      DateTime?
+  aplicado_por_id      String?   @db.Uuid
+  fecha_aplicacion     DateTime?
+  cancelado_por_id     String?   @db.Uuid
+  fecha_cancelacion    DateTime?
+  motivo_cancelacion   String?
 
-  expediente    Expediente? @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
-  cotizacion    Cotizacion? @relation(fields: [cotizacion_id], references: [id], onDelete: SetNull)
-  capturado_por User        @relation("MovimientoCapturado", fields: [capturado_por_id], references: [id], onDelete: Restrict)
-  validado_por  User?       @relation("MovimientoValidado", fields: [validado_por_id], references: [id], onDelete: SetNull)
-  revertido_por User?       @relation("MovimientoRevertido", fields: [revertido_por_id], references: [id], onDelete: SetNull)
+  expediente    Expediente?       @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  cotizacion    Cotizacion?       @relation(fields: [cotizacion_id], references: [id], onDelete: SetNull)
+  compareciente Compareciente?    @relation(fields: [compareciente_id], references: [id], onDelete: SetNull)
+  notaria       Notaria?          @relation(fields: [notaria_id], references: [id], onDelete: SetNull)
+  responsable   User?             @relation("MovimientoResponsable", fields: [responsable_id], references: [id], onDelete: SetNull)
+  cuenta        CuentaFinanciera? @relation(fields: [cuenta_id], references: [id], onDelete: Restrict)
+  capturado_por User              @relation("MovimientoCapturado", fields: [capturado_por_id], references: [id], onDelete: Restrict)
+  validado_por  User?             @relation("MovimientoValidado", fields: [validado_por_id], references: [id], onDelete: SetNull)
+  revertido_por User?             @relation("MovimientoRevertido", fields: [revertido_por_id], references: [id], onDelete: SetNull)
+  aplicado_por  User?             @relation("MovimientoAplicado", fields: [aplicado_por_id], references: [id], onDelete: SetNull)
+  cancelado_por User?             @relation("MovimientoCancelado", fields: [cancelado_por_id], references: [id], onDelete: SetNull)
 
-  movimientoOrigen     MovimientoFinanciero?  @relation("MovimientoReversoRel", fields: [movimiento_origen_id], references: [id], onDelete: Restrict)
-  reversosGenerados    MovimientoFinanciero[] @relation("MovimientoReversoRel")
+  movimientoOrigen     MovimientoFinanciero?    @relation("MovimientoReversoRel", fields: [movimiento_origen_id], references: [id], onDelete: Restrict)
+  reversosGenerados    MovimientoFinanciero[]   @relation("MovimientoReversoRel")
   movimientoDocumentos MovimientoDocumento[]
+  distribuciones       MovimientoDistribucion[]
+  comprobanteInterno   ComprobanteFinanciero?
+  conciliaciones       ConciliacionFinanciera[]
 
+  @@index([fecha_movimiento, estatus])
+  @@index([naturaleza, estatus])
+  @@index([expediente_id, fecha_movimiento])
+  @@index([cuenta_id, fecha_movimiento])
+  @@index([notaria_id, fecha_movimiento])
+  @@index([responsable_id, fecha_movimiento])
   @@map("movimientos_financieros")
 }
 
@@ -1500,12 +1545,220 @@ enum NaturalezaMovimiento {
 }
 
 enum EstatusMovimiento {
+  BORRADOR
   PENDIENTE
+  PENDIENTE_COMPROBANTE
+  LISTO_APLICAR
+  APLICADO
   RECIBIDO
   VALIDADO
   RECHAZADO
   REVERTIDO
   CANCELADO
+}
+
+enum NaturalezaCategoriaFinanciera {
+  DESPACHO
+  TERCERO
+  EGRESO_DESPACHO
+  TRANSFERENCIA_INTERNA
+  OTRO
+}
+
+enum DireccionCategoriaFinanciera {
+  INGRESO
+  EGRESO
+  AMBAS
+}
+
+model CategoriaFinanciera {
+  id         String                        @id @default(uuid()) @db.Uuid
+  clave      String                        @unique
+  nombre     String
+  naturaleza NaturalezaCategoriaFinanciera
+  direccion  DireccionCategoriaFinanciera  @default(AMBAS)
+  activa     Boolean                       @default(true)
+  orden      Int                           @default(0)
+  created_at DateTime                      @default(now())
+  updated_at DateTime                      @updatedAt
+
+  distribuciones MovimientoDistribucion[]
+
+  @@index([activa, orden])
+  @@map("categorias_financieras")
+}
+
+model CuentaFinanciera {
+  id             String   @id @default(uuid()) @db.Uuid
+  institucion    String
+  alias          String
+  tipo           String
+  ultimos_cuatro String?
+  moneda         String   @default("MXN")
+  activa         Boolean  @default(true)
+  predeterminada Boolean  @default(false)
+  saldo_inicial  Decimal  @default(0) @db.Decimal(14, 2)
+  creada_por_id  String   @db.Uuid
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  creada_por         User                      @relation("CuentaFinancieraCreador", fields: [creada_por_id], references: [id], onDelete: Restrict)
+  movimientos        MovimientoFinanciero[]
+  transaccionesBanco TransaccionEstadoCuenta[]
+
+  @@unique([institucion, alias])
+  @@index([activa, predeterminada])
+  @@map("cuentas_financieras")
+}
+
+enum EstadoHonorarioGenerado {
+  RECONOCIDO
+  AJUSTADO
+  CANCELADO
+}
+
+model HonorarioGenerado {
+  id                    String                  @id @default(uuid()) @db.Uuid
+  clave_origen          String                  @unique
+  cotizacion_id         String                  @db.Uuid
+  cotizacion_version_id String                  @db.Uuid
+  expediente_id         String?                 @db.Uuid
+  notaria_id            String?                 @db.Uuid
+  responsable_id        String?                 @db.Uuid
+  monto                 Decimal                 @db.Decimal(14, 2)
+  fecha_reconocimiento  DateTime                @default(now())
+  fecha_vencimiento     DateTime?
+  evento_reconocimiento String                  @default("COTIZACION_ACEPTADA")
+  estado                EstadoHonorarioGenerado @default(RECONOCIDO)
+  reconocido_por_id     String                  @db.Uuid
+  created_at            DateTime                @default(now())
+  updated_at            DateTime                @updatedAt
+
+  cotizacion        Cotizacion               @relation(fields: [cotizacion_id], references: [id], onDelete: Restrict)
+  cotizacionVersion CotizacionVersion        @relation(fields: [cotizacion_version_id], references: [id], onDelete: Restrict)
+  expediente        Expediente?              @relation(fields: [expediente_id], references: [id], onDelete: SetNull)
+  notaria           Notaria?                 @relation(fields: [notaria_id], references: [id], onDelete: SetNull)
+  responsable       User?                    @relation("HonorarioGeneradoResponsable", fields: [responsable_id], references: [id], onDelete: SetNull)
+  reconocido_por    User                     @relation("HonorarioGeneradoActor", fields: [reconocido_por_id], references: [id], onDelete: Restrict)
+  distribuciones    MovimientoDistribucion[]
+
+  @@unique([cotizacion_id])
+  @@index([expediente_id])
+  @@index([fecha_reconocimiento, estado])
+  @@index([responsable_id, notaria_id])
+  @@map("honorarios_generados")
+}
+
+model MovimientoDistribucion {
+  id                    String   @id @default(uuid()) @db.Uuid
+  movimiento_id         String   @db.Uuid
+  categoria_id          String   @db.Uuid
+  honorario_generado_id String?  @db.Uuid
+  monto                 Decimal  @db.Decimal(14, 2)
+  observaciones         String?
+  created_at            DateTime @default(now())
+
+  movimiento        MovimientoFinanciero @relation(fields: [movimiento_id], references: [id], onDelete: Restrict)
+  categoria         CategoriaFinanciera  @relation(fields: [categoria_id], references: [id], onDelete: Restrict)
+  honorarioGenerado HonorarioGenerado?   @relation(fields: [honorario_generado_id], references: [id], onDelete: SetNull)
+
+  @@index([movimiento_id])
+  @@index([categoria_id])
+  @@index([honorario_generado_id])
+  @@map("movimiento_distribuciones")
+}
+
+enum EstadoComprobanteFinanciero {
+  VIGENTE
+  ANULADO
+}
+
+model ComprobanteFinanciero {
+  id                String                      @id @default(uuid()) @db.Uuid
+  folio             String                      @unique
+  movimiento_id     String                      @unique @db.Uuid
+  tipo              NaturalezaMovimiento
+  fecha             DateTime                    @default(now())
+  importe           Decimal                     @db.Decimal(14, 2)
+  concepto          String
+  persona           String?
+  forma_pago        String?
+  cuenta_snapshot   Json?
+  observaciones     String?
+  snapshot          Json
+  estado            EstadoComprobanteFinanciero @default(VIGENTE)
+  registrado_por_id String                      @db.Uuid
+  anulado_por_id    String?                     @db.Uuid
+  fecha_anulacion   DateTime?
+  motivo_anulacion  String?
+  created_at        DateTime                    @default(now())
+
+  movimiento     MovimientoFinanciero @relation(fields: [movimiento_id], references: [id], onDelete: Restrict)
+  registrado_por User                 @relation("ComprobanteRegistrador", fields: [registrado_por_id], references: [id], onDelete: Restrict)
+  anulado_por    User?                @relation("ComprobanteAnulador", fields: [anulado_por_id], references: [id], onDelete: SetNull)
+
+  @@index([fecha, tipo])
+  @@map("comprobantes_financieros")
+}
+
+enum EstadoTransaccionBanco {
+  PENDIENTE
+  CONCILIADA
+  IGNORADA
+}
+
+model TransaccionEstadoCuenta {
+  id               String                 @id @default(uuid()) @db.Uuid
+  cuenta_id        String                 @db.Uuid
+  fecha            DateTime
+  importe          Decimal                @db.Decimal(14, 2)
+  descripcion      String
+  referencia       String?
+  fingerprint      String                 @unique
+  fuente           String                 @default("MANUAL")
+  estado           EstadoTransaccionBanco @default(PENDIENTE)
+  importado_por_id String                 @db.Uuid
+  created_at       DateTime               @default(now())
+
+  cuenta         CuentaFinanciera         @relation(fields: [cuenta_id], references: [id], onDelete: Restrict)
+  importado_por  User                     @relation("TransaccionBancoImportador", fields: [importado_por_id], references: [id], onDelete: Restrict)
+  conciliaciones ConciliacionFinanciera[]
+
+  @@index([cuenta_id, fecha, estado])
+  @@map("transacciones_estado_cuenta")
+}
+
+enum EstadoConciliacionFinanciera {
+  SUGERIDA
+  CONCILIADA
+  RECHAZADA
+}
+
+enum MetodoConciliacionFinanciera {
+  EXACTA
+  SUGERIDA
+  MANUAL
+}
+
+model ConciliacionFinanciera {
+  id                      String                       @id @default(uuid()) @db.Uuid
+  movimiento_id           String                       @db.Uuid
+  transaccion_bancaria_id String                       @db.Uuid
+  estado                  EstadoConciliacionFinanciera @default(SUGERIDA)
+  metodo                  MetodoConciliacionFinanciera
+  score                   Int?
+  justificacion           String?
+  conciliado_por_id       String?                      @db.Uuid
+  fecha_conciliacion      DateTime?
+  created_at              DateTime                     @default(now())
+
+  movimiento          MovimientoFinanciero    @relation(fields: [movimiento_id], references: [id], onDelete: Restrict)
+  transaccionBancaria TransaccionEstadoCuenta @relation(fields: [transaccion_bancaria_id], references: [id], onDelete: Restrict)
+  conciliado_por      User?                   @relation("ConciliacionActor", fields: [conciliado_por_id], references: [id], onDelete: SetNull)
+
+  @@unique([movimiento_id, transaccion_bancaria_id])
+  @@index([estado, created_at])
+  @@map("conciliaciones_financieras")
 }
 
 model Pago {

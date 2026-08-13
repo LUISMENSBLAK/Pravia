@@ -83,7 +83,7 @@ export function calculateFinancialPosition(input: {
   // Un reverso compensa un movimiento que ya dejó de estar activo. Por ello el
   // renglón técnico REVERSO también se excluye de los saldos operativos.
   const active = input.movements.filter(
-    (movement) => ['VALIDADO', 'RECIBIDO'].includes(movement.estatus) && movement.categoria !== 'REVERSO',
+    (movement) => ['APLICADO', 'VALIDADO', 'RECIBIDO'].includes(movement.estatus) && movement.categoria !== 'REVERSO',
   );
   const ingresosCliente = active
     .filter((movement) => movement.naturaleza === 'INGRESO')
