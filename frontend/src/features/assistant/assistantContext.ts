@@ -34,10 +34,10 @@ const actions: Partial<Record<AssistantModule, AssistantAction[]>> = {
     { id: 'today-finance', label: 'Resumen financiero', prompt: 'Muéstrame el resumen financiero disponible.' },
   ],
   expedientes: [
-    { id: 'file-missing', label: '¿Qué falta?', prompt: '¿Qué falta en este expediente?' },
-    { id: 'file-summary', label: 'Resumen', prompt: 'Resume este expediente.' },
-    { id: 'file-documents', label: 'Documentos', prompt: 'Revisa los documentos de este expediente.' },
-    { id: 'file-next', label: 'Próximos pasos', prompt: '¿Cuáles son los próximos pasos?' },
+    { id: 'files-urgent', label: '¿Qué urge?', prompt: '¿Qué expedientes requieren atención?' },
+    { id: 'files-blocked', label: 'Expedientes bloqueados', prompt: 'Muéstrame los expedientes bloqueados.' },
+    { id: 'files-signatures', label: 'Próximas firmas', prompt: 'Muéstrame las próximas firmas de expedientes.' },
+    { id: 'files-search', label: 'Buscar expediente', prompt: 'Ayúdame a buscar un expediente.' },
   ],
   comparecientes: [
     { id: 'person-missing', label: '¿Qué falta?', prompt: '¿Qué falta para este compareciente?' },
@@ -87,7 +87,16 @@ const quoteDetailActions: AssistantAction[] = [
   { id: 'quote-next', label: 'Próximo paso', prompt: '¿Cuál es el próximo paso para esta cotización?' },
 ];
 
-export const getAssistantActions = (context: AssistantContext) => context.entityType === 'prospecto'
+const expedienteDetailActions: AssistantAction[] = [
+  { id: 'file-missing', label: '¿Qué falta?', prompt: '¿Qué falta en este expediente?' },
+  { id: 'file-summary', label: 'Resumen', prompt: 'Resume este expediente.' },
+  { id: 'file-documents', label: 'Documentos pendientes', prompt: 'Revisa los documentos pendientes de este expediente.' },
+  { id: 'file-next', label: 'Próximos pasos', prompt: '¿Cuáles son los próximos pasos de este expediente?' },
+];
+
+export const getAssistantActions = (context: AssistantContext) => context.entityType === 'expediente'
+  ? expedienteDetailActions
+  : context.entityType === 'prospecto'
   ? prospectDetailActions
   : context.entityType === 'cotizacion'
     ? quoteDetailActions

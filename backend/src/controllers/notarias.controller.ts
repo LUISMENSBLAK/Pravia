@@ -27,7 +27,9 @@ const normalizeEmail = (value: unknown, field: string) => {
 // 1. GET ALL NOTARIAS WITH SEARCH & FILTER
 export const getNotarias = async (req: Request, res: Response) => {
   try {
-    const { search, activa, predeterminada } = req.query;
+    const { search, activa, predeterminada, paginated } = req.query;
+    const page = Math.max(1, Number.parseInt(String(req.query.page || '1'), 10) || 1);
+    const limit = Math.min(100, Math.max(1, Number.parseInt(String(req.query.limit || req.query.pageSize || '25'), 10) || 25));
 
     const whereClause: any = {
       archived_at: null
@@ -52,28 +54,27 @@ export const getNotarias = async (req: Request, res: Response) => {
       ];
     }
 
-    const notarias = await prisma.notaria.findMany({
+    const options = {
       where: whereClause,
       include: {
-        contactos: {
-          orderBy: { created_at: 'asc' }
-        },
-        _count: {
-          select: {
-            cotizaciones: true,
-            expedientes: true
-          }
-        }
+        contactos: { orderBy: { created_at: 'asc' as const } },
+        _count: { select: { cotizaciones: true, expedientes: true } },
       },
       orderBy: [
-        { predeterminada: 'desc' },
-        { activa: 'desc' },
-        { numero_notaria: 'asc' },
-        { nombre: 'asc' }
-      ]
-    });
-
-    res.json(notarias);
+        { predeterminada: 'desc' as const },
+        { activa: 'desc' as const },
+        { numero_notaria: 'asc' as const },
+        { nombre: 'asc' as const },
+      ],
+    };
+    if (String(paginated) === 'true') {
+      const [notarias, total] = await Promise.all([
+        prisma.notaria.findMany({ ...options, skip: (page - 1) * limit, take: limit }),
+        prisma.notaria.count({ where: whereClause }),
+      ]);
+      return res.json({ data: notarias, meta: { total, page, limit, totalPages: Math.max(1, Math.ceil(total / limit)) } });
+    }
+    res.json(await prisma.notaria.findMany(options));
   } catch (error: any) {
     res.status(500).json({ error: 'Error al consultar catálogo de notarías', detail: error.message });
   }

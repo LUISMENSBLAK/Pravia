@@ -10,8 +10,10 @@ import { ProspectsPage } from '../features/prospects/ProspectsPage';
 import { ProspectDetailPage } from '../features/prospects/ProspectDetailPage';
 import { QuotesPage } from '../features/quotes/QuotesPage';
 import { QuoteDetailPage } from '../features/quotes/QuoteDetailPage';
+import { ExpedientesPage } from '../features/cases/ExpedientesPage';
+import { ExpedienteWorkspace } from '../features/cases/ExpedienteWorkspace';
 
-const modulePaths = ['expedientes', 'notarias', 'comparecientes', 'finanzas', 'agenda', 'reportes', 'riesgos', 'configuracion'];
+const modulePaths = ['notarias', 'comparecientes', 'finanzas', 'agenda', 'reportes', 'riesgos', 'configuracion'];
 
 export function App() {
   return (
@@ -26,7 +28,8 @@ export function App() {
             <Route path="/prospectos/:id" element={<ProspectDetailPage />} />
             <Route path="/cotizaciones" element={<QuotesPage />} />
             <Route path="/cotizaciones/:id" element={<QuoteDetailPage />} />
-            <Route path="/expedientes/:id" element={<ModulePlaceholder />} />
+            <Route path="/expedientes" element={<ExpedientesPage />} />
+            <Route path="/expedientes/:id" element={<ExpedienteWorkspace />} />
             {modulePaths.map((path) => <Route key={path} path={`/${path}`} element={<ModulePlaceholder />} />)}
           </Route>
         </Route>

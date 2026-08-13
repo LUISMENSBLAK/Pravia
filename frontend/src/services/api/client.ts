@@ -103,6 +103,8 @@ export const apiRequest = async <T>(path: string, options: RequestOptions = {}):
   if (!response.ok) {
     const message = typeof payload === 'object' && payload && 'message' in payload
       ? String((payload as { message: unknown }).message)
+      : typeof payload === 'object' && payload && 'error' in payload
+        ? String((payload as { error: unknown }).error)
       : 'No fue posible completar la solicitud.';
     throw new ApiError(message, response.status, payload);
   }

@@ -1,0 +1,5 @@
+import { FileText, History, RefreshCw } from 'lucide-react';
+import type { ExpedienteDetail } from '../../expedientes.types';
+import { dateTime, fullName } from '../../expedienteFormatters';
+import styles from '../../Expedientes.module.css';
+export function ActivityTab({ expediente }: { expediente: ExpedienteDetail }) { const activities = expediente.actividades || []; return <section className={styles.sectionCard}><header><div><h2>Actividad</h2><p>Eventos operativos registrados en el expediente.</p></div></header>{activities.length ? <ol className={styles.activityList}>{activities.map((item: any) => { const Icon = item.tipo === 'DOCUMENTO' ? FileText : item.tipo === 'CAMBIO_ESTATUS' ? RefreshCw : History; return <li key={item.id}><span><Icon size={17} /></span><div><strong>{item.titulo}</strong><p>{item.descripcion}</p><small>{fullName(item.usuario)} · {dateTime(item.created_at)}</small></div></li>; })}</ol> : <p className={styles.sectionEmpty}>No hay actividad registrada.</p>}</section>; }

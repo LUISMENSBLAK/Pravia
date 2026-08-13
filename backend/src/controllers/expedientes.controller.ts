@@ -19,10 +19,15 @@ import {
   validateMovementSemantics,
 } from '../domain/financialLedger';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
-import { reserveExpedienteFolio } from '../services/expedienteFolio.service';
 import { canAccessCotizacion } from '../services/objectAccess.service';
+import { complianceAttention, complianceLabel, macrophaseForStatus, parseExpedienteQuery } from '../domain/expedienteReadModel';
+import { ExpedienteReadService } from '../services/expedienteRead.service';
+import { ExpedienteOpeningError, ExpedienteOpeningService } from '../services/expedienteOpening.service';
+import { buildExpedienteReadiness } from '../services/expedienteReadiness.service';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
+const expedienteReadService = new ExpedienteReadService(prisma);
+const expedienteOpeningService = new ExpedienteOpeningService(prisma);
 
 async function assertRequestExpedienteScope(req: Request, expedienteId: string) {
   if (!req.user) throw new ExpedienteUpdateError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
@@ -69,86 +74,10 @@ class ExpedienteUpdateError extends Error {
 // 1. Listar Expedientes con Filtros y Paginación
 export const getExpedientes = async (req: Request, res: Response) => {
   try {
-    const { estatus, abogado_id, tipo_acto_id, search, limit = 50, page = 1 } = req.query;
-
-    const where: any = {
-      archived_at: null,
-      AND: req.user ? [expedienteAccessWhere(req.user)] : [],
-    };
-
-    if (estatus) {
-      where.estatus = estatus as ExpedienteEstatus;
-    }
-
-    if (abogado_id) {
-      where.abogado_id = String(abogado_id);
-    }
-
-    if (tipo_acto_id) {
-      where.tipo_acto_id = String(tipo_acto_id);
-    }
-
-    if (search) {
-      const searchStr = String(search).trim();
-      where.AND.push({ OR: [
-        { numero_pravia: { contains: searchStr, mode: 'insensitive' } },
-        { numero_notaria: { contains: searchStr, mode: 'insensitive' } },
-        { cliente_alias: { contains: searchStr, mode: 'insensitive' } }
-      ] });
-    }
-
-    const take = Number(limit);
-    const skip = (Number(page) - 1) * take;
-
-    const [expedientes, total] = await Promise.all([
-      prisma.expediente.findMany({
-        where,
-        take,
-        skip,
-        orderBy: { updated_at: 'desc' },
-        include: {
-          tipo_acto: { select: { id: true, nombre: true } },
-          abogado: { select: { id: true, nombre: true, apellido: true } },
-          etapaActual: { select: { id: true, nombre_snapshot: true, fecha_inicio: true } },
-          _count: {
-            select: {
-              comparecientes: true,
-              requisitos_docs: true,
-              movimientosFinancieros: true
-            }
-          }
-        }
-      }),
-      prisma.expediente.count({ where })
-    ]);
-
-    const canReadFinance = req.user?.permissions.includes('finanzas.read');
-    const operationalRole = req.user && ['RECEPCION', 'GESTORIA'].includes(req.user.rol);
-    res.json({
-      data: expedientes.map((item) => operationalRole ? {
-        id: item.id,
-        numero_pravia: item.numero_pravia,
-        numero_notaria: item.numero_notaria,
-        cliente_alias: item.cliente_alias,
-        estatus: item.estatus,
-        version: item.version,
-        etapa_actual_nombre: item.etapa_actual_nombre,
-        proxima_accion: item.proxima_accion,
-        fecha_limite_accion: item.fecha_limite_accion,
-        updated_at: item.updated_at,
-        tipo_acto: item.tipo_acto,
-        etapaActual: item.etapaActual,
-        requisitos_count: item._count.requisitos_docs,
-      } : canReadFinance ? item : { ...item, valor_operacion: null, _count: { ...item._count, movimientosFinancieros: 0 } }),
-      meta: {
-        total,
-        page: Number(page),
-        limit: take,
-        totalPages: Math.ceil(total / take)
-      }
-    });
+    if (!req.user) return res.status(401).json({ error: 'Inicia sesión para continuar.', code: 'AUTH_REQUIRED' });
+    return res.json(await expedienteReadService.list(req.user, parseExpedienteQuery(req.query)));
   } catch (error: any) {
-    res.status(500).json({ error: 'Error al listar expedientes', detail: error.message });
+    res.status(500).json({ error: 'No pudimos cargar los expedientes.', code: 'EXPEDIENTE_LIST_FAILED' });
   }
 };
 
@@ -185,6 +114,7 @@ export const getExpedienteById = async (req: Request, res: Response) => {
             caracter: true
           }
         },
+        expedienteRepresentaciones: true,
         requisitos_docs: {
           include: {
             documentoVinculos: {
@@ -194,7 +124,7 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         },
         expedienteDocumentos: {
           where: { estatus: 'ACTIVO' },
-          include: { documento: true }
+          include: { documento: { include: { subido_por: { select: { id: true, nombre: true, apellido: true } } } } }
         },
         movimientosFinancieros: {
           where: { estatus: { notIn: ['CANCELADO', 'REVERTIDO'] } },
@@ -220,6 +150,11 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         },
         tareas_externas: { orderBy: { updated_at: 'desc' } },
         entrega: true,
+        complianceReviews: {
+          orderBy: { updated_at: 'desc' },
+          take: 20,
+          include: { ruleSet: { select: { nombre: true, tipo: true, version: true } }, evidencias: true },
+        },
       }
     });
 
@@ -256,7 +191,19 @@ export const getExpedienteById = async (req: Request, res: Response) => {
     ) || null;
 
     const canReadFinance = req.user?.permissions.includes('finanzas.read');
-    const progress = await calculateExpedienteProgress(id);
+    const [progress, currentProjectCount] = await Promise.all([
+      calculateExpedienteProgress(id),
+      prisma.expedienteDocumento.count({ where: { expediente_id: id, estatus: 'ACTIVO', tipo_vinculo: 'PROYECTO_ESCRITURA', documento: { tipo: 'PROYECTO_ESCRITURA', estatus: { not: 'RECHAZADO' } } } }),
+    ]);
+    const readiness = buildExpedienteReadiness(expediente, currentProjectCount > 0);
+    const capabilities = {
+      canWrite: Boolean(req.user?.permissions.includes('expedientes.write')),
+      canDeliver: Boolean(req.user?.permissions.includes('expedientes.deliver')),
+      canManagePostfirma: Boolean(req.user?.permissions.includes('expedientes.postfirma.manage')),
+      canReadProject: Boolean(req.user?.permissions.includes('expedientes.project.read')),
+      canReadFinance: Boolean(req.user?.permissions.includes('finanzas.read')),
+      canUploadDocuments: Boolean(req.user?.permissions.includes('documentos.write')),
+    };
     if (req.user && ['RECEPCION', 'GESTORIA'].includes(req.user.rol)) {
       const isReception = req.user.rol === 'RECEPCION';
       const permittedTransitions = transitions.filter((item) => isReception
@@ -273,6 +220,10 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         proxima_accion: expediente.proxima_accion,
         fecha_limite_accion: expediente.fecha_limite_accion,
         updated_at: expediente.updated_at,
+        macrofase: macrophaseForStatus(expediente.estatus),
+        cliente_principal: expediente.cliente_alias || 'Sin cliente',
+        comparecientes_adicionales: Math.max(0, expediente.comparecientes.length - 1),
+        riesgo: { label: complianceLabel(expediente.complianceReviews[0]?.resultado_json), requires_attention: complianceAttention(expediente.complianceReviews[0]?.resultado_json) },
         tipo_acto: { id: expediente.tipo_acto.id, nombre: expediente.tipo_acto.nombre },
         notaria: isReception || !expediente.notaria ? null : {
           id: expediente.notaria.id,
@@ -300,10 +251,19 @@ export const getExpedienteById = async (req: Request, res: Response) => {
           next_stage: nextStage,
         },
         progress: { documental: progress.documental, operativo: progress.operativo, general: progress.general },
+        readiness,
+        capabilities,
       });
     }
     res.json({
       ...expediente,
+      macrofase: macrophaseForStatus(expediente.estatus),
+      cliente_principal: expediente.comparecientes[0]?.compareciente.personaFisica?.nombre_completo_calculado
+        || expediente.comparecientes[0]?.compareciente.personaMoral?.razon_social
+        || expediente.cliente_alias
+        || 'Sin cliente',
+      comparecientes_adicionales: Math.max(0, expediente.comparecientes.length - 1),
+      riesgo: { label: complianceLabel(expediente.complianceReviews[0]?.resultado_json), requires_attention: complianceAttention(expediente.complianceReviews[0]?.resultado_json) },
       ...(canReadFinance ? {} : { valor_operacion: null, movimientosFinancieros: [], financial_access: false }),
       workflow: {
         current_status_label: EXPEDIENTE_STATUS_LABELS[expediente.estatus],
@@ -312,6 +272,8 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         stages: workflowStages,
       },
       progress,
+      readiness,
+      capabilities,
     });
   } catch (error: any) {
     res.status(500).json({ error: 'Error al obtener detalle del expediente', detail: error.message });
@@ -325,8 +287,9 @@ export const createExpediente = async (req: Request, res: Response) => {
       tipo_acto_id,
       abogado_id,
       cliente_alias,
+      compareciente_id,
+      caracter_id,
       descripcion,
-      valor_operacion,
       notaria_id,
       datos_operacion
     } = req.body;
@@ -335,97 +298,24 @@ export const createExpediente = async (req: Request, res: Response) => {
     if (!creador_id) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
     const assignedLawyerId = req.user?.rol === 'ABOGADO' ? req.user.id : abogado_id;
 
-    if (!tipo_acto_id || !assignedLawyerId || !cliente_alias) {
-      return res.status(400).json({ error: 'Campos obligatorios requeridos: tipo_acto_id, abogado_id, cliente_alias' });
-    }
-
-    // Buscar versiones vigentes del TipoActo
-    const [tipoActo, formVer, flujoVer, plantDocVer] = await Promise.all([
-      prisma.tipoActo.findUnique({ where: { id: tipo_acto_id } }),
-      prisma.formularioVersion.findFirst({ where: { tipo_acto_id }, orderBy: { version: 'desc' } }),
-      prisma.flujoVersion.findFirst({ where: { tipo_acto_id }, orderBy: { version: 'desc' } }),
-      prisma.plantillaDocumentalVersion.findFirst({ where: { tipo_acto_id }, orderBy: { version: 'desc' } })
-    ]);
-
-    if (!tipoActo) {
-      return res.status(404).json({ error: 'TipoActo no encontrado' });
-    }
-
-    const expediente = await prisma.$transaction(async (tx) => {
-      const numero_pravia = await reserveExpedienteFolio(tx);
-      const exp = await tx.expediente.create({
-        data: {
-          numero_pravia,
-          tipo_acto_id,
-          formulario_version_id: formVer?.id,
-          flujo_version_id: flujoVer?.id,
-          plantilla_doc_version_id: plantDocVer?.id,
-          abogado_id: assignedLawyerId,
-          creador_id,
-          cliente_alias,
-          descripcion,
-          valor_operacion: valor_operacion ? Number(valor_operacion) : null,
-          notaria_id,
-          datos_operacion,
-          estatus: 'ABIERTO'
-        }
-      });
-
-      // Crear primera etapa del flujo si existe versión
-      if (flujoVer && Array.isArray(flujoVer.etapas_json) && flujoVer.etapas_json.length > 0) {
-        const primera = (flujoVer.etapas_json as any[])[0];
-        const etapaInstancia = await tx.expedienteEtapa.create({
-          data: {
-            expediente_id: exp.id,
-            flujo_version_id: flujoVer.id,
-            clave_snapshot: primera.clave,
-            nombre_snapshot: primera.nombre,
-            orden_snapshot: primera.orden || 1,
-            duracion_esperada_snapshot: primera.dias || 3,
-            responsable_id: assignedLawyerId
-          }
-        });
-
-        await tx.expediente.update({
-          where: { id: exp.id },
-          data: {
-            expediente_etapa_actual_id: etapaInstancia.id,
-            etapa_actual_nombre: primera.nombre
-          }
-        });
-      }
-
-      // Crear requisitos documentales iniciales si existen
-      if (plantDocVer && Array.isArray(plantDocVer.requisitos_json)) {
-        for (const reqItem of (plantDocVer.requisitos_json as any[])) {
-          await tx.expedienteRequisitoDoc.create({
-            data: {
-              expediente_id: exp.id,
-              nombre: reqItem.nombre,
-              categoria: reqItem.categoria || 'PROYECTO',
-              obligatorio: reqItem.obligatorio ?? true
-            }
-          });
-        }
-      }
-
-      // Registrar Actividad
-      await tx.expedienteActividad.create({
-        data: {
-          expediente_id: exp.id,
-          usuario_id: creador_id,
-          tipo: 'CAMBIO_ESTATUS',
-          titulo: 'Apertura de Expediente',
-          descripcion: `Expediente aperturado exitosamente con folio ${exp.numero_pravia}`
-        }
-      });
-
-      return exp;
+    const expediente = await expedienteOpeningService.open({
+      tipoActoId: String(tipo_acto_id || ''),
+      abogadoId: String(assignedLawyerId || ''),
+      actorUserId: creador_id,
+      clienteAlias: String(cliente_alias || ''),
+      notariaId: notaria_id ? String(notaria_id) : null,
+      comparecienteId: compareciente_id ? String(compareciente_id) : null,
+      caracterId: caracter_id ? String(caracter_id) : null,
+      descripcion: descripcion ? String(descripcion) : null,
+      datosOperacion: datos_operacion,
+      correlationId: (req as any).correlationId,
+      source: 'DIRECTO',
     });
 
     res.status(201).json(expediente);
   } catch (error: any) {
-    res.status(500).json({ error: 'Error al crear expediente', detail: error.message });
+    const status = error instanceof ExpedienteOpeningError ? error.status : 500;
+    res.status(status).json({ error: error instanceof ExpedienteOpeningError ? error.message : 'No pudimos crear el expediente.', code: error.code || 'EXPEDIENTE_OPEN_FAILED' });
   }
 };
 
@@ -1910,8 +1800,15 @@ export const downloadMovimientoAdjunto = async (req: Request, res: Response) => 
 export const getTiposActo = async (req: Request, res: Response) => {
   try {
     const tipos = await prisma.tipoActo.findMany({
-      where: { activo: true },
-      orderBy: { nombre: 'asc' }
+      where: { activo: true, archived_at: null },
+      orderBy: { nombre: 'asc' },
+      include: {
+        tipoActoCaracteresCompareciente: {
+          where: { caracter: { activo: true } },
+          include: { caracter: true },
+          orderBy: [{ sugerido: 'desc' }, { orden: 'asc' }],
+        },
+      },
     });
     res.json(tipos);
   } catch (error: any) {

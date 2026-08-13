@@ -1,0 +1,36 @@
+import { AlertTriangle, ArrowLeft, Bot, Building2, ChevronDown, FolderOpen, LoaderCircle, MoreHorizontal, UserRound } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useAssistant } from '../assistant/AssistantProvider';
+import { ActivityTab } from './components/tabs/ActivityTab';
+import { ComplianceTab } from './components/tabs/ComplianceTab';
+import { DocumentsTab } from './components/tabs/DocumentsTab';
+import { FinanceTab } from './components/tabs/FinanceTab';
+import { PartiesTab } from './components/tabs/PartiesTab';
+import { ProjectTab } from './components/tabs/ProjectTab';
+import { SummaryTab } from './components/tabs/SummaryTab';
+import { WorkflowTab } from './components/tabs/WorkflowTab';
+import { expedientesService } from './expedientes.service';
+import { fullName, macroLabels } from './expedienteFormatters';
+import type { ExpedienteDetail, ProjectState } from './expedientes.types';
+import styles from './Expedientes.module.css';
+
+type TabKey = 'resumen' | 'comparecientes' | 'documentos' | 'proyecto' | 'workflow' | 'finanzas' | 'cumplimiento' | 'actividad';
+const allTabs: Array<{ key: TabKey; label: string }> = [{ key: 'resumen', label: 'Resumen' }, { key: 'comparecientes', label: 'Comparecientes' }, { key: 'documentos', label: 'Documentos' }, { key: 'proyecto', label: 'Proyecto' }, { key: 'workflow', label: 'Workflow' }, { key: 'finanzas', label: 'Finanzas' }, { key: 'cumplimiento', label: 'Cumplimiento' }, { key: 'actividad', label: 'Actividad' }];
+export function ExpedienteWorkspace() {
+  const { id = '' } = useParams(); const location = useLocation(); const navigate = useNavigate(); const { openAssistant } = useAssistant(); const [expediente, setExpediente] = useState<ExpedienteDetail | null>(null); const [project, setProject] = useState<ProjectState | null>(null); const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const tabRefs = useRef<Partial<Record<TabKey, HTMLButtonElement | null>>>({});
+  const active = (location.hash.slice(1) || 'resumen') as TabKey;
+  const load = useCallback(async (signal?: AbortSignal) => { try { const detail = await expedientesService.detail(id, signal); setExpediente(detail); if (detail.capabilities.canReadProject) { try { setProject(await expedientesService.project(id, signal)); } catch { setProject(null); } } setStatus('ready'); } catch (error) { if (!(error instanceof DOMException && error.name === 'AbortError')) setStatus('error'); } }, [id]);
+  useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
+  useEffect(() => { if (status === 'ready') tabRefs.current[active]?.scrollIntoView?.({ behavior: 'smooth', block: 'nearest', inline: 'center' }); }, [active, status]);
+  const tabs = useMemo(() => allTabs.filter((tab) => tab.key !== 'finanzas' || expediente?.capabilities.canReadFinance).filter((tab) => tab.key !== 'proyecto' || expediente?.capabilities.canReadProject), [expediente]);
+  if (status === 'loading') return <div className={styles.workspaceLoading}><LoaderCircle className={styles.spin} /><span>Preparando el workspace…</span></div>;
+  if (status === 'error' || !expediente) return <section className={styles.pageState} role="alert"><span><AlertTriangle /></span><h2>No pudimos abrir este expediente.</h2><p>La información no está disponible o ya no tienes acceso.</p><button type="button" className={styles.secondaryButton} onClick={() => { setStatus('loading'); void load(); }}>Reintentar</button></section>;
+  const notary = expediente.notaria ? `${expediente.notaria.numero_notaria ? `Notaría ${expediente.notaria.numero_notaria}` : expediente.notaria.nombre}${expediente.notaria.municipio ? ` · ${expediente.notaria.municipio}` : ''}` : 'Sin notaría asignada';
+  return <div className={styles.workspace}><Link className={styles.backLink} to="/expedientes"><ArrowLeft size={17} />Volver a expedientes</Link><header className={styles.workspaceHeader}><div className={styles.headerMain}><div className={styles.headerEyebrow}><span>{expediente.numero_pravia}</span><span className={`${styles.phaseBadge} ${styles[`phase${expediente.macrofase}`]}`}>{macroLabels[expediente.macrofase]}</span><span>{expediente.riesgo.label}</span></div><h1>{expediente.tipo_acto.nombre}</h1><p>{expediente.cliente_principal || expediente.cliente_alias}</p></div><div className={styles.workspaceActions}><button type="button" className={styles.secondaryButton} onClick={() => openAssistant({ prefill: '¿Qué falta en este expediente?' })}><Bot size={17} />¿Qué falta?</button>{expediente.capabilities.canWrite && <button type="button" className={styles.primaryButton} onClick={() => navigate('#workflow')}><span>Acciones</span><ChevronDown size={16} /></button>}<button type="button" className={styles.iconButton} aria-label="Más opciones"><MoreHorizontal size={19} /></button></div></header>
+    <section className={styles.headerFacts}><article><span><UserRound size={17} /></span><div><small>Responsable</small><strong>{fullName(expediente.abogado)}</strong></div></article><article><span><Building2 size={17} /></span><div><small>Notaría</small><strong>{notary}</strong></div></article><article><span><FolderOpen size={17} /></span><div><small>Etapa actual</small><strong>{expediente.etapaActual?.nombre_snapshot || expediente.etapa_actual_nombre || 'Sin etapa'}</strong></div></article></section>
+    <nav className={styles.tabs} aria-label="Secciones del expediente" role="tablist">{tabs.map((tab) => <button key={tab.key} ref={(element) => { tabRefs.current[tab.key] = element; }} type="button" role="tab" aria-selected={active === tab.key} className={active === tab.key ? styles.tabActive : ''} onClick={() => navigate({ hash: tab.key }, { replace: true })}>{tab.label}</button>)}</nav>
+    <main className={styles.tabContent} role="tabpanel" aria-label={tabs.find((tab) => tab.key === active)?.label}>{active === 'resumen' && <SummaryTab expediente={expediente} onChanged={() => void load()} />}{active === 'comparecientes' && <PartiesTab expediente={expediente} />}{active === 'documentos' && <DocumentsTab expediente={expediente} onChanged={() => void load()} />}{active === 'proyecto' && <ProjectTab expediente={expediente} project={project} onChanged={() => void load()} />}{active === 'workflow' && <WorkflowTab expediente={expediente} onChanged={() => void load()} />}{active === 'finanzas' && expediente.capabilities.canReadFinance && <FinanceTab expediente={expediente} />}{active === 'cumplimiento' && <ComplianceTab expediente={expediente} />}{active === 'actividad' && <ActivityTab expediente={expediente} />}</main>
+  </div>;
+}
