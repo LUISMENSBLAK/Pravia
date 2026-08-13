@@ -60,4 +60,11 @@ describe('assistant backend tools', () => {
     expect(catalog[0]).not.toHaveProperty('permission');
     expect(catalog[0]).toEqual(expect.objectContaining({ mode: expect.any(String), object_scope: expect.any(String), sensitivity: expect.any(String) }));
   });
+
+  it('publica Reportes para IA solo con la doble autorización requerida', () => {
+    const allowed = assistantToolCatalog(user(['ai.use', 'ai.reportes.read', 'reportes.read']));
+    expect(allowed.map((item) => item.name)).toContain('getReportingSummary');
+    const missingModulePermission = assistantToolCatalog(user(['ai.use', 'ai.reportes.read']));
+    expect(missingModulePermission.map((item) => item.name)).not.toContain('getReportingSummary');
+  });
 });

@@ -5,12 +5,14 @@ import type { Permission } from '../auth/permissions';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { comparecienteObjectWhere } from './objectAccess.service';
 import { calculateFinancialPosition } from '../domain/financialLedger';
+import { ReportingService } from './reporting.service';
 
 type AuthUser = NonNullable<Request['user']>;
 export type AssistantToolName =
   | 'searchExpedientes' | 'getExpedienteSummary' | 'getExpedientePendingItems'
   | 'searchComparecientes' | 'getComparecienteSummary' | 'getExpedienteDocuments'
   | 'getAgenda' | 'getUpcomingEvents' | 'getFinancialSummary' | 'getOutstandingBalances'
+  | 'getReportingSummary'
   | 'getComplianceSummary' | 'getCurrentUserWork' | 'globalSearch'
   | 'navigateToEntity' | 'prepareTask' | 'prepareAppointment' | 'prepareFollowUp';
 
@@ -58,6 +60,7 @@ export const ASSISTANT_TOOL_REGISTRY: Record<AssistantToolName, ToolDefinition> 
   getUpcomingEvents: { capability: 'ai.agenda.read', systemPermissions: ['agenda.read'], objectScope: 'USER', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'INTERNAL', mode: 'READ' },
   getFinancialSummary: { capability: 'ai.finanzas.read', systemPermissions: ['finanzas.read', 'expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'FINANCIAL', mode: 'READ' },
   getOutstandingBalances: { capability: 'ai.finanzas.read', systemPermissions: ['finanzas.read', 'expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'FINANCIAL', mode: 'READ' },
+  getReportingSummary: { capability: 'ai.reportes.read', systemPermissions: ['reportes.read'], objectScope: 'USER', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'FINANCIAL', mode: 'READ' },
   getComplianceSummary: { capability: 'ai.cumplimiento.read', systemPermissions: ['cumplimiento.read', 'expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'SUMMARY', maxResults: 25, sensitivity: 'COMPLIANCE', mode: 'READ' },
   getCurrentUserWork: { capability: 'ai.work.read', systemPermissions: ['mi_dia.read'], objectScope: 'USER', resultType: 'SUMMARY', maxResults: 25, sensitivity: 'INTERNAL', mode: 'READ' },
   globalSearch: { capability: 'ai.search', anySystemPermission: ['expedientes.read', 'comparecientes.read', 'notarias.read'], objectScope: 'DYNAMIC', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'PERSONAL', mode: 'READ' },
@@ -143,6 +146,17 @@ const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
   getUpcomingEvents: readAgenda,
   getFinancialSummary: readFinancial,
   getOutstandingBalances: readFinancial,
+  getReportingSummary: async (db, input) => {
+    const args = input.args || {};
+    const report = await new ReportingService(db).summary(input.user, {
+      periodo: textArg(args.periodo, 30) || 'ESTE_MES',
+      fecha_desde: textArg(args.fecha_desde, 20) || undefined,
+      fecha_hasta: textArg(args.fecha_hasta, 20) || undefined,
+      abogado_id: textArg(args.abogado_id, 64) || undefined,
+      notaria_id: textArg(args.notaria_id, 64) || undefined,
+    });
+    return { data: report, provenance: [source('Reporte', 'resumen', report.period.label, '/reportes')], truncated: false };
+  },
   getComplianceSummary: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const id = resolveContextId(args, input.context, 'expediente_id', 'expediente'); const exp = await findScopedExpediente(db, input.user, id); const reviews = await db.complianceReview.findMany({ where: { expediente_id: id }, select: { id: true, tipo: true, estatus: true, rule_version_snapshot: true, resultado_json: true, explicacion: true, updated_at: true }, orderBy: { updated_at: 'desc' }, take: limit }); return { data: { expediente_id: id, folio: exp.numero_pravia, revisiones: reviews }, provenance: reviews.length ? reviews.map((review) => source('ComplianceReview', review.id, `${review.tipo} · ${review.estatus}`, '/riesgos')) : [source('Expediente', exp.id, exp.numero_pravia, `/expedientes/${exp.id}`)], truncated: reviews.length === limit }; },
   getCurrentUserWork: async (db, input) => { const limit = boundedLimit(input.args?.limit); const [tasks, events] = await Promise.all([db.tarea.findMany({ where: { asignado_a_id: input.user.id, estatus: { in: ['PENDIENTE', 'EN_PROCESO'] } }, select: { id: true, titulo: true, prioridad: true, fecha_limite: true, expediente: { select: { id: true, numero_pravia: true } } }, orderBy: { fecha_limite: 'asc' }, take: limit }), db.eventoAgenda.findMany({ where: { user_id: input.user.id, estatus: 'ACTIVO', fecha_inicio: { gte: new Date(), lte: new Date(Date.now() + 7 * 86_400_000) } }, select: { id: true, titulo: true, tipo: true, fecha_inicio: true, expediente: { select: { id: true, numero_pravia: true } } }, orderBy: { fecha_inicio: 'asc' }, take: limit })]); return { data: { tareas: tasks, proximos_eventos: events }, provenance: [source('User', input.user.id, 'Trabajo del usuario autenticado', '/mi-dia')], truncated: tasks.length === limit || events.length === limit }; },
   globalSearch: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const query = textArg(args.query, 120); if (query.length < 2) throw new AssistantToolError('Escribe al menos dos caracteres para buscar.', 'AI_SEARCH_QUERY_TOO_SHORT'); const expScope = expedienteAccessWhere(input.user); const [expedientes, comparecientes, notarias] = await Promise.all([input.user.permissions.includes('expedientes.read') ? db.expediente.findMany({ where: { archived_at: null, ...expScope, OR: [{ numero_pravia: { contains: query, mode: 'insensitive' } }, { cliente_alias: { contains: query, mode: 'insensitive' } }] }, select: { id: true, numero_pravia: true, cliente_alias: true }, take: limit }) : [], input.user.permissions.includes('comparecientes.read') ? db.compareciente.findMany({ where: { archived_at: null, ...comparecienteObjectWhere(input.user), nombre_busqueda: { contains: query, mode: 'insensitive' } }, select: { id: true, nombre_busqueda: true }, take: limit }) : [], input.user.permissions.includes('notarias.read') ? db.notaria.findMany({ where: { activa: true, OR: [{ nombre: { contains: query, mode: 'insensitive' } }, { numero_notaria: { contains: query, mode: 'insensitive' } }] }, select: { id: true, nombre: true, numero_notaria: true }, take: limit }) : []]); const data = { expedientes, comparecientes, notarias }; return { data, provenance: [...expedientes.map((item) => source('Expediente', item.id, item.numero_pravia, `/expedientes/${item.id}`)), ...comparecientes.map((item) => source('Compareciente', item.id, item.nombre_busqueda, `/comparecientes/${item.id}`)), ...notarias.map((item) => source('Notaria', item.id, item.nombre, '/notarias'))], truncated: [expedientes, comparecientes, notarias].some((items) => items.length === limit) }; },

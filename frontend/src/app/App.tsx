@@ -18,8 +18,9 @@ import { NotariasPage } from '../features/notarias/NotariasPage';
 import { NotariaWorkspace } from '../features/notarias/NotariaWorkspace';
 import { AgendaPage } from '../features/agenda/AgendaPage';
 import { FinancePage } from '../features/finance/FinancePage';
+import { ReportsPage } from '../features/reports/ReportsPage';
 
-const modulePaths = ['reportes', 'riesgos', 'configuracion'];
+const modulePaths = ['riesgos', 'configuracion'];
 
 export function App() {
   return (
@@ -42,6 +43,7 @@ export function App() {
             <Route path="/notarias/:id" element={<NotariaWorkspace />} />
             <Route path="/agenda" element={<AgendaPage />} />
             <Route path="/finanzas" element={<FinancePage />} />
+            <Route path="/reportes" element={<ReportsPage />} />
             {modulePaths.map((path) => <Route key={path} path={`/${path}`} element={<ModulePlaceholder />} />)}
           </Route>
         </Route>

@@ -49,7 +49,12 @@ type SidebarProps = {
 };
 
 export function Sidebar({ collapsed, mobileOpen, onToggle, onCloseMobile, user }: SidebarProps) {
-  const visibleNavigation = navigation.filter((item) => item.to !== '/finanzas' || !user?.permissions || user.permissions.includes('finanzas.read'));
+  const visibleNavigation = navigation.filter((item) => {
+    if (!user?.permissions) return true;
+    if (item.to === '/finanzas') return user.permissions.includes('finanzas.read');
+    if (item.to === '/reportes') return user.permissions.includes('reportes.read');
+    return true;
+  });
   return (
     <>
       <button

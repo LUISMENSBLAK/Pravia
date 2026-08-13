@@ -77,6 +77,12 @@ const actions: Partial<Record<AssistantModule, AssistantAction[]>> = {
     { id: 'finance-receipts', label: 'Sin comprobante', prompt: 'Muéstrame los movimientos sin comprobante.' },
     { id: 'finance-reconcile', label: 'Conciliación pendiente', prompt: 'Muéstrame las conciliaciones pendientes.' },
   ],
+  reportes: [
+    { id: 'reports-summary', label: 'Resumen ejecutivo', prompt: 'Resume los indicadores ejecutivos del periodo visible usando únicamente datos canónicos de Reportes.' },
+    { id: 'reports-collections', label: 'Analizar cobranza', prompt: 'Analiza la cobranza del periodo visible y señala los saldos con mayor prioridad.' },
+    { id: 'reports-signatures', label: 'Analizar firmas', prompt: 'Resume las firmas realizadas, pendientes y programadas del periodo visible.' },
+    { id: 'reports-potential', label: 'Clientes potenciales', prompt: 'Muéstrame las cotizaciones sin anticipo y prioriza el seguimiento con datos del reporte.' },
+  ],
 };
 
 const fallbackActions: AssistantAction[] = [

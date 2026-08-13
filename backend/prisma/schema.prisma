@@ -66,6 +66,8 @@ model User {
   cuentasFinancierasCreadas    CuentaFinanciera[]           @relation("CuentaFinancieraCreador")
   honorariosReconocidos        HonorarioGenerado[]          @relation("HonorarioGeneradoActor")
   honorariosResponsable        HonorarioGenerado[]          @relation("HonorarioGeneradoResponsable")
+  metasHonorario               MetaHonorario[]               @relation("MetaHonorarioUsuario")
+  metasHonorarioCreadas        MetaHonorario[]               @relation("MetaHonorarioCreador")
   comprobantesRegistrados      ComprobanteFinanciero[]      @relation("ComprobanteRegistrador")
   comprobantesAnulados         ComprobanteFinanciero[]      @relation("ComprobanteAnulador")
   transaccionesBancoImportadas TransaccionEstadoCuenta[]    @relation("TransaccionBancoImportador")
@@ -1647,6 +1649,38 @@ model HonorarioGenerado {
   @@index([fecha_reconocimiento, estado])
   @@index([responsable_id, notaria_id])
   @@map("honorarios_generados")
+}
+
+enum MetaHonorarioAlcance {
+  DESPACHO
+  ABOGADO
+}
+
+enum MetaHonorarioBase {
+  GENERADOS
+  COBRADOS
+}
+
+model MetaHonorario {
+  id             String               @id @default(uuid()) @db.Uuid
+  alcance        MetaHonorarioAlcance
+  usuario_id     String?              @db.Uuid
+  periodo_inicio DateTime
+  periodo_fin    DateTime
+  importe        Decimal              @db.Decimal(14, 2)
+  moneda         String               @default("MXN")
+  base           MetaHonorarioBase    @default(GENERADOS)
+  activa         Boolean              @default(true)
+  creada_por_id  String               @db.Uuid
+  created_at     DateTime             @default(now())
+  updated_at     DateTime             @updatedAt
+
+  usuario   User? @relation("MetaHonorarioUsuario", fields: [usuario_id], references: [id], onDelete: SetNull)
+  creada_por User  @relation("MetaHonorarioCreador", fields: [creada_por_id], references: [id], onDelete: Restrict)
+
+  @@unique([alcance, usuario_id, periodo_inicio, periodo_fin, base])
+  @@index([activa, periodo_inicio, periodo_fin])
+  @@map("metas_honorarios")
 }
 
 model MovimientoDistribucion {
