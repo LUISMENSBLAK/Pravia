@@ -80,6 +80,6 @@ describe('Mi Día', () => {
     render(<MemoryRouter initialEntries={['/mi-dia']}><App /></MemoryRouter>);
     await screen.findByRole('heading', { name: /Usuario/ });
     await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA para hacer una pregunta' }));
-    expect(screen.getByRole('dialog', { name: 'PRAVIA IA' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'PRAVIA IA' })).toBeInTheDocument();
   });
 });

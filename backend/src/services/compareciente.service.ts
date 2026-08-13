@@ -287,7 +287,7 @@ export class ComparecienteService {
         documentos: {
           where: { archived_at: null, estatus: 'ACTIVO' },
           include: {
-            documento: { select: { id: true, nombre_original: true, tipo: true, categoria: true, mime_type: true, size_bytes: true, fecha_carga: true, fecha_emision: true, fecha_vigencia: true, observaciones: true, estatus: true } },
+            documento: { select: { id: true, nombre_original: true, tipo: true, categoria: true, mime_type: true, size_bytes: true, fecha_carga: true, fecha_emision: true, fecha_vigencia: true, observaciones: true, estatus: true, subido_por: { select: { nombre: true, apellido: true } } } },
             validado_por: { select: { id: true, nombre: true, apellido: true } },
           }
         },

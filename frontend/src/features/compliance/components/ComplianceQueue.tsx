@@ -1,0 +1,12 @@
+import { ArrowLeft, ArrowRight, ExternalLink } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import type { ComplianceList } from '../compliance.types';
+import { humanResult, humanStatus, shortDate } from '../compliance.utils';
+import { ComplianceCard } from './ComplianceCard';
+import styles from '../Compliance.module.css';
+
+export function ComplianceQueue({ data, onPage }: { data: ComplianceList; onPage: (page:number)=>void }) { const navigate=useNavigate(); return <section className={styles.queue}>
+  <header><div><small>Cola operativa</small><h2>Revisiones dentro de tu alcance</h2></div><span>{data.meta.total} resultados</span></header>
+  {!data.revisiones.length ? <div className={styles.empty}><h3>No hay revisiones pendientes dentro de tu alcance.</h3><p>Ajusta los filtros o inicia una revisión desde un expediente accesible.</p></div> : <><div className={styles.desktopTable}><table><thead><tr><th>Expediente</th><th>Acto / comparecientes</th><th>Notaría</th><th>Responsable</th><th>Estado revisión</th><th>Resultado</th><th>Alertas</th><th>Actualización</th><th><span className="sr-only">Acción</span></th></tr></thead><tbody>{data.revisiones.map(r=><tr key={r.id} tabIndex={0} onClick={()=>navigate(`/riesgos/revisiones/${r.id}`)} onKeyDown={e=>{if(e.key==='Enter')navigate(`/riesgos/revisiones/${r.id}`);}}><td><strong>{r.expediente.numero_pravia}</strong><small>{r.tipo} · {r.rule_version_snapshot}</small></td><td>{r.expediente.tipo_acto?.nombre || r.expediente.cliente_alias}<small>{r.expediente.comparecientes?.length || 0} comparecientes</small></td><td>{r.expediente.notaria?.numero_notaria || '—'}</td><td>{r.expediente.abogado ? `${r.expediente.abogado.nombre} ${r.expediente.abogado.apellido}` : '—'}</td><td><b data-status={r.estatus}>{humanStatus(r.estatus)}</b></td><td>{humanResult(r.resultado_json?.clasificacion)}</td><td>{r.resultado_json?.alertas?.length || 0}</td><td>{shortDate(r.updated_at)}</td><td><ExternalLink/></td></tr>)}</tbody></table></div><div className={styles.mobileCards}>{data.revisiones.map(r=><ComplianceCard key={r.id} review={r}/>)}</div></>}
+  <footer className={styles.pagination}><span>Página {data.meta.page} de {data.meta.totalPages}</span><div><button aria-label="Página anterior" disabled={data.meta.page<=1} onClick={()=>onPage(data.meta.page-1)}><ArrowLeft/></button><button aria-label="Página siguiente" disabled={data.meta.page>=data.meta.totalPages} onClick={()=>onPage(data.meta.page+1)}><ArrowRight/></button></div></footer>
+ </section>; }

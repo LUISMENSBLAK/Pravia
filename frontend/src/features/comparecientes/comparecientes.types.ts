@@ -40,7 +40,7 @@ export type ComparecienteDetail = ComparecienteListItem & {
   documentos: Array<Record<string, any>>; expedientes: Array<Record<string, any>>; datosFuente: Array<Record<string, any>>;
   representacionesComoRepresentante: Array<Record<string, any>>; representacionesComoRepresentado: Array<Record<string, any>>;
   complianceSnapshots: Array<Record<string, any>>; actividad: Array<Record<string, any>>; health: HealthDimension[];
-  capabilities: { canUploadDocuments: boolean; canArchive: boolean; allowsSoftDuplicateOverride: boolean; blocksExactIdentityDuplicate: boolean };
+  capabilities: { canEdit?: boolean; canUploadDocuments: boolean; canLinkCases?: boolean; canArchive: boolean; allowsSoftDuplicateOverride: boolean; blocksExactIdentityDuplicate: boolean };
 };
 
 export type NewComparecienteDraft = Record<string, string> & { tipo_persona: PersonType };

@@ -1,12 +1,12 @@
 export type AssistantStatus = 'idle' | 'thinking' | 'processing' | 'success' | 'error' | 'confirmation-required';
 export type AssistantViewState = 'closed' | AssistantStatus;
-export type AssistantModule = 'mi-dia' | 'prospectos' | 'cotizaciones' | 'expedientes' | 'notarias' | 'comparecientes' | 'finanzas' | 'agenda' | 'reportes' | 'riesgos' | 'configuracion' | 'unknown';
+export type AssistantModule = 'mi-dia' | 'prospectos' | 'cotizaciones' | 'expedientes' | 'notarias' | 'comparecientes' | 'finanzas' | 'agenda' | 'reportes' | 'compliance' | 'configuracion' | 'unknown';
 
 export type AssistantContext = {
   route: string;
   module: AssistantModule;
   label: string;
-  entityType?: 'expediente' | 'compareciente' | 'notaria' | 'prospecto' | 'cotizacion' | 'evento';
+  entityType?: 'expediente' | 'compareciente' | 'notaria' | 'prospecto' | 'cotizacion' | 'evento' | 'complianceReview';
   entityId?: string;
   subview?: string;
 };

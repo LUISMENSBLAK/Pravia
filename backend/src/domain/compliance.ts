@@ -30,10 +30,10 @@ export function evaluateUif(parameters: any, answers: Record<string, unknown>) {
     ['pep_declarada', 'Declaración PEP'],
   ].filter(([key]) => answers[key] === undefined || answers[key] === null || answers[key] === '').map(([, label]) => label);
   const alerts = [
-    answers.identidad_verificada === false ? 'Falta verificar identidad con documento oficial.' : null,
-    answers.beneficiario_controlador_identificado === false ? 'Falta identificar beneficiario controlador o recabar la declaración aplicable.' : null,
-    answers.origen_recursos_documentado === false ? 'Falta documentar el origen de recursos.' : null,
-    String(answers.pep_declarada || '').toUpperCase() === 'SI' ? 'La condición PEP requiere revisión reforzada conforme a la política vigente.' : null,
+    answers.identidad_verificada === false ? { codigo: 'ID-01', mensaje: 'Falta verificar identidad con documento oficial.', regla: rule.fundamento, dato: 'identidad_verificada = no', fuente: 'Snapshot de comparecientes y respuesta humana', accion: 'Revisar identificación y vincular evidencia.' } : null,
+    answers.beneficiario_controlador_identificado === false ? { codigo: 'BC-04', mensaje: 'Falta confirmar beneficiario controlador o recabar la declaración aplicable.', regla: rule.fundamento, dato: 'beneficiario_controlador_identificado = no', fuente: 'Respuesta de la revisión; no existe maestro independiente', accion: 'Completar la declaración y adjuntar evidencia.' } : null,
+    answers.origen_recursos_documentado === false ? { codigo: 'OR-02', mensaje: 'Falta documentar el origen de recursos.', regla: rule.fundamento, dato: 'origen_recursos_documentado = no', fuente: 'Respuesta y evidencia de la revisión', accion: 'Solicitar o vincular soporte de origen de recursos.' } : null,
+    String(answers.pep_declarada || '').toUpperCase() === 'SI' ? { codigo: 'PEP-01', mensaje: 'La declaración PEP requiere revisión reforzada conforme a la política vigente.', regla: 'Declaración PEP de la revisión', dato: 'pep_declarada = sí', fuente: 'Master/snapshot o confirmación humana; sin screening externo', accion: 'Realizar revisión humana reforzada.' } : null,
   ].filter(Boolean);
 
   return {

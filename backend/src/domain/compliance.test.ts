@@ -23,6 +23,14 @@ describe('UIF configurable', () => {
     expect(evaluateUif(parameters, { ...complete, tipo_acto_uif: 'PODER' }).requiere_aviso).toBe(true);
   });
 
+  it('explica PEP y origen de fondos con regla, dato, fuente y acción', () => {
+    const result = evaluateUif(parameters, { ...complete, tipo_acto_uif: 'INMUEBLE', pep_declarada: 'SI', origen_recursos_documentado: false });
+    expect(result.alertas).toEqual(expect.arrayContaining([
+      expect.objectContaining({ codigo: 'PEP-01', dato: 'pep_declarada = sí', fuente: expect.stringContaining('sin screening externo'), accion: expect.any(String) }),
+      expect.objectContaining({ codigo: 'OR-02', regla: 'Artículo 17' }),
+    ]));
+  });
+
   it('no presenta una conclusión completa si falta debida diligencia', () => {
     const result = evaluateUif(parameters, { tipo_acto_uif: 'INMUEBLE', precio_pactado: 100000 });
     expect(result.clasificacion).toBe('INCOMPLETO');

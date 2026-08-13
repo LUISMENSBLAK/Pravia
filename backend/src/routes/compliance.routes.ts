@@ -5,8 +5,10 @@ import { requireExpedienteAccess, requirePermission } from '../middleware/auth.m
 const router = Router();
 router.get('/catalogos', ComplianceController.catalogs);
 router.get('/revisiones', ComplianceController.list);
+router.get('/revisiones/:id', ComplianceController.detail);
 router.post('/revisiones', requireExpedienteAccess, ComplianceController.create);
 router.post('/revisiones/:id/evaluar', ComplianceController.evaluate);
 router.post('/revisiones/:id/revisar', requirePermission('cumplimiento.confirm'), ComplianceController.review);
+router.post('/revisiones/:id/reevaluar', ComplianceController.reevaluate);
 router.post('/revisiones/:id/evidencias', ComplianceController.addEvidence);
 export default router;

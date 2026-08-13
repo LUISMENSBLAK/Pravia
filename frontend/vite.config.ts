@@ -15,5 +15,9 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     css: true,
+    // Los archivos ejercitan la aplicación completa. Un solo worker evita
+    // transformar en paralelo los mismos route chunks y mantiene cada prueba
+    // bajo el timeout local sin ampliar ese límite.
+    maxWorkers: 1,
   },
 });

@@ -18,6 +18,8 @@ const clean = (value?: string) => value?.trim() || undefined;
 export const comparecientesService = {
   list(filters: ComparecienteFilters, signal?: AbortSignal) { return apiRequest<ComparecienteListResult>(`/comparecientes?${query(filters)}`, { signal }); },
   detail(id: string, signal?: AbortSignal) { return apiRequest<{ data: ComparecienteDetail }>(`/comparecientes/${encodeURIComponent(id)}`, { signal }).then(unwrap); },
+  catalogs(signal?: AbortSignal) { return apiRequest<{ data: { caracteresCompareciente: Array<{ id: string; nombre: string }> } }>('/comparecientes/catalogos', { signal }).then(unwrap); },
+  searchCases(search: string, signal?: AbortSignal) { const params = new URLSearchParams({ page: '1', pageSize: '20', search }); return apiRequest<{ data: Array<{ id: string; numero_pravia: string; cliente_principal?: string; tipo_acto?: { nombre: string } }> }>(`/expedientes?${params}`, { signal }).then((payload) => payload.data); },
   duplicates(draft: NewComparecienteDraft, signal?: AbortSignal) {
     const params = new URLSearchParams();
     const name = draft.tipo_persona === 'FISICA' ? [draft.nombre, draft.apellido_paterno, draft.apellido_materno].filter(Boolean).join(' ') : draft.razon_social;
@@ -36,7 +38,14 @@ export const comparecientesService = {
   uploadAssisted(sessionId: string, file: File, type = 'OTRO') { const body = new FormData(); body.set('archivo', file); body.set('tipo_documento', type); return apiRequest<{ documento: { id: string; nombre_original: string } }>(`/comparecientes/altas/${sessionId}/documentos`, { method: 'POST', body }); },
   extractAssisted(sessionId: string, ids: string[]) { return apiRequest<any>(`/comparecientes/altas/${sessionId}/extraer`, { method: 'POST', body: JSON.stringify({ documentos: ids }) }); },
   confirmAssisted(sessionId: string, draft: NewComparecienteDraft, ids: string[]) { return apiRequest<{ compareciente: { id: string } }>(`/comparecientes/altas/${sessionId}/confirmar`, { method: 'POST', body: JSON.stringify({ ...draft, documentos_integrar: ids }) }); },
-  uploadDocument(id: string, file: File, category: string) { const body = new FormData(); body.set('file', file); body.set('categoria', category); return apiRequest(`/comparecientes/${encodeURIComponent(id)}/documentos`, { method: 'POST', body }); },
+  uploadDocument(id: string, file: File, category: string, metadata: { issueDate?: string; expiryDate?: string; notes?: string } = {}) { const body = new FormData(); body.set('file', file); body.set('categoria', category); if (metadata.issueDate) body.set('fecha_emision', metadata.issueDate); if (metadata.expiryDate) body.set('fecha_vencimiento', metadata.expiryDate); if (metadata.notes) body.set('observaciones', metadata.notes); return apiRequest(`/comparecientes/${encodeURIComponent(id)}/documentos`, { method: 'POST', body }); },
+  linkCase(id: string, input: { expediente_id: string; caracter_id: string; observaciones?: string }) { return apiRequest('/comparecientes/vincular-expediente', { method: 'POST', body: JSON.stringify({ ...input, compareciente_id: id }) }); },
+  async previewDocument(id: string, documentId: string) {
+    const headers = new Headers(); const token = tokenStore.get(); if (token) headers.set('Authorization', `Bearer ${token}`);
+    const response = await fetch(apiUrl(`/comparecientes/${encodeURIComponent(id)}/documentos/${encodeURIComponent(documentId)}/visualizar`), { credentials: 'include', headers });
+    if (!response.ok) throw new Error('El documento no está disponible.');
+    return URL.createObjectURL(await response.blob());
+  },
   async downloadDocument(id: string, documentId: string, name: string) {
     const headers = new Headers(); const token = tokenStore.get(); if (token) headers.set('Authorization', `Bearer ${token}`);
     const response = await fetch(apiUrl(`/comparecientes/${encodeURIComponent(id)}/documentos/${encodeURIComponent(documentId)}/descargar`), { credentials: 'include', headers });

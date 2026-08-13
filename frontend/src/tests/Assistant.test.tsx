@@ -41,12 +41,13 @@ describe('PRAVIA IA global', () => {
     const user = userEvent.setup();
     renderAssistant();
     await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA' }));
-    expect(screen.getByRole('dialog', { name: 'PRAVIA IA' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'PRAVIA IA' })).toBeInTheDocument();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     const launcher = screen.getByRole('button', { name: 'Abrir PRAVIA IA' });
     await waitFor(() => expect(launcher).toHaveFocus());
     await user.click(launcher);
+    await screen.findByRole('dialog', { name: 'PRAVIA IA' });
     await user.click(screen.getByRole('button', { name: 'Cerrar PRAVIA IA' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });

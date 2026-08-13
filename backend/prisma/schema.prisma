@@ -44,6 +44,7 @@ model User {
   complianceReviewsCreated  ComplianceReview[]      @relation("ComplianceReviewCreator")
   complianceReviewsReviewed ComplianceReview[]      @relation("ComplianceReviewReviewer")
   complianceEvidenceAdded   ComplianceEvidence[]    @relation("ComplianceEvidenceAdder")
+  complianceDecisions       ComplianceDecision[]    @relation("ComplianceDecisionActor")
   auditLogs                 AuditLog[]
   cotizaciones              Cotizacion[]
   comunicaciones            Comunicacion[]
@@ -2307,6 +2308,10 @@ model ComplianceReview {
   estatus               String    @default("BORRADOR")
   fecha_operacion       DateTime?
   rule_version_snapshot String
+  rule_snapshot         Json
+  master_snapshot       Json
+  snapshot_captured_at  DateTime  @default(now())
+  supersedes_review_id  String?   @db.Uuid
   cuestionario_json     Json
   resultado_json        Json?
   explicacion           String?
@@ -2321,10 +2326,31 @@ model ComplianceReview {
   creado_por   User                 @relation("ComplianceReviewCreator", fields: [creado_por_id], references: [id], onDelete: Restrict)
   revisado_por User?                @relation("ComplianceReviewReviewer", fields: [revisado_por_id], references: [id], onDelete: SetNull)
   evidencias   ComplianceEvidence[]
+  decisiones   ComplianceDecision[]
+  supersedes   ComplianceReview?    @relation("ComplianceReviewLineage", fields: [supersedes_review_id], references: [id], onDelete: Restrict)
+  reevaluations ComplianceReview[]  @relation("ComplianceReviewLineage")
 
   @@index([expediente_id, tipo])
   @@index([estatus, created_at])
   @@map("compliance_reviews")
+}
+
+model ComplianceDecision {
+  id                      String   @id @default(uuid()) @db.Uuid
+  review_id               String   @db.Uuid
+  decision                String
+  observaciones           String?
+  resultado_snapshot      Json
+  rule_snapshot           Json
+  master_snapshot         Json
+  decidido_por_id         String   @db.Uuid
+  decidido_at             DateTime @default(now())
+
+  review      ComplianceReview @relation(fields: [review_id], references: [id], onDelete: Restrict)
+  decidido_por User            @relation("ComplianceDecisionActor", fields: [decidido_por_id], references: [id], onDelete: Restrict)
+
+  @@index([review_id, decidido_at])
+  @@map("compliance_decisions")
 }
 
 model ComplianceEvidence {

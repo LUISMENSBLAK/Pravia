@@ -1,0 +1,7 @@
+import { ArrowLeft, GitCompareArrows, RefreshCw, ShieldCheck } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import type { ComplianceReview } from '../compliance.types';
+import { humanStatus, shortDate } from '../compliance.utils';
+import styles from '../Compliance.module.css';
+
+export function ReviewHeader({review,canWrite,onReevaluate}:{review:ComplianceReview;canWrite:boolean;onReevaluate:()=>void}){const navigate=useNavigate();return <><button className={styles.back} onClick={()=>navigate('/riesgos')}><ArrowLeft/>Volver a Riesgos / UIF</button><header className={styles.reviewHeader}><div><span className={styles.eyebrow}><ShieldCheck/>{review.tipo} · Revisión trazable</span><h1>{review.expediente.numero_pravia}</h1><p>{review.expediente.tipo_acto?.nombre || review.expediente.cliente_alias} · {review.expediente.abogado?.nombre} {review.expediente.abogado?.apellido}</p><div className={styles.headerMeta}><span>RuleSet <strong>{review.rule_version_snapshot}</strong></span><span>Snapshot <strong>{shortDate(review.snapshot_captured_at)}</strong></span><b data-status={review.estatus}>{humanStatus(review.estatus)}</b></div></div><div className={styles.reviewActions}>{review.master_data_changed&&<span className={styles.changed}><GitCompareArrows/>Datos actualizados desde la última revisión</span>}{canWrite&&<button onClick={onReevaluate}><RefreshCw/>Reevaluar</button>}</div></header></>}

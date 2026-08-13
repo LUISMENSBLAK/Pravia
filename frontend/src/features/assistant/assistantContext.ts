@@ -4,7 +4,7 @@ import type { AssistantAction, AssistantContext, AssistantModule } from './assis
 const labels: Record<AssistantModule, string> = {
   'mi-dia': 'Mi Día', prospectos: 'Prospectos', cotizaciones: 'Cotizaciones', expedientes: 'Expedientes',
   notarias: 'Notarías', comparecientes: 'Comparecientes', finanzas: 'Finanzas', agenda: 'Agenda',
-  reportes: 'Reportes', riesgos: 'Riesgos / UIF', configuracion: 'Configuración', unknown: 'PRAVIA OS',
+  reportes: 'Reportes', compliance: 'Riesgos / UIF', configuracion: 'Configuración', unknown: 'PRAVIA OS',
 };
 
 const entityRoutes = new Map<string, AssistantContext['entityType']>([
@@ -15,14 +15,14 @@ const entityRoutes = new Map<string, AssistantContext['entityType']>([
 export function resolveAssistantContext(location: Pick<Location, 'pathname' | 'hash'>): AssistantContext {
   const segments = location.pathname.split('/').filter(Boolean);
   const first = segments[0] ?? '';
-  const module = (first === 'mi-dia' ? 'mi-dia' : first in labels ? first : 'unknown') as AssistantModule;
+  const module = (first === 'riesgos' ? 'compliance' : first === 'mi-dia' ? 'mi-dia' : first in labels ? first : 'unknown') as AssistantModule;
   const agendaEventId = module === 'agenda' ? new URLSearchParams(location.hash.replace(/^#/, '')).get('evento') : null;
-  const entityType = agendaEventId ? 'evento' : segments[1] ? entityRoutes.get(first) : undefined;
+  const entityType = agendaEventId ? 'evento' : first === 'riesgos' && segments[1] === 'revisiones' && segments[2] ? 'complianceReview' : segments[1] ? entityRoutes.get(first) : undefined;
   return {
     route: location.pathname,
     module,
     label: labels[module],
-    ...(agendaEventId ? { entityType, entityId: agendaEventId } : entityType && segments[1] ? { entityType, entityId: decodeURIComponent(segments[1]) } : {}),
+    ...(agendaEventId ? { entityType, entityId: agendaEventId } : entityType === 'complianceReview' ? { entityType, entityId: decodeURIComponent(segments[2]) } : entityType && segments[1] ? { entityType, entityId: decodeURIComponent(segments[1]) } : {}),
     ...(location.hash ? { subview: location.hash.slice(1) } : {}),
   };
 }
@@ -83,6 +83,12 @@ const actions: Partial<Record<AssistantModule, AssistantAction[]>> = {
     { id: 'reports-signatures', label: 'Analizar firmas', prompt: 'Resume las firmas realizadas, pendientes y programadas del periodo visible.' },
     { id: 'reports-potential', label: 'Clientes potenciales', prompt: 'Muéstrame las cotizaciones sin anticipo y prioriza el seguimiento con datos del reporte.' },
   ],
+  compliance: [
+    { id: 'compliance-pending', label: '¿Qué requiere revisión?', prompt: 'Muéstrame las revisiones de cumplimiento pendientes dentro de mi alcance.' },
+    { id: 'compliance-alerts', label: 'Explicar alertas', prompt: 'Resume las alertas persistidas e indica regla, versión, dato y fuente.' },
+    { id: 'compliance-evidence', label: 'Evidencia faltante', prompt: '¿Qué evidencia falta en las revisiones disponibles?' },
+    { id: 'compliance-changes', label: 'Cambios desde revisión', prompt: '¿Qué datos cambiaron desde la última revisión?' },
+  ],
 };
 
 const fallbackActions: AssistantAction[] = [
@@ -132,6 +138,14 @@ const eventDetailActions: AssistantAction[] = [
   { id: 'event-missing', label: '¿Qué falta antes de esta firma?', prompt: '¿Qué falta antes de esta firma programada?' },
 ];
 
+const complianceDetailActions: AssistantAction[] = [
+  { id: 'compliance-why', label: '¿Por qué esta alerta?', prompt: 'Explica esta alerta usando la regla, versión, dato y fuente persistidos.' },
+  { id: 'compliance-missing', label: '¿Qué falta?', prompt: '¿Qué falta para completar esta revisión?' },
+  { id: 'compliance-summary', label: 'Resumir revisión', prompt: 'Resume esta revisión sin emitir un dictamen legal.' },
+  { id: 'compliance-docs', label: 'Documentos de soporte', prompt: '¿Qué documentos respaldan este resultado?' },
+  { id: 'compliance-changed', label: 'Cambios desde anterior', prompt: '¿Qué cambió desde la revisión anterior?' },
+];
+
 export const getAssistantActions = (context: AssistantContext) => context.entityType === 'expediente'
   ? expedienteDetailActions
   : context.entityType === 'notaria'
@@ -144,4 +158,6 @@ export const getAssistantActions = (context: AssistantContext) => context.entity
   ? quoteDetailActions
   : context.entityType === 'evento'
   ? eventDetailActions
+  : context.entityType === 'complianceReview'
+  ? complianceDetailActions
     : actions[context.module] ?? fallbackActions;

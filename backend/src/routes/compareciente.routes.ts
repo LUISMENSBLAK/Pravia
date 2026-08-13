@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { ComparecienteController } from '../controllers/compareciente.controller';
 import { requireComparecienteObjectAccess } from '../middleware/objectAccess.middleware';
+import { requireExpedienteAccess } from '../middleware/auth.middleware';
 
 const upload = multer({ limits: { fileSize: 25 * 1024 * 1024 } });
 const router = Router();
@@ -18,6 +19,7 @@ router.patch('/:id/provenance/:sourceId/resolve', ComparecienteController.resolv
 // Archivo Documental del Compareciente
 router.get('/:id/documentos', ComparecienteController.obtenerArchivoDocumental);
 router.get('/:id/documentos/:documentoId/descargar', ComparecienteController.descargarDocumentoMaster);
+router.get('/:id/documentos/:documentoId/visualizar', ComparecienteController.visualizarDocumentoMaster);
 router.post('/:id/documentos', upload.single('file'), ComparecienteController.subirDocumentoMaster);
 
 // Endpoints de creación
@@ -25,7 +27,7 @@ router.post('/persona-fisica', ComparecienteController.crearPersonaFisica);
 router.post('/persona-moral', ComparecienteController.crearPersonaMoral);
 
 // Endpoints de vinculación contextual en Expedientes
-router.post('/vincular-expediente', ComparecienteController.vincularAExpediente);
+router.post('/vincular-expediente', requireComparecienteObjectAccess, requireExpedienteAccess, ComparecienteController.vincularAExpediente);
 router.patch('/vincular-expediente/:vinculoId/validacion', ComparecienteController.validarVinculoExpediente);
 router.delete('/vincular-expediente/:vinculoId', ComparecienteController.desvincularDeExpediente);
 

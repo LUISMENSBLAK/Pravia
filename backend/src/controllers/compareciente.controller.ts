@@ -51,6 +51,13 @@ export class ComparecienteController {
     try {
       const { id } = req.params;
       const data: any = await comparecienteService.obtenerPorId(id);
+      const canWrite = req.user?.permissions?.includes('comparecientes.write') || false;
+      data.capabilities = {
+        ...data.capabilities,
+        canEdit: canWrite,
+        canUploadDocuments: canWrite,
+        canLinkCases: canWrite && (req.user?.permissions?.includes('expedientes.write') || false),
+      };
       if (!req.user?.permissions?.includes('cumplimiento.read')) {
         data.complianceSnapshots = [];
         data.cumplimiento = 'NO_CONFIGURADO';
@@ -230,6 +237,20 @@ export class ComparecienteController {
       const data = await comparecienteService.descargarDocumento(req.params.id, req.params.documentoId);
       res.set('Content-Type', data.mimeType || 'application/octet-stream');
       res.set('Content-Disposition', `attachment; filename="${encodeURIComponent(data.fileName)}"`);
+      res.set('Content-Length', String(data.buffer.length));
+      res.set('Cache-Control', 'private, no-store');
+      res.set('X-Content-Type-Options', 'nosniff');
+      return res.status(200).send(data.buffer);
+    } catch {
+      return res.status(404).json({ success: false, error: 'El documento no está disponible.' });
+    }
+  }
+
+  public static async visualizarDocumentoMaster(req: Request, res: Response) {
+    try {
+      const data = await comparecienteService.descargarDocumento(req.params.id, req.params.documentoId);
+      res.set('Content-Type', data.mimeType || 'application/octet-stream');
+      res.set('Content-Disposition', `inline; filename="${encodeURIComponent(data.fileName)}"`);
       res.set('Content-Length', String(data.buffer.length));
       res.set('Cache-Control', 'private, no-store');
       res.set('X-Content-Type-Options', 'nosniff');
