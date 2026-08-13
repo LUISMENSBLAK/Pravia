@@ -1,5 +1,14 @@
 .root { position: relative; }
+.count { position: absolute; top: -2px; right: -3px; min-width: 16px; height: 16px; display: grid; place-items: center; padding: 0 3px; border: 2px solid var(--color-navy-900); border-radius: 99px; color: var(--color-navy-950); background: var(--color-gold-400); font-size: 8px; font-weight: 800; }
 .popover { position: absolute; z-index: var(--layer-menu); top: calc(100% + 9px); right: 0; width: 290px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-4); color: var(--color-text-primary); background: var(--color-surface); box-shadow: var(--shadow-md); }
 .popover strong { font-size: var(--text-sm); }
 .popover p { margin: var(--space-2) 0 0; color: var(--color-text-secondary); font-size: var(--text-xs); line-height: 1.5; }
+.popover header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.popover header button { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 7px; color: var(--color-gold-700); background: var(--color-gold-100); cursor: pointer; }
+.items { margin: 0 -8px; }
+.items button { width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 10px 9px; border: 0; border-radius: 8px; color: inherit; text-align: left; background: transparent; cursor: pointer; }
+.items button:hover { background: var(--color-surface-subtle); }
+.items button.unread { box-shadow: inset 3px 0 var(--color-gold-500); background: #fffcf5; }
+.items small { color: var(--color-text-secondary); line-height: 1.35; }
+.all { width: 100%; margin-top: 10px; padding: 9px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-gold-700); background: #fff; font-weight: 680; cursor: pointer; }
 @media (max-width: 480px) { .popover { position: fixed; top: var(--topbar-height); right: var(--space-3); width: calc(100vw - 24px); } }

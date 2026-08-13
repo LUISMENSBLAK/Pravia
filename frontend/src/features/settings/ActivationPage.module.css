@@ -1,0 +1,10 @@
+.page { min-height: 100dvh; display: grid; grid-template-rows: auto 1fr; padding: 28px; color: #fff; background: radial-gradient(circle at 70% 20%, #15365f 0, #071b38 38%, #041329 100%); }
+.brand { width: 190px; }
+.card { align-self: center; justify-self: center; width: min(460px, 100%); padding: 36px; border: 1px solid rgb(255 255 255 / 14%); border-radius: 16px; color: var(--color-text-primary); background: #fff; box-shadow: 0 28px 70px rgb(0 0 0 / 28%); }
+.card h1 { margin: 8px 0 12px; font-size: 28px; letter-spacing: -.035em; }
+.card > p { color: var(--color-text-secondary); line-height: 1.55; }
+.card form { display: flex; flex-direction: column; gap: 16px; margin-top: 24px; }
+.card form > small { color: var(--color-text-secondary); line-height: 1.45; }
+.eyebrow { color: var(--color-gold-700); font-size: 11px; font-weight: 780; letter-spacing: .12em; }
+.error { color: var(--color-danger-700) !important; }
+@media (max-width: 520px) { .page { padding: 20px; } .brand { width: 160px; } .card { padding: 24px 20px; } }

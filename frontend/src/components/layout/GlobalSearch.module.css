@@ -11,5 +11,13 @@
 .empty { display: grid; gap: var(--space-2); padding: var(--space-6); }
 .empty span { color: var(--color-text-primary); font-weight: 650; }
 .empty p { margin: 0; color: var(--color-text-secondary); font-size: var(--text-sm); line-height: 1.6; }
+.results { max-height: min(460px, 60dvh); overflow-y: auto; }
+.results > button { width: 100%; display: grid; grid-template-columns: 36px 1fr auto; align-items: center; gap: 12px; padding: 12px 18px; border: 0; border-top: 1px solid var(--color-border); color: var(--color-text-primary); text-align: left; background: #fff; cursor: pointer; }
+.results > button:hover, .results > button:focus-visible { background: var(--color-surface-subtle); outline: 0; }
+.results > button > svg { width: 36px; height: 36px; padding: 9px; border-radius: 9px; color: var(--color-gold-700); background: var(--color-gold-100); }
+.results > button span { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.results > button strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.results > button small { color: var(--color-text-secondary); }
+.results > button em { color: var(--color-text-muted); font-size: 9px; font-style: normal; font-weight: 750; letter-spacing: .06em; }
 
 @media (max-width: 880px) { .trigger { display: none; } .mobileTrigger { display: inline-grid; } }

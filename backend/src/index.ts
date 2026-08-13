@@ -22,6 +22,7 @@ import complianceRoutes from './routes/compliance.routes';
 import authRoutes from './routes/auth.routes';
 import usersRoutes from './routes/users.routes';
 import storageRoutes from './routes/storage.routes';
+import settingsRoutes from './routes/settings.routes';
 import { authenticate, authorizeByMethod, authorizeExpedienteRequest, requirePasswordReady, requirePermission } from './middleware/auth.middleware';
 import { errorLogLevel, normalizeErrorBody } from './utils/httpError';
 import { getStorageCompensationHealth, storageCompensationWorker } from './workers/storageCompensation.worker';
@@ -209,6 +210,7 @@ if (process.env.NODE_ENV !== 'production') app.get('/api/debug/openai', authenti
 app.use('/api', authenticate);
 app.use('/api', requirePasswordReady);
 app.use('/api/users', usersRoutes);
+app.use('/api/settings', settingsRoutes);
 app.use('/api/prospectos', authorizeByMethod('prospectos.read', 'prospectos.write'), prospectosRoutes);
 app.use('/api/documentos', authorizeByMethod('documentos.read', 'documentos.write'), documentosRoutes);
 app.use('/api/notarias', authorizeByMethod('notarias.read', 'notarias.write'), notariasRoutes);

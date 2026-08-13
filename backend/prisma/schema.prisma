@@ -18,6 +18,7 @@ model User {
   password_hash            String
   nombre                   String
   apellido                 String
+  telefono                 String?
   rol                      Role      @default(ABOGADO)
   avatar_url               String?
   activo                   Boolean   @default(true)
@@ -53,6 +54,11 @@ model User {
   documentosSubidos         Documento[]
   authSessions              AuthSession[]
   passwordResetTokens       PasswordResetToken[]
+  preference                UserPreference?
+  invitationsCreated       UserInvitation[] @relation("InvitationCreator")
+  invitationAccepted       UserInvitation?  @relation("InvitationAcceptedUser")
+  notifications            Notification[]   @relation("NotificationRecipient")
+  notificationsCreated     Notification[]   @relation("NotificationCreator")
 
   // Relaciones con motor operativo, finanzas, auditoría y vínculos de documentos
   formularioVersionesCreadas   FormularioVersion[]          @relation("FormularioVersionCreador")
@@ -150,6 +156,63 @@ model PasswordResetToken {
 
   @@index([user_id, used_at, expires_at])
   @@map("password_reset_tokens")
+}
+
+model UserPreference {
+  id                            String   @id @default(uuid()) @db.Uuid
+  user_id                       String   @unique @db.Uuid
+  default_view                  String   @default("CARDS")
+  density                      String   @default("COMFORTABLE")
+  timezone                     String   @default("America/Mexico_City")
+  date_format                  String   @default("DD/MM/YYYY")
+  theme                        String   @default("SYSTEM")
+  notifications_enabled        Boolean  @default(true)
+  assistant_suggestions_enabled Boolean @default(true)
+  created_at                   DateTime @default(now())
+  updated_at                   DateTime @updatedAt
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+model UserInvitation {
+  id               String    @id @default(uuid()) @db.Uuid
+  email            String
+  nombre           String
+  apellido         String
+  rol              Role
+  token_hash       String    @unique
+  expires_at       DateTime
+  accepted_at      DateTime?
+  revoked_at       DateTime?
+  created_by_id    String    @db.Uuid
+  accepted_user_id String?   @unique @db.Uuid
+  created_at       DateTime  @default(now())
+
+  created_by    User  @relation("InvitationCreator", fields: [created_by_id], references: [id], onDelete: Restrict)
+  accepted_user User? @relation("InvitationAcceptedUser", fields: [accepted_user_id], references: [id], onDelete: SetNull)
+
+  @@index([email, accepted_at, revoked_at, expires_at])
+  @@map("user_invitations")
+}
+
+model Notification {
+  id            String    @id @default(uuid()) @db.Uuid
+  recipient_id  String    @db.Uuid
+  created_by_id String?   @db.Uuid
+  type          String
+  title         String
+  body          String
+  href          String?
+  read_at       DateTime?
+  created_at    DateTime  @default(now())
+
+  recipient User  @relation("NotificationRecipient", fields: [recipient_id], references: [id], onDelete: Cascade)
+  created_by User? @relation("NotificationCreator", fields: [created_by_id], references: [id], onDelete: SetNull)
+
+  @@index([recipient_id, read_at, created_at])
+  @@map("notifications")
 }
 
 // ═══════════════════════════════════════

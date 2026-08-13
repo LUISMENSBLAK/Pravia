@@ -2,4 +2,4 @@
 .header { min-height: 66px; display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-5); margin-bottom: var(--space-6); }
 .header h1 { margin: 0; color: var(--color-text-primary); font-size: clamp(1.65rem, 2.2vw, 1.95rem); font-weight: 710; letter-spacing: -.035em; line-height: 1.18; }
 .header p { margin: var(--space-2) 0 0; color: var(--color-text-secondary); font-size: var(--text-base); line-height: 1.5; }
-@media (max-width: 600px) { .header { min-height: auto; margin-bottom: var(--space-5); } .header h1 { font-size: 1.65rem; } .header p { font-size: var(--text-sm); } }
+@media (max-width: 600px) { .header { min-height: auto; align-items: stretch; flex-direction: column; gap: var(--space-3); margin-bottom: var(--space-5); } .header h1 { font-size: 1.65rem; } .header p { font-size: var(--text-sm); } }

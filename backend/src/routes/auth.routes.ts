@@ -19,6 +19,8 @@ const limitLogin = (req: any, res: any, next: any) => {
 };
 
 router.post('/login', limitLogin, AuthController.login);
+router.get('/activation', AuthController.activationInfo);
+router.post('/activation', AuthController.activate);
 router.post('/refresh', AuthController.refresh);
 router.post('/logout', AuthController.logout);
 router.get('/me', authenticate, AuthController.me);

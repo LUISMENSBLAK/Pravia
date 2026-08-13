@@ -4,7 +4,6 @@ import { AppShell } from '../components/layout/AppShell';
 import { AuthProvider } from '../features/auth/AuthProvider';
 import { LoginPage } from '../features/auth/LoginPage';
 import { ProtectedRoute } from '../features/auth/ProtectedRoute';
-import { ModulePlaceholder } from '../pages/ModulePlaceholder';
 import { AssistantProvider } from '../features/assistant/AssistantProvider';
 
 const MyDayPage = lazy(() => import('../features/my-day/MyDayPage').then((module) => ({ default: module.MyDayPage })));
@@ -23,8 +22,9 @@ const FinancePage = lazy(() => import('../features/finance/FinancePage').then((m
 const ReportsPage = lazy(() => import('../features/reports/ReportsPage').then((module) => ({ default: module.ReportsPage })));
 const CompliancePage = lazy(() => import('../features/compliance/CompliancePage').then((module) => ({ default: module.CompliancePage })));
 const ComplianceReviewPage = lazy(() => import('../features/compliance/ComplianceReviewPage').then((module) => ({ default: module.ComplianceReviewPage })));
-
-const modulePaths = ['configuracion'];
+const SettingsPage = lazy(() => import('../features/settings/SettingsPage').then((module) => ({ default: module.SettingsPage })));
+const UserDetailPage = lazy(() => import('../features/settings/UserDetailPage').then((module) => ({ default: module.UserDetailPage })));
+const ActivationPage = lazy(() => import('../features/settings/ActivationPage').then((module) => ({ default: module.ActivationPage })));
 
 export function App() {
   return (
@@ -32,6 +32,7 @@ export function App() {
       <Suspense fallback={<div role="status" aria-live="polite">Cargando módulo…</div>}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/activar" element={<ActivationPage />} />
           <Route element={<ProtectedRoute />}>
             <Route element={<AssistantProvider><AppShell /></AssistantProvider>}>
               <Route index element={<Navigate to="/mi-dia" replace />} />
@@ -51,7 +52,9 @@ export function App() {
               <Route path="/reportes" element={<ReportsPage />} />
               <Route path="/riesgos" element={<CompliancePage />} />
               <Route path="/riesgos/revisiones/:id" element={<ComplianceReviewPage />} />
-              {modulePaths.map((path) => <Route key={path} path={`/${path}`} element={<ModulePlaceholder />} />)}
+              <Route path="/configuracion" element={<SettingsPage />} />
+              <Route path="/configuracion/:section" element={<SettingsPage />} />
+              <Route path="/configuracion/usuarios/:id" element={<UserDetailPage />} />
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

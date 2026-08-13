@@ -71,6 +71,40 @@ async function issueSession(req: Request, res: Response, user: any, rotatedFromI
 }
 
 export class AuthController {
+  static async activationInfo(req: Request, res: Response) {
+    const token = String(req.query.token || '');
+    if (!token) return res.status(400).json({ code: 'ACTIVATION_TOKEN_REQUIRED', error: 'El enlace de activación no es válido.' });
+    const invitation = await prisma.userInvitation.findUnique({ where: { token_hash: hashOpaqueToken(token) }, select: { email: true, nombre: true, apellido: true, rol: true, expires_at: true, accepted_at: true, revoked_at: true } });
+    if (!invitation || invitation.accepted_at || invitation.revoked_at || invitation.expires_at <= new Date()) return res.status(400).json({ code: 'ACTIVATION_TOKEN_INVALID', error: 'El enlace de activación es inválido o expiró.' });
+    return res.json({ invitation: { email: invitation.email, nombre: invitation.nombre, apellido: invitation.apellido, rol: invitation.rol, expires_at: invitation.expires_at } });
+  }
+
+  static async activate(req: Request, res: Response) {
+    const token = String(req.body?.token || '');
+    const password = String(req.body?.password || '');
+    const failures = validatePasswordStrength(password);
+    if (!token || failures.length) return res.status(400).json({ code: 'ACTIVATION_INPUT_INVALID', error: failures.join(' ') || 'El enlace de activación no es válido.', requirements: failures });
+    const invitation = await prisma.userInvitation.findUnique({ where: { token_hash: hashOpaqueToken(token) } });
+    if (!invitation || invitation.accepted_at || invitation.revoked_at || invitation.expires_at <= new Date()) return res.status(400).json({ code: 'ACTIVATION_TOKEN_INVALID', error: 'El enlace de activación es inválido o expiró.' });
+    const existing = await prisma.user.findUnique({ where: { email: invitation.email }, select: { id: true } });
+    if (existing) return res.status(409).json({ code: 'USER_EMAIL_EXISTS', error: 'La cuenta ya fue activada.' });
+    const passwordHash = await bcrypt.hash(password, 12);
+    const user = await prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({ data: { email: invitation.email, nombre: invitation.nombre, apellido: invitation.apellido, rol: invitation.rol, password_hash: passwordHash, activo: true, requires_password_change: false, password_changed_at: new Date() } });
+      const claimed = await tx.userInvitation.updateMany({ where: { id: invitation.id, accepted_at: null, revoked_at: null }, data: { accepted_at: new Date(), accepted_user_id: created.id } });
+      if (claimed.count !== 1) throw new Error('INVITATION_ALREADY_CLAIMED');
+      await tx.auditLog.create({ data: { user_id: created.id, accion: 'USER_INVITATION_ACCEPTED', entidad: 'UserInvitation', entidad_id: invitation.id, correlation_id: req.correlationId, ip_address: requestContext(req).ip, user_agent: requestContext(req).userAgent } });
+      await tx.notification.create({ data: { recipient_id: created.id, created_by_id: invitation.created_by_id, type: 'WELCOME', title: 'Bienvenido a PRAVIA OS', body: 'Tu cuenta quedó activa. Revisa tu perfil y preferencias.', href: '/configuracion/perfil' } });
+      return created;
+    }).catch((error) => {
+      if (String(error?.message).includes('INVITATION_ALREADY_CLAIMED')) return null;
+      throw error;
+    });
+    if (!user) return res.status(409).json({ code: 'ACTIVATION_ALREADY_USED', error: 'La invitación ya fue utilizada.' });
+    const session = await issueSession(req, res, user);
+    return res.status(201).json({ success: true, ...session });
+  }
+
   static async login(req: Request, res: Response) {
     const email = String(req.body?.email || '').trim().toLocaleLowerCase('es-MX');
     const password = String(req.body?.password || '');
