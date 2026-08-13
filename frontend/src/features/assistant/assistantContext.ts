@@ -16,12 +16,13 @@ export function resolveAssistantContext(location: Pick<Location, 'pathname' | 'h
   const segments = location.pathname.split('/').filter(Boolean);
   const first = segments[0] ?? '';
   const module = (first === 'mi-dia' ? 'mi-dia' : first in labels ? first : 'unknown') as AssistantModule;
-  const entityType = segments[1] ? entityRoutes.get(first) : undefined;
+  const agendaEventId = module === 'agenda' ? new URLSearchParams(location.hash.replace(/^#/, '')).get('evento') : null;
+  const entityType = agendaEventId ? 'evento' : segments[1] ? entityRoutes.get(first) : undefined;
   return {
     route: location.pathname,
     module,
     label: labels[module],
-    ...(entityType && segments[1] ? { entityType, entityId: decodeURIComponent(segments[1]) } : {}),
+    ...(agendaEventId ? { entityType, entityId: agendaEventId } : entityType && segments[1] ? { entityType, entityId: decodeURIComponent(segments[1]) } : {}),
     ...(location.hash ? { subview: location.hash.slice(1) } : {}),
   };
 }
@@ -65,8 +66,9 @@ const actions: Partial<Record<AssistantModule, AssistantAction[]>> = {
   ],
   agenda: [
     { id: 'agenda-today', label: '¿Qué tengo hoy?', prompt: '¿Qué tengo en la agenda hoy?' },
-    { id: 'agenda-next', label: 'Próximos eventos', prompt: 'Muéstrame los próximos eventos.' },
+    { id: 'agenda-signatures', label: 'Próximas firmas', prompt: 'Muéstrame las próximas firmas programadas.' },
     { id: 'agenda-space', label: 'Buscar espacio', prompt: 'Ayúdame a buscar un espacio disponible.' },
+    { id: 'agenda-week', label: 'Eventos esta semana', prompt: 'Muéstrame los eventos de esta semana.' },
   ],
   finanzas: [
     { id: 'finance-receivable', label: 'Por cobrar', prompt: 'Muéstrame lo que está por cobrar.' },
@@ -115,6 +117,13 @@ const notariaDetailActions: AssistantAction[] = [
   { id: 'notary-contacts', label: 'Contactos', prompt: 'Muéstrame los contactos de esta notaría.' },
 ];
 
+const eventDetailActions: AssistantAction[] = [
+  { id: 'event-summary', label: 'Resumir evento', prompt: 'Resume este evento de agenda.' },
+  { id: 'event-case', label: 'Ver expediente', prompt: 'Muéstrame el expediente relacionado con este evento.' },
+  { id: 'event-reschedule', label: 'Reprogramar', prompt: 'Prepara una reprogramación de este evento y pide confirmación antes de aplicarla.' },
+  { id: 'event-missing', label: '¿Qué falta antes de esta firma?', prompt: '¿Qué falta antes de esta firma programada?' },
+];
+
 export const getAssistantActions = (context: AssistantContext) => context.entityType === 'expediente'
   ? expedienteDetailActions
   : context.entityType === 'notaria'
@@ -124,5 +133,7 @@ export const getAssistantActions = (context: AssistantContext) => context.entity
   : context.entityType === 'prospecto'
   ? prospectDetailActions
   : context.entityType === 'cotizacion'
-    ? quoteDetailActions
+  ? quoteDetailActions
+  : context.entityType === 'evento'
+  ? eventDetailActions
     : actions[context.module] ?? fallbackActions;

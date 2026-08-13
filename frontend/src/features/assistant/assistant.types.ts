@@ -6,7 +6,7 @@ export type AssistantContext = {
   route: string;
   module: AssistantModule;
   label: string;
-  entityType?: 'expediente' | 'compareciente' | 'notaria' | 'prospecto' | 'cotizacion';
+  entityType?: 'expediente' | 'compareciente' | 'notaria' | 'prospecto' | 'cotizacion' | 'evento';
   entityId?: string;
   subview?: string;
 };

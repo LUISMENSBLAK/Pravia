@@ -24,6 +24,8 @@ export const AGENDA_EVENT_TYPES: TipoEvento[] = [
   'OTRO',
 ];
 
+export const AGENDA_TIME_ZONE = process.env.AGENDA_TIME_ZONE || 'America/Mexico_City';
+
 export class AgendaError extends Error {
   constructor(message: string, readonly code: string, readonly status = 400) {
     super(message);
@@ -43,14 +45,18 @@ export function parseAgendaRange(input: {
   fechaFin?: unknown;
   todoElDia?: boolean;
 }) {
-  const start = new Date(String(input.fechaInicio || ''));
-  if (Number.isNaN(start.getTime())) {
-    throw new AgendaError('La fecha de inicio no es válida.', 'AGENDA_START_INVALID');
-  }
-  const end = input.fechaFin ? new Date(String(input.fechaFin)) : null;
-  if (end && Number.isNaN(end.getTime())) {
-    throw new AgendaError('La fecha final no es válida.', 'AGENDA_END_INVALID');
-  }
+  const parseDate = (value: unknown, message: string, code: string) => {
+    if (value instanceof Date) return new Date(value);
+    const source = String(value || '').trim();
+    if (source && !/(?:Z|[+-]\d{2}:\d{2})$/i.test(source)) {
+      throw new AgendaError('Indica la fecha y hora con una zona horaria explícita.', 'AGENDA_TIMEZONE_REQUIRED');
+    }
+    const parsed = new Date(source);
+    if (Number.isNaN(parsed.getTime())) throw new AgendaError(message, code);
+    return parsed;
+  };
+  const start = parseDate(input.fechaInicio, 'La fecha de inicio no es válida.', 'AGENDA_START_INVALID');
+  const end = input.fechaFin ? parseDate(input.fechaFin, 'La fecha final no es válida.', 'AGENDA_END_INVALID') : null;
   if (end && end.getTime() < start.getTime()) {
     throw new AgendaError('La fecha final no puede ser anterior al inicio.', 'AGENDA_RANGE_INVALID');
   }
@@ -59,6 +65,16 @@ export function parseAgendaRange(input: {
     throw new AgendaError('Un evento no puede abarcar más de un año.', 'AGENDA_RANGE_TOO_LONG');
   }
   return { start, end, allDay: Boolean(input.todoElDia) };
+}
+
+export function agendaRangesOverlap(
+  first: { start: Date; end?: Date | null },
+  second: { start: Date; end?: Date | null },
+) {
+  const defaultDuration = 30 * 60 * 1000;
+  const firstEnd = first.end || new Date(first.start.getTime() + defaultDuration);
+  const secondEnd = second.end || new Date(second.start.getTime() + defaultDuration);
+  return first.start < secondEnd && second.start < firstEnd;
 }
 
 export function normalizeReminders(value: unknown): number[] {

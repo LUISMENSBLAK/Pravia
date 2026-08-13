@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { EventoAgendaEstatus, Prisma } from '@prisma/client';
 import prisma from '../config/prisma';
-import { AgendaError, canAssignAgendaResponsibility, canManageAgendaTeam, normalizeAgendaType, normalizeReminders, parseAgendaRange } from '../domain/agenda';
+import { AGENDA_TIME_ZONE, AgendaError, agendaRangesOverlap, canAssignAgendaResponsibility, canManageAgendaTeam, normalizeAgendaType, normalizeReminders, parseAgendaRange } from '../domain/agenda';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { comparecienteObjectWhere } from '../services/objectAccess.service';
 
@@ -42,7 +42,20 @@ async function validateAgendaLinks(input: { expedienteId?: unknown; comparecient
 
 const eventInclude = {
   usuario: { select: { id: true, nombre: true, apellido: true } },
-  expediente: { select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true } },
+  expediente: {
+    select: {
+      id: true,
+      numero_pravia: true,
+      cliente_alias: true,
+      estatus: true,
+      etapa_actual_nombre: true,
+      version: true,
+      fecha_estimada_firma: true,
+      fecha_real_firma: true,
+      tipo_acto: { select: { id: true, nombre: true } },
+      notaria: { select: { id: true, numero_notaria: true, nombre: true, ciudad: true, municipio: true, entidad_federativa: true } },
+    },
+  },
   compareciente: {
     select: {
       id: true,
@@ -63,7 +76,44 @@ const serializeEvent = (event: any) => ({
       || event.compareciente.personaMoral?.razon_social
       || event.compareciente.nombre_busqueda
     : null,
+  notaria: event.expediente?.notaria || null,
+  firma: event.tipo === 'FIRMA' ? {
+    programada: event.fecha_inicio,
+    estimada_expediente: event.expediente?.fecha_estimada_firma || null,
+    efectiva: event.expediente?.fecha_real_firma || null,
+  } : null,
 });
+
+const agendaObjectWhere = (req: Request): Prisma.EventoAgendaWhereInput => {
+  if (!req.user) return { id: '00000000-0000-0000-0000-000000000000' };
+  if (canManageAgendaTeam(req.user)) {
+    return req.query.user_id && req.query.user_id !== 'TODOS' ? { user_id: String(req.query.user_id) } : {};
+  }
+  const expedienteScope = expedienteAccessWhere(req.user);
+  return {
+    user_id: req.user.id,
+    AND: [{ OR: [{ expediente_id: null }, { expediente: expedienteScope }] }],
+  };
+};
+
+async function findConflicts(input: { responsableId: string; start: Date; end: Date | null; excludeId?: string }) {
+  const proposedEnd = input.end || new Date(input.start.getTime() + 30 * 60 * 1000);
+  const candidates = await prisma.eventoAgenda.findMany({
+    where: {
+      user_id: input.responsableId,
+      estatus: 'ACTIVO',
+      ...(input.excludeId ? { id: { not: input.excludeId } } : {}),
+      fecha_inicio: { lt: proposedEnd },
+      OR: [{ fecha_fin: { gt: input.start } }, { fecha_fin: null }],
+    },
+    include: eventInclude,
+    orderBy: { fecha_inicio: 'asc' },
+    take: 25,
+  });
+  return candidates
+    .filter((event) => agendaRangesOverlap({ start: event.fecha_inicio, end: event.fecha_fin }, { start: input.start, end: input.end }))
+    .map(serializeEvent);
+}
 
 export class AgendaController {
   static async listTasks(req: Request, res: Response) {
@@ -84,7 +134,7 @@ export class AgendaController {
       });
       return res.json({ success: true, tareas: tasks, meta: { total: tasks.length } });
     } catch (error: any) {
-      return res.status(500).json({ success: false, error: 'No fue posible cargar las tareas.', detail: error.message });
+      return res.status(500).json({ success: false, error: 'No fue posible cargar las tareas.', code: 'TASK_LIST_FAILED' });
     }
   }
 
@@ -128,7 +178,7 @@ export class AgendaController {
       return res.status(201).json({ success: true, tarea: task });
     } catch (error: any) {
       const status = error instanceof AgendaError ? error.status : error.code === 'P2002' ? 409 : 500;
-      return res.status(status).json({ success: false, error: error.code === 'P2002' ? 'La tarea ya fue registrada.' : error.message, code: error.code || 'TASK_CREATE_FAILED' });
+      return res.status(status).json({ success: false, error: error.code === 'P2002' ? 'La tarea ya fue registrada.' : error instanceof AgendaError ? error.message : 'No fue posible crear la tarea.', code: error.code || 'TASK_CREATE_FAILED' });
     }
   }
 
@@ -174,7 +224,7 @@ export class AgendaController {
       return res.json({ success: true, tarea: updated });
     } catch (error: any) {
       const status = error instanceof AgendaError ? error.status : 500;
-      return res.status(status).json({ success: false, error: error.message, code: error.code || 'TASK_UPDATE_FAILED' });
+      return res.status(status).json({ success: false, error: error instanceof AgendaError ? error.message : 'No fue posible actualizar la tarea.', code: error.code || 'TASK_UPDATE_FAILED' });
     }
   }
 
@@ -183,11 +233,9 @@ export class AgendaController {
       const now = new Date();
       const defaultFrom = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const defaultTo = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59, 999);
-      const from = req.query.desde ? new Date(String(req.query.desde)) : defaultFrom;
-      const to = req.query.hasta ? new Date(String(req.query.hasta)) : defaultTo;
-      if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to < from) {
-        throw new AgendaError('El rango de consulta de agenda no es válido.', 'AGENDA_QUERY_RANGE_INVALID');
-      }
+      const queryRange = parseAgendaRange({ fechaInicio: req.query.desde || defaultFrom, fechaFin: req.query.hasta || defaultTo });
+      const from = queryRange.start;
+      const to = queryRange.end as Date;
       if (to.getTime() - from.getTime() > 370 * 24 * 60 * 60 * 1000) {
         throw new AgendaError('Consulta como máximo un año de agenda.', 'AGENDA_QUERY_RANGE_TOO_LONG');
       }
@@ -201,19 +249,52 @@ export class AgendaController {
           OR: [{ fecha_fin: { gte: from } }, { fecha_fin: null, fecha_inicio: { gte: from } }],
           ...(status !== 'TODOS' ? { estatus: status as EventoAgendaEstatus } : {}),
           ...(req.query.tipo && req.query.tipo !== 'TODOS' ? { tipo: normalizeAgendaType(req.query.tipo) } : {}),
-          ...(!req.user || ['DIRECCION', 'ADMINISTRACION'].includes(req.user.rol)
-            ? (req.query.user_id && req.query.user_id !== 'TODOS' ? { user_id: String(req.query.user_id) } : {})
-            : { user_id: req.user.id }),
+          ...agendaObjectWhere(req),
           ...(req.query.expediente_id ? { expediente_id: String(req.query.expediente_id) } : {}),
         },
         include: eventInclude,
         orderBy: [{ fecha_inicio: 'asc' }, { created_at: 'asc' }],
         take: 750,
       });
-      return res.json({ success: true, eventos: events.map(serializeEvent), meta: { total: events.length, desde: from, hasta: to } });
+      return res.json({ success: true, eventos: events.map(serializeEvent), meta: { total: events.length, desde: from, hasta: to, timezone: AGENDA_TIME_ZONE } });
     } catch (error: any) {
       const status = error instanceof AgendaError ? error.status : 500;
-      return res.status(status).json({ success: false, error: error.message, code: error.code || 'AGENDA_LIST_FAILED' });
+      return res.status(status).json({ success: false, error: error instanceof AgendaError ? error.message : 'No fue posible cargar la agenda.', code: error.code || 'AGENDA_LIST_FAILED' });
+    }
+  }
+
+  static async detail(req: Request, res: Response) {
+    try {
+      const event = await prisma.eventoAgenda.findFirst({
+        where: { id: req.params.id, ...agendaObjectWhere(req) },
+        include: eventInclude,
+      });
+      if (!event) throw new AgendaError('Evento no encontrado.', 'AGENDA_EVENT_NOT_FOUND', 404);
+      const activity = await prisma.auditLog.findMany({
+        where: { entidad: 'EventoAgenda', entidad_id: event.id },
+        include: { usuario: { select: { id: true, nombre: true, apellido: true } } },
+        orderBy: { created_at: 'desc' },
+        take: 20,
+      });
+      return res.json({ success: true, evento: { ...serializeEvent(event), actividad: activity }, meta: { timezone: AGENDA_TIME_ZONE } });
+    } catch (error: any) {
+      const status = error instanceof AgendaError ? error.status : 500;
+      return res.status(status).json({ success: false, error: error instanceof AgendaError ? error.message : 'No fue posible cargar el evento.', code: error.code || 'AGENDA_DETAIL_FAILED' });
+    }
+  }
+
+  static async conflicts(req: Request, res: Response) {
+    try {
+      if (!req.user) throw new AgendaError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
+      const responsableId = String(req.query.responsable_id || req.user.id);
+      if (!canAssignAgendaResponsibility(req.user, responsableId)) throw new AgendaError('No puedes consultar la disponibilidad de ese responsable.', 'AGENDA_ASSIGNMENT_DENIED', 403);
+      await requireActiveUser(responsableId, 'El responsable');
+      const range = parseAgendaRange({ fechaInicio: req.query.desde, fechaFin: req.query.hasta });
+      const conflictos = await findConflicts({ responsableId, start: range.start, end: range.end, excludeId: req.query.excluir_id ? String(req.query.excluir_id) : undefined });
+      return res.json({ success: true, conflictos, meta: { total: conflictos.length, timezone: AGENDA_TIME_ZONE, blocking: false } });
+    } catch (error: any) {
+      const status = error instanceof AgendaError ? error.status : 500;
+      return res.status(status).json({ success: false, error: error instanceof AgendaError ? error.message : 'No fue posible revisar el horario.', code: error.code || 'AGENDA_CONFLICT_FAILED' });
     }
   }
 
@@ -225,9 +306,9 @@ export class AgendaController {
       const canManageTeam = canManageAgendaTeam(req.user);
       const [usuarios, expedientes, comparecientes] = await Promise.all([
         prisma.user.findMany({ where: { activo: true, ...(!canManageTeam ? { id: req.user.id } : {}) }, select: { id: true, nombre: true, apellido: true, rol: true }, orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }] }),
-        prisma.expediente.findMany({ where: { archived_at: null, ...expedienteScope }, select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true }, orderBy: { updated_at: 'desc' }, take: 300 }),
+        prisma.expediente.findMany({ where: { archived_at: null, ...expedienteScope }, select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true, version: true, fecha_estimada_firma: true, fecha_real_firma: true, abogado_id: true, tipo_acto: { select: { id: true, nombre: true } }, notaria: { select: { id: true, numero_notaria: true, nombre: true, ciudad: true, municipio: true, entidad_federativa: true } } }, orderBy: { updated_at: 'desc' }, take: 300 }),
         prisma.compareciente.findMany({
-          where: { archived_at: null, ...(!canReadComparecientes ? { id: '00000000-0000-0000-0000-000000000000' } : {}) },
+          where: { archived_at: null, ...(!canReadComparecientes ? { id: '00000000-0000-0000-0000-000000000000' } : comparecienteObjectWhere(req.user)) },
           select: {
             id: true,
             tipo_persona: true,
@@ -250,10 +331,12 @@ export class AgendaController {
             nombre: item.personaFisica?.nombre_completo_calculado || item.personaMoral?.razon_social || item.nombre_busqueda,
           })),
           tipos: Object.keys(EVENT_COLORS).map((tipo) => ({ tipo, color: EVENT_COLORS[tipo] })),
+          timezone: AGENDA_TIME_ZONE,
+          permisos: { gestionar_equipo: canManageTeam, escribir: req.user.permissions.includes('agenda.write') },
         },
       });
-    } catch (error: any) {
-      return res.status(500).json({ success: false, error: 'No fue posible cargar los catálogos de agenda.', detail: error.message });
+    } catch {
+      return res.status(500).json({ success: false, error: 'No fue posible cargar los catálogos de agenda.', code: 'AGENDA_CATALOGS_FAILED' });
     }
   }
 
@@ -270,6 +353,8 @@ export class AgendaController {
       const reminders = normalizeReminders(req.body.recordatorios);
       if (!req.user) throw new AgendaError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
       const links = await validateAgendaLinks({ expedienteId: req.body.expediente_id, comparecienteId: req.body.compareciente_id }, req.user);
+      if (tipo === 'FIRMA' && !links.expedienteId) throw new AgendaError('Una firma programada debe vincularse con un expediente.', 'AGENDA_SIGNATURE_CASE_REQUIRED');
+      const conflicts = await findConflicts({ responsableId, start: range.start, end: range.end });
       const idempotencyKey = String(req.body.idempotency_key || '').trim() || null;
 
       const result = await prisma.$transaction(async (tx) => {
@@ -317,10 +402,16 @@ export class AgendaController {
         }
         return { event, idempotent: false };
       });
-      return res.status(result.idempotent ? 200 : 201).json({ success: true, evento: serializeEvent(result.event), idempotent: result.idempotent });
+      return res.status(result.idempotent ? 200 : 201).json({
+        success: true,
+        evento: serializeEvent(result.event),
+        idempotent: result.idempotent,
+        conflictos: conflicts,
+        warnings: conflicts.length ? [{ code: 'SCHEDULE_CONFLICT', message: 'El responsable ya tiene otro evento en ese horario.' }] : [],
+      });
     } catch (error: any) {
       const status = error instanceof AgendaError ? error.status : 500;
-      return res.status(status).json({ success: false, error: error.message, code: error.code || 'AGENDA_CREATE_FAILED' });
+      return res.status(status).json({ success: false, error: error instanceof AgendaError ? error.message : 'No fue posible guardar el evento.', code: error.code || 'AGENDA_CREATE_FAILED' });
     }
   }
 
@@ -350,6 +441,9 @@ export class AgendaController {
       if (titulo.length < 3 || titulo.length > 180) throw new AgendaError('El título debe tener entre 3 y 180 caracteres.', 'AGENDA_TITLE_INVALID');
       const estatus = req.body.estatus ? String(req.body.estatus).toUpperCase() as EventoAgendaEstatus : current.estatus;
       if (!['ACTIVO', 'COMPLETADO'].includes(estatus)) throw new AgendaError('El estado solicitado no es válido.', 'AGENDA_STATUS_INVALID');
+      const tipo = req.body.tipo ? normalizeAgendaType(req.body.tipo) : current.tipo;
+      if (tipo === 'FIRMA' && !links.expedienteId) throw new AgendaError('Una firma programada debe vincularse con un expediente.', 'AGENDA_SIGNATURE_CASE_REQUIRED');
+      const conflicts = await findConflicts({ responsableId: responsableId || actorId, start: range.start, end: range.end, excludeId: current.id });
 
       const updated = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:agenda-event:${current.id}`}))`);
@@ -358,7 +452,7 @@ export class AgendaController {
           data: {
             titulo,
             descripcion: req.body.descripcion === undefined ? current.descripcion : String(req.body.descripcion || '').trim() || null,
-            tipo: req.body.tipo ? normalizeAgendaType(req.body.tipo) : current.tipo,
+            tipo,
             fecha_inicio: range.start,
             fecha_fin: range.end,
             todo_el_dia: range.allDay,
@@ -383,10 +477,15 @@ export class AgendaController {
         });
         return event;
       });
-      return res.json({ success: true, evento: serializeEvent(updated) });
+      return res.json({
+        success: true,
+        evento: serializeEvent(updated),
+        conflictos: conflicts,
+        warnings: conflicts.length ? [{ code: 'SCHEDULE_CONFLICT', message: 'El responsable ya tiene otro evento en ese horario.' }] : [],
+      });
     } catch (error: any) {
       const status = error instanceof AgendaError ? error.status : 500;
-      return res.status(status).json({ success: false, error: error.message, code: error.code || 'AGENDA_UPDATE_FAILED' });
+      return res.status(status).json({ success: false, error: error instanceof AgendaError ? error.message : 'No fue posible actualizar el evento.', code: error.code || 'AGENDA_UPDATE_FAILED' });
     }
   }
 
@@ -427,7 +526,7 @@ export class AgendaController {
       return res.json({ success: true, evento: serializeEvent(event) });
     } catch (error: any) {
       const status = error instanceof AgendaError ? error.status : 500;
-      return res.status(status).json({ success: false, error: error.message, code: error.code || 'AGENDA_CANCEL_FAILED' });
+      return res.status(status).json({ success: false, error: error instanceof AgendaError ? error.message : 'No fue posible cancelar el evento.', code: error.code || 'AGENDA_CANCEL_FAILED' });
     }
   }
 }

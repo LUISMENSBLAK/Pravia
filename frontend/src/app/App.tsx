@@ -16,8 +16,9 @@ import { ComparecientesPage } from '../features/comparecientes/ComparecientesPag
 import { ComparecienteWorkspace } from '../features/comparecientes/ComparecienteWorkspace';
 import { NotariasPage } from '../features/notarias/NotariasPage';
 import { NotariaWorkspace } from '../features/notarias/NotariaWorkspace';
+import { AgendaPage } from '../features/agenda/AgendaPage';
 
-const modulePaths = ['finanzas', 'agenda', 'reportes', 'riesgos', 'configuracion'];
+const modulePaths = ['finanzas', 'reportes', 'riesgos', 'configuracion'];
 
 export function App() {
   return (
@@ -38,6 +39,7 @@ export function App() {
             <Route path="/comparecientes/:id" element={<ComparecienteWorkspace />} />
             <Route path="/notarias" element={<NotariasPage />} />
             <Route path="/notarias/:id" element={<NotariaWorkspace />} />
+            <Route path="/agenda" element={<AgendaPage />} />
             {modulePaths.map((path) => <Route key={path} path={`/${path}`} element={<ModulePlaceholder />} />)}
           </Route>
         </Route>
