@@ -85,7 +85,16 @@ export function calculateFinanceAggregates(input: {
     .reduce((sum, item) => sum + cents(item.amount), 0);
   const honorariosCobrados = allocated('INGRESO', 'DESPACHO');
   const fondosTerceros = allocated('INGRESO', 'TERCERO');
-  const otrosDestinos = allocated('INGRESO', 'OTRO');
+  // Los movimientos legacy validados pueden no tener distribuciones. No deben
+  // convertirse silenciosamente en honorarios ni desaparecer de la ecuación:
+  // el saldo sin clasificar se expone como OTRO hasta su conciliación humana.
+  const unallocatedIncome = applied
+    .filter((item) => item.nature === 'INGRESO')
+    .reduce((sum, item) => {
+      const classified = item.allocations.reduce((subtotal, allocation) => subtotal + cents(allocation.amount), 0);
+      return sum + Math.max(0, cents(item.amount) - classified);
+    }, 0);
+  const otrosDestinos = allocated('INGRESO', 'OTRO') + unallocatedIncome;
   const fondosTercerosPagados = allocated('EGRESO', 'TERCERO');
   const honorariosGenerados = input.generatedFees.reduce((sum, item) => sum + cents(item), 0);
 

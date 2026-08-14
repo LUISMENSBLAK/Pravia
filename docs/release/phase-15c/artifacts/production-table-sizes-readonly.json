@@ -1,0 +1,29 @@
+{
+  "generated_at": "2026-08-14T09:36:26.809Z",
+  "environment": "production",
+  "transaction_read_only": "on",
+  "source": "PostgreSQL catalog estimates; no EXPLAIN ANALYZE",
+  "tables": [
+    {
+      "table_name": "documentos",
+      "estimated_rows": "65",
+      "table_bytes": "32768",
+      "index_bytes": "114688",
+      "total_bytes": "180224"
+    },
+    {
+      "table_name": "movimientos_financieros",
+      "estimated_rows": "3",
+      "table_bytes": "8192",
+      "index_bytes": "114688",
+      "total_bytes": "131072"
+    },
+    {
+      "table_name": "tareas_externas",
+      "estimated_rows": "-1",
+      "table_bytes": "0",
+      "index_bytes": "16384",
+      "total_bytes": "24576"
+    }
+  ]
+}

@@ -31,6 +31,8 @@
     "db:migrate": "ts-node src/cli/prismaSafe.ts migrate dev",
     "db:migrate:status": "ts-node src/cli/prismaSafe.ts migrate status",
     "db:migrate:deploy": "ts-node src/cli/prismaSafe.ts migrate deploy",
+    "staging:migrate:status": "ts-node src/cli/prismaStaging.ts migrate status",
+    "staging:migrate:deploy": "ts-node src/cli/prismaStaging.ts migrate deploy",
     "db:push": "ts-node src/cli/prismaSafe.ts db push",
     "db:studio": "npx prisma studio"
   },

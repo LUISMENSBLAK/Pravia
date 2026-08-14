@@ -16,11 +16,11 @@ const OBSERVED_IDENTIFICATION = {
   estatus: { in: ['VENCIDO', 'RECHAZADO'] },
 } as const;
 
-function newestDate(values: Array<Date | string | null | undefined>, fallback: Date | string) {
+function newestDate(values: Array<Date | string | null | undefined>, fallback: Date | string | null | undefined) {
   return values.reduce<Date>((latest, value) => {
     const candidate = value ? new Date(value) : latest;
     return candidate.getTime() > latest.getTime() ? candidate : latest;
-  }, new Date(fallback));
+  }, fallback ? new Date(fallback) : new Date(0));
 }
 
 function identityState(record: any): IdentityState {
@@ -205,7 +205,7 @@ export class ComparecienteService {
         ...record.datosFuente.map((item: any) => item.updated_at),
         ...record.documentos.flatMap((item: any) => [item.updated_at, item.documento.fecha_carga]),
         ...record.expedientes.map((item: any) => item.updated_at),
-      ], record.updated_at);
+      ], record.updated_at || record.created_at);
       return {
         id: record.id,
         tipo_persona: record.tipo_persona,
@@ -361,7 +361,7 @@ export class ComparecienteService {
       ...compareciente.documentos.flatMap((item) => [item.updated_at, item.documento.fecha_carga]),
       ...compareciente.datosFuente.map((item) => item.updated_at),
       ...compareciente.expedientes.map((item) => item.updated_at),
-    ], compareciente.updated_at);
+    ], compareciente.updated_at || compareciente.created_at);
 
     return {
       ...compareciente,

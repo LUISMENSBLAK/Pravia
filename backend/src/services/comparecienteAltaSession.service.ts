@@ -61,12 +61,13 @@ export class ComparecienteAltaSessionService {
     const finalUsuarioId = usuario_id;
 
     if (idempotency_key) {
-      const sesionExistente = await prisma.comparecienteAltaSession.findUnique({
+      // La unicidad real es un índice parcial (solo filas no archivadas), que
+      // Prisma no puede representar como un selector compuesto findUnique.
+      const sesionExistente = await prisma.comparecienteAltaSession.findFirst({
         where: {
-          usuario_id_idempotency_key: {
-            usuario_id: finalUsuarioId,
-            idempotency_key
-          }
+          usuario_id: finalUsuarioId,
+          idempotency_key,
+          archived_at: null
         },
         include: {
           cargasTemporales: {

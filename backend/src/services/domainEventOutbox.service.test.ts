@@ -13,6 +13,7 @@ describe('DomainEventOutboxService', () => {
         payload: { actor_user_id: 'user-1' },
         occurred_at: new Date(),
         correlation_id: 'corr-1',
+        attempts: 1,
       }]),
       domainEventOutbox: { update },
     } as any;
@@ -25,6 +26,7 @@ describe('DomainEventOutboxService', () => {
       data: expect.objectContaining({
         estatus: 'FALLIDO',
         last_error: 'NO_HANDLER_REGISTERED:EventoSinHandlerDePrueba',
+        available_at: expect.any(Date),
       }),
     }));
   });

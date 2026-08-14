@@ -33,7 +33,7 @@ export class ComparecienteAltaSessionController {
           estatus: sesion.estatus,
           tipo_persona: sesion.tipo_persona,
           expires_at: sesion.expires_at,
-          cargasTemporales: sesion.cargasTemporales || []
+          cargasTemporales: 'cargasTemporales' in sesion ? sesion.cargasTemporales : []
         }
       });
     } catch (err: any) {

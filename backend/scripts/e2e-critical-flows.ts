@@ -187,6 +187,48 @@ async function main() {
   await patch(`/comparecientes/vincular-expediente/${firstLink.data.id}/validacion`, { datos_validados: true });
   steps.push('compareciente:creado-reutilizado-validado');
 
+  const complianceCatalogs = await request('/cumplimiento/catalogos');
+  const uifRule = complianceCatalogs.reglas?.find((item: any) => item.tipo === 'UIF');
+  if (!uifRule) throw new Error('El staging no contiene una regla UIF activa para validar snapshots.');
+  const reviewCreated = await post('/cumplimiento/revisiones', {
+    expediente_id: secondExpediente.id,
+    tipo: 'UIF',
+    rule_set_id: uifRule.id,
+    fecha_operacion: new Date().toISOString(),
+    cuestionario: {
+      tipo_acto_uif: 'TRANSMISION_DERECHOS_REALES_INMUEBLES',
+      precio_pactado: 2_000_000,
+      valor_catastral: 1_500_000,
+      valor_comercial: 1_800_000,
+      monto_garantizado: 0,
+      operaciones_relacionadas_seis_meses: 0,
+      pep_declarada: 'NO',
+      identidad_verificada: true,
+      actividad_ocupacion_acreditada: true,
+      origen_recursos_documentado: true,
+      beneficiario_controlador_identificado: true,
+    },
+  });
+  const reviewId = reviewCreated.revision?.id;
+  if (!reviewId) throw new Error('La revisión UIF no devolvió identificador.');
+  const evaluated = await post(`/cumplimiento/revisiones/${reviewId}/evaluar`, { cuestionario: {} });
+  if (!evaluated.revision?.resultado_json) throw new Error('La evaluación UIF no persistió un resultado explicable.');
+  const confirmed = await post(`/cumplimiento/revisiones/${reviewId}/revisar`, {
+    decision: 'CONFIRMAR', observaciones: 'Confirmación humana E2E en staging aislado.',
+  });
+  const frozenMaster = JSON.stringify(confirmed.revision?.master_snapshot || {});
+  const beforeMasterChange = await request(`/expedientes/${secondExpediente.id}`);
+  await patch(`/expedientes/${secondExpediente.id}`, {
+    version: beforeMasterChange.version,
+    cliente_alias: `E2E Master Modificado ${suffix}`,
+  });
+  const frozenDetail = await request(`/cumplimiento/revisiones/${reviewId}`);
+  if (JSON.stringify(frozenDetail.revision?.master_snapshot || {}) !== frozenMaster
+    || frozenDetail.revision?.master_data_changed !== true) {
+    throw new Error('El snapshot de cumplimiento cambió junto con el master o no detectó el cambio posterior.');
+  }
+  steps.push('compliance:snapshot-inmutable-confirmado');
+
   const pdf = Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF');
   const documentForm = new FormData();
   documentForm.set('file', new Blob([pdf], { type: 'application/pdf' }), `evidencia-${suffix}.pdf`);

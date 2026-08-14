@@ -23,9 +23,11 @@ export class DomainEventOutboxService {
           "attempts" = "attempts" + 1
       WHERE "id" IN (
         SELECT "id" FROM "domain_event_outbox"
-        WHERE "estatus" IN ('PENDIENTE', 'FALLIDO')
-          AND "attempts" < 5
-          AND "available_at" <= NOW()
+        WHERE "attempts" < 5
+          AND (
+            ("estatus" IN ('PENDIENTE', 'FALLIDO') AND "available_at" <= NOW())
+            OR ("estatus" = 'PROCESANDO' AND "locked_at" < NOW() - INTERVAL '5 minutes')
+          )
         ORDER BY "created_at" ASC
         FOR UPDATE SKIP LOCKED
         LIMIT $2
@@ -42,11 +44,13 @@ export class DomainEventOutboxService {
     for (const outboxRecord of claimedEvents) {
       const handlers = DomainEventBus.getHandlers(outboxRecord.event_type);
       if (handlers.length === 0) {
+        const retryDelayMs = Math.min(60_000 * 2 ** Math.max(outboxRecord.attempts - 1, 0), 3_600_000);
         await this.prisma.domainEventOutbox.update({
           where: { id: outboxRecord.id },
           data: {
             estatus: 'FALLIDO',
             last_error: `NO_HANDLER_REGISTERED:${outboxRecord.event_type}`,
+            available_at: new Date(Date.now() + retryDelayMs),
             locked_at: null,
             locked_by: null,
           },
@@ -148,11 +152,13 @@ export class DomainEventOutboxService {
         });
         processedCount++;
       } else {
+        const retryDelayMs = Math.min(60_000 * 2 ** Math.max(outboxRecord.attempts - 1, 0), 3_600_000);
         await this.prisma.domainEventOutbox.update({
           where: { id: outboxRecord.id },
           data: {
             estatus: 'FALLIDO',
             last_error: lastErrorMsg,
+            available_at: new Date(Date.now() + retryDelayMs),
             locked_at: null,
             locked_by: null
           }

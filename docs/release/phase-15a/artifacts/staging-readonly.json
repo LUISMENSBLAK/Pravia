@@ -1,0 +1,180 @@
+{
+  "generated_at": "2026-08-13T21:48:08.824Z",
+  "environment": "staging",
+  "identity": {
+    "host": "127.0.0.1",
+    "port": "55433",
+    "database": "pravia_staging",
+    "schema": "pravia_os",
+    "project_ref": null,
+    "current_schema": "pravia_os",
+    "postgres_version": "16.14",
+    "transaction_read_only": "on",
+    "server_address": "172.17.0.3/32",
+    "server_port": 5432
+  },
+  "queries": [
+    "SELECT current_database/current_schema/server_version/transaction_read_only/server address",
+    "SELECT migration table schemas FROM information_schema.tables WHERE table_name = '_prisma_migrations'",
+    "SELECT migration metadata FROM each discovered _prisma_migrations table",
+    "SELECT tables FROM information_schema.tables WHERE schema IN ('pravia_os','public')",
+    "SELECT columns FROM information_schema.columns WHERE schema = 'pravia_os'",
+    "SELECT constraints FROM pg_constraint WHERE schema = 'pravia_os'",
+    "SELECT indexes FROM pg_indexes WHERE schema = 'pravia_os'",
+    "SELECT enums FROM pg_type/pg_enum WHERE schema = 'pravia_os'",
+    "SELECT sequences FROM information_schema.sequences WHERE schema = 'pravia_os'",
+    "SELECT triggers FROM information_schema.triggers WHERE schema = 'pravia_os'",
+    "SELECT function signatures FROM pg_proc WHERE schema = 'pravia_os'"
+  ],
+  "migrations": [
+    {
+      "table_schema": "pravia_os",
+      "id": "638447a0-526f-423a-8982-10cbb710141f",
+      "migration_name": "20260726000000_expedientes_core_engine",
+      "checksum": "75f600ceed3569bdc1929e8efe5ad6dd9a2e868fa02479430640787799baf95e",
+      "started_at": "2026-08-13T21:47:53.510Z",
+      "finished_at": null,
+      "rolled_back_at": null,
+      "applied_steps_count": 0,
+      "logs": "A migration failed to apply. New migrations cannot be applied before the error is recovered from. Read more about how to resolve migration issues in a production database: https://pris.ly/d/migrate-resolve\n\nMigration name: 20260726000000_expedientes_core_engine\n\nDatabase error code: 42704\n\nDatabase error:\nERROR: type \"DocCategoria\" does not exist\n\nDbError { severity: \"ERROR\", parsed_severity: Some(Error), code: SqlState(E42704), message: \"type \\\"DocCategoria\\\" does not exist\", detail: None, hint: None, position: None, where_: None, schema: None, table: None, column: None, datatype: None, constraint: None, file: Some(\"parse_type.c\"), line: Some(270), routine: Some(\"typenameType\") }\n\n"
+    }
+  ],
+  "structure": {
+    "tables": [],
+    "columns": [
+      {
+        "table_schema": "pravia_os",
+        "table_name": "_prisma_migrations",
+        "ordinal_position": 1,
+        "column_name": "id",
+        "data_type": "character varying",
+        "udt_schema": "pg_catalog",
+        "udt_name": "varchar",
+        "is_nullable": "NO",
+        "column_default": null,
+        "character_maximum_length": 36,
+        "numeric_precision": null,
+        "numeric_scale": null
+      },
+      {
+        "table_schema": "pravia_os",
+        "table_name": "_prisma_migrations",
+        "ordinal_position": 2,
+        "column_name": "checksum",
+        "data_type": "character varying",
+        "udt_schema": "pg_catalog",
+        "udt_name": "varchar",
+        "is_nullable": "NO",
+        "column_default": null,
+        "character_maximum_length": 64,
+        "numeric_precision": null,
+        "numeric_scale": null
+      },
+      {
+        "table_schema": "pravia_os",
+        "table_name": "_prisma_migrations",
+        "ordinal_position": 3,
+        "column_name": "finished_at",
+        "data_type": "timestamp with time zone",
+        "udt_schema": "pg_catalog",
+        "udt_name": "timestamptz",
+        "is_nullable": "YES",
+        "column_default": null,
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null
+      },
+      {
+        "table_schema": "pravia_os",
+        "table_name": "_prisma_migrations",
+        "ordinal_position": 4,
+        "column_name": "migration_name",
+        "data_type": "character varying",
+        "udt_schema": "pg_catalog",
+        "udt_name": "varchar",
+        "is_nullable": "NO",
+        "column_default": null,
+        "character_maximum_length": 255,
+        "numeric_precision": null,
+        "numeric_scale": null
+      },
+      {
+        "table_schema": "pravia_os",
+        "table_name": "_prisma_migrations",
+        "ordinal_position": 5,
+        "column_name": "logs",
+        "data_type": "text",
+        "udt_schema": "pg_catalog",
+        "udt_name": "text",
+        "is_nullable": "YES",
+        "column_default": null,
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null
+      },
+      {
+        "table_schema": "pravia_os",
+        "table_name": "_prisma_migrations",
+        "ordinal_position": 6,
+        "column_name": "rolled_back_at",
+        "data_type": "timestamp with time zone",
+        "udt_schema": "pg_catalog",
+        "udt_name": "timestamptz",
+        "is_nullable": "YES",
+        "column_default": null,
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null
+      },
+      {
+        "table_schema": "pravia_os",
+        "table_name": "_prisma_migrations",
+        "ordinal_position": 7,
+        "column_name": "started_at",
+        "data_type": "timestamp with time zone",
+        "udt_schema": "pg_catalog",
+        "udt_name": "timestamptz",
+        "is_nullable": "NO",
+        "column_default": "now()",
+        "character_maximum_length": null,
+        "numeric_precision": null,
+        "numeric_scale": null
+      },
+      {
+        "table_schema": "pravia_os",
+        "table_name": "_prisma_migrations",
+        "ordinal_position": 8,
+        "column_name": "applied_steps_count",
+        "data_type": "integer",
+        "udt_schema": "pg_catalog",
+        "udt_name": "int4",
+        "is_nullable": "NO",
+        "column_default": "0",
+        "character_maximum_length": null,
+        "numeric_precision": 32,
+        "numeric_scale": 0
+      }
+    ],
+    "constraints": [
+      {
+        "schema_name": "pravia_os",
+        "table_name": "_prisma_migrations",
+        "constraint_name": "_prisma_migrations_pkey",
+        "constraint_type": "p",
+        "definition": "PRIMARY KEY (id)"
+      }
+    ],
+    "indexes": [
+      {
+        "schema_name": "pravia_os",
+        "table_name": "_prisma_migrations",
+        "index_name": "_prisma_migrations_pkey",
+        "definition": "CREATE UNIQUE INDEX _prisma_migrations_pkey ON pravia_os._prisma_migrations USING btree (id)"
+      }
+    ],
+    "enums": [],
+    "sequences": [],
+    "triggers": [],
+    "functions": []
+  }
+}

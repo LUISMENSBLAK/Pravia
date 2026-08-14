@@ -1,0 +1,2 @@
+legacy_pago_id,fecha,referencia,clasificacion,importe,expediente_id,cotizacion_id,posibles_duplicados,destino_propuesto,razon
+"9b53b792-a909-4fca-a632-f331a2775fb6","Fri Aug 14 2026 01:31:06 GMT-0600 (Central Standard Time)","legacy:pago:9b53b792-a909-4fca-a632-f331a2775fb6","YA_REPRESENTADO","1000","aa1fdd31-9d8b-4066-8479-a70b3d8bd8f1","5999d2a6-f09e-4414-abbe-6a58b81ba052","83aa35d5-9642-4d56-b3db-6ca597465009","null","Existe un movimiento activo del mismo objeto, importe, fecha y concepto."

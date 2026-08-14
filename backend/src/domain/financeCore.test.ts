@@ -55,6 +55,15 @@ describe('dominio financiero canónico', () => {
     expect(result.honorarios_cobrados + result.fondos_terceros + result.otros_destinos).toBe(result.ingresos_recibidos);
   });
 
+  it('mantiene reconciliables los ingresos legacy sin distribución', () => {
+    const result = calculateFinanceAggregates({
+      generatedFees: [],
+      movements: [{ nature: 'INGRESO', amount: 1_000, status: 'VALIDADO', allocations: [] }],
+    });
+    expect(result).toMatchObject({ ingresos_recibidos: 1_000, honorarios_cobrados: 0, fondos_terceros: 0, otros_destinos: 1_000 });
+    expect(result.honorarios_cobrados + result.fondos_terceros + result.otros_destinos).toBe(result.ingresos_recibidos);
+  });
+
   it('no cuenta borradores ni convierte terceros en honorarios', () => {
     const result = calculateFinanceAggregates({
       generatedFees: [10_000],

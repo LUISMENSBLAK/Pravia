@@ -1,0 +1,22 @@
+{
+  "format": "pravia-canonical-migration-manifest-v1",
+  "baseline": {
+    "name": "20260812000000_canonical_production_baseline",
+    "sha256": "51526bb12228a0c5f4fd02f9baec77ae696f601c2c6f5ff70c2fa9b9cf5f7b49"
+  },
+  "future_migrations": [
+    { "order": 1, "name": "20260812010000_add_granular_delivery_postfirma", "sha256": "ced3561b11cd56647b701a5b3c75c39910e6a5cfb8bdd106348e9b5e249afabe" },
+    { "order": 2, "name": "20260812020000_persist_project_templates", "sha256": "d423eb7b5a09f5f543dfd550ddc57808e91a60aee78eaa44f9e3347536025ea4" },
+    { "order": 3, "name": "20260812030000_create_canonical_finance_ledger", "sha256": "15ba00cfb150ce41ce9b5aaef664b4ac03fd92bff8b9c3c2f927f4f00b84c99a" },
+    { "order": 4, "name": "20260813010000_immutable_compliance_snapshots", "sha256": "2d9c0eae0c2b4973567b102e5539845b8c3fc9668983315727c4db2811c96d30" },
+    { "order": 5, "name": "20260813020000_create_reporting_targets", "sha256": "a6fb0cdb2116eb1f31f7b6707cd30625dfc332bf14013b6f37217c7229081140" },
+    { "order": 6, "name": "20260813030000_settings_and_access", "sha256": "62af5db6f6fac0c2e8cf8d3d8397cbaf0907bbd4e8f0698492d30960387c0ffa" },
+    { "order": 7, "name": "20260813040000_harden_session_persistence", "sha256": "1de3506cad5bc3b70ab64b2a673a73b1348c1a7cb31ec2950e4c73ae1ac23b17" },
+    { "order": 8, "name": "20260814010000_align_future_schema_and_indexes", "sha256": "30ab822be29d2d0bdb1c5f10dc14dcb060034a2df746aaa25e82d405b7728568" }
+  ],
+  "schema_fingerprints": {
+    "production_baseline": "4a4d89cbb98c0ba29017fcac70c3109ed95a8e0824b74637bcf6f3f2dfc5b172",
+    "future_schema_s1": "e4dd1e6e5823c46b8cb71c02c929451391d0fc8e4f870dfadfd6776d5a4e284f",
+    "future_schema": "fe865ca1070fa688dd65f65b00c4c7538b30303aac718ad39406e25abcf4bc20"
+  }
+}
