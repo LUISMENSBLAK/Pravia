@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import path from 'path';
 import { resolveRuntimeConfig, validateRuntimeConfig } from '../src/config/runtime';
+import { validateJwtSecret } from '../src/auth/authTokens';
 
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
@@ -19,8 +20,9 @@ try {
   hasErrors = true;
 }
 
-if ((process.env.AUTH_JWT_SECRET || '').length < 32) {
-  console.error('INVALIDA AUTH_JWT_SECRET: debe tener al menos 32 caracteres aleatorios.');
+const jwtSecretError = validateJwtSecret(process.env.AUTH_JWT_SECRET);
+if (jwtSecretError) {
+  console.error(`INVALIDA ${jwtSecretError}`);
   hasErrors = true;
 } else console.log('OK AUTH_JWT_SECRET');
 

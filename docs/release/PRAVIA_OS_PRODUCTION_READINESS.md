@@ -1,9 +1,15 @@
 # PRAVIA OS — Production Readiness
 
-Fecha de corte: 2026-08-13
+Fecha de corte: 2026-08-14
 Decisión: **NOT READY FOR PRODUCTION**
 
 El código de Fase 14 quedó integrado y validado en una copia local real. No se desplegó, no se hizo push y no se aplicó ninguna migración a producción. La decisión permanece en rojo porque el historial remoto de Prisma está divergente, el secreto JWT remoto observado no cumple el mínimo, no hay staging real validado y faltan pruebas operativas sobre infraestructura productiva.
+
+## Actualización Fase 15D
+
+Fase 15C reconcilió el historial y produjo S2 reproducible, pero Fase 15D termina **YELLOW — INFRASTRUCTURE ACTION REQUIRED**: no existe un Supabase PRAVIA staging accesible ni sesiones/servicios staging verificables en Render y Netlify. Las huellas productivas inicial y final siguen siendo S0 exacto en sesiones read-only. No hubo producción write/deploy/migration ni push.
+
+Se reforzó la validación JWT contra placeholders/repetición y el build frontend bloquea localhost/HTTP y cruces de host staging. Las suites quedan backend 211/211 y frontend 127/127; auditorías y secret scan están limpios. Estos resultados no sustituyen Auth, RBAC, E2E, Storage, workers, PWA, backup/restore, performance y accessibility sobre HTTPS staging real.
 
 ## Arquitectura final
 

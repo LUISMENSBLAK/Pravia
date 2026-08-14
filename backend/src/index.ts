@@ -27,9 +27,11 @@ import { authenticate, authorizeByMethod, authorizeExpedienteRequest, requirePas
 import { errorLogLevel, normalizeErrorBody } from './utils/httpError';
 import { getStorageCompensationHealth, storageCompensationWorker } from './workers/storageCompensation.worker';
 import { resolveRuntimeConfig, validateRuntimeConfig } from './config/runtime';
+import { validateJwtSecret } from './auth/authTokens';
 
 const startupErrors = validateRuntimeConfig(resolveRuntimeConfig());
-if ((process.env.AUTH_JWT_SECRET || '').length < 32) startupErrors.push('AUTH_JWT_SECRET debe tener al menos 32 caracteres aleatorios.');
+const jwtSecretError = validateJwtSecret(process.env.AUTH_JWT_SECRET);
+if (jwtSecretError) startupErrors.push(jwtSecretError);
 if (process.env.NODE_ENV === 'production') {
   const origins = String(process.env.CORS_ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean);
   if (!origins.length || origins.some((value) => value === '*' || /localhost|127\.0\.0\.1/i.test(value))) {
@@ -44,6 +46,7 @@ if (startupErrors.length) throw new Error(`Configuración de arranque inválida:
 const app = express();
 app.disable('etag');
 app.disable('x-powered-by');
+if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:5174,http://localhost:5175')
   .split(',')
@@ -65,6 +68,7 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; base-uri 'none'; frame-ancestors 'none'");
   if (process.env.NODE_ENV === 'production') res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
 });

@@ -6,6 +6,14 @@ export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 export const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const REFRESH_COOKIE = 'pravia_refresh';
 
+const JWT_PLACEHOLDER_PATTERNS = [
+  /replace[-_ ]?with/i,
+  /change[-_ ]?me/i,
+  /your[-_ ]?(?:jwt[-_ ]?)?secret/i,
+  /example[-_ ]?secret/i,
+  /secret[-_ ]?of[-_ ]?at[-_ ]?least/i,
+];
+
 type AccessClaims = {
   sub: string;
   sid: string;
@@ -13,9 +21,22 @@ type AccessClaims = {
   type: 'access';
 };
 
+export function validateJwtSecret(secret: string | undefined) {
+  const value = String(secret || '');
+  if (value.length < 32) return 'AUTH_JWT_SECRET debe tener al menos 32 caracteres.';
+  if (JWT_PLACEHOLDER_PATTERNS.some((pattern) => pattern.test(value))) {
+    return 'AUTH_JWT_SECRET no puede ser un placeholder.';
+  }
+  if (new Set(value).size < 12 || /^(.)\1+$/.test(value)) {
+    return 'AUTH_JWT_SECRET debe ser aleatorio y no repetitivo.';
+  }
+  return null;
+}
+
 export function getJwtSecret() {
   const secret = process.env.AUTH_JWT_SECRET || '';
-  if (secret.length < 32) throw new Error('AUTH_JWT_SECRET debe tener al menos 32 caracteres.');
+  const error = validateJwtSecret(secret);
+  if (error) throw new Error(error);
   return secret;
 }
 

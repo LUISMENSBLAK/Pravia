@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { hashOpaqueToken, newOpaqueToken, parseCookies, signAccessToken, verifyAccessToken } from './authTokens';
+import { getJwtSecret, hashOpaqueToken, newOpaqueToken, parseCookies, signAccessToken, validateJwtSecret, verifyAccessToken } from './authTokens';
 
 describe('tokens de sesión', () => {
   const previousSecret = process.env.AUTH_JWT_SECRET;
@@ -28,5 +28,19 @@ describe('tokens de sesión', () => {
 
   it('interpreta cookies sin perder valores codificados', () => {
     expect(parseCookies('uno=1; pravia_refresh=abc%2Fdef; tema=oscuro')).toEqual({ uno: '1', pravia_refresh: 'abc/def', tema: 'oscuro' });
+  });
+
+  it('rechaza secretos vacíos, cortos, placeholders y repetitivos', () => {
+    expect(validateJwtSecret(undefined)).toMatch(/32 caracteres/);
+    expect(validateJwtSecret('short-secret')).toMatch(/32 caracteres/);
+    expect(validateJwtSecret('replace-with-a-random-secret-of-at-least-32-characters')).toMatch(/placeholder/);
+    expect(validateJwtSecret('a'.repeat(64))).toMatch(/aleatorio/);
+  });
+
+  it('acepta un secreto aleatorio fuerte y getJwtSecret aplica la misma política', () => {
+    const strong = 'kN7_q4f2Cw9-Yx3Vb8mP6sR1tL5zD0Ha';
+    expect(validateJwtSecret(strong)).toBeNull();
+    process.env.AUTH_JWT_SECRET = strong;
+    expect(getJwtSecret()).toBe(strong);
   });
 });
