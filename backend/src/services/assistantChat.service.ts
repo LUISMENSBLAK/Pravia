@@ -65,6 +65,7 @@ const READ_TOOL_NAMES = new Set<AssistantToolName>([
   'searchExpedientes',
   'getExpedienteSummary',
   'getExpedientePendingItems',
+  'getExpedientesRequiringAttention',
   'searchComparecientes',
   'getComparecienteSummary',
   'getExpedienteDocuments',
@@ -82,6 +83,7 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   searchExpedientes: 'Busca expedientes reales dentro del alcance del usuario. Sin query devuelve los expedientes accesibles actualizados recientemente.',
   getExpedienteSummary: 'Obtiene el resumen real de un expediente autorizado. Usa el expediente del contexto cuando exista.',
   getExpedientePendingItems: 'Obtiene requisitos documentales, tareas y gestiones pendientes de un expediente autorizado.',
+  getExpedientesRequiringAttention: 'Identifica expedientes reales que requieren atención dentro del alcance del usuario y explica los motivos: tareas, documentos, gestiones, estado, firma próxima o cobro pendiente autorizado.',
   searchComparecientes: 'Busca comparecientes reales dentro del alcance del usuario por nombre, RFC o CURP.',
   getComparecienteSummary: 'Obtiene el resumen real de un compareciente autorizado.',
   getExpedienteDocuments: 'Obtiene los documentos reales y vigencias de un expediente autorizado.',
@@ -91,7 +93,7 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   getOutstandingBalances: 'Obtiene saldos reales por cobrar dentro del alcance autorizado.',
   getReportingSummary: 'Obtiene indicadores canónicos reales de Reportes para el periodo solicitado.',
   getComplianceSummary: 'Obtiene revisiones y evidencia de cumplimiento persistidas para un expediente autorizado.',
-  getCurrentUserWork: 'Obtiene las tareas pendientes del usuario autenticado y sus próximos eventos. Úsala para Mi Día, pendientes de hoy y expedientes que requieren atención.',
+  getCurrentUserWork: 'Obtiene exclusivamente tareas pendientes del usuario autenticado y sus próximos eventos. Úsala para pendientes personales de hoy; no sustituye una revisión de expedientes.',
   globalSearch: 'Busca una referencia textual en expedientes, comparecientes y notarías respetando permisos.',
 };
 
@@ -99,6 +101,7 @@ const TOOL_PROPERTIES: Record<string, Record<string, unknown>> = {
   searchExpedientes: { query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 25 } },
   getExpedienteSummary: { expediente_id: { type: 'string' } },
   getExpedientePendingItems: { expediente_id: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 25 } },
+  getExpedientesRequiringAttention: { limit: { type: 'integer', minimum: 1, maximum: 25 } },
   searchComparecientes: { query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 25 } },
   getComparecienteSummary: { compareciente_id: { type: 'string' } },
   getExpedienteDocuments: { expediente_id: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 25 } },
@@ -160,6 +163,7 @@ function systemInstructions(user: AuthUser, input: AssistantMessageInput) {
     'Eres PRAVIA IA, asistente operativo de una plataforma notarial mexicana.',
     'Responde siempre en español claro, breve y profesional.',
     'Para cualquier pregunta sobre datos, pendientes, agenda, expedientes, personas, finanzas, reportes o cumplimiento de PRAVIA, debes consultar una herramienta antes de responder.',
+    'Si la pregunta pide qué expedientes requieren atención, consulta getExpedientesRequiringAttention aunque la pantalla actual sea Mi Día. El contexto visual orienta, pero no cambia el objeto solicitado por el usuario.',
     'No inventes registros, cifras, estados, fechas ni fuentes. Si una herramienta no devuelve datos, dilo explícitamente.',
     'Las herramientas ya aplican RBAC y alcance por objeto. Nunca intentes ampliar ese alcance ni trates el contexto visual como autorización.',
     'No incluyas UUID, correlation IDs, nombres internos de permisos, trazas ni detalles técnicos en la respuesta al usuario.',
@@ -168,6 +172,18 @@ function systemInstructions(user: AuthUser, input: AssistantMessageInput) {
     `Usuario autenticado: ${user.nombre} ${user.apellido}; función: ${user.rol}.`,
     `Contexto visual: módulo=${String(context.module || 'desconocido').slice(0, 60)}, ruta=${String(context.route || '/').slice(0, 180)}, etiqueta=${String(context.label || '').slice(0, 80)}.`,
   ].join('\n');
+}
+
+function initialToolChoice(message: string, tools: Array<{ name: string }>) {
+  const normalized = message.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const available = new Set(tools.map((tool) => tool.name));
+  if (/\bexpedientes?\b/.test(normalized) && /\b(atencion|requieren|urg(?:e|en|ente|entes)|pendiente|pendientes|bloqueado|bloqueados)\b/.test(normalized) && available.has('getExpedientesRequiringAttention')) {
+    return { type: 'function', name: 'getExpedientesRequiringAttention' };
+  }
+  if (/\bhoy\b/.test(normalized) && /\b(pendiente|pendientes|tarea|tareas|agenda|evento|eventos)\b/.test(normalized) && available.has('getCurrentUserWork')) {
+    return { type: 'function', name: 'getCurrentUserWork' };
+  }
+  return 'auto';
 }
 
 function extractText(response: ProviderResponse) {
@@ -219,6 +235,7 @@ export function createAssistantChatService(dependencies: ChatDependencies = {}) 
     }
 
     const tools = buildTools(user);
+    const requiredInitialTool = initialToolChoice(message, tools);
     const context = normalizeContext(input.context);
     const conversation: Array<Record<string, unknown>> = [{
       role: 'user',
@@ -240,7 +257,7 @@ export function createAssistantChatService(dependencies: ChatDependencies = {}) 
             instructions: systemInstructions(user, input),
             input: conversation,
             tools,
-            tool_choice: 'auto',
+            tool_choice: round === 0 ? requiredInitialTool : 'auto',
             parallel_tool_calls: false,
             reasoning: { effort: reasoningEffort() },
             max_output_tokens: 2_048,

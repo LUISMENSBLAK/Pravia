@@ -65,6 +65,28 @@ describe('PRAVIA IA conversational service', () => {
     });
     const secondBody = JSON.parse(String(fetchImpl.mock.calls[1][1]?.body));
     expect(secondBody.input).toContainEqual(expect.objectContaining({ type: 'function_call_output', call_id: 'call-1' }));
+    const firstBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+    expect(firstBody.tool_choice).toEqual({ type: 'function', name: 'getCurrentUserWork' });
+  });
+
+  it('prioriza una revisión real de expedientes aunque el contexto visual sea Mi Día', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(providerResponse({ status: 'completed', output: [{ type: 'function_call', name: 'getExpedientesRequiringAttention', arguments: '{"limit":10}', call_id: 'call-attention' }] }))
+      .mockResolvedValueOnce(providerResponse({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: 'EXP-2026-0099 requiere atención por una tarea vencida.' }] }] }));
+    const executeTool = vi.fn().mockResolvedValue({
+      data: [{ expediente_id: 'exp-attention', folio: 'EXP-2026-0099', reasons: [{ type: 'TAREA_VENCIDA', detail: 'Revisar documentación' }] }],
+      provenance: [{ entity: 'Expediente', id: 'exp-attention', label: 'EXP-2026-0099', path: '/expedientes/exp-attention' }],
+      truncated: false,
+    });
+    const send = createAssistantChatService({ fetchImpl: fetchImpl as any, executeTool: executeTool as any });
+
+    const result = await send({ message: '¿Qué expedientes requieren mi atención?', context: { module: 'mi-dia', route: '/mi-dia', label: 'Mi Día' } }, user, 'corr-attention');
+
+    const firstBody = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+    expect(firstBody.tool_choice).toEqual({ type: 'function', name: 'getExpedientesRequiringAttention' });
+    expect(firstBody.tools.map((tool: any) => tool.name)).toContain('getExpedientesRequiringAttention');
+    expect(executeTool).toHaveBeenCalledWith(expect.objectContaining({ tool: 'getExpedientesRequiringAttention', user }));
+    expect(result).toMatchObject({ message: expect.stringContaining('EXP-2026-0099'), sources: [{ type: 'Expediente', label: 'EXP-2026-0099' }] });
   });
 
   it('no expone herramientas que el usuario no puede usar ni herramientas de escritura', async () => {

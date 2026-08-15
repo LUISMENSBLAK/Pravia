@@ -77,4 +77,29 @@ describe('assistant backend tools', () => {
     expect(client.tarea.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ asignado_a_id: currentUser.id }) }));
     expect(result.data.tareas[0]).toMatchObject({ titulo: 'Revisar escritura', expediente: { numero_pravia: 'EXP-2026-0042' } });
   });
+
+  it('identifica expedientes que requieren atención con motivos reales y dentro del scope', async () => {
+    const client = db();
+    client.expediente.findMany.mockResolvedValue([{
+      id: 'exp-attention', numero_pravia: 'EXP-2026-0099', cliente_alias: 'Cliente Atención',
+      estatus: 'PENDIENTE_CLIENTE', etapa_actual_nombre: 'Integración', updated_at: new Date('2026-08-15T10:00:00Z'),
+      fecha_estimada_firma: null, fecha_real_firma: null, requisitos_docs: [{ id: 'req-1', nombre: 'Identificación', estatus: 'VENCIDO', fecha_vencimiento: new Date('2026-08-14T10:00:00Z') }],
+      tareas: [{ id: 'task-1', titulo: 'Revisar documentación', prioridad: 'ALTA', estatus: 'PENDIENTE', fecha_limite: new Date('2026-08-14T10:00:00Z') }],
+      tareas_externas: [],
+    }]);
+    const result = await executeAssistantTool({ tool: 'getExpedientesRequiringAttention', args: { limit: 10 }, user: user(), correlationId: 'corr-attention' }, client);
+    expect(client.expediente.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ archived_at: null }),
+      take: 300,
+    }));
+    expect(result.data).toEqual([expect.objectContaining({
+      folio: 'EXP-2026-0099',
+      reasons: expect.arrayContaining([
+        expect.objectContaining({ type: 'PENDIENTE_CLIENTE' }),
+        expect.objectContaining({ type: 'TAREA_VENCIDA', detail: 'Revisar documentación' }),
+        expect.objectContaining({ type: 'DOCUMENTO_PENDIENTE', detail: 'Identificación' }),
+      ]),
+    })]);
+    expect(result.provenance).toEqual([expect.objectContaining({ entity: 'Expediente', id: 'exp-attention', label: 'EXP-2026-0099' })]);
+  });
 });

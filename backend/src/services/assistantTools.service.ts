@@ -9,7 +9,7 @@ import { ReportingService } from './reporting.service';
 
 type AuthUser = NonNullable<Request['user']>;
 export type AssistantToolName =
-  | 'searchExpedientes' | 'getExpedienteSummary' | 'getExpedientePendingItems'
+  | 'searchExpedientes' | 'getExpedienteSummary' | 'getExpedientePendingItems' | 'getExpedientesRequiringAttention'
   | 'searchComparecientes' | 'getComparecienteSummary' | 'getExpedienteDocuments'
   | 'getAgenda' | 'getUpcomingEvents' | 'getFinancialSummary' | 'getOutstandingBalances'
   | 'getReportingSummary'
@@ -53,6 +53,7 @@ export const ASSISTANT_TOOL_REGISTRY: Record<AssistantToolName, ToolDefinition> 
   searchExpedientes: { capability: 'ai.expedientes.read', systemPermissions: ['expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'INTERNAL', mode: 'READ' },
   getExpedienteSummary: { capability: 'ai.expedientes.read', systemPermissions: ['expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'INTERNAL', mode: 'READ' },
   getExpedientePendingItems: { capability: 'ai.expedientes.read', systemPermissions: ['expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'SUMMARY', maxResults: 25, sensitivity: 'INTERNAL', mode: 'READ' },
+  getExpedientesRequiringAttention: { capability: 'ai.expedientes.read', systemPermissions: ['expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'INTERNAL', mode: 'READ' },
   searchComparecientes: { capability: 'ai.comparecientes.read', systemPermissions: ['comparecientes.read'], objectScope: 'COMPARECIENTE', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'PERSONAL', mode: 'READ' },
   getComparecienteSummary: { capability: 'ai.comparecientes.read', systemPermissions: ['comparecientes.read'], objectScope: 'COMPARECIENTE', resultType: 'SUMMARY', maxResults: 10, sensitivity: 'PERSONAL', mode: 'READ' },
   getExpedienteDocuments: { capability: 'ai.documentos.read', systemPermissions: ['documentos.read', 'expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'PERSONAL', mode: 'READ' },
@@ -137,6 +138,78 @@ const readFinancial: ToolExecutor = async (db, input) => {
 
 const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
   searchExpedientes: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const query = textArg(args.query, 120); const data = await db.expediente.findMany({ where: { archived_at: null, ...expedienteAccessWhere(input.user), ...(query ? { OR: [{ numero_pravia: { contains: query, mode: 'insensitive' } }, { cliente_alias: { contains: query, mode: 'insensitive' } }] } : {}) }, select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true, etapa_actual_nombre: true, updated_at: true }, orderBy: { updated_at: 'desc' }, take: limit }); return { data, provenance: data.map((item) => source('Expediente', item.id, item.numero_pravia, `/expedientes/${item.id}`)), truncated: data.length === limit }; },
+  getExpedientesRequiringAttention: async (db, input) => {
+    const limit = boundedLimit(input.args?.limit);
+    const now = new Date();
+    const nextWeek = new Date(now.getTime() + 7 * 86_400_000);
+    const canReadFinance = input.user.permissions.includes('finanzas.read');
+    const records = await db.expediente.findMany({
+      where: { archived_at: null, ...expedienteAccessWhere(input.user) },
+      include: {
+        cotizacion: canReadFinance,
+        movimientosFinancieros: canReadFinance,
+        requisitos_docs: {
+          where: { obligatorio: true, estatus: { in: ['PENDIENTE', 'EN_REVISION', 'RECHAZADO', 'VENCIDO'] } },
+          select: { id: true, nombre: true, estatus: true, fecha_vencimiento: true },
+        },
+        tareas: {
+          where: { estatus: { in: ['PENDIENTE', 'EN_PROCESO'] } },
+          select: { id: true, titulo: true, prioridad: true, estatus: true, fecha_limite: true },
+        },
+        tareas_externas: {
+          where: { estatus: { not: 'COMPLETADA' } },
+          select: { id: true, descripcion: true, institucion: true, estatus: true, fecha_limite: true },
+        },
+      },
+      orderBy: { updated_at: 'desc' },
+      take: 300,
+    });
+
+    const attention = records.map((exp: any) => {
+      const reasons: Array<{ type: string; priority: 'ALTA' | 'MEDIA'; detail: string; due_at?: Date | null }> = [];
+      if (exp.estatus === 'SUSPENDIDO') reasons.push({ type: 'EXPEDIENTE_BLOQUEADO', priority: 'ALTA', detail: 'El expediente está suspendido.' });
+      if (exp.estatus === 'PENDIENTE_CLIENTE') reasons.push({ type: 'PENDIENTE_CLIENTE', priority: 'MEDIA', detail: 'Hay información o una acción pendiente del cliente.' });
+      if (exp.estatus === 'PENDIENTE_NOTARIA') reasons.push({ type: 'PENDIENTE_NOTARIA', priority: 'MEDIA', detail: 'Hay información o una acción pendiente de la notaría.' });
+      if (exp.fecha_estimada_firma && !exp.fecha_real_firma && exp.fecha_estimada_firma >= now && exp.fecha_estimada_firma <= nextWeek) {
+        reasons.push({ type: 'FIRMA_PROXIMA', priority: 'ALTA', detail: 'La firma está programada dentro de los próximos 7 días.', due_at: exp.fecha_estimada_firma });
+      }
+      for (const task of exp.tareas) {
+        const overdue = task.fecha_limite && task.fecha_limite < now;
+        reasons.push({ type: overdue ? 'TAREA_VENCIDA' : 'TAREA_PENDIENTE', priority: overdue || task.prioridad === 'ALTA' ? 'ALTA' : 'MEDIA', detail: task.titulo, due_at: task.fecha_limite });
+      }
+      for (const external of exp.tareas_externas) {
+        reasons.push({ type: external.estatus === 'BLOQUEADA' ? 'GESTION_BLOQUEADA' : 'GESTION_PENDIENTE', priority: external.estatus === 'BLOQUEADA' ? 'ALTA' : 'MEDIA', detail: external.descripcion || external.institucion || 'Gestión externa pendiente.', due_at: external.fecha_limite });
+      }
+      for (const requirement of exp.requisitos_docs) {
+        reasons.push({ type: 'DOCUMENTO_PENDIENTE', priority: ['RECHAZADO', 'VENCIDO'].includes(requirement.estatus) ? 'ALTA' : 'MEDIA', detail: requirement.nombre, due_at: requirement.fecha_vencimiento });
+      }
+      if (canReadFinance) {
+        const totals = financialBudget(exp);
+        const position = calculateFinancialPosition({
+          ...totals,
+          movements: exp.movimientosFinancieros.map((movement: any) => ({ ...movement, monto: Number(movement.monto) })),
+        });
+        if (position.saldo_cliente > 0) reasons.push({ type: 'COBRO_PENDIENTE', priority: 'MEDIA', detail: `Saldo pendiente: ${position.saldo_cliente.toFixed(2)} MXN.` });
+      }
+      return {
+        expediente_id: exp.id,
+        folio: exp.numero_pravia,
+        cliente: exp.cliente_alias,
+        estado: exp.estatus,
+        etapa: exp.etapa_actual_nombre,
+        reasons: reasons.sort((a, b) => a.priority === b.priority ? 0 : a.priority === 'ALTA' ? -1 : 1),
+        updated_at: exp.updated_at,
+      };
+    }).filter((item) => item.reasons.length > 0)
+      .sort((a, b) => Number(b.reasons.some((reason) => reason.priority === 'ALTA')) - Number(a.reasons.some((reason) => reason.priority === 'ALTA')) || new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+
+    const data = attention.slice(0, limit);
+    return {
+      data,
+      provenance: data.map((item) => source('Expediente', item.expediente_id, item.folio, `/expedientes/${item.expediente_id}`)),
+      truncated: attention.length > limit,
+    };
+  },
   getExpedienteSummary: async (db, input) => { const args = input.args || {}; const id = resolveContextId(args, input.context, 'expediente_id', 'expediente'); const exp = await findScopedExpediente(db, input.user, id, { tipo_acto: true, abogado: { select: { nombre: true, apellido: true } }, gestor: { select: { nombre: true, apellido: true } }, notaria: { select: { nombre: true } } }); const data = { id: exp.id, folio: exp.numero_pravia, cliente: exp.cliente_alias, estado: exp.estatus, etapa: exp.etapa_actual_nombre, tipo_acto: exp.tipo_acto?.nombre, abogado: exp.abogado ? `${exp.abogado.nombre} ${exp.abogado.apellido}`.trim() : null, gestor: exp.gestor ? `${exp.gestor.nombre} ${exp.gestor.apellido}`.trim() : null, notaria: exp.notaria?.nombre, fechas: { apertura: exp.fecha_apertura, firma_estimada: exp.fecha_estimada_firma, firma_real: exp.fecha_real_firma, entrega: exp.fecha_entrega_cliente }, avance: { general: exp.avance_general, documental: exp.avance_documental, operativo: exp.avance_operativo, ...(input.user.permissions.includes('finanzas.read') ? { financiero: exp.avance_financiero } : {}) } }; return { data, provenance: [source('Expediente', exp.id, exp.numero_pravia, `/expedientes/${exp.id}`)], truncated: false }; },
   getExpedientePendingItems: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const id = resolveContextId(args, input.context, 'expediente_id', 'expediente'); const exp = await findScopedExpediente(db, input.user, id, { requisitos_docs: { where: { obligatorio: true, estatus: { in: ['PENDIENTE', 'EN_REVISION', 'RECHAZADO', 'VENCIDO'] } }, select: { id: true, nombre: true, categoria: true, estatus: true, fecha_vencimiento: true } }, tareas: { where: { estatus: { in: ['PENDIENTE', 'EN_PROCESO'] } }, select: { id: true, titulo: true, prioridad: true, estatus: true, fecha_limite: true } }, tareas_externas: { where: { estatus: { not: 'COMPLETADA' } }, select: { id: true, tipo: true, descripcion: true, institucion: true, estatus: true, fecha_limite: true } } }); const data = { expediente_id: exp.id, folio: exp.numero_pravia, requisitos_documentales: exp.requisitos_docs.slice(0, limit), tareas: exp.tareas.slice(0, limit), gestiones_externas: exp.tareas_externas.slice(0, limit), total_pendientes: exp.requisitos_docs.length + exp.tareas.length + exp.tareas_externas.length }; return { data, provenance: [source('Expediente', exp.id, exp.numero_pravia, `/expedientes/${exp.id}`)], truncated: [exp.requisitos_docs, exp.tareas, exp.tareas_externas].some((items) => items.length > limit) }; },
   searchComparecientes: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const query = textArg(args.query, 120); const data = await db.compareciente.findMany({ where: { archived_at: null, ...comparecienteObjectWhere(input.user), ...(query ? { OR: [{ nombre_busqueda: { contains: query, mode: 'insensitive' } }, { personaFisica: { is: { OR: [{ curp: { contains: query, mode: 'insensitive' } }, { rfc: { contains: query, mode: 'insensitive' } }] } } }, { personaMoral: { is: { rfc: { contains: query, mode: 'insensitive' } } } }] } : {}) }, select: { id: true, tipo_persona: true, nombre_busqueda: true, estatus: true, personaFisica: { select: { nombre_completo_calculado: true, rfc: true, curp: true } }, personaMoral: { select: { razon_social: true, rfc: true } } }, orderBy: { updated_at: 'desc' }, take: limit }); const serialized = data.map((item) => ({ id: item.id, tipo: item.tipo_persona, nombre: item.personaFisica?.nombre_completo_calculado || item.personaMoral?.razon_social || item.nombre_busqueda, rfc: item.personaFisica?.rfc || item.personaMoral?.rfc || null, curp: item.personaFisica?.curp || null, estatus: item.estatus })); return { data: serialized, provenance: serialized.map((item) => source('Compareciente', item.id, item.nombre, `/comparecientes/${item.id}`)), truncated: data.length === limit }; },
