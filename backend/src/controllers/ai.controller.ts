@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import prisma from '../config/prisma';
 import { getOpenAIEscalationModelName, getOpenAIModelName } from '../services/openaiDocument.service';
 import { ASSISTANT_TOOL_REGISTRY, AssistantToolError, assistantToolCatalog, canUseAssistantTool, executeAssistantTool, type AssistantToolName } from '../services/assistantTools.service';
+import { AssistantChatError, sendAssistantMessage } from '../services/assistantChat.service';
 
 const asNumber = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : 0;
 
@@ -15,6 +16,25 @@ function periodStart(value: unknown) {
 }
 
 export class AIController {
+  static async message(req: Request, res: Response) {
+    try {
+      if (!req.user) return res.status(401).json({ success: false, code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
+      const reply = await sendAssistantMessage(
+        { message: req.body?.message, context: req.body?.context, suggestionId: req.body?.suggestionId },
+        req.user,
+        req.correlationId || crypto.randomUUID(),
+      );
+      return res.json(reply);
+    } catch (error: any) {
+      const status = error instanceof AssistantChatError ? error.status : 500;
+      return res.status(status).json({
+        success: false,
+        code: error instanceof AssistantChatError ? error.code : 'AI_ASSISTANT_FAILED',
+        error: status >= 500 ? 'PRAVIA IA no pudo completar la consulta. Intenta de nuevo.' : error.message,
+      });
+    }
+  }
+
   static async tools(req: Request, res: Response) {
     if (!req.user) return res.status(401).json({ success: false, code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
     return res.json({ success: true, tools: assistantToolCatalog(req.user) });

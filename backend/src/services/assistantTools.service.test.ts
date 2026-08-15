@@ -67,4 +67,14 @@ describe('assistant backend tools', () => {
     const missingModulePermission = assistantToolCatalog(user(['ai.use', 'ai.reportes.read']));
     expect(missingModulePermission.map((item) => item.name)).not.toContain('getReportingSummary');
   });
+
+  it('lee trabajo real exclusivamente del usuario autenticado', async () => {
+    const client = db();
+    client.tarea.findMany.mockResolvedValue([{ id: 'task-1', titulo: 'Revisar escritura', prioridad: 'ALTA', fecha_limite: new Date('2026-08-15'), expediente: { id: 'exp-1', numero_pravia: 'EXP-2026-0042' } }]);
+    client.eventoAgenda.findMany.mockResolvedValue([]);
+    const currentUser = user(['ai.use', 'ai.work.read', 'mi_dia.read']);
+    const result = await executeAssistantTool({ tool: 'getCurrentUserWork', args: { limit: 10 }, user: currentUser, correlationId: 'corr-work' }, client);
+    expect(client.tarea.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ asignado_a_id: currentUser.id }) }));
+    expect(result.data.tareas[0]).toMatchObject({ titulo: 'Revisar escritura', expediente: { numero_pravia: 'EXP-2026-0042' } });
+  });
 });

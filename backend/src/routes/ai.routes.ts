@@ -3,6 +3,7 @@ import { AIController } from '../controllers/ai.controller';
 import { requirePermission } from '../middleware/auth.middleware';
 
 const router = Router();
+router.post('/assistant/messages', requirePermission('ai.use'), AIController.message);
 router.get('/assistant/tools', requirePermission('ai.use'), AIController.tools);
 router.post('/assistant/tools/:tool', requirePermission('ai.use'), AIController.executeTool);
 router.post('/assistant/confirmations', requirePermission('ai.use'), AIController.confirmPreparedAction);

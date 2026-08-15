@@ -126,6 +126,22 @@ describe('PRAVIA IA global', () => {
     expect(screen.queryByText(/HTTP 500|endpoint|stack/i)).not.toBeInTheDocument();
   });
 
+  it('Reintentar repite la consulta fallida y muestra la respuesta real', async () => {
+    const sendMessage = vi.fn()
+      .mockRejectedValueOnce(new Error('provider unavailable'))
+      .mockResolvedValueOnce({ status: 'success', message: 'Tienes dos pendientes reales.' });
+    const service = makeService({ sendMessage });
+    const user = userEvent.setup();
+    renderAssistant(service);
+    await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA' }));
+    await user.type(screen.getByLabelText('Pregúntame algo...'), 'Muéstrame mis pendientes de hoy.');
+    await user.click(screen.getByRole('button', { name: 'Enviar mensaje' }));
+    await user.click(await screen.findByRole('button', { name: 'Reintentar' }));
+    expect(await screen.findByText('Tienes dos pendientes reales.')).toBeInTheDocument();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ message: 'Muéstrame mis pendientes de hoy.' }), expect.any(AbortSignal));
+  });
+
   it('exige confirmación antes de llamar a una acción sensible', async () => {
     const confirmation = { id: 'confirm-1', title: 'Preparar una cita', summary: 'Revisa los datos antes de continuar.', details: [{ label: 'Expediente', value: 'Referencia del backend' }] };
     const service = makeService({ sendMessage: vi.fn(async (): Promise<AssistantReply> => ({ status: 'confirmation-required', message: 'Voy a preparar una cita con estos datos:', confirmation })) });
