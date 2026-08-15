@@ -1,12 +1,15 @@
 {
   "compilerOptions": {
     "composite": true,
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
     "skipLibCheck": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "strict": true
+    "strict": true,
+    "types": ["node"]
   },
   "include": ["vite.config.ts", "src/config/deploymentGuard.ts"]
 }
