@@ -142,6 +142,42 @@ describe('PRAVIA IA global', () => {
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ message: 'Muéstrame mis pendientes de hoy.' }), expect.any(AbortSignal));
   });
 
+  it('envía historial acotado para un follow-up contextual', async () => {
+    const sendMessage = vi.fn()
+      .mockResolvedValueOnce({ status: 'idle', message: 'EXP-1 y EXP-2 requieren atención.' })
+      .mockResolvedValueOnce({ status: 'idle', message: 'EXP-1 es el urgente.' });
+    const user = userEvent.setup();
+    renderAssistant(makeService({ sendMessage }));
+    await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA' }));
+    const composer = screen.getByLabelText('Pregúntame algo...');
+    await user.type(composer, '¿Qué expedientes requieren atención?');
+    await user.click(screen.getByRole('button', { name: 'Enviar mensaje' }));
+    expect(await screen.findByText('EXP-1 y EXP-2 requieren atención.')).toBeInTheDocument();
+    await user.type(composer, 'Solo enséñame los urgentes.');
+    await user.click(screen.getByRole('button', { name: 'Enviar mensaje' }));
+    await screen.findByText('EXP-1 es el urgente.');
+    expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({
+      message: 'Solo enséñame los urgentes.',
+      history: [
+        expect.objectContaining({ role: 'user', content: '¿Qué expedientes requieren atención?' }),
+        expect.objectContaining({ role: 'assistant', content: 'EXP-1 y EXP-2 requieren atención.' }),
+      ],
+    }), expect.any(AbortSignal));
+  });
+
+  it('TEST 10 mantiene el input accesible y no corta una respuesta larga', async () => {
+    const content = Array.from({ length: 35 }, (_value, index) => `## Bloque ${index + 1}\n\n- Resultado ${index + 1}`).join('\n\n');
+    const user = userEvent.setup();
+    renderAssistant(makeService({ sendMessage: vi.fn(async (): Promise<AssistantReply> => ({ status: 'idle', message: content })) }));
+    await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA' }));
+    const composer = screen.getByLabelText('Pregúntame algo...');
+    await user.type(composer, 'Dame un resumen completo.');
+    await user.click(screen.getByRole('button', { name: 'Enviar mensaje' }));
+    expect(await screen.findByText('Resultado 35')).toBeInTheDocument();
+    expect(composer).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Enviar mensaje' })).toBeInTheDocument();
+  });
+
   it('exige confirmación antes de llamar a una acción sensible', async () => {
     const confirmation = { id: 'confirm-1', title: 'Preparar una cita', summary: 'Revisa los datos antes de continuar.', details: [{ label: 'Expediente', value: 'Referencia del backend' }] };
     const service = makeService({ sendMessage: vi.fn(async (): Promise<AssistantReply> => ({ status: 'confirmation-required', message: 'Voy a preparar una cita con estos datos:', confirmation })) });

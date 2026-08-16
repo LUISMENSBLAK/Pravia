@@ -1,6 +1,6 @@
 import { apiRequest } from '../../services/api/client';
 import { apiConfig } from '../../services/api/config';
-import type { AssistantContext, AssistantReply, AssistantSuggestion } from './assistant.types';
+import type { AssistantContext, AssistantMessage, AssistantReply, AssistantSuggestion } from './assistant.types';
 
 export class AssistantUnavailableError extends Error {
   constructor() {
@@ -9,7 +9,12 @@ export class AssistantUnavailableError extends Error {
   }
 }
 
-export type SendAssistantInput = { message: string; context: AssistantContext; suggestionId?: string };
+export type SendAssistantInput = {
+  message: string;
+  context: AssistantContext;
+  suggestionId?: string;
+  history?: Array<Pick<AssistantMessage, 'role' | 'content'>>;
+};
 
 export type AssistantService = {
   getSuggestions(context: AssistantContext, signal?: AbortSignal): Promise<AssistantSuggestion[]>;

@@ -10,6 +10,8 @@ const db = (expediente: any = null) => ({
   expediente: { findFirst: vi.fn().mockResolvedValue(expediente), findMany: vi.fn().mockResolvedValue([]) },
   compareciente: { findFirst: vi.fn(), findMany: vi.fn() },
   eventoAgenda: { findMany: vi.fn() }, tarea: { findMany: vi.fn() }, complianceReview: { findMany: vi.fn() },
+  userPreference: { findUnique: vi.fn().mockResolvedValue({ timezone: 'America/Mexico_City' }) },
+  prospectoSeguimiento: { findMany: vi.fn().mockResolvedValue([]) },
   notaria: { findMany: vi.fn() }, user: { findFirst: vi.fn() }, auditLog: { create: vi.fn().mockResolvedValue({}) },
 } as any);
 
@@ -70,12 +72,59 @@ describe('assistant backend tools', () => {
 
   it('lee trabajo real exclusivamente del usuario autenticado', async () => {
     const client = db();
-    client.tarea.findMany.mockResolvedValue([{ id: 'task-1', titulo: 'Revisar escritura', prioridad: 'ALTA', fecha_limite: new Date('2026-08-15'), expediente: { id: 'exp-1', numero_pravia: 'EXP-2026-0042' } }]);
+    client.tarea.findMany.mockResolvedValueOnce([{ id: 'task-1', titulo: 'Revisar escritura', prioridad: 'ALTA', estatus: 'PENDIENTE', fecha_limite: new Date(), fecha_completada: null, expediente: { id: 'exp-1', numero_pravia: 'EXP-2026-0042' } }]).mockResolvedValueOnce([]);
     client.eventoAgenda.findMany.mockResolvedValue([]);
     const currentUser = user(['ai.use', 'ai.work.read', 'mi_dia.read']);
-    const result = await executeAssistantTool({ tool: 'getCurrentUserWork', args: { limit: 10 }, user: currentUser, correlationId: 'corr-work' }, client);
+    const result = await executeAssistantTool({ tool: 'getCurrentUserWork', args: { period: 'THIS_MONTH', limit: 10 }, user: currentUser, correlationId: 'corr-work' }, client);
     expect(client.tarea.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ asignado_a_id: currentUser.id }) }));
-    expect(result.data.tareas[0]).toMatchObject({ titulo: 'Revisar escritura', expediente: { numero_pravia: 'EXP-2026-0042' } });
+    expect(result.data.tareas_del_periodo[0]).toMatchObject({ titulo: 'Revisar escritura', expediente: { numero_pravia: 'EXP-2026-0042' } });
+    expect(result.data.periodo.timezone).toBe('America/Mexico_City');
+  });
+
+  it('consulta agenda con el límite final exclusivo de la zona configurada', async () => {
+    const client = db();
+    client.eventoAgenda.findMany.mockResolvedValue([]);
+    const currentUser = user(['ai.use', 'ai.agenda.read', 'agenda.read']);
+    const result = await executeAssistantTool({ tool: 'getAgenda', args: { period: 'TODAY' }, user: currentUser, correlationId: 'corr-agenda' }, client);
+    expect(client.eventoAgenda.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        user_id: currentUser.id,
+        fecha_inicio: { gte: expect.any(Date), lt: expect.any(Date) },
+      }),
+    }));
+    expect(result.data.periodo).toMatchObject({ key: 'TODAY', timezone: 'America/Mexico_City' });
+  });
+
+  it('mantiene seguimientos comerciales separados y dentro del scope autorizado', async () => {
+    const client = db();
+    client.prospectoSeguimiento.findMany.mockResolvedValue([{
+      id: 'follow-1', tipo: 'LLAMADA', proxima_accion: 'Confirmar documentos',
+      fecha_proximo_seguimiento: new Date(),
+      prospecto: { id: 'prospect-1', nombre: 'Cliente potencial', estado: 'SEGUIMIENTO', prioridad: 'ALTA', tipo_acto: 'Compraventa' },
+    }]);
+    const prospectUser = user(['ai.use', 'ai.prospectos.read', 'prospectos.read']);
+    const result = await executeAssistantTool({ tool: 'getProspectFollowUps', args: { period: 'THIS_MONTH' }, user: prospectUser, correlationId: 'corr-prospect' }, client);
+    expect(client.prospectoSeguimiento.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ prospecto: expect.objectContaining({ archived_at: null }) }),
+    }));
+    expect(result.data.seguimientos_del_periodo[0]).toMatchObject({ prospecto: { nombre: 'Cliente potencial' } });
+    expect(result.provenance).toEqual([expect.objectContaining({ entity: 'Prospecto', id: 'prospect-1' })]);
+  });
+
+  it('resuelve un follow-up por folio visible sin relajar el scope del expediente', async () => {
+    const client = db();
+    client.expediente.findFirst
+      .mockResolvedValueOnce({ id: 'exp-1' })
+      .mockResolvedValueOnce({
+        id: 'exp-1', numero_pravia: 'EXP-2026-0042',
+        requisitos_docs: [{ id: 'req-1', nombre: 'Identificación', categoria: 'IDENTIDAD', estatus: 'PENDIENTE', fecha_vencimiento: null }],
+        tareas: [], tareas_externas: [],
+      });
+    const result = await executeAssistantTool({ tool: 'getExpedientePendingItems', args: { folio: 'EXP-2026-0042' }, user: user(), correlationId: 'corr-follow-up' }, client);
+    expect(client.expediente.findFirst).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: expect.objectContaining({ numero_pravia: { equals: 'EXP-2026-0042', mode: 'insensitive' }, archived_at: null }),
+    }));
+    expect(result.data).toMatchObject({ folio: 'EXP-2026-0042', total_pendientes: 1 });
   });
 
   it('identifica expedientes que requieren atención con motivos reales y dentro del scope', async () => {

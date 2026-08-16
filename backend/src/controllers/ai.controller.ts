@@ -19,8 +19,18 @@ export class AIController {
   static async message(req: Request, res: Response) {
     try {
       if (!req.user) return res.status(401).json({ success: false, code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
+      const preferenceReader = (prisma as any).userPreference?.findUnique;
+      const preference = typeof preferenceReader === 'function'
+        ? await preferenceReader.call((prisma as any).userPreference, { where: { user_id: req.user.id }, select: { timezone: true } })
+        : null;
       const reply = await sendAssistantMessage(
-        { message: req.body?.message, context: req.body?.context, suggestionId: req.body?.suggestionId },
+        {
+          message: req.body?.message,
+          context: req.body?.context,
+          suggestionId: req.body?.suggestionId,
+          history: req.body?.history,
+          timezone: preference?.timezone,
+        },
         req.user,
         req.correlationId || crypto.randomUUID(),
       );

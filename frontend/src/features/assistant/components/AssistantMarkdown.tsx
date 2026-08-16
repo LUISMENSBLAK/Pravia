@@ -42,7 +42,28 @@ function renderInline(value: string, keyPrefix: string): ReactNode[] {
 
 type ListBlock = { type: 'ul' | 'ol'; items: string[]; start?: number };
 type TextBlock = { type: 'paragraph' | 'heading' | 'quote'; lines: string[] };
-type Block = ListBlock | TextBlock;
+type TableBlock = { type: 'table'; headers: string[]; rows: string[][] };
+type Block = ListBlock | TextBlock | TableBlock;
+
+const tableCells = (line: string) => {
+  const value = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+  const cells: string[] = [];
+  let current = '';
+  let escaped = false;
+  for (const char of value) {
+    if (escaped) { current += char; escaped = false; continue; }
+    if (char === '\\') { escaped = true; continue; }
+    if (char === '|') { cells.push(current.trim()); current = ''; continue; }
+    current += char;
+  }
+  cells.push(current.trim());
+  return cells;
+};
+
+const isTableDivider = (line: string, columns: number) => {
+  const cells = tableCells(line);
+  return cells.length === columns && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+};
 
 const toBlocks = (content: string): Block[] => {
   const lines = content.replace(/\r\n?/g, '\n').split('\n');
@@ -51,6 +72,20 @@ const toBlocks = (content: string): Block[] => {
   while (index < lines.length) {
     const line = lines[index];
     if (!line.trim()) { index += 1; continue; }
+    if (line.includes('|') && index + 1 < lines.length) {
+      const headers = tableCells(line);
+      if (headers.length > 1 && isTableDivider(lines[index + 1], headers.length)) {
+        const rows: string[][] = [];
+        index += 2;
+        while (index < lines.length && lines[index].trim() && lines[index].includes('|')) {
+          const row = tableCells(lines[index]);
+          rows.push([...row.slice(0, headers.length), ...Array(Math.max(0, headers.length - row.length)).fill('')]);
+          index += 1;
+        }
+        blocks.push({ type: 'table', headers, rows });
+        continue;
+      }
+    }
     const heading = line.match(/^\s*#{1,3}\s+(.+)$/);
     if (heading) { blocks.push({ type: 'heading', lines: [heading[1]] }); index += 1; continue; }
     const quote = line.match(/^\s*>\s?(.+)$/);
@@ -97,6 +132,12 @@ export function AssistantMarkdown({ content }: { content: string }) {
     if (block.type === 'heading') return <h3 key={key}>{renderInline(block.lines[0], key)}</h3>;
     if (block.type === 'quote') return <blockquote key={key}>{renderInline(block.lines[0], key)}</blockquote>;
     if (block.type === 'paragraph') return <p key={key}>{block.lines.map((line, lineIndex) => <Fragment key={`${key}-${lineIndex}`}>{lineIndex > 0 && <br />}{renderInline(line, `${key}-${lineIndex}`)}</Fragment>)}</p>;
+    if (block.type === 'table') return <div key={key} className={styles.tableScroll} role="region" aria-label="Tabla de resultados" tabIndex={0}>
+      <table>
+        <thead><tr>{block.headers.map((header, cellIndex) => <th key={`${key}-head-${cellIndex}`} scope="col">{renderInline(header, `${key}-head-${cellIndex}`)}</th>)}</tr></thead>
+        <tbody>{block.rows.map((row, rowIndex) => <tr key={`${key}-row-${rowIndex}`}>{row.map((cell, cellIndex) => <td key={`${key}-${rowIndex}-${cellIndex}`}>{renderInline(cell, `${key}-${rowIndex}-${cellIndex}`)}</td>)}</tr>)}</tbody>
+      </table>
+    </div>;
     return null;
   })}</div>;
 }

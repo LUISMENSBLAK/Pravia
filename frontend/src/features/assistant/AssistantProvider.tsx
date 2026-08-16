@@ -138,7 +138,8 @@ export function AssistantProvider({ children, service = assistantService }: Prop
     activeRequest.current?.abort();
     activeRequest.current = controller;
     try {
-      const reply = await service.sendMessage({ message: prompt, context, suggestionId: selectedSuggestion?.id }, controller.signal);
+      const history = messages.slice(-8).map(({ role, content }) => ({ role, content }));
+      const reply = await service.sendMessage({ message: prompt, context, suggestionId: selectedSuggestion?.id, history }, controller.signal);
       applyReply(reply);
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -147,7 +148,7 @@ export function AssistantProvider({ children, service = assistantService }: Prop
     } finally {
       if (activeRequest.current === controller) activeRequest.current = null;
     }
-  }, [applyReply, context, draft, selectedSuggestion?.id, service, status]);
+  }, [applyReply, context, draft, messages, selectedSuggestion?.id, service, status]);
 
   const retry = useCallback(async () => {
     if (lastPrompt.current) await sendMessage(lastPrompt.current);

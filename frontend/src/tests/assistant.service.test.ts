@@ -18,10 +18,14 @@ describe('assistant service adapter', () => {
     await expect(assistantService.sendMessage({
       message: 'Muéstrame mis pendientes de hoy.',
       context: { route: '/mi-dia', module: 'mi-dia', label: 'Mi Día' },
+      history: [{ role: 'assistant', content: '¿En qué puedo ayudarte?' }],
     })).resolves.toMatchObject({ status: 'success', message: 'Tienes un pendiente real.' });
 
     expect(fetchMock).toHaveBeenCalledWith('/api/ia/assistant/messages', expect.objectContaining({ method: 'POST' }));
     const headers = fetchMock.mock.calls[0][1].headers as Headers;
     expect(headers.get('Authorization')).toBe('Bearer access-token-for-test');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toMatchObject({
+      history: [{ role: 'assistant', content: '¿En qué puedo ayudarte?' }],
+    });
   });
 });

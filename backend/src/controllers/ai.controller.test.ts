@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ auditCreate: vi.fn(), sendAssistantMessage: vi.fn() }));
-vi.mock('../config/prisma', () => ({ default: { auditLog: { create: mocks.auditCreate } } }));
+const mocks = vi.hoisted(() => ({ auditCreate: vi.fn(), sendAssistantMessage: vi.fn(), preferenceFind: vi.fn() }));
+vi.mock('../config/prisma', () => ({ default: { auditLog: { create: mocks.auditCreate }, userPreference: { findUnique: mocks.preferenceFind } } }));
 vi.mock('../services/openaiDocument.service', () => ({
   getOpenAIEscalationModelName: () => 'model-escalation',
   getOpenAIModelName: () => 'model-primary',
@@ -24,6 +24,7 @@ describe('confirmación humana de PRAVIA IA', () => {
   beforeEach(() => {
     mocks.auditCreate.mockReset().mockResolvedValue({ id: 'audit-1' });
     mocks.sendAssistantMessage.mockReset();
+    mocks.preferenceFind.mockReset().mockResolvedValue({ timezone: 'America/Bahia_Banderas' });
   });
 
   it('rechaza una consulta conversacional sin usuario autenticado', async () => {
@@ -36,10 +37,12 @@ describe('confirmación humana de PRAVIA IA', () => {
   it('devuelve la respuesta conversacional estructurada sin modificarla', async () => {
     const reply = { status: 'success', message: 'Tienes dos pendientes.' };
     mocks.sendAssistantMessage.mockResolvedValue(reply);
-    const req: any = { user: { id: 'user-1' }, correlationId: 'corr-message', body: { message: 'Pendientes', context: { module: 'mi-dia' } } };
+    const req: any = { user: { id: 'user-1' }, correlationId: 'corr-message', body: { message: 'Pendientes', context: { module: 'mi-dia' }, history: [{ role: 'assistant', content: 'Respuesta anterior' }] } };
     const res = response();
     await AIController.message(req, res);
-    expect(mocks.sendAssistantMessage).toHaveBeenCalledWith(expect.objectContaining({ message: 'Pendientes' }), req.user, 'corr-message');
+    expect(mocks.sendAssistantMessage).toHaveBeenCalledWith(expect.objectContaining({
+      message: 'Pendientes', history: req.body.history, timezone: 'America/Bahia_Banderas',
+    }), req.user, 'corr-message');
     expect(res.json).toHaveBeenCalledWith(reply);
   });
 
