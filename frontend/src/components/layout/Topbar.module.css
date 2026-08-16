@@ -8,11 +8,9 @@
   .topbar { padding-inline: var(--space-3); }
   .menuButton { display: inline-grid; }
   .mobileLogo { display: block; width: 122px; height: 40px; }
-  .mobileLogo img { width: 130px; top: -28px; left: -4px; }
   .divider { display: none; }
 }
 
 @media (max-width: 400px) {
   .mobileLogo { width: 106px; }
-  .mobileLogo img { width: 114px; top: -24px; }
 }

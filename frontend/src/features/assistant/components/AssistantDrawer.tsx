@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, type FormEvent, type KeyboardEvent 
 import { useAssistant } from '../AssistantProvider';
 import { useReducedMotion } from '../useReducedMotion';
 import { AssistantConfirmationCard } from './AssistantConfirmationCard';
+import { AssistantMarkdown } from './AssistantMarkdown';
 import { AssistantOwl } from './AssistantOwl';
 import { AssistantSources } from './AssistantSources';
 import styles from './AssistantDrawer.module.css';
@@ -72,7 +73,7 @@ export function AssistantDrawer() {
         <div className={styles.conversation} role="log" aria-live="polite" aria-label="Conversación con PRAVIA IA">
           {assistant.messages.map((message) => <article key={message.id} className={message.role === 'user' ? styles.userMessage : styles.assistantMessage}>
             {message.role === 'assistant' && <span className={styles.messageAuthor}>PRAVIA IA</span>}
-            <p>{message.content}</p>
+            {message.role === 'assistant' ? <AssistantMarkdown content={message.content} /> : <p>{message.content}</p>}
             <AssistantSources sources={message.sources} />
           </article>)}
 

@@ -4,10 +4,9 @@
 .brandPanel::after { content: ''; position: absolute; right: -170px; bottom: -190px; width: 520px; aspect-ratio: 1; border: 1px solid rgb(211 165 70 / 16%); border-radius: 50%; box-shadow: 0 0 0 70px rgb(211 165 70 / 4%), 0 0 0 140px rgb(211 165 70 / 3%); }
 .brandContent { position: relative; z-index: 1; display: grid; gap: clamp(100px, 16vh, 160px); }
 .brandLogo { width: 300px; height: 76px; }
-.brandLogo img { width: 316px; top: -67px; left: -8px; }
 .brandCopy { max-width: 490px; }
 .eyebrow { display: inline-flex; align-items: center; gap: var(--space-3); color: var(--color-gold-300); font-size: var(--text-xs); font-weight: 700; letter-spacing: .16em; }
-.eyebrow::before { content: ''; width: 28px; height: 1px; background: var(--color-gold-500); }
+.eyebrow::before, .eyebrow::after { content: ''; width: 28px; height: 1px; background: var(--color-gold-500); }
 .brandCopy h1 { max-width: 540px; margin: var(--space-5) 0 var(--space-4); font-size: clamp(2.3rem, 4vw, 4.25rem); font-weight: 650; letter-spacing: -.05em; line-height: 1.04; }
 .brandCopy p { max-width: 420px; margin: 0; color: var(--color-sidebar-muted); font-size: var(--text-lg); line-height: 1.65; }
 .brandFooter { position: relative; z-index: 1; color: rgb(255 255 255 / 42%); font-size: 11px; font-weight: 650; letter-spacing: .16em; }
@@ -46,7 +45,6 @@
   .formPanel { display: block; padding: 0 24px 40px; }
   .mobileBrand { height: 188px; display: flex; align-items: center; justify-content: center; margin-top: -188px; position: relative; z-index: 2; }
   .mobileBrand > span { width: 238px; height: 62px; }
-  .mobileBrand img { width: 250px; top: -53px; left: -6px; }
   .form { margin: 0 auto; padding-top: 38px; gap: var(--space-5); }
   .icon { display: none; }
   .heading h2 { font-size: 1.72rem; }

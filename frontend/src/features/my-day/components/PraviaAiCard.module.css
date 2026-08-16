@@ -1,18 +1,18 @@
-.online { display: inline-flex; align-items: center; gap: 5px; color: var(--color-success-700); font-size: 9px; font-weight: 650; }
+.online { display: inline-flex; align-items: center; gap: 5px; color: var(--color-success-700); font-size: 12px; font-weight: 650; }
 .online i { width: 6px; height: 6px; border-radius: 50%; background: #58aa69; }
-.content { display: grid; justify-items: center; gap: 4px; padding: 4px var(--space-3) 8px; }
-.owl { position: relative; width: min(98px, 50%); aspect-ratio: 1; }
+.content { display: grid; justify-items: center; gap: 8px; padding: 6px var(--space-3) 12px; }
+.owl { position: relative; width: min(92px, 45%); aspect-ratio: 1; }
 .owl img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .blink { opacity: 0; animation: owl-blink 8s steps(1, end) infinite; }
-.content > p { margin: -6px 0 0; color: var(--color-text-secondary); font-size: 9px; }
-.prompt { width: 100%; min-height: 28px; display: flex; align-items: center; gap: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0 var(--space-3); color: var(--color-text-muted); background: var(--color-surface-subtle); font: inherit; cursor: pointer; }
-.prompt span { min-width: 0; width: 100%; overflow: hidden; color: var(--color-text-secondary); font-size: 10px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-.actions { width: 100%; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
-.actions button { min-width: 0; min-height: 27px; display: flex; align-items: center; justify-content: flex-start; gap: 5px; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 0 7px; color: var(--color-text-primary); background: white; font: inherit; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.content > p { margin: -4px 0 0; color: var(--color-text-secondary); font-size: 12px; }
+.prompt { min-width: 0; width: 100%; min-height: 36px; display: flex; align-items: center; gap: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0 var(--space-3); color: var(--color-text-muted); background: var(--color-surface-subtle); font: inherit; cursor: pointer; }
+.prompt span { min-width: 0; width: 100%; overflow: hidden; color: var(--color-text-secondary); font-size: 13px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.actions { min-width: 0; align-self: stretch; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.actions button { min-width: 0; min-height: 34px; display: flex; align-items: center; justify-content: flex-start; gap: 6px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 6px 8px; color: var(--color-text-primary); background: white; font: inherit; font-size: 12px; line-height: 1.2; text-align: left; white-space: normal; cursor: pointer; }
 .actions button:hover:not(:disabled) { background: var(--color-surface-subtle); }
 .prompt:focus-visible, .actions button:focus-visible { outline: 3px solid var(--color-focus); }
 .actions button:disabled { color: var(--color-text-muted); background: var(--color-surface-subtle); cursor: not-allowed; }
 @keyframes owl-blink { 0%, 46%, 49%, 100% { opacity: 0; } 47%, 48% { opacity: 1; } }
-@media (max-width: 1024px) { .content { grid-template-columns: 142px 1fr; align-items: center; justify-items: stretch; } .owl { grid-row: 1 / 4; width: 138px; } .content > p { margin: 0; } .actions { grid-column: 2; } }
-@media (max-width: 580px) { .content { display: grid; grid-template-columns: 112px 1fr; } .owl { width: 108px; } .actions { grid-column: 1 / -1; } }
+@media (max-width: 1024px) { .content { grid-template-columns: 142px minmax(0, 1fr); align-items: center; justify-items: stretch; } .owl { grid-row: 1 / 3; width: 138px; } .content > p { margin: 0; } .actions { grid-column: 1 / -1; } }
+@media (max-width: 580px) { .content { display: grid; grid-template-columns: 112px minmax(0, 1fr); } .owl { width: 108px; } .actions { grid-column: 1 / -1; } }
 @media (prefers-reduced-motion: reduce) { .blink { display: none; animation: none; } }

@@ -1,6 +1,6 @@
 .layer { position: fixed; z-index: var(--layer-modal); inset: var(--topbar-height) 0 0; pointer-events: none; }
 .backdrop { position: absolute; inset: 0; border: 0; background: rgb(6 23 47 / 8%); pointer-events: auto; }
-.launcher { position: fixed; z-index: calc(var(--layer-modal) - 1); right: 22px; bottom: max(20px, env(safe-area-inset-bottom)); width: 60px; height: 60px; display: grid; place-items: center; border: 1px solid rgb(211 163 61 / 54%); border-radius: 19px; padding: 5px; color: white; background: var(--color-navy-900); box-shadow: 0 12px 28px rgb(6 23 47 / 22%); cursor: pointer; transition: transform var(--motion-fast), box-shadow var(--motion-fast), border-color var(--motion-fast); }
+.launcher { position: fixed; z-index: calc(var(--layer-modal) - 1); right: max(22px, env(safe-area-inset-right)); bottom: max(22px, env(safe-area-inset-bottom)); width: 60px; height: 60px; display: grid; place-items: center; border: 1px solid rgb(211 163 61 / 54%); border-radius: 19px; padding: 5px; color: white; background: var(--color-navy-900); box-shadow: 0 12px 28px rgb(6 23 47 / 22%); cursor: pointer; transition: transform var(--motion-fast), box-shadow var(--motion-fast), border-color var(--motion-fast); }
 .launcher:hover { transform: translateY(-2px); border-color: var(--color-gold-400); box-shadow: 0 15px 34px rgb(6 23 47 / 28%); }
 .launcher:active { transform: scale(.97); }
 .launcher:focus-visible { outline: 4px solid var(--color-focus); outline-offset: 3px; }
@@ -23,7 +23,8 @@
 @keyframes suggestion-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 767px) {
   .layer { inset: 0; }
-  .launcher { right: max(14px, env(safe-area-inset-right)); bottom: max(10px, env(safe-area-inset-bottom)); width: 48px; height: 48px; border-radius: 15px; padding: 4px; }
+  .launcher { right: max(18px, calc(env(safe-area-inset-right) + 12px)); bottom: max(18px, calc(env(safe-area-inset-bottom) + 12px)); width: 48px; height: 48px; border-radius: 15px; padding: 4px; }
+  .launcherWithMobileSidebar { right: auto; left: 208px; bottom: max(88px, calc(env(safe-area-inset-bottom) + 88px)); }
   .launcherStatus { top: 5px; right: 5px; width: 7px; height: 7px; }
   .suggestion { right: max(14px, env(safe-area-inset-right)); bottom: calc(var(--assistant-mobile-dock-height, 68px) + env(safe-area-inset-bottom) + 10px); }
   .suggestion header > button { width: 44px; height: 44px; flex-basis: 44px; }

@@ -33,7 +33,7 @@ function SidebarLink({ item, collapsed, onNavigate }: { item: NavItem; collapsed
         onClick={onNavigate}
         className={({ isActive }) => `${styles.link} ${isActive ? styles.active : ''}`}
       >
-        <Icon size={20} strokeWidth={1.8} aria-hidden="true" />
+        <Icon size={21} strokeWidth={1.8} aria-hidden="true" />
         <span className={styles.label}>{item.label}</span>
       </NavLink>
     </Tooltip>
@@ -66,7 +66,8 @@ export function Sidebar({ collapsed, mobileOpen, onToggle, onCloseMobile, user }
       />
       <aside className={`${styles.sidebar} ${collapsed ? styles.collapsed : ''} ${mobileOpen ? styles.mobileOpen : ''}`} aria-label="Navegación principal">
         <div className={styles.brand}>
-          <BrandLogo compact={collapsed} />
+          <BrandLogo className={styles.fullBrandLogo} />
+          <BrandLogo compact className={styles.compactBrandLogo} />
         </div>
 
         <nav className={styles.nav}>

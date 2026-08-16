@@ -14,9 +14,13 @@ const prospect = (overrides: Partial<Prospect> = {}): Prospect => ({
   atendido_por: { nombre: 'Andrea Ruiz' }, cotizacion: null, documentos: [], seguimientos: [{ id: 'follow-1', tipo: 'Llamada', contenido: 'Primer contacto', proxima_accion: 'Validar documentos', created_at: '2026-08-11T10:00:00.000Z' }], ...overrides,
 });
 
-const mockApi = (prospects: Prospect[] = [prospect()], permissions?: string[]) => vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+const mockApi = (prospects: Prospect[] = [prospect()], permissions?: string[], defaultView: 'CARDS' | 'LIST' = 'CARDS') => vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
   if (url.endsWith('/auth/me')) return response(session(permissions));
+  if (url.endsWith('/settings/preferences')) {
+    const selected = init?.method === 'PATCH' ? JSON.parse(String(init.body)).default_view : defaultView;
+    return response({ preferences: { default_view: selected, density: 'COMFORTABLE', timezone: 'America/Mexico_City', date_format: 'DD/MM/YYYY', theme: 'LIGHT', notifications_enabled: true, assistant_suggestions_enabled: true } });
+  }
   if (url.includes('/prospectos') && init?.method === 'POST' && !url.includes('/seguimientos')) return response(prospect({ id: 'created', nombre: JSON.parse(String(init.body)).nombre }), 201);
   if (url.endsWith('/prospectos/prospect-1/seguimientos')) return response({ id: 'follow-2', tipo: 'Nota', contenido: 'Se recibió información', proxima_accion: 'Revisar alcance', created_at: '2026-08-12T10:00:00.000Z', usuario: { nombre: 'Andrea Ruiz' } }, 201);
   if (url.endsWith('/prospectos/prospect-1/documentos')) return response([]);
@@ -35,6 +39,25 @@ describe('Prospectos', () => {
     expect((await screen.findAllByText('Constructora Horizonte')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('2').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Cierre').length).toBeGreaterThan(0);
+  });
+
+  it('alterna Tarjetas y Lista con los mismos datos y abre el prospecto desde la tabla', async () => {
+    mockApi();
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/prospectos']}><App /></MemoryRouter>);
+    expect(await screen.findByRole('button', { name: 'Tarjetas' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByRole('button', { name: 'Lista' }));
+    expect(screen.getByRole('button', { name: 'Lista' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('columnheader', { name: 'Prospecto' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Abrir prospecto Constructora Horizonte' }));
+    expect(await screen.findByRole('heading', { name: 'Constructora Horizonte' })).toBeInTheDocument();
+  });
+
+  it('respeta Lista como vista predeterminada guardada en Preferencias', async () => {
+    mockApi([prospect()], undefined, 'LIST');
+    render(<MemoryRouter initialEntries={['/prospectos']}><App /></MemoryRouter>);
+    expect(await screen.findByRole('button', { name: 'Lista' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('table')).toBeInTheDocument();
   });
 
   it('envía search y prioridad al backend y aplica filtros reales de servicio', async () => {

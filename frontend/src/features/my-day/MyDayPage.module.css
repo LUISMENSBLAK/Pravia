@@ -1,5 +1,5 @@
 .page { min-width: 0; display: grid; gap: var(--space-3); }
-.dashboardGrid { min-width: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: 250px 250px; grid-template-areas: "agenda signatures recommendation tasks" "agenda recent reminders ai"; gap: var(--space-3); }
+.dashboardGrid { min-width: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(270px, auto)); grid-template-areas: "agenda signatures recommendation tasks" "agenda recent reminders ai"; gap: var(--space-3); }
 .dashboardGrid > section { min-height: 0; }
 .agenda { grid-area: agenda; }
 .signatures { grid-area: signatures; }
@@ -8,7 +8,11 @@
 .reminders { grid-area: reminders; }
 .tasks { grid-area: tasks; }
 .ai { grid-area: ai; }
-.signatures h2 { font-size: 11px; }
+.signatures h2 { font-size: 14px; }
+
+@media (min-width: 1025px) {
+  .ai { min-height: 300px !important; }
+}
 
 @media (max-width: 1180px) {
   .dashboardGrid { gap: var(--space-2); }

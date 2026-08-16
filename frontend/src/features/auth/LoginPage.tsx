@@ -6,11 +6,27 @@ import { BrandLogo } from '../../components/layout/BrandLogo';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
 import { PasswordInput } from '../../components/ui/PasswordInput';
+import { ApiError } from '../../services/api/client';
 import { useAuth } from './AuthProvider';
 import { AuthSplash } from './AuthSplash';
 import styles from './LoginPage.module.css';
 
 type LocationState = { from?: { pathname?: string } };
+
+const loginErrorMessage = (error: unknown) => {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return 'No pudimos iniciar sesión con esos datos. Verifica tu correo y contraseña.';
+    if (error.status === 403) return 'El entorno local no está autorizado para comunicarse con el backend. Revisa el proxy de desarrollo.';
+    if ([502, 503, 504].includes(error.status)) return 'El backend no está disponible en este momento. Intenta nuevamente en unos minutos.';
+    return 'El servicio de autenticación no pudo completar la solicitud. Intenta nuevamente.';
+  }
+
+  if (error instanceof TypeError) {
+    return 'No fue posible conectar con el backend. Revisa la red o el proxy de desarrollo.';
+  }
+
+  return 'No fue posible completar el inicio de sesión. Intenta nuevamente.';
+};
 
 export function LoginPage() {
   const { status, login } = useAuth();
@@ -44,8 +60,8 @@ export function LoginPage() {
     try {
       await login({ email: email.trim(), password, remember });
       navigate(destination, { replace: true });
-    } catch {
-      setError('No pudimos iniciar sesión con esos datos. Verifica tu correo y contraseña.');
+    } catch (loginError) {
+      setError(loginErrorMessage(loginError));
     } finally {
       setSubmitting(false);
     }

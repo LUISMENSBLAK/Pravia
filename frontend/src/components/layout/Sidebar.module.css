@@ -12,9 +12,12 @@
   transition: width var(--motion-standard), transform var(--motion-standard);
 }
 .brand { height: var(--topbar-height); flex: 0 0 var(--topbar-height); display: flex; align-items: center; padding: 0 20px; overflow: hidden; }
+.compactBrandLogo { display: none; }
+.collapsed .fullBrandLogo { display: none; }
+.collapsed .compactBrandLogo { display: block; }
 .collapsed .brand { justify-content: center; padding-inline: 14px; }
 .nav { flex: 1; min-height: 0; display: grid; align-content: start; gap: var(--space-1); padding: var(--space-3) var(--space-2); overflow-y: auto; }
-.link { position: relative; min-height: 48px; width: 100%; border: 0; border-radius: var(--radius-md); padding: 0 var(--space-4); display: flex; align-items: center; gap: var(--space-3); color: var(--color-sidebar-text); background: transparent; text-decoration: none; font: inherit; font-size: var(--text-sm); text-align: left; white-space: nowrap; cursor: pointer; transition: color var(--motion-fast), background-color var(--motion-fast); }
+.link { position: relative; min-height: 50px; width: 100%; border: 0; border-radius: var(--radius-md); padding: 0 var(--space-4); display: flex; align-items: center; gap: 14px; color: var(--color-sidebar-text); background: transparent; text-decoration: none; font: inherit; font-size: var(--text-sm); font-weight: 560; text-align: left; white-space: nowrap; cursor: pointer; transition: color var(--motion-fast), background-color var(--motion-fast); }
 .link::before { content: ''; position: absolute; left: -8px; top: 10px; bottom: 10px; width: 2px; border-radius: 2px; background: transparent; }
 .link:hover { color: white; background: rgb(255 255 255 / 6%); }
 .link:focus-visible { outline: 3px solid var(--color-focus-on-dark); outline-offset: -2px; }
@@ -31,8 +34,9 @@
 @media (min-width: 768px) and (max-width: 1024px) {
   .sidebar { width: 76px; }
   .brand { justify-content: center; padding-inline: 14px; }
+  .fullBrandLogo { display: none; }
+  .compactBrandLogo { display: block; }
   .brand > span { width: 34px; height: 44px; }
-  .brand > span img { width: 150px; top: -31px; left: -4px; }
   .link { justify-content: center; padding-inline: 0; }
   .label { display: none; }
   .collapseButton { display: none; }
@@ -42,9 +46,10 @@
   .sidebar { width: 272px; transform: translateX(-100%); box-shadow: var(--shadow-lg); }
   .mobileOpen { transform: translateX(0); }
   .sidebar.collapsed { width: 272px; }
+  .fullBrandLogo, .sidebar.collapsed .fullBrandLogo { display: block; }
+  .compactBrandLogo, .sidebar.collapsed .compactBrandLogo { display: none; }
   .sidebar.collapsed .brand { justify-content: flex-start; padding-inline: 20px; }
   .sidebar.collapsed .brand > span { width: 194px; height: 52px; }
-  .sidebar.collapsed .brand > span img { width: 206px; top: -43px; left: -6px; }
   .sidebar.collapsed .link { justify-content: flex-start; padding-inline: var(--space-4); }
   .sidebar.collapsed .label { display: inline; opacity: 1; }
   .collapseButton { display: none; }

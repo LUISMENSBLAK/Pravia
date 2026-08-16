@@ -79,6 +79,10 @@ describe('Mi Día', () => {
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={['/mi-dia']}><App /></MemoryRouter>);
     await screen.findByRole('heading', { name: /Usuario/ });
+    expect(screen.getByRole('button', { name: 'Buscar expediente' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Ver pendientes' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Programar firma' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Resumen financiero' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA para hacer una pregunta' }));
     expect(await screen.findByRole('dialog', { name: 'PRAVIA IA' })).toBeInTheDocument();
   });

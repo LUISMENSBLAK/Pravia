@@ -27,7 +27,7 @@ export function AppShell() {
         <Topbar user={user} onOpenMobile={() => setMobileOpen(true)} onLogout={logout} />
         <main className={styles.workspace} id="main-content"><Outlet /></main>
       </div>
-      <AssistantLayer />
+      <AssistantLayer mobileSidebarOpen={mobileOpen} />
     </div>
   );
 }

@@ -31,7 +31,7 @@ export function GlobalSearch() {
   const choose = (result: SearchResult) => { setOpen(false); setQuery(''); navigate(result.href); };
 
   return <>
-    <button type="button" className={styles.trigger} onClick={() => setOpen(true)} aria-label="Abrir búsqueda global"><Search size={18} /><span>Buscar expedientes, prospectos, notarías, contactos...</span><kbd><Command size={12} /> K</kbd></button>
+    <button type="button" className={styles.trigger} onClick={() => setOpen(true)} aria-label="Abrir búsqueda global"><Search size={19} /><span>Buscar expedientes, prospectos, notarías, contactos...</span><kbd><Command size={13} /> K</kbd></button>
     <IconButton className={styles.mobileTrigger} onClick={() => setOpen(true)} aria-label="Abrir búsqueda global"><Search size={20} /></IconButton>
     {open && <div className={styles.overlay} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setOpen(false); }}><section className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="search-title"><div className={styles.searchControl}><Search size={20} aria-hidden="true" /><input ref={inputRef} aria-label="Buscar en PRAVIA OS" placeholder="Buscar expediente, persona, cotización o notaría…" value={query} onChange={(event) => setQuery(event.target.value)} /><IconButton onClick={() => setOpen(false)} aria-label="Cerrar búsqueda"><X size={19} /></IconButton></div><div className={styles.results} id="search-title">
       {query.length < 2 && <div className={styles.empty}><span>Búsqueda global</span><p>Escribe al menos dos caracteres. Los resultados respetan tu rol y alcance.</p></div>}

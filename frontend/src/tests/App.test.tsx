@@ -22,6 +22,8 @@ describe('App auth flow', () => {
     render(<MemoryRouter initialEntries={['/mi-dia']}><App /></MemoryRouter>);
     expect(screen.getByRole('status', { name: 'Validando sesión' })).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: 'Bienvenido a PRAVIA OS' })).toBeInTheDocument();
+    expect(screen.getAllByAltText('PRAVIA OS — Plataforma Notarial')[0]).toHaveAttribute('src', '/brand/pravia-os/pravia-os-lockup.png');
+    expect(screen.getByText('PLATAFORMA NOTARIAL')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Mi Día' })).not.toBeInTheDocument();
   });
 
@@ -33,5 +35,33 @@ describe('App auth flow', () => {
     await user.type(screen.getByLabelText('Contraseña'), 'contraseña-segura');
     await user.click(screen.getByRole('button', { name: 'Iniciar sesión' }));
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('No pudimos iniciar sesión con esos datos.'));
+  });
+
+  it('distingue un fallo de red de credenciales inválidas', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/auth/login')) throw new TypeError('Failed to fetch');
+      return jsonResponse({ message: 'No session' }, 401);
+    }));
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/login']}><App /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'Bienvenido a PRAVIA OS' });
+    await user.type(screen.getByLabelText('Correo electrónico'), 'persona@notaria.mx');
+    await user.type(screen.getByLabelText('Contraseña'), 'contraseña-segura');
+    await user.click(screen.getByRole('button', { name: 'Iniciar sesión' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('No fue posible conectar con el backend.'));
+  });
+
+  it('distingue un backend temporalmente no disponible', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).endsWith('/auth/login')) return jsonResponse({ code: 'SERVICE_UNAVAILABLE' }, 503);
+      return jsonResponse({ message: 'No session' }, 401);
+    }));
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/login']}><App /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'Bienvenido a PRAVIA OS' });
+    await user.type(screen.getByLabelText('Correo electrónico'), 'persona@notaria.mx');
+    await user.type(screen.getByLabelText('Contraseña'), 'contraseña-segura');
+    await user.click(screen.getByRole('button', { name: 'Iniciar sesión' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('El backend no está disponible en este momento.'));
   });
 });

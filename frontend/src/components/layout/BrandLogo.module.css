@@ -1,6 +1,4 @@
-.frame { position: relative; display: block; overflow: hidden; flex: 0 0 auto; }
-.frame img { position: absolute; max-width: none; mix-blend-mode: screen; }
+.frame { display: block; flex: 0 0 auto; }
+.frame img { display: block; width: 100%; height: 100%; object-fit: contain; mix-blend-mode: screen; }
 .full { width: 194px; height: 52px; }
-.full img { width: 206px; height: auto; top: -43px; left: -6px; }
 .compact { width: 34px; height: 44px; }
-.compact img { width: 150px; height: auto; top: -31px; left: -4px; }
