@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import prisma from '../config/prisma';
+import { normalizeWeeklySchedule, optionalEstimatedDays } from '../domain/notariaConfiguration';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { NotariasService } from '../services/notarias.service';
 
@@ -34,18 +35,12 @@ export const getNotarias = async (req: Request, res: Response) => {
     if (String(req.query.portfolio) === 'true') {
       const page = Math.max(1, Number.parseInt(String(req.query.page || '1'), 10) || 1);
       const pageSize = Math.min(100, Math.max(1, Number.parseInt(String(req.query.pageSize || req.query.limit || '20'), 10) || 20));
-      const status = String(req.query.estatus || '').toUpperCase();
-      const sortOptions = ['numero:asc', 'numero:desc', 'titular:asc', 'titular:desc', 'updated_at:asc', 'updated_at:desc'] as const;
-      const requestedSort = String(req.query.sort || 'numero:asc') as typeof sortOptions[number];
       const result = await notariasService.listPortfolio({
         page,
         pageSize,
         search: optionalText(req.query.search) || undefined,
         estado: optionalText(req.query.estado) || undefined,
-        ciudad: optionalText(req.query.ciudad) || undefined,
-        estatus: status === 'ACTIVA' || status === 'INACTIVA' ? status : undefined,
-        conExpedientesActivos: String(req.query.con_expedientes_activos) === 'true',
-        sort: sortOptions.includes(requestedSort) ? requestedSort : 'numero:asc',
+        sort: 'numero:asc',
         expedienteScope: req.user ? expedienteAccessWhere(req.user) : {},
       });
       return res.status(200).json(result);
@@ -137,7 +132,7 @@ export const addNotariaContacto = async (req: Request, res: Response) => {
   try {
     const nombre = optionalText(req.body.nombre);
     const cargo = optionalText(req.body.cargo);
-    if (!nombre || !cargo) return res.status(400).json({ error: 'Nombre y cargo del contacto son obligatorios.' });
+    if (!nombre) return res.status(400).json({ error: 'El nombre del contacto es obligatorio.' });
     const notaria = await prisma.notaria.findFirst({ where: { id: req.params.id, archived_at: null }, select: { id: true } });
     if (!notaria) return res.status(404).json({ error: 'Notaría no encontrada' });
     const contacto = await prisma.$transaction(async (tx) => {
@@ -151,19 +146,32 @@ export const addNotariaContacto = async (req: Request, res: Response) => {
         observaciones: optionalText(req.body.observaciones),
         activo: true,
       } });
+      if (req.body.principal === true) {
+        await tx.notaria.update({ where: { id: notaria.id }, data: { contacto_principal_id: created.id, contacto_principal: created.nombre } });
+      }
       await tx.auditLog.create({ data: {
         user_id: req.user!.id,
         accion: 'AGREGAR_CONTACTO_NOTARIA',
         entidad: 'Notaria',
         entidad_id: notaria.id,
-        valores_nuevos: { contacto_id: created.id, nombre: created.nombre, cargo: created.cargo },
+        valores_nuevos: { contacto_id: created.id, nombre: created.nombre, cargo: created.cargo, principal: req.body.principal === true },
         correlation_id: req.correlationId,
       } });
+      if (req.body.principal === true) {
+        await tx.auditLog.create({ data: {
+          user_id: req.user!.id,
+          accion: 'CAMBIAR_CONTACTO_PRINCIPAL_NOTARIA',
+          entidad: 'Notaria',
+          entidad_id: notaria.id,
+          valores_nuevos: { contacto_id: created.id },
+          correlation_id: req.correlationId,
+        } });
+      }
       return created;
     });
     return res.status(201).json(contacto);
   } catch (error: any) {
-    const validationError = /obligatorios|válido/.test(error.message || '');
+    const validationError = /obligatorio|válido/.test(error.message || '');
     return res.status(validationError ? 400 : 500).json({ error: validationError ? error.message : 'Error al agregar contacto', detail: error.message });
   }
 };
@@ -292,7 +300,7 @@ export const createNotaria = async (req: Request, res: Response) => {
               data: {
                 notaria_id: notaria.id,
                 nombre: c.nombre.trim(),
-                cargo: c.cargo || 'Gestor',
+                cargo: optionalText(c.cargo),
                 telefono: optionalText(c.telefono),
                 whatsapp: optionalText(c.whatsapp),
                 correo: normalizeEmail(c.correo, 'El correo del contacto'),
@@ -318,7 +326,7 @@ export const createNotaria = async (req: Request, res: Response) => {
 
     const fullNotaria = await prisma.notaria.findUnique({
       where: { id: result.id },
-      include: { contactos: true }
+      include: { contactos: true, contacto_principal_ref: true }
     });
 
     res.status(201).json(fullNotaria);
@@ -347,8 +355,13 @@ export const updateNotaria = async (req: Request, res: Response) => {
       correo_proyectos,
       pagina_web,
       contacto_principal,
+      contacto_principal_id,
       horario,
+      horario_semanal,
       dias_atencion,
+      dias_respuesta_estimados,
+      dias_presupuesto_estimados,
+      dias_firma_estimados,
       tiempo_respuesta,
       tiempo_presupuesto,
       tiempo_firma,
@@ -376,6 +389,15 @@ export const updateNotaria = async (req: Request, res: Response) => {
     const tiposActo = jsonTextList(tipos_acto_json, 'Tipos de acto');
     const instituciones = jsonTextList(instituciones_json, 'Instituciones');
     const municipiosAtendidos = jsonTextList(municipios_atendidos_json, 'Municipios atendidos');
+    const weeklySchedule = normalizeWeeklySchedule(horario_semanal);
+    const responseDays = optionalEstimatedDays(dias_respuesta_estimados, 'El tiempo de respuesta');
+    const budgetDays = optionalEstimatedDays(dias_presupuesto_estimados, 'El tiempo de presupuesto');
+    const signatureDays = optionalEstimatedDays(dias_firma_estimados, 'El tiempo de firma');
+    if (responseDays === null) throw new Error('El tiempo de respuesta debe indicar entre 1 y 365 días.');
+    const primaryContact = contacto_principal_id === undefined || contacto_principal_id === null || contacto_principal_id === ''
+      ? null
+      : await prisma.notariaContacto.findFirst({ where: { id: String(contacto_principal_id), notaria_id: id, activo: true }, select: { id: true, nombre: true } });
+    if (contacto_principal_id && !primaryContact) throw new Error('El contacto principal seleccionado no pertenece a esta notaría o está inactivo.');
 
     const result = await prisma.$transaction(async (tx) => {
       const nextNumber = numero_notaria !== undefined ? optionalText(numero_notaria) : existingNotaria.numero_notaria;
@@ -421,9 +443,18 @@ export const updateNotaria = async (req: Request, res: Response) => {
           correo_general: correo_general !== undefined ? normalizeEmail(correo_general, 'El correo general') : existingNotaria.correo_general,
           correo_proyectos: correo_proyectos !== undefined ? normalizeEmail(correo_proyectos, 'El correo de proyectos') : existingNotaria.correo_proyectos,
           pagina_web: pagina_web !== undefined ? optionalText(pagina_web) : existingNotaria.pagina_web,
-          contacto_principal: contacto_principal !== undefined ? optionalText(contacto_principal) : existingNotaria.contacto_principal,
+          contacto_principal: contacto_principal_id !== undefined
+            ? (primaryContact?.nombre || null)
+            : contacto_principal !== undefined ? optionalText(contacto_principal) : existingNotaria.contacto_principal,
+          contacto_principal_id: contacto_principal_id !== undefined ? (primaryContact?.id || null) : existingNotaria.contacto_principal_id,
           horario: horario !== undefined ? optionalText(horario) : existingNotaria.horario,
+          horario_semanal: weeklySchedule === undefined
+            ? (existingNotaria.horario_semanal === null ? Prisma.DbNull : existingNotaria.horario_semanal)
+            : weeklySchedule === null ? Prisma.DbNull : weeklySchedule,
           dias_atencion: dias_atencion !== undefined ? optionalText(dias_atencion) : existingNotaria.dias_atencion,
+          dias_respuesta_estimados: responseDays !== undefined ? responseDays : existingNotaria.dias_respuesta_estimados,
+          dias_presupuesto_estimados: budgetDays !== undefined ? budgetDays : existingNotaria.dias_presupuesto_estimados,
+          dias_firma_estimados: signatureDays !== undefined ? signatureDays : existingNotaria.dias_firma_estimados,
           tiempo_respuesta: tiempo_respuesta !== undefined ? optionalText(tiempo_respuesta) : existingNotaria.tiempo_respuesta,
           tiempo_presupuesto: tiempo_presupuesto !== undefined ? optionalText(tiempo_presupuesto) : existingNotaria.tiempo_presupuesto,
           tiempo_firma: tiempo_firma !== undefined ? optionalText(tiempo_firma) : existingNotaria.tiempo_firma,
@@ -453,7 +484,7 @@ export const updateNotaria = async (req: Request, res: Response) => {
             const data = {
                 notaria_id: id,
                 nombre: c.nombre.trim(),
-                cargo: c.cargo || 'Gestor',
+                cargo: optionalText(c.cargo),
                 telefono: optionalText(c.telefono),
                 whatsapp: optionalText(c.whatsapp),
                 correo: normalizeEmail(c.correo, 'El correo del contacto'),
@@ -481,19 +512,92 @@ export const updateNotaria = async (req: Request, res: Response) => {
         valores_nuevos: { campos: Object.keys(req.body) },
         correlation_id: req.correlationId,
       } });
+      if (Array.isArray(contactos)) {
+        await tx.auditLog.create({ data: {
+          user_id: req.user!.id,
+          accion: 'ACTUALIZAR_CONTACTOS_NOTARIA',
+          entidad: 'Notaria',
+          entidad_id: id,
+          valores_nuevos: { contactos: contactos.map((contacto) => ({ id: contacto.id || null, nombre: optionalText(contacto.nombre), activo: contacto.activo !== false })) },
+          correlation_id: req.correlationId,
+        } });
+      }
+      if (horario_semanal !== undefined) {
+        await tx.auditLog.create({ data: {
+          user_id: req.user!.id,
+          accion: 'CONFIGURAR_HORARIO_NOTARIA',
+          entidad: 'Notaria',
+          entidad_id: id,
+          valores_nuevos: { horario_semanal: weeklySchedule },
+          correlation_id: req.correlationId,
+        } });
+      }
+      if ([dias_respuesta_estimados, dias_presupuesto_estimados, dias_firma_estimados].some((value) => value !== undefined)) {
+        await tx.auditLog.create({ data: {
+          user_id: req.user!.id,
+          accion: 'CONFIGURAR_TIEMPOS_NOTARIA',
+          entidad: 'Notaria',
+          entidad_id: id,
+          valores_nuevos: {
+            dias_respuesta_estimados: responseDays,
+            dias_presupuesto_estimados: budgetDays,
+            dias_firma_estimados: signatureDays,
+          },
+          correlation_id: req.correlationId,
+        } });
+      }
+      if (contacto_principal_id !== undefined) {
+        await tx.auditLog.create({ data: {
+          user_id: req.user!.id,
+          accion: 'CAMBIAR_CONTACTO_PRINCIPAL_NOTARIA',
+          entidad: 'Notaria',
+          entidad_id: id,
+          valores_nuevos: { contacto_id: primaryContact?.id || null },
+          correlation_id: req.correlationId,
+        } });
+      }
 
       return updated;
     });
 
     const fullUpdated = await prisma.notaria.findUnique({
       where: { id },
-      include: { contactos: true }
+      include: { contactos: true, contacto_principal_ref: true }
     });
 
     res.json(fullUpdated);
   } catch (error: any) {
-    const validationError = /obligatorio|válido|debe ser|Ya existe/.test(error.message || '');
+    const validationError = /obligatorio|válido|debe ser|Ya existe|entre 1 y 365|no pertenece/.test(error.message || '');
     res.status(validationError ? 400 : 500).json({ error: validationError ? error.message : 'Error al actualizar notaría', detail: error.message });
+  }
+};
+
+export const setNotariaContactoPrincipal = async (req: Request, res: Response) => {
+  try {
+    const contacto = await prisma.notariaContacto.findFirst({
+      where: { id: req.params.contactId, notaria_id: req.params.id, activo: true },
+      select: { id: true, nombre: true },
+    });
+    if (!contacto) return res.status(404).json({ error: 'Contacto activo no encontrado para esta notaría.' });
+    const updated = await prisma.$transaction(async (tx) => {
+      const notaria = await tx.notaria.update({
+        where: { id: req.params.id },
+        data: { contacto_principal_id: contacto.id, contacto_principal: contacto.nombre },
+        include: { contactos: true, contacto_principal_ref: true },
+      });
+      await tx.auditLog.create({ data: {
+        user_id: req.user!.id,
+        accion: 'CAMBIAR_CONTACTO_PRINCIPAL_NOTARIA',
+        entidad: 'Notaria',
+        entidad_id: req.params.id,
+        valores_nuevos: { contacto_id: contacto.id },
+        correlation_id: req.correlationId,
+      } });
+      return notaria;
+    });
+    return res.json(updated);
+  } catch (error: any) {
+    return res.status(500).json({ error: 'No pudimos actualizar el contacto principal.', detail: error.message });
   }
 };
 

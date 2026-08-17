@@ -8,6 +8,7 @@ import {
   archiveNotaria,
   getNotariaExpedientes,
   addNotariaContacto,
+  setNotariaContactoPrincipal,
 } from '../controllers/notarias.controller';
 
 const router = express.Router();
@@ -17,6 +18,7 @@ router.get('/:id/expedientes', getNotariaExpedientes);
 router.get('/:id', getNotariaById);
 router.post('/', createNotaria);
 router.post('/:id/contactos', addNotariaContacto);
+router.patch('/:id/contactos/:contactId/principal', setNotariaContactoPrincipal);
 router.put('/:id', updateNotaria);
 router.patch('/:id/predeterminada', setNotariaPredeterminada);
 router.patch('/:id/archivar', archiveNotaria);

@@ -10,9 +10,6 @@ export type NotariaPortfolioQuery = {
   pageSize: number;
   search?: string;
   estado?: string;
-  ciudad?: string;
-  estatus?: 'ACTIVA' | 'INACTIVA';
-  conExpedientesActivos?: boolean;
   sort: 'numero:asc' | 'numero:desc' | 'titular:asc' | 'titular:desc' | 'updated_at:asc' | 'updated_at:desc';
   expedienteScope?: Prisma.ExpedienteWhereInput;
 };
@@ -29,13 +26,17 @@ const allExpedientesWhere = (scope: Prisma.ExpedienteWhereInput = {}): Prisma.Ex
 });
 
 const primaryContact = (record: any) => {
+  const referenced = record.contacto_principal_ref?.activo ? record.contacto_principal_ref : null;
   const named = record.contactos?.find((contact: any) => contact.activo && record.contacto_principal
     && contact.nombre.localeCompare(record.contacto_principal, 'es', { sensitivity: 'base' }) === 0);
-  const contact = named || record.contactos?.find((item: any) => item.activo);
+  const contact = referenced || named;
   return {
+    id: contact?.id || null,
     nombre: contact?.nombre || record.contacto_principal || null,
-    telefono: contact?.telefono || contact?.whatsapp || record.telefono || record.whatsapp || null,
+    cargo: contact?.cargo || null,
+    telefono: contact?.telefono || record.telefono || null,
     correo: contact?.correo || record.correo_general || record.correo_proyectos || null,
+    es_principal: Boolean(referenced || named || record.contacto_principal),
   };
 };
 
@@ -47,10 +48,6 @@ export class NotariasService {
   async listPortfolio(query: NotariaPortfolioQuery) {
     const expedienteScope = query.expedienteScope || {};
     const filters: Prisma.NotariaWhereInput[] = [];
-    if (query.ciudad) filters.push({ OR: [
-      { ciudad: { equals: query.ciudad, mode: 'insensitive' } },
-      { municipio: { equals: query.ciudad, mode: 'insensitive' } },
-    ] });
     if (query.search) filters.push({ OR: [
       { numero_notaria: { contains: query.search, mode: 'insensitive' } },
       { nombre: { contains: query.search, mode: 'insensitive' } },
@@ -59,13 +56,11 @@ export class NotariasService {
       { municipio: { contains: query.search, mode: 'insensitive' } },
       { entidad_federativa: { contains: query.search, mode: 'insensitive' } },
       { telefono: { contains: query.search, mode: 'insensitive' } },
-      { whatsapp: { contains: query.search, mode: 'insensitive' } },
       { correo_general: { contains: query.search, mode: 'insensitive' } },
       { correo_proyectos: { contains: query.search, mode: 'insensitive' } },
       { contactos: { some: { activo: true, OR: [
         { nombre: { contains: query.search, mode: 'insensitive' } },
         { telefono: { contains: query.search, mode: 'insensitive' } },
-        { whatsapp: { contains: query.search, mode: 'insensitive' } },
         { correo: { contains: query.search, mode: 'insensitive' } },
       ] } } },
     ] });
@@ -73,8 +68,6 @@ export class NotariasService {
       archived_at: null,
       ...(filters.length ? { AND: filters } : {}),
       ...(query.estado ? { entidad_federativa: { equals: query.estado, mode: 'insensitive' } } : {}),
-      ...(query.estatus ? { activa: query.estatus === 'ACTIVA' } : {}),
-      ...(query.conExpedientesActivos ? { expedientes: { some: activeExpedientesWhere(expedienteScope) } } : {}),
     };
     const baseWhere: Prisma.NotariaWhereInput = { archived_at: null };
     const [sortField, sortDirection] = query.sort.split(':') as [string, 'asc' | 'desc'];
@@ -84,33 +77,23 @@ export class NotariasService {
         ? { notario_titular: sortDirection }
         : { updated_at: sortDirection };
 
-    const [records, total, totalAll, active, inactive, withActiveCases, stateGroups, cityRows] = await Promise.all([
+    const [records, total, totalAll, nayarit, jalisco] = await Promise.all([
       this.prisma.notaria.findMany({
         where: listWhere,
         skip: (query.page - 1) * query.pageSize,
         take: query.pageSize,
         orderBy: [orderBy, { nombre: 'asc' }],
         include: {
-          contactos: { where: { activo: true }, orderBy: { created_at: 'asc' }, take: 3 },
+          contacto_principal_ref: true,
+          contactos: { where: { activo: true }, orderBy: { created_at: 'asc' } },
           _count: { select: { expedientes: { where: activeExpedientesWhere(expedienteScope) } } },
         },
       }),
       this.prisma.notaria.count({ where: listWhere }),
       this.prisma.notaria.count({ where: baseWhere }),
-      this.prisma.notaria.count({ where: { ...baseWhere, activa: true } }),
-      this.prisma.notaria.count({ where: { ...baseWhere, activa: false } }),
-      this.prisma.notaria.count({ where: { ...baseWhere, expedientes: { some: activeExpedientesWhere(expedienteScope) } } }),
-      this.prisma.notaria.groupBy({ by: ['entidad_federativa'], where: baseWhere, _count: { _all: true }, orderBy: { _count: { entidad_federativa: 'desc' } } }),
-      this.prisma.notaria.findMany({ where: baseWhere, distinct: ['municipio'], select: { municipio: true, ciudad: true }, orderBy: { municipio: 'asc' } }),
+      this.prisma.notaria.count({ where: { ...baseWhere, entidad_federativa: { equals: 'Nayarit', mode: 'insensitive' } } }),
+      this.prisma.notaria.count({ where: { ...baseWhere, entidad_federativa: { equals: 'Jalisco', mode: 'insensitive' } } }),
     ]);
-
-    const groups = (stateGroups as any[]).map((group) => ({
-      label: group.entidad_federativa || 'Sin estado',
-      value: group._count._all,
-    }));
-    const top = groups.slice(0, 5);
-    const remaining = groups.slice(5).reduce((sum, group) => sum + group.value, 0);
-    if (remaining) top.push({ label: 'Otros', value: remaining });
 
     return {
       data: records.map((record: any) => ({
@@ -129,16 +112,8 @@ export class NotariasService {
         predeterminada: record.predeterminada,
         updated_at: record.updated_at,
       })),
-      metrics: { total: totalAll, active, inactive, withActiveCases },
-      distribution: {
-        criterion: 'ENTIDAD_FEDERATIVA',
-        total: totalAll,
-        items: top.map((item) => ({ ...item, percentage: totalAll ? Number(((item.value / totalAll) * 100).toFixed(1)) : 0 })),
-      },
-      facets: {
-        states: groups.map((item) => item.label).sort((a, b) => a.localeCompare(b, 'es')),
-        cities: Array.from(new Set((cityRows as any[]).flatMap((item) => [item.ciudad, item.municipio]).filter(Boolean))).sort((a: string, b: string) => a.localeCompare(b, 'es')),
-      },
+      metrics: { total: totalAll, nayarit, jalisco },
+      facets: { states: ['Nayarit', 'Jalisco'] },
       meta: {
         total, page: query.page, limit: query.pageSize, pageSize: query.pageSize,
         totalPages: Math.max(1, Math.ceil(total / query.pageSize)),
@@ -147,7 +122,7 @@ export class NotariasService {
       },
       definitions: {
         activeCases: 'Expedientes no archivados cuyo estatus no es Entregado ni Cancelado, dentro del alcance del usuario.',
-        geography: 'Distribución por entidad federativa registrada en la ficha de cada notaría. Se muestran las cinco principales y el resto se agrupa en Otros.',
+        geography: 'Los conteos de Nayarit y Jalisco usan la entidad federativa registrada; Total conserva todas las notarías registradas, sin limitar la entidad federativa.',
       },
     };
   }
@@ -159,7 +134,7 @@ export class NotariasService {
     const [record, activeCount, historicalCount, recentCases, upcomingSignatureCount, upcomingSignatures, lawyerGroups, managerGroups, activity] = await Promise.all([
       this.prisma.notaria.findFirst({
         where: { id, archived_at: null },
-        include: { contactos: { orderBy: [{ activo: 'desc' }, { created_at: 'asc' }] }, _count: { select: { cotizaciones: true } } },
+        include: { contacto_principal_ref: true, contactos: { orderBy: [{ activo: 'desc' }, { created_at: 'asc' }] }, _count: { select: { cotizaciones: true } } },
       }),
       this.prisma.expediente.count({ where: { notaria_id: id, ...activeScope } }),
       this.prisma.expediente.count({ where: { notaria_id: id, ...scope } }),

@@ -16,4 +16,36 @@ describe('Sidebar', () => {
     expect(screen.queryByText('Inteligencia')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Mi Día' })).toHaveAttribute('aria-current', 'page');
   });
+
+  it('muestra Finanzas y Reportes únicamente cuando la sesión concede sus permisos', () => {
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/notarias']}>
+        <Sidebar
+          collapsed={false}
+          mobileOpen={false}
+          onToggle={vi.fn()}
+          onCloseMobile={vi.fn()}
+          user={{ name: 'Andrea Ruiz', role: 'ADMINISTRACION', permissions: ['notarias.read', 'notarias.write', 'expedientes.read'] }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole('link', { name: 'Finanzas' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Reportes' })).not.toBeInTheDocument();
+
+    rerender(
+      <MemoryRouter initialEntries={['/notarias']}>
+        <Sidebar
+          collapsed={false}
+          mobileOpen={false}
+          onToggle={vi.fn()}
+          onCloseMobile={vi.fn()}
+          user={{ name: 'Andrea Ruiz', role: 'ADMINISTRACION', permissions: ['notarias.read', 'finanzas.read', 'reportes.read'] }}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('link', { name: 'Finanzas' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Reportes' })).toBeInTheDocument();
+  });
 });

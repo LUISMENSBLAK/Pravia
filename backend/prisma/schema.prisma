@@ -293,6 +293,7 @@ model Notaria {
   direccion                 String?
   entidad_federativa        String                       @default("Nayarit")
   horario                   String?
+  horario_semanal           Json?
   instituciones_json        Json?
   instrucciones_especiales  String?
   municipio                 String                       @default("Tepic")
@@ -306,15 +307,20 @@ model Notaria {
   tiempo_firma              String?
   tiempo_presupuesto        String?
   tiempo_respuesta          String?
+  dias_presupuesto_estimados Int?
+  dias_firma_estimados       Int?
   tipos_acto_json           Json?
   whatsapp                  String?
   cotizaciones              Cotizacion[]
   expedientes               Expediente[]
   honorariosGenerados       HonorarioGenerado[]
   movimientosFinancieros    MovimientoFinanciero[]
-  contactos                 NotariaContacto[]
+  contacto_principal_id     String?                      @db.Uuid
+  contacto_principal_ref    NotariaContacto?             @relation("NotariaContactoPrincipal", fields: [contacto_principal_id], references: [id], onDelete: SetNull)
+  contactos                 NotariaContacto[]            @relation("NotariaContactos")
   plantillaDocumentales     PlantillaDocumentalVersion[]
 
+  @@index([contacto_principal_id], map: "idx_notarias_contacto_principal_fk")
   @@map("notarias")
 }
 
@@ -322,14 +328,15 @@ model NotariaContacto {
   id            String   @id @default(uuid()) @db.Uuid
   notaria_id    String   @db.Uuid
   nombre        String
-  cargo         String
+  cargo         String?
   telefono      String?
   whatsapp      String?
   correo        String?
   observaciones String?
   activo        Boolean  @default(true)
   created_at    DateTime @default(now())
-  notaria       Notaria  @relation(fields: [notaria_id], references: [id], onDelete: Cascade)
+  notaria       Notaria  @relation("NotariaContactos", fields: [notaria_id], references: [id], onDelete: Cascade)
+  principal_de  Notaria[] @relation("NotariaContactoPrincipal")
 
   @@index([notaria_id], map: "idx_notaria_contactos_notaria_fk")
   @@map("notaria_contactos")
