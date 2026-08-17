@@ -1,5 +1,5 @@
-.agendaPage { min-width: 0; color: var(--color-text-primary); }
-.agendaHeader { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title actions" "date views"; gap: 18px 24px; margin-bottom: 16px; }
+.agendaPage { min-width: 0; max-width: 100%; overflow-x: clip; color: var(--color-text-primary); }
+.agendaHeader { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "title actions" "date views"; gap: 14px 24px; margin-bottom: 14px; }
 .titleBlock { grid-area: title; }
 .titleBlock h1 { margin: 0; color: var(--color-navy-950); font-family: inherit; font-size: clamp(1.85rem, 2.5vw, 2.35rem); font-weight: 710; letter-spacing: -.035em; }
 .titleBlock p { margin: 5px 0 0; color: var(--color-text-secondary); font-size: .9rem; }
@@ -21,8 +21,8 @@
 button:not(:disabled) { cursor: pointer; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(46,113,198,.28); outline-offset: 2px; }
 
-.agendaLayout { display: grid; grid-template-columns: 188px minmax(540px, 1fr) 224px; gap: 14px; align-items: start; min-width: 0; }
-.leftRail { display: grid; gap: 14px; min-width: 0; }
+.agendaLayout { display: grid; grid-template-columns: 176px minmax(640px, 1fr) 200px; gap: 12px; align-items: start; min-width: 0; }
+.leftRail { display: grid; gap: 12px; min-width: 0; }
 .miniCalendar, .teamFilters, .tasksPanel, .calendarCard, .upcoming { border: 1px solid #e0e5ec; border-radius: 12px; background: white; box-shadow: 0 5px 18px rgba(11,30,62,.035); }
 .miniCalendar { padding: 13px; }
 .miniCalendar header { display: grid; grid-template-columns: 25px 1fr 25px; align-items: center; margin-bottom: 10px; }
@@ -68,7 +68,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .weekHeader strong small { font-size: .59rem; text-transform: uppercase; }
 .weekHeader strong b { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; font-size: .72rem; }
 .weekHeader strong[data-today="true"] b { color: white; background: var(--color-navy-900); }
-.weekScroll { position: relative; height: min(60vh, 590px); min-height: 440px; overflow: auto; }
+.weekScroll { position: relative; height: clamp(500px, calc(100dvh - 260px), 720px); overflow: auto; }
 .timeLabels { position: sticky; z-index: 3; left: 0; width: 51px; background: white; }
 .timeLabels span { position: absolute; right: 9px; transform: translateY(-6px); color: #8791a1; font-size: .55rem; }
 .weekGrid { min-width: 570px; display: grid; grid-template-columns: repeat(7, 1fr); margin-left: 51px; }
@@ -111,7 +111,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .railCta { width: calc(100% - 24px); height: 34px; display: flex; align-items: center; justify-content: center; gap: 5px; margin: 11px 12px; border: 1px solid #dbc084; border-radius: 8px; color: #9c6b13; background: white; font-size: .62rem; font-weight: 700; }
 .railEmpty { padding: 18px 13px; color: #8791a0; font-size: .65rem; line-height: 1.5; }
 
-.dayCalendar { min-height: 520px; padding: 18px 22px; }
+.dayCalendar { min-height: clamp(560px, calc(100dvh - 240px), 760px); padding: 18px 22px; }
 .dayCalendar > header { display: flex; align-items: baseline; gap: 8px; padding-bottom: 16px; border-bottom: 1px solid #edf0f4; }
 .dayCalendar > header span { color: #68758b; font-size: .75rem; font-weight: 700; }
 .dayCalendar > header strong { color: var(--color-navy-950); font-family: inherit; font-size: 1.7rem; }
@@ -135,14 +135,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .monthCalendar > header, .monthCalendar > div { display: grid; grid-template-columns: repeat(7, minmax(80px,1fr)); }
 .monthCalendar > header span { padding: 10px; border-left: 1px solid #edf0f4; color: #768296; text-align: center; font-size: .6rem; font-weight: 800; }
-.monthCalendar article { min-height: 92px; overflow: hidden; border-top: 1px solid #edf0f4; border-left: 1px solid #edf0f4; padding: 6px; }
+.monthCalendar article { min-height: 102px; overflow: hidden; border-top: 1px solid #edf0f4; border-left: 1px solid #edf0f4; padding: 7px; }
 .monthCalendar article[data-outside="true"] { background: #fafbfc; opacity: .52; }
 .monthCalendar article[data-today="true"] .monthDayNumber { color: white; background: var(--color-navy-900); }
 .monthDayNumber { width: 23px; height: 23px; display: grid; place-items: center; border: 0; border-radius: 50%; color: #536176; background: transparent; font-size: .62rem; font-weight: 700; }
 .monthEvent, .moreEvents { width: 100%; overflow: hidden; display: block; margin-top: 3px; border-width: 1px; border-radius: 4px; padding: 3px 4px; font-size: .48rem; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 .moreEvents { border: 0; color: #50627c; background: transparent; font-weight: 700; }
 
-.agendaList { min-height: 500px; padding: 4px 14px 16px; }
+.agendaList { min-height: clamp(560px, calc(100dvh - 240px), 760px); padding: 4px 14px 16px; }
 .agendaList > button { width: 100%; display: grid; grid-template-columns: 8px 140px minmax(150px,1fr) 130px 120px; align-items: center; gap: 10px; border: 0; border-bottom: 1px solid #edf0f4; padding: 13px 5px; color: #536176; background: white; text-align: left; }
 .agendaList > button > time { display: flex; align-items: center; gap: 5px; color: #35455d; font-size: .62rem; font-weight: 700; }
 .agendaList > button > time small { display: flex; gap: 3px; margin-left: 3px; color: #8791a1; font-size: .53rem; font-weight: 500; }
@@ -237,17 +237,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @keyframes pulse { to { opacity: .58; } }
 @keyframes enterDrawer { from { transform: translateX(28px); opacity: .6; } }
 
-@media (min-width: 1025px) and (max-width: 1320px) {
-  .agendaLayout { grid-template-columns: 180px minmax(520px,1fr); }
+@media (min-width: 1025px) and (max-width: 1799px) {
+  .agendaLayout { grid-template-columns: 176px minmax(0,1fr); }
   .upcoming { grid-column: 1 / -1; }
   .upcoming ol { display: grid; grid-template-columns: repeat(3,1fr); gap: 0 16px; }
 }
 @media (min-width: 768px) and (max-width: 1024px) {
-  .agendaLayout { grid-template-columns: 175px minmax(0,1fr); }
-  .upcoming { grid-column: 1 / -1; }
+  .agendaLayout { grid-template-columns: minmax(0,1fr); }
+  .calendarCard { grid-row: 1; }
+  .leftRail { grid-row: 2; grid-template-columns: repeat(3,minmax(0,1fr)); align-items: start; }
+  .upcoming { grid-row: 3; }
   .upcoming ol { display: grid; grid-template-columns: repeat(3,1fr); gap: 0 14px; }
-  .weekScroll { height: 520px; }
   .dateControls > strong { max-width: 330px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+@media (min-height: 850px) and (min-width: 768px) {
+  .monthCalendar article { min-height: 116px; }
 }
 @media (max-width: 767px) {
   .agendaHeader { grid-template-columns: 1fr auto; grid-template-areas: "title actions" "date date" "views views"; gap: 12px; }
@@ -277,6 +281,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .dayCalendar li button em, .dayCalendar li button b { display: none; }
   .monthCalendar { overflow: auto; }
   .monthCalendar > header, .monthCalendar > div { min-width: 630px; }
+  .monthCalendar article { min-height: 92px; }
+  .agendaList { min-height: 480px; }
   .agendaList > button { grid-template-columns: 7px 96px 1fr; }
   .agendaList > button > span:nth-of-type(n+2) { display: none; }
   .agendaList > button > time { display: block; }
