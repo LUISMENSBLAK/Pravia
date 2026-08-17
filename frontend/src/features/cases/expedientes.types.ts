@@ -32,11 +32,11 @@ export type ExpedienteDetail = ExpedienteListItem & {
   comparecientes: Array<any>; expedienteRepresentaciones?: Array<any>;
   requisitos_docs: Array<any>; expedienteDocumentos?: Array<any>; documentos_autorizados?: Array<any>;
   etapas?: Array<any>; tareas?: Array<any>; tareas_externas?: Array<any>; tareas_postfirma?: Array<any>; entrega?: any;
-  movimientosFinancieros?: Array<any>; actividades?: Array<any>; complianceReviews?: Array<any>;
+  movimientosFinancieros?: Array<any>; honorariosGenerados?: Array<any>; financialSummary?: { ingresos_recibidos:number;honorarios_generados:number;honorarios_cobrados:number;honorarios_por_cobrar:number;fondos_terceros:number;otros_destinos:number;fondos_terceros_pendientes:number;egresos:number } | null; actividades?: Array<any>; complianceReviews?: Array<any>;
   workflow: { current_status_label: string; transitions: ExpedienteTransition[]; next_stage?: any; stages?: Array<any> };
   progress: { documental: number; operativo: number; financiero?: number; general: number; configuration?: Record<string, string> };
   readiness: { indicators: ReadinessIndicator[]; blockers: Array<{ type: string; label: string }>; complete: number };
-  capabilities: { canWrite: boolean; canDeliver: boolean; canManagePostfirma: boolean; canReadProject: boolean; canReadFinance: boolean; canUploadDocuments: boolean };
+  capabilities: { canWrite: boolean; canDeliver: boolean; canManagePostfirma: boolean; canReadProject: boolean; canReadFinance: boolean; canWriteFinance: boolean; canUploadDocuments: boolean; canReadDocuments: boolean; canDeleteDocuments: boolean };
 };
 export type ProjectVersion = { id: string; version_numero: number; nombre_original?: string; nota_version?: string; es_vigente: boolean; es_version_final?: boolean; subido_por_nombre?: string; created_at: string };
 export type ProjectState = { vigente: ProjectVersion | null; historial: ProjectVersion[]; ultimoReporte?: unknown };

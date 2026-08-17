@@ -12,11 +12,24 @@ import {
 describe('dominio financiero canónico', () => {
   it('acepta una distribución exacta y evita errores de centavos', () => {
     expect(validateDistribution(100_000, [{ amount: 30_000 }, { amount: 70_000 }])).toEqual({ total: 100000, classified: 100000, pending: 0, balanced: true });
+    expect(validateDistribution(85_000, [{ amount: 30_000 }, { amount: 55_000 }])).toEqual({ total: 85000, classified: 85000, pending: 0, balanced: true });
     expect(validateDistribution(0.3, [{ amount: 0.1 }, { amount: 0.2 }]).balanced).toBe(true);
+    expect(validateDistribution(85_000.01, [{ amount: 30_000 }, { amount: 55_000.01 }]).balanced).toBe(true);
   });
 
   it('expone el importe pendiente de clasificar', () => {
     expect(validateDistribution(100_000, [{ amount: 80_000 }])).toMatchObject({ pending: 20_000, balanced: false });
+    expect(validateDistribution(85_000, [{ amount: 30_000 }, { amount: 40_000 }])).toMatchObject({ classified: 70_000, pending: 15_000, balanced: false });
+  });
+
+  it('rechaza una distribución superior al movimiento con precisión de centavos', () => {
+    try {
+      validateDistribution(85_000, [{ amount: 30_000 }, { amount: 70_000 }]);
+      throw new Error('Expected over-distribution rejection');
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'FINANCE_DISTRIBUTION_EXCEEDS_TOTAL', status: 400 });
+    }
+    expect(() => validateDistribution(85_000.01, [{ amount: 30_000 }, { amount: 55_000.02 }])).toThrow('excede el importe');
   });
 
   it('rechaza importes y distribuciones inválidas', () => {

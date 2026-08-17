@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { FinanceLedgerController } from '../controllers/financeLedger.controller';
 import { FinanzasController } from '../controllers/finanzas.controller';
 import { requirePermission } from '../middleware/auth.middleware';
+import { requireDocumentoObjectAccess } from '../middleware/objectAccess.middleware';
 
 const router = Router();
 
@@ -20,6 +21,7 @@ router.post('/movimientos', requirePermission('finanzas.write'), FinanceLedgerCo
 router.patch('/movimientos/:id/distribucion', requirePermission('finanzas.write'), FinanceLedgerController.replaceDistribution);
 router.post('/movimientos/:id/comprobante', requirePermission('finanzas.write'), FinanceLedgerController.generateReceipt);
 router.post('/movimientos/:id/aplicar', requirePermission('finanzas.validate'), FinanceLedgerController.applyMovement);
+router.delete('/movimientos/:id/comprobantes/:documentId', requirePermission('finanzas.write'), requirePermission('documentos.unlink'), requireDocumentoObjectAccess, FinanceLedgerController.retireEvidence);
 router.post('/movimientos/:id/cancelar', requirePermission('finanzas.validate'), FinanceLedgerController.cancelMovement);
 router.post('/movimientos/:id/revertir', requirePermission('finanzas.validate'), FinanceLedgerController.reverseMovement);
 router.post('/cuentas', requirePermission('finanzas.write'), FinanceLedgerController.createAccount);

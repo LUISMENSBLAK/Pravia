@@ -11,7 +11,6 @@ import { InvoicesView } from './components/InvoicesView';
 import { MovementDetail } from './components/MovementDetail';
 import { MovementsView } from './components/MovementsView';
 import { NewMovementFlow } from './components/NewMovementFlow';
-import { ReceiptsView } from './components/ReceiptsView';
 import { ReceivablesView } from './components/ReceivablesView';
 import { ReconciliationView } from './components/ReconciliationView';
 import styles from './Finance.module.css';
@@ -24,7 +23,6 @@ import type {
   FinanceSummary,
   FinanceView,
   Paginated,
-  Receipt,
   Receivable,
   ReconciliationData,
 } from './finance.types';
@@ -32,13 +30,12 @@ import type {
 const views: Array<{ key: FinanceView; label: string }> = [
   { key: 'resumen', label: 'Resumen' },
   { key: 'movimientos', label: 'Movimientos' },
-  { key: 'comprobantes', label: 'Comprobantes' },
   { key: 'cuentas', label: 'Cuentas' },
   { key: 'conciliacion', label: 'Conciliación' },
   { key: 'facturacion', label: 'Facturación' },
   { key: 'cartera', label: 'Cartera' },
 ];
-const periodViews = new Set<FinanceView>(['resumen', 'movimientos', 'comprobantes', 'conciliacion', 'cartera']);
+const periodViews = new Set<FinanceView>(['resumen', 'movimientos', 'conciliacion', 'cartera']);
 const emptyPage = <T,>(): Paginated<T> => ({ items: [], meta: { page: 1, pageSize: 20, total: 0, totalPages: 1 } });
 const localDate = (date: Date) => {
   const offset = date.getTimezoneOffset() * 60_000;
@@ -59,7 +56,6 @@ export function FinancePage() {
   const [catalogs, setCatalogs] = useState<FinanceCatalogs | null>(null);
   const [summary, setSummary] = useState<FinanceSummary | null>(null);
   const [movements, setMovements] = useState<Paginated<FinanceMovement>>(emptyPage);
-  const [receipts, setReceipts] = useState<Paginated<Receipt>>(emptyPage);
   const [accounts, setAccounts] = useState<FinanceAccount[]>([]);
   const [receivables, setReceivables] = useState<Paginated<Receivable>>(emptyPage);
   const [reconciliation, setReconciliation] = useState<ReconciliationData | null>(null);
@@ -88,7 +84,6 @@ export function FinancePage() {
       setCatalogs(cat);
       if (current === 'resumen') setSummary(await financeService.summary(periodQuery, signal));
       if (current === 'movimientos') setMovements(await financeService.movements({ ...periodQuery, ...filters, page, pageSize: 20 }, signal));
-      if (current === 'comprobantes') setReceipts(await financeService.receipts({ ...periodQuery, page, pageSize: 20 }, signal));
       if (current === 'cuentas') setAccounts(await financeService.accounts(signal));
       if (current === 'cartera') setReceivables(await financeService.receivables({ ...periodQuery, page, pageSize: 20 }, signal));
       if (current === 'conciliacion') setReconciliation(await financeService.reconciliation({ ...periodQuery, cuenta_id: filters.cuenta_id }, signal));
@@ -154,7 +149,7 @@ export function FinancePage() {
     <PageContainer
       title="Finanzas"
       subtitle="Movimientos, cobranza y control de recursos."
-      action={<div className={styles.headerActions}>{periodControl}{catalogs?.permisos.escribir && <button type="button" className={styles.primaryButton} onClick={() => setNewOpen(true)}><Plus size={17} />Registrar movimiento</button>}</div>}
+      action={<div className={styles.headerActions}>{periodControl}{current === 'movimientos' && catalogs?.permisos.escribir && <button type="button" className={styles.primaryButton} onClick={() => setNewOpen(true)}><Plus size={17} />Registrar movimiento</button>}</div>}
     >
       <nav className={styles.subnav} aria-label="Secciones de Finanzas">
         {views.map((item) => <button type="button" key={item.key} ref={(node) => { tabRefs.current[item.key] = node; }} data-active={current === item.key} aria-current={current === item.key ? 'page' : undefined} onClick={() => navigate(item.key)}>{item.label}</button>)}
@@ -164,7 +159,6 @@ export function FinancePage() {
       {status === 'ready' && catalogs && <>
         {current === 'resumen' && summary && <FinanceSummaryView summary={summary} onOpen={navigate} />}
         {current === 'movimientos' && <MovementsView result={movements} catalogs={catalogs} filters={filters} onFilter={change} onPage={(value) => change('page', String(value))} onSelect={setSelected} onNew={() => setNewOpen(true)} />}
-        {current === 'comprobantes' && <ReceiptsView result={receipts} />}
         {current === 'cuentas' && <AccountsView accounts={accounts} canWrite={catalogs.permisos.escribir} onNew={() => setAccountOpen(true)} />}
         {current === 'conciliacion' && reconciliation && <ReconciliationView data={reconciliation} canReconcile={catalogs.permisos.conciliar} onReconcile={async (movementId, bankId) => { await financeService.reconcile(movementId, bankId); saved('Conciliación registrada correctamente.'); }} />}
         {current === 'facturacion' && <InvoicesView />}
@@ -172,7 +166,7 @@ export function FinancePage() {
       </>}
       {newOpen && catalogs && <NewMovementFlow catalogs={catalogs} onClose={() => setNewOpen(false)} onSaved={() => saved()} />}
       {accountOpen && <AccountForm onClose={() => setAccountOpen(false)} onSaved={() => { setAccountOpen(false); saved('Cuenta guardada correctamente.'); }} />}
-      {selected && <MovementDetail movement={selected} onClose={() => setSelected(null)} />}
+      {selected && <MovementDetail movement={selected} permissions={catalogs?.permisos} onChanged={() => void load()} onClose={() => setSelected(null)} />}
       <div className={`${styles.toast} ${toast ? styles.toastVisible : ''}`} role="status">{toast}</div>
     </PageContainer>
   );

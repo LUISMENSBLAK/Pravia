@@ -63,6 +63,7 @@ export async function canAccessDocumento(user: AuthUser, id: string) {
       cotizacionVinculos: { where: { estatus: 'ACTIVO' }, select: { cotizacion_id: true } },
       expedienteVinculos: { where: { estatus: 'ACTIVO' }, select: { expediente_id: true } },
       comparecienteVinculos: { where: { estatus: 'ACTIVO' }, select: { compareciente_id: true } },
+      movimientoVinculos: { where: { estatus: 'ACTIVO' }, select: { movimiento_id: true } },
     },
   });
   if (!document) return false;
@@ -72,6 +73,7 @@ export async function canAccessDocumento(user: AuthUser, id: string) {
   const quoteIds = [document.cotizacion_id, ...document.cotizacionVinculos.map((link) => link.cotizacion_id)].filter(Boolean) as string[];
   const expedienteIds = [document.expediente_id, ...document.expedienteVinculos.map((link) => link.expediente_id)].filter(Boolean) as string[];
   const comparecienteIds = [document.compareciente_id, ...document.comparecienteVinculos.map((link) => link.compareciente_id)].filter(Boolean) as string[];
+  const movementIds = document.movimientoVinculos.map((link) => link.movimiento_id);
 
   if ((await Promise.all(prospectIds.map((recordId) => canAccessProspecto(user, recordId)))).some(Boolean)) return true;
   if ((await Promise.all(quoteIds.map((recordId) => canAccessCotizacion(user, recordId)))).some(Boolean)) return true;
@@ -79,6 +81,21 @@ export async function canAccessDocumento(user: AuthUser, id: string) {
   if (expedienteIds.length) {
     const accessible = await prisma.expediente.findFirst({
       where: { id: { in: expedienteIds }, archived_at: null, ...expedienteAccessWhere(user) },
+      select: { id: true },
+    });
+    if (accessible) return true;
+  }
+  if (movementIds.length && user.permissions.includes('finanzas.read') && user.permissions.includes('documentos.read')) {
+    const accessible = await prisma.movimientoFinanciero.findFirst({
+      where: {
+        id: { in: movementIds },
+        ...(hasGlobalRead(user) ? {} : {
+          OR: [
+            { expediente_id: null },
+            { expediente: expedienteAccessWhere(user) },
+          ],
+        }),
+      },
       select: { id: true },
     });
     if (accessible) return true;
@@ -91,6 +108,7 @@ export async function canAttachDocumento(user: AuthUser, targets: {
   cotizacion_id?: string | null;
   expediente_id?: string | null;
   compareciente_id?: string | null;
+  movimiento_id?: string | null;
 }) {
   if (targets.prospecto_id && !(await canAccessProspecto(user, targets.prospecto_id))) return false;
   if (targets.cotizacion_id && !(await canAccessCotizacion(user, targets.cotizacion_id))) return false;
@@ -98,6 +116,22 @@ export async function canAttachDocumento(user: AuthUser, targets: {
   if (targets.expediente_id) {
     const record = await prisma.expediente.findFirst({
       where: { id: targets.expediente_id, archived_at: null, ...expedienteAccessWhere(user) },
+      select: { id: true },
+    });
+    if (!record) return false;
+  }
+  if (targets.movimiento_id) {
+    if (!user.permissions.includes('finanzas.write') || !user.permissions.includes('documentos.write')) return false;
+    const record = await prisma.movimientoFinanciero.findFirst({
+      where: {
+        id: targets.movimiento_id,
+        ...(hasGlobalRead(user) ? {} : {
+          OR: [
+            { expediente_id: null },
+            { expediente: expedienteAccessWhere(user) },
+          ],
+        }),
+      },
       select: { id: true },
     });
     if (!record) return false;

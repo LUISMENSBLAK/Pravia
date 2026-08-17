@@ -9,8 +9,8 @@ export class FinanceDomainError extends Error {
   }
 }
 
-const cents = (value: number) => Math.round(Number(value) * 100);
-const money = (value: number) => cents(value) / 100;
+export const moneyToCents = (value: number) => Math.round(Number(value) * 100);
+const money = (value: number) => moneyToCents(value) / 100;
 
 export function validateDistribution(total: number, allocations: Array<{ amount: number }>) {
   if (!Number.isFinite(total) || total <= 0) {
@@ -24,8 +24,14 @@ export function validateDistribution(total: number, allocations: Array<{ amount:
       throw new FinanceDomainError('Cada clasificación debe tener un importe mayor a cero.', 'FINANCE_ALLOCATION_INVALID');
     }
   });
-  const classifiedCents = allocations.reduce((sum, item) => sum + cents(item.amount), 0);
-  const pendingCents = cents(total) - classifiedCents;
+  const classifiedCents = allocations.reduce((sum, item) => sum + moneyToCents(item.amount), 0);
+  const pendingCents = moneyToCents(total) - classifiedCents;
+  if (pendingCents < 0) {
+    throw new FinanceDomainError(
+      `La distribución excede el importe del movimiento por ${(Math.abs(pendingCents) / 100).toFixed(2)}.`,
+      'FINANCE_DISTRIBUTION_EXCEEDS_TOTAL',
+    );
+  }
   return {
     total: money(total),
     classified: classifiedCents / 100,
@@ -67,6 +73,15 @@ export type CanonicalMovement = {
   allocations: Array<{ nature: EconomicNature; amount: number }>;
 };
 
+export function legacyFinanceAllocations(nature: 'INGRESO' | 'EGRESO', category: string, amount: number) {
+  if (nature === 'INGRESO' && category === 'HONORARIOS_PRAVIA') return [{ nature: 'DESPACHO' as const, amount }];
+  // Un ingreso histórico sin distribución explícita permanece sin clasificar.
+  // No se presume que pertenezca a terceros ni al despacho.
+  if (nature === 'INGRESO') return [{ nature: 'OTRO' as const, amount }];
+  if (category === 'PRAVIA') return [{ nature: 'EGRESO_DESPACHO' as const, amount }];
+  return [{ nature: 'TERCERO' as const, amount }];
+}
+
 export function calculateFinanceAggregates(input: {
   generatedFees: number[];
   movements: CanonicalMovement[];
@@ -74,15 +89,15 @@ export function calculateFinanceAggregates(input: {
   const applied = input.movements.filter((item) => APPLIED_MOVEMENT_STATUSES.includes(item.status as any));
   const ingresosRecibidos = applied
     .filter((item) => item.nature === 'INGRESO')
-    .reduce((sum, item) => sum + cents(item.amount), 0);
+    .reduce((sum, item) => sum + moneyToCents(item.amount), 0);
   const egresos = applied
     .filter((item) => item.nature === 'EGRESO')
-    .reduce((sum, item) => sum + cents(item.amount), 0);
+    .reduce((sum, item) => sum + moneyToCents(item.amount), 0);
   const allocated = (movementNature: 'INGRESO' | 'EGRESO', economicNature: EconomicNature) => applied
     .filter((item) => item.nature === movementNature)
     .flatMap((item) => item.allocations)
     .filter((item) => item.nature === economicNature)
-    .reduce((sum, item) => sum + cents(item.amount), 0);
+    .reduce((sum, item) => sum + moneyToCents(item.amount), 0);
   const honorariosCobrados = allocated('INGRESO', 'DESPACHO');
   const fondosTerceros = allocated('INGRESO', 'TERCERO');
   // Los movimientos legacy validados pueden no tener distribuciones. No deben
@@ -91,12 +106,12 @@ export function calculateFinanceAggregates(input: {
   const unallocatedIncome = applied
     .filter((item) => item.nature === 'INGRESO')
     .reduce((sum, item) => {
-      const classified = item.allocations.reduce((subtotal, allocation) => subtotal + cents(allocation.amount), 0);
-      return sum + Math.max(0, cents(item.amount) - classified);
+      const classified = item.allocations.reduce((subtotal, allocation) => subtotal + moneyToCents(allocation.amount), 0);
+      return sum + Math.max(0, moneyToCents(item.amount) - classified);
     }, 0);
   const otrosDestinos = allocated('INGRESO', 'OTRO') + unallocatedIncome;
   const fondosTercerosPagados = allocated('EGRESO', 'TERCERO');
-  const honorariosGenerados = input.generatedFees.reduce((sum, item) => sum + cents(item), 0);
+  const honorariosGenerados = input.generatedFees.reduce((sum, item) => sum + moneyToCents(item), 0);
 
   return {
     ingresos_recibidos: ingresosRecibidos / 100,
@@ -111,7 +126,7 @@ export function calculateFinanceAggregates(input: {
 }
 
 export function calculateReceivable(input: { generated: number; collected: number; dueDate?: Date | null; now?: Date }) {
-  const pending = Math.max(0, cents(input.generated) - cents(input.collected)) / 100;
+  const pending = Math.max(0, moneyToCents(input.generated) - moneyToCents(input.collected)) / 100;
   const now = input.now || new Date();
   const ageDays = input.dueDate && pending > 0
     ? Math.max(0, Math.floor((now.getTime() - input.dueDate.getTime()) / 86_400_000))
@@ -134,7 +149,7 @@ export function reconciliationScore(input: {
   bankReference?: string | null;
   sameAccount: boolean;
 }) {
-  if (cents(input.movementAmount) !== cents(Math.abs(input.bankAmount)) || !input.sameAccount) return 0;
+  if (moneyToCents(input.movementAmount) !== moneyToCents(Math.abs(input.bankAmount)) || !input.sameAccount) return 0;
   let score = 65;
   const days = Math.abs(input.movementDate.getTime() - input.bankDate.getTime()) / 86_400_000;
   if (days === 0) score += 20;
@@ -146,7 +161,7 @@ export function reconciliationScore(input: {
 }
 
 export function reconciliationReasons(input: Parameters<typeof reconciliationScore>[0]) {
-  if (cents(input.movementAmount) !== cents(Math.abs(input.bankAmount)) || !input.sameAccount) return [];
+  if (moneyToCents(input.movementAmount) !== moneyToCents(Math.abs(input.bankAmount)) || !input.sameAccount) return [];
   const reasons = ['Importe exacto', 'Misma cuenta'];
   const days = Math.abs(input.movementDate.getTime() - input.bankDate.getTime()) / 86_400_000;
   if (days === 0) reasons.push('Misma fecha');
@@ -164,8 +179,8 @@ export function canMutateFinancialRecord(status: string) {
 export function movementStatusLabel(status: string) {
   const labels: Record<string, string> = {
     BORRADOR: 'Borrador', PENDIENTE: 'Pendiente', PENDIENTE_COMPROBANTE: 'Falta comprobante',
-    LISTO_APLICAR: 'Listo para aplicar', APLICADO: 'Aplicado', RECIBIDO: 'Aplicado (legacy)',
-    VALIDADO: 'Aplicado (legacy)', RECHAZADO: 'Rechazado', REVERTIDO: 'Revertido', CANCELADO: 'Cancelado',
+    LISTO_APLICAR: 'Listo para aplicar', APLICADO: 'Aplicado', RECIBIDO: 'Aplicado (histórico)',
+    VALIDADO: 'Aplicado (histórico)', RECHAZADO: 'Rechazado', REVERTIDO: 'Revertido', CANCELADO: 'Cancelado',
   };
   return labels[status] || 'Estado no disponible';
 }

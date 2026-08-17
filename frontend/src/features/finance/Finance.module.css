@@ -67,7 +67,7 @@
 .insightStrip strong{font-size:.76rem}
 .insightStrip small{color:var(--color-text-muted);margin-top:3px;font-size:.55rem}
 .insightStrip button{color:#996c18;font:inherit;cursor:pointer;background:0 0;border:0;align-items:center;gap:5px;font-size:.62rem;font-weight:760;display:flex}
-.filters{border:1px solid var(--color-border);background:#fff;border-radius:12px;grid-template-columns:minmax(260px,1.6fr) repeat(4,minmax(118px,.65fr)) auto;gap:8px;margin-bottom:11px;padding:10px;display:grid}
+.filters{border:1px solid var(--color-border);background:#fff;border-radius:12px;grid-template-columns:minmax(260px,1.6fr) repeat(4,minmax(118px,.65fr));gap:8px;margin-bottom:11px;padding:10px;display:grid}
 .filters label:not(.search){border:1px solid var(--color-border);border-radius:8px;flex-direction:column;height:39px;padding:5px 9px;display:flex}
 .filters label span{color:var(--color-text-muted);font-size:.48rem}
 .filters select{appearance:none;color:var(--color-text-primary);font:inherit;background:0 0;border:0;outline:0;font-size:.61rem}
@@ -267,8 +267,7 @@
 @media (width<=1240px){.metrics{scrollbar-width:none;scroll-snap-type:x mandatory;scroll-padding-inline:20px;overscroll-behavior-x:contain;grid-template-columns:repeat(5,minmax(150px,1fr));padding-bottom:5px;overflow-x:auto}
 .metrics::-webkit-scrollbar{display:none}
 .metric{scroll-snap-align:start}
-.filters{grid-template-columns:minmax(220px,1.4fr) repeat(3,minmax(110px,.6fr))}
-.filters label:nth-of-type(5),.filterButton{display:none}
+.filters{grid-template-columns:minmax(220px,1.4fr) repeat(2,minmax(110px,.6fr))}
 .accountGrid{grid-template-columns:repeat(2,1fr)}
 }
 @media (width<=1024px){.summaryGrid{grid-template-columns:1fr}
@@ -304,7 +303,7 @@
 .insightStrip button{grid-column:auto}
 .filters{grid-template-columns:1fr 1fr;padding:8px}
 .search{grid-column:1/-1}
-.filters label:nth-of-type(4),.filters label:nth-of-type(5),.filterButton,.tableWrap{display:none}
+.tableWrap{display:none}
 .mobileList{flex-direction:column;gap:8px;padding:9px;display:flex}
 .mobileMovement,.receiptCard,.receivableCard{border:1px solid var(--color-border);text-align:left;background:#fff;border-radius:10px;flex-direction:column;gap:7px;width:100%;min-height:155px;padding:13px;display:flex}
 .mobileMovement header,.receiptCard header,.receivableCard header{justify-content:space-between;align-items:center;display:flex}
@@ -354,7 +353,6 @@
 .allocationBody{grid-template-columns:1fr}
 .donut{margin:auto}
 .filters{grid-template-columns:1fr}
-.filters label:nth-of-type(3){display:none}
 .search{grid-column:1}
 .pagination>span{max-width:145px}
 .drawerFooter .secondaryButton,.drawerFooter .primaryButton{padding-inline:11px}
@@ -362,3 +360,11 @@
 }
 @media (prefers-reduced-motion:reduce){.metric,.drawer,.toast,.loadingMetrics span,.loadingBody span,.loadingTable{transition:none;animation:none}
 }
+
+.lockedFieldNote{color:var(--color-blue-700);font-size:.75rem;line-height:1.4}
+.receiptUpload{position:relative;cursor:pointer}.receiptUpload>input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.receiptUpload:focus-within{outline:3px solid var(--color-focus);outline-offset:2px}
+.movementEvidence{margin-top:15px;padding-top:15px;border-top:1px solid var(--color-border)}
+.movementEvidence>header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.movementEvidence h3{margin:0;font-size:.75rem}.movementEvidence header p{margin:4px 0 0;color:var(--color-text-muted);font-size:.66rem;line-height:1.45}.movementEvidence .secondaryButton{min-height:38px;padding-inline:11px;font-size:.72rem}
+.evidenceList{display:flex;flex-direction:column;gap:8px;margin-top:12px}.evidenceList article{min-width:0;padding:10px;display:grid;grid-template-columns:36px minmax(0,1fr) auto;align-items:center;gap:9px;border:1px solid var(--color-border);border-radius:9px}.evidenceList article>span{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--color-success-700);background:var(--color-success-100)}.evidenceList article>div{min-width:0;display:flex;flex-direction:column;gap:3px}.evidenceList strong{overflow:hidden;font-size:.72rem;text-overflow:ellipsis;white-space:nowrap}.evidenceList small{color:var(--color-text-muted);font-size:.63rem}.evidenceList nav{display:flex;gap:4px}.evidenceList nav button{width:38px;height:38px;display:grid;place-items:center;border:1px solid var(--color-border);border-radius:8px;color:var(--color-text-secondary);background:#fff}.evidenceList nav button:last-child{color:var(--color-danger-700)}
+.confirmBackdrop{position:fixed;z-index:calc(var(--layer-modal) + 4);inset:0;padding:16px;display:grid;place-items:center;background:rgb(4 17 35/65%)}.confirmDialog{width:min(470px,100%);padding:22px;border-radius:14px;background:#fff;box-shadow:var(--shadow-lg);text-align:center}.confirmDialog>span{width:48px;height:48px;margin:0 auto 12px;display:grid;place-items:center;border-radius:50%;color:var(--color-danger-700);background:var(--color-danger-100)}.confirmDialog h2{margin:0;font-size:1rem}.confirmDialog>p{margin:8px 0 16px;color:var(--color-text-secondary);font-size:.76rem;line-height:1.55}.confirmDialog label{display:flex;flex-direction:column;gap:6px;text-align:left;color:var(--color-text-secondary);font-size:.72rem;font-weight:680}.confirmDialog textarea{min-height:88px;padding:10px;border:1px solid var(--color-border-strong);border-radius:8px;font:inherit;resize:vertical}.confirmDialog footer{display:flex;justify-content:flex-end;gap:8px;margin-top:17px}.dangerButton{min-height:42px;padding:0 14px;border:1px solid var(--color-danger-700);border-radius:8px;color:#fff;background:var(--color-danger-700);font:inherit;font-size:.72rem;font-weight:740}.dangerButton:disabled{opacity:.5}
+@media (width<=767px){.movementEvidence>header{align-items:stretch;flex-direction:column}.movementEvidence .secondaryButton{width:100%}.evidenceList article{grid-template-columns:36px minmax(0,1fr)}.evidenceList nav{grid-column:1/-1;justify-content:flex-end}.confirmDialog footer{flex-direction:column-reverse}.confirmDialog footer button{width:100%}}

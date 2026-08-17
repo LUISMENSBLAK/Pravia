@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { calculateFinanceAggregates, calculateReceivable, type EconomicNature } from '../domain/financeCore';
+import { calculateFinanceAggregates, calculateReceivable, legacyFinanceAllocations, type EconomicNature } from '../domain/financeCore';
 
 export type FinancePeriod = { from: Date; to: Date; key: string; label: string };
 
@@ -33,23 +33,34 @@ export class FinanceAnalyticsService {
   constructor(private readonly db: PrismaClient) {}
 
   async summary(period: FinancePeriod) {
-    const [movements, fees] = await Promise.all([
+    const [movements, movementsAsOf, fees] = await Promise.all([
       this.db.movimientoFinanciero.findMany({
         where: { fecha_movimiento: { gte: period.from, lte: period.to }, estatus: { in: ['APLICADO', 'RECIBIDO', 'VALIDADO'] } },
         include: { distribuciones: { include: { categoria: true } } },
         orderBy: { fecha_movimiento: 'asc' },
       }),
+      this.db.movimientoFinanciero.findMany({
+        where: { fecha_movimiento: { lte: period.to }, estatus: { in: ['APLICADO', 'RECIBIDO', 'VALIDADO'] } },
+        include: { distribuciones: { include: { categoria: true } } },
+        orderBy: { fecha_movimiento: 'asc' },
+      }),
       this.db.honorarioGenerado.findMany({ where: { fecha_reconocimiento: { lte: period.to }, estado: { not: 'CANCELADO' } }, select: { monto: true } }),
     ]);
-    const canonical = movements.map((movement) => ({
+    const canonicalMovement = (movement: typeof movements[number]) => ({
       nature: movement.naturaleza,
       amount: Number(movement.monto),
       status: movement.estatus,
       allocations: movement.distribuciones.length
         ? movement.distribuciones.map((item) => ({ nature: item.categoria.naturaleza as EconomicNature, amount: Number(item.monto) }))
-        : legacyAllocations(movement.naturaleza, movement.categoria, Number(movement.monto)),
-    }));
-    const kpis = calculateFinanceAggregates({ generatedFees: fees.map((item) => Number(item.monto)), movements: canonical });
+        : legacyFinanceAllocations(movement.naturaleza, movement.categoria, Number(movement.monto)),
+    });
+    const periodKpis = calculateFinanceAggregates({ generatedFees: [], movements: movements.map(canonicalMovement) });
+    const asOfKpis = calculateFinanceAggregates({ generatedFees: fees.map((item) => Number(item.monto)), movements: movementsAsOf.map(canonicalMovement) });
+    const kpis = {
+      ...periodKpis,
+      honorarios_generados: asOfKpis.honorarios_generados,
+      honorarios_por_cobrar: asOfKpis.honorarios_por_cobrar,
+    };
     const monthly = new Map<string, { periodo: string; ingresos: number; honorarios: number; egresos: number }>();
     movements.forEach((movement) => {
       const date = new Date(movement.fecha_movimiento);
@@ -100,14 +111,12 @@ export class FinanceAnalyticsService {
       ultimo_pago: null,
       ...calculateReceivable({ generated: Number(item.monto), collected: item.distribuciones.reduce((sum, row) => sum + Number(row.monto), 0), dueDate: item.fecha_vencimiento }),
     })).filter((item) => item.pending > 0);
+    const totals = items.reduce((summary, item) => ({
+      generated: summary.generated + item.generated,
+      collected: summary.collected + item.collected,
+      pending: summary.pending + item.pending,
+    }), { generated: 0, collected: 0, pending: 0 });
     const start = (page - 1) * pageSize;
-    return { items: items.slice(start, start + pageSize), meta: { page, pageSize, total: items.length, totalPages: Math.max(1, Math.ceil(items.length / pageSize)), agingAvailable: items.some((item) => item.bucket !== null) } };
+    return { items: items.slice(start, start + pageSize), meta: { page, pageSize, total: items.length, totalPages: Math.max(1, Math.ceil(items.length / pageSize)), agingAvailable: items.some((item) => item.bucket !== null), totals } };
   }
-}
-
-function legacyAllocations(nature: 'INGRESO' | 'EGRESO', category: string, amount: number) {
-  if (nature === 'INGRESO' && category === 'HONORARIOS_PRAVIA') return [{ nature: 'DESPACHO' as const, amount }];
-  if (nature === 'INGRESO') return [{ nature: 'TERCERO' as const, amount }];
-  if (category === 'PRAVIA') return [{ nature: 'EGRESO_DESPACHO' as const, amount }];
-  return [{ nature: 'TERCERO' as const, amount }];
 }

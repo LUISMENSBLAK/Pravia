@@ -24,6 +24,7 @@ import { complianceAttention, complianceLabel, macrophaseForStatus, parseExpedie
 import { ExpedienteReadService } from '../services/expedienteRead.service';
 import { ExpedienteOpeningError, ExpedienteOpeningService } from '../services/expedienteOpening.service';
 import { buildExpedienteReadiness } from '../services/expedienteReadiness.service';
+import { calculateFinanceAggregates, legacyFinanceAllocations, type EconomicNature } from '../domain/financeCore';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
 const expedienteReadService = new ExpedienteReadService(prisma);
@@ -132,12 +133,19 @@ export const getExpedienteById = async (req: Request, res: Response) => {
           include: {
             capturado_por: { select: { id: true, nombre: true, apellido: true } },
             validado_por: { select: { id: true, nombre: true, apellido: true } },
+            cuenta: { select: { id: true, institucion: true, alias: true, ultimos_cuatro: true, moneda: true } },
+            distribuciones: { include: { categoria: true } },
+            comprobanteInterno: true,
             movimientoDocumentos: {
-              where: { estatus: 'ACTIVO' },
+              where: { estatus: 'ACTIVO', tipo_vinculo: 'COMPROBANTE_PAGO' },
               include: { documento: true },
               orderBy: { fecha_vinculo: 'desc' },
             },
           }
+        },
+        honorariosGenerados: {
+          where: { estado: { not: 'CANCELADO' } },
+          orderBy: { fecha_reconocimiento: 'desc' },
         },
         actividades: {
           take: 20,
@@ -191,6 +199,20 @@ export const getExpedienteById = async (req: Request, res: Response) => {
     ) || null;
 
     const canReadFinance = req.user?.permissions.includes('finanzas.read');
+    const financialSummary = canReadFinance ? calculateFinanceAggregates({
+      generatedFees: expediente.honorariosGenerados.map((item) => Number(item.monto)),
+      movements: expediente.movimientosFinancieros.map((movement) => ({
+        nature: movement.naturaleza,
+        amount: Number(movement.monto),
+        status: movement.estatus,
+        allocations: movement.distribuciones.length
+          ? movement.distribuciones.map((allocation) => ({
+            nature: allocation.categoria.naturaleza as EconomicNature,
+            amount: Number(allocation.monto),
+          }))
+          : legacyFinanceAllocations(movement.naturaleza, movement.categoria, Number(movement.monto)),
+      })),
+    }) : null;
     const [progress, currentProjectCount] = await Promise.all([
       calculateExpedienteProgress(id),
       prisma.expedienteDocumento.count({ where: { expediente_id: id, estatus: 'ACTIVO', tipo_vinculo: 'PROYECTO_ESCRITURA', documento: { tipo: 'PROYECTO_ESCRITURA', estatus: { not: 'RECHAZADO' } } } }),
@@ -202,7 +224,10 @@ export const getExpedienteById = async (req: Request, res: Response) => {
       canManagePostfirma: Boolean(req.user?.permissions.includes('expedientes.postfirma.manage')),
       canReadProject: Boolean(req.user?.permissions.includes('expedientes.project.read')),
       canReadFinance: Boolean(req.user?.permissions.includes('finanzas.read')),
+      canWriteFinance: Boolean(req.user?.permissions.includes('finanzas.write')),
       canUploadDocuments: Boolean(req.user?.permissions.includes('documentos.write')),
+      canReadDocuments: Boolean(req.user?.permissions.includes('documentos.read')),
+      canDeleteDocuments: Boolean(req.user?.permissions.includes('documentos.unlink')),
     };
     if (req.user && ['RECEPCION', 'GESTORIA'].includes(req.user.rol)) {
       const isReception = req.user.rol === 'RECEPCION';
@@ -264,7 +289,9 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         || 'Sin cliente',
       comparecientes_adicionales: Math.max(0, expediente.comparecientes.length - 1),
       riesgo: { label: complianceLabel(expediente.complianceReviews[0]?.resultado_json), requires_attention: complianceAttention(expediente.complianceReviews[0]?.resultado_json) },
-      ...(canReadFinance ? {} : { valor_operacion: null, movimientosFinancieros: [], financial_access: false }),
+      ...(canReadFinance
+        ? { financialSummary }
+        : { valor_operacion: null, movimientosFinancieros: [], honorariosGenerados: [], financialSummary: null, financial_access: false }),
       workflow: {
         current_status_label: EXPEDIENTE_STATUS_LABELS[expediente.estatus],
         transitions,

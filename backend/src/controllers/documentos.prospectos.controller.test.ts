@@ -46,6 +46,22 @@ describe('documentos de Prospectos', () => {
     expect(storage.uploadFile).not.toHaveBeenCalled();
   });
 
+  it('vincula el comprobante privado al movimiento canónico', async () => {
+    const tx = {
+      documento: { create: vi.fn().mockResolvedValue({ id: 'doc-finance' }), findUniqueOrThrow: vi.fn().mockResolvedValue({ id: 'doc-finance', nombre_original: 'comprobante.pdf' }) },
+      prospectoDocumento: { create: vi.fn() }, prospecto: { update: vi.fn() }, cotizacionDocumento: { create: vi.fn() },
+      expedienteDocumento: { create: vi.fn() }, comparecienteDocumento: { create: vi.fn() }, movimientoDocumento: { create: vi.fn().mockResolvedValue({}) },
+    };
+    db.$transaction.mockImplementation(async (callback: any) => callback(tx));
+    const req: any = { user: { ...user, permissions: ['documentos.write', 'finanzas.write'] }, file: { originalname: 'comprobante.pdf', buffer: Buffer.from('pdf'), mimetype: 'application/pdf', size: 3 }, body: { tipo: 'COMPROBANTE_PAGO', categoria: 'OTROS', movimiento_id: 'movement-1' } };
+    const res = response();
+    await uploadDocumento(req, res);
+    expect(access.canAttachDocumento).toHaveBeenCalledWith(req.user, expect.objectContaining({ movimiento_id: 'movement-1' }));
+    expect(tx.documento.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ categoria: 'OTROS' }) }));
+    expect(tx.movimientoDocumento.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ movimiento_id: 'movement-1', documento_id: 'doc-finance', tipo_vinculo: 'COMPROBANTE_PAGO' }) }));
+    expect(res.status).toHaveBeenCalledWith(201);
+  });
+
   it('lista vínculos activos y conserva documentos directos legacy sin duplicarlos', async () => {
     const date = new Date('2026-08-16T12:00:00Z');
     db.prospectoDocumento.findMany.mockResolvedValue([{ tipo_vinculo: 'PREDIAL', documento: { id: 'doc-1', tipo: 'OTRO', fecha_carga: date } }]);

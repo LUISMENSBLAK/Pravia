@@ -15,6 +15,10 @@ export const financeService = {
   async createMovement(draft:MovementDraft){return data(await apiRequest('/finanzas/movimientos',{method:'POST',body:JSON.stringify(draft)}));},
   async generateReceipt(id:string,observaciones=''){return data(await apiRequest(`/finanzas/movimientos/${encodeURIComponent(id)}/comprobante`,{method:'POST',body:JSON.stringify({observaciones})}));},
   async applyMovement(id:string){return data(await apiRequest(`/finanzas/movimientos/${encodeURIComponent(id)}/aplicar`,{method:'POST',body:'{}'}));},
+  async uploadReceipt(id:string,file:File){const form=new FormData();form.append('archivo',file);form.append('tipo','COMPROBANTE_PAGO');form.append('categoria','OTROS');form.append('movimiento_id',id);return apiRequest<{id:string;nombre_original:string;mime_type?:string;size_bytes?:number}>('/documentos',{method:'POST',body:form});},
+  async receiptUrl(documentId:string){return apiRequest<{url:string}>(`/documentos/${encodeURIComponent(documentId)}/url`);},
+  async downloadReceipt(documentId:string,name:string){const {url}=await this.receiptUrl(documentId);const response=await fetch(url);if(!response.ok)throw new Error('El comprobante no está disponible.');const objectUrl=URL.createObjectURL(await response.blob());const link=document.createElement('a');link.href=objectUrl;link.download=name;link.click();window.setTimeout(()=>URL.revokeObjectURL(objectUrl),1000);},
+  async retireReceipt(movementId:string,documentId:string,motivo:string){return data(await apiRequest(`/finanzas/movimientos/${encodeURIComponent(movementId)}/comprobantes/${encodeURIComponent(documentId)}`,{method:'DELETE',body:JSON.stringify({motivo})}));},
   async createAccount(input:Record<string,unknown>){return data(await apiRequest('/finanzas/cuentas',{method:'POST',body:JSON.stringify(input)}));},
   async reconcile(movimiento_id:string,transaccion_bancaria_id:string,metodo='MANUAL'){return data(await apiRequest('/finanzas/conciliacion',{method:'POST',body:JSON.stringify({movimiento_id,transaccion_bancaria_id,metodo})}));},
 };

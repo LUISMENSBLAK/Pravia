@@ -64,6 +64,13 @@ export class FinanceLedgerController {
     catch (error) { return failure(res, error, 'No pudimos aplicar este movimiento.'); }
   }
 
+  static async retireEvidence(req: Request, res: Response) {
+    try {
+      const data = await movementService.retireEvidence(req.params.id, req.params.documentId, actor(req), req.body?.motivo, correlation(req));
+      return res.json({ success: true, data });
+    } catch (error) { return failure(res, error, 'No pudimos retirar este comprobante.'); }
+  }
+
   static async cancelMovement(req: Request, res: Response) {
     try { return res.json({ success: true, data: await movementService.cancelDraft(req.params.id, actor(req), req.body?.motivo, correlation(req)) }); }
     catch (error) { return failure(res, error, 'No pudimos cancelar este movimiento.'); }
@@ -157,7 +164,7 @@ export class FinanceLedgerController {
         prisma.notaria.findMany({ where: { activa: true }, select: { id: true, nombre: true, numero_notaria: true }, orderBy: { nombre: 'asc' } }),
         prisma.user.findMany({ where: { activo: true, rol: { in: ['DIRECCION', 'ADMINISTRACION', 'ABOGADO'] } }, select: { id: true, nombre: true, apellido: true, rol: true }, orderBy: { nombre: 'asc' } }),
       ]);
-      return res.json({ success: true, data: { categories, accounts, expedientes, notarias, responsables, permisos: { escribir: Boolean(req.user?.permissions.includes('finanzas.write')), aplicar: Boolean(req.user?.permissions.includes('finanzas.validate')), conciliar: Boolean(req.user?.permissions.includes('finanzas.validate')) }, invoiceIntegration: { configured: false, status: 'PENDIENTE_CONFIGURACION', message: 'Integración de facturación pendiente de configuración.' }, bankImport: { configured: false, message: 'Formato de importación bancaria pendiente de confirmar con el cliente.' } } });
+      return res.json({ success: true, data: { categories, accounts, expedientes, notarias, responsables, permisos: { escribir: Boolean(req.user?.permissions.includes('finanzas.write')), aplicar: Boolean(req.user?.permissions.includes('finanzas.validate')), conciliar: Boolean(req.user?.permissions.includes('finanzas.validate')), expedientesLeer: Boolean(req.user?.permissions.includes('expedientes.read')), documentosLeer: Boolean(req.user?.permissions.includes('documentos.read')), documentosEscribir: Boolean(req.user?.permissions.includes('documentos.write')), documentosEliminar: Boolean(req.user?.permissions.includes('documentos.unlink')) }, invoiceIntegration: { configured: false, status: 'PENDIENTE_CONFIGURACION', message: 'Integración de facturación pendiente de configuración.' }, bankImport: { configured: false, message: 'Formato de importación bancaria pendiente de confirmar con el cliente.' } } });
     } catch (error) { return failure(res, error, 'No pudimos cargar los catálogos financieros.'); }
   }
 

@@ -25,6 +25,7 @@ export const uploadDocumento = async (req: Request, res: Response) => {
       cotizacion_id,
       expediente_id,
       compareciente_id,
+      movimiento_id,
       observaciones
     } = req.body;
 
@@ -39,13 +40,14 @@ export const uploadDocumento = async (req: Request, res: Response) => {
       cotizacion_id,
       expediente_id,
       compareciente_id,
+      movimiento_id,
     });
     if (!targetAccess) {
       return res.status(403).json({ error: 'No tienes acceso al expediente o catálogo de destino.', code: 'DOCUMENT_TARGET_ACCESS_DENIED' });
     }
 
     // Validate enum DocCategoria ('PROYECTO' | 'FIRMA')
-    const validCategoria: 'PROYECTO' | 'FIRMA' = categoria === 'FIRMA' ? 'FIRMA' : 'PROYECTO';
+    const validCategoria: 'PROYECTO' | 'FIRMA' | 'OTROS' = categoria === 'FIRMA' ? 'FIRMA' : categoria === 'OTROS' ? 'OTROS' : 'PROYECTO';
 
     // Generate unique internal name
     const ext = path.extname(file.originalname) || '.bin';
@@ -87,6 +89,9 @@ export const uploadDocumento = async (req: Request, res: Response) => {
         if (compareciente_id) await tx.comparecienteDocumento.create({
           data: { compareciente_id, documento_id: created.id, categoria: 'OTROS', creado_por_id: actorUserId, estatus: 'ACTIVO' },
         });
+        if (movimiento_id) await tx.movimientoDocumento.create({
+          data: { movimiento_id, documento_id: created.id, tipo_vinculo: tipo, creado_por_id: actorUserId, estatus: 'ACTIVO' },
+        });
         return tx.documento.findUniqueOrThrow({
           where: { id: created.id },
           include: { subido_por: { select: { nombre: true } } },
@@ -95,6 +100,7 @@ export const uploadDocumento = async (req: Request, res: Response) => {
 
       await logAudit(actorUserId, 'UPLOAD', 'Documento', documento.id, {
         prospecto_id: prospecto_id || null,
+        movimiento_id: movimiento_id || null,
         tipo,
         nombre_original: documento.nombre_original,
       });
