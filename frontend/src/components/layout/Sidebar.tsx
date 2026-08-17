@@ -56,6 +56,7 @@ export function Sidebar({ collapsed, mobileOpen, onToggle, onCloseMobile, user }
     if (item.to === '/finanzas') return user.permissions.includes('finanzas.read');
     if (item.to === '/reportes') return user.permissions.includes('reportes.read');
     if (item.to === '/calculo-isr') return localISRFixture || user.permissions.includes('isr.read');
+    if (item.to === '/riesgos') return user.permissions.some((permission) => ['compliance.read', 'cumplimiento.read'].includes(permission));
     return true;
   });
   return (

@@ -7,6 +7,7 @@ describe('DomainEventOutboxService', () => {
     const prisma = {
       $queryRawUnsafe: vi.fn().mockResolvedValue([{
         id: 'event-without-handler',
+        organization_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         event_type: 'EventoSinHandlerDePrueba',
         aggregate_type: 'Expediente',
         aggregate_id: 'exp-1',

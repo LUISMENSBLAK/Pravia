@@ -1,5 +1,6 @@
 import { Prisma, PrismaClient, type ExpedienteEstatus } from '@prisma/client';
 import type { Request } from 'express';
+import { activeOrganizationMembershipWhere, organizationMembershipRoleSelect, usersWithEffectiveMembershipRoles } from '../auth/organizationMembership';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import {
   complianceAttention,
@@ -97,7 +98,11 @@ export class ExpedienteReadService {
       this.prisma.expediente.count({ where }),
       this.prisma.expediente.groupBy({ by: ['estatus'], where: baseScope, _count: { _all: true } }),
       this.prisma.tipoActo.findMany({ where: { activo: true, archived_at: null }, select: { id: true, nombre: true, descripcion: true }, orderBy: { nombre: 'asc' } }),
-      this.prisma.user.findMany({ where: { activo: true, rol: { in: ['DIRECCION', 'ADMINISTRACION', 'ABOGADO'] } }, select: { id: true, nombre: true, apellido: true, rol: true }, orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }] }),
+      this.prisma.user.findMany({
+        where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(user.organizationId, ['DIRECCION', 'ADMINISTRACION', 'ABOGADO']) } },
+        select: { id: true, nombre: true, apellido: true, ...organizationMembershipRoleSelect(user.organizationId) },
+        orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }],
+      }),
       this.prisma.notaria.findMany({ where: { activa: true, archived_at: null }, select: { id: true, nombre: true, numero_notaria: true, municipio: true }, orderBy: [{ predeterminada: 'desc' }, { nombre: 'asc' }], take: 150 }),
       this.prisma.expedienteEtapa.findMany({ where: { expediente: baseScope }, distinct: ['nombre_snapshot'], select: { nombre_snapshot: true }, orderBy: { nombre_snapshot: 'asc' }, take: 100 }),
     ]);
@@ -144,7 +149,7 @@ export class ExpedienteReadService {
         { key: 'ENTREGADO', label: 'Entregado', value: macroCount('ENTREGADO') },
         { key: 'TOTAL', label: 'Total expedientes', value: totalRecords },
       ].map((metric) => ({ ...metric, percentage: totalRecords > 0 && metric.key !== 'TOTAL' ? Math.round((metric.value / totalRecords) * 100) : null })),
-      facets: { actTypes, responsibles, notaries, stages: stageRows.map((item) => item.nombre_snapshot) },
+      facets: { actTypes, responsibles: usersWithEffectiveMembershipRoles(responsibles), notaries, stages: stageRows.map((item) => item.nombre_snapshot) },
     };
   }
 }

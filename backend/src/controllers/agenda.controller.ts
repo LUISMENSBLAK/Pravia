@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { EventoAgendaEstatus, Prisma } from '@prisma/client';
 import prisma from '../config/prisma';
+import { activeOrganizationMembershipWhere, organizationMembershipRoleSelect, usersWithEffectiveMembershipRoles } from '../auth/organizationMembership';
 import { AGENDA_TIME_ZONE, AgendaError, agendaRangesOverlap, canAssignAgendaResponsibility, canManageAgendaTeam, normalizeAgendaType, normalizeReminders, parseAgendaRange } from '../domain/agenda';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { comparecienteObjectWhere } from '../services/objectAccess.service';
@@ -305,7 +306,11 @@ export class AgendaController {
       const canReadComparecientes = req.user.permissions.includes('comparecientes.read');
       const canManageTeam = canManageAgendaTeam(req.user);
       const [usuarios, expedientes, comparecientes] = await Promise.all([
-        prisma.user.findMany({ where: { activo: true, ...(!canManageTeam ? { id: req.user.id } : {}) }, select: { id: true, nombre: true, apellido: true, rol: true }, orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }] }),
+        prisma.user.findMany({
+          where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(req.user.organizationId) }, ...(!canManageTeam ? { id: req.user.id } : {}) },
+          select: { id: true, nombre: true, apellido: true, ...organizationMembershipRoleSelect(req.user.organizationId) },
+          orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }],
+        }),
         prisma.expediente.findMany({ where: { archived_at: null, ...expedienteScope }, select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true, version: true, fecha_estimada_firma: true, fecha_real_firma: true, abogado_id: true, tipo_acto: { select: { id: true, nombre: true } }, notaria: { select: { id: true, numero_notaria: true, nombre: true, ciudad: true, municipio: true, entidad_federativa: true } } }, orderBy: { updated_at: 'desc' }, take: 300 }),
         prisma.compareciente.findMany({
           where: { archived_at: null, ...(!canReadComparecientes ? { id: '00000000-0000-0000-0000-000000000000' } : comparecienteObjectWhere(req.user)) },
@@ -323,7 +328,7 @@ export class AgendaController {
       return res.json({
         success: true,
         catalogos: {
-          usuarios,
+          usuarios: usersWithEffectiveMembershipRoles(usuarios),
           expedientes,
           comparecientes: comparecientes.map((item) => ({
             id: item.id,

@@ -51,7 +51,7 @@ export const uploadDocumento = async (req: Request, res: Response) => {
 
     // Generate unique internal name
     const ext = path.extname(file.originalname) || '.bin';
-    nombre_interno = `${uuidv4()}${ext}`;
+    nombre_interno = `organizations/${req.user!.organizationId}/documentos/${uuidv4()}${ext}`;
 
     // Upload to Supabase Storage
     const storage_key = await uploadFile(file.buffer, nombre_interno, file.mimetype);

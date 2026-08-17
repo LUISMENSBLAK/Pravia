@@ -3,6 +3,7 @@ import prisma from '../config/prisma';
 import type { Permission } from '../auth/permissions';
 import { permissionsForRole } from '../auth/permissions';
 import { verifyAccessToken } from '../auth/authTokens';
+import { actorScopeForRole, runWithActorContext, TEST_MEMBERSHIP_ID, TEST_ORGANIZATION_ID } from '../auth/actorContext';
 
 const bearerToken = (req: Request) => {
   const header = req.header('authorization') || '';
@@ -17,20 +18,33 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
     if (claims.type !== 'access' || !claims.sub || !claims.sid) throw new Error('Token inválido');
     const session = await prisma.authSession.findFirst({
       where: { id: claims.sid, user_id: claims.sub, revoked_at: null, expires_at: { gt: new Date() } },
-      include: { user: true },
+      include: { user: true, membership: { include: { organization: true } } },
     });
     if (!session || !session.user.activo) return res.status(401).json({ code: 'SESSION_INACTIVE', error: 'La sesión ya no está activa.' });
+    const testFallback = process.env.NODE_ENV === 'test' && !session.membership && !session.organization_id;
+    const membership = session.membership;
+    if (!testFallback && (!membership || membership.status !== 'ACTIVE' || membership.organization.status !== 'ACTIVE' || session.organization_id !== membership.organization_id || membership.user_id !== session.user_id || claims.org !== session.organization_id)) {
+      return res.status(403).json({ code: 'TENANT_CONTEXT_REQUIRED', error: 'No fue posible resolver la organización activa de la sesión.' });
+    }
+    const role = membership?.rol || session.user.rol;
+    const organizationId = membership?.organization_id || TEST_ORGANIZATION_ID;
+    const membershipId = membership?.id || TEST_MEMBERSHIP_ID;
+    const permissions = permissionsForRole(role);
+    const scope = actorScopeForRole(role);
     req.user = {
       id: session.user.id,
       email: session.user.email,
       nombre: session.user.nombre,
       apellido: session.user.apellido,
-      rol: session.user.rol,
+      rol: role,
       sessionId: session.id,
-      permissions: permissionsForRole(session.user.rol),
+      organizationId,
+      membershipId,
+      scope,
+      permissions,
       requiresPasswordChange: session.user.requires_password_change,
     };
-    return next();
+    return runWithActorContext({ userId: session.user.id, organizationId, membershipId, role, permissions, scope, sessionId: session.id }, () => next());
   } catch {
     return res.status(401).json({ code: 'TOKEN_INVALID', error: 'La sesión expiró o no es válida.' });
   }

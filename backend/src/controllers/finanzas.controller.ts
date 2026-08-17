@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
+import { activeOrganizationMembershipWhere, organizationMembershipRoleSelect, usersWithEffectiveMembershipRoles } from '../auth/organizationMembership';
 import { calculateFinancialPosition } from '../domain/financialLedger';
 
 const toFiniteNumber = (value: unknown, fallback = 0): number => {
@@ -749,8 +750,8 @@ export class FinanzasController {
           orderBy: { numero_notaria: 'asc' }
         }),
         prisma.user.findMany({
-          where: { activo: true },
-          select: { id: true, nombre: true, apellido: true, rol: true },
+          where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(req.user!.organizationId) } },
+          select: { id: true, nombre: true, apellido: true, ...organizationMembershipRoleSelect(req.user!.organizationId) },
           orderBy: { nombre: 'asc' }
         }),
         prisma.tipoActo.findMany({
@@ -764,7 +765,7 @@ export class FinanzasController {
         success: true,
         catalogos: {
           notarias,
-          abogados,
+          abogados: usersWithEffectiveMembershipRoles(abogados),
           tipos_acto: tiposActo,
           estatus_expediente: [
             'ABIERTO',

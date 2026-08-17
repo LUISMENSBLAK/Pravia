@@ -1,5 +1,7 @@
 import { DocCategoria, Prisma, PrismaClient, Role } from '@prisma/client';
 import { reserveExpedienteFolio } from './expedienteFolio.service';
+import { activeOrganizationMembershipWhere, organizationMembershipRoleSelect, userWithEffectiveMembershipRole } from '../auth/organizationMembership';
+import { requireActorContext } from '../auth/actorContext';
 
 export class ExpedienteOpeningError extends Error {
   constructor(message: string, readonly code: string, readonly status = 400) { super(message); }
@@ -32,6 +34,7 @@ export class ExpedienteOpeningService {
   }
 
   async openInTransaction(tx: Prisma.TransactionClient, input: OpenExpedienteInput) {
+    const { organizationId } = requireActorContext();
     const alias = input.clienteAlias?.trim();
     if (!input.tipoActoId || !input.abogadoId || !input.actorUserId || !alias) {
       throw new ExpedienteOpeningError('Completa el tipo de acto, cliente y responsable.', 'EXPEDIENTE_OPEN_REQUIRED');
@@ -39,7 +42,10 @@ export class ExpedienteOpeningService {
     const [tipoActo, actor, lawyer, notary, formVersion, workflowVersion, documentTemplateVersion, selectedParty] = await Promise.all([
       tx.tipoActo.findFirst({ where: { id: input.tipoActoId, activo: true, archived_at: null }, include: { tipoActoCaracteresCompareciente: { include: { caracter: true }, orderBy: [{ sugerido: 'desc' }, { orden: 'asc' }] } } }),
       tx.user.findFirst({ where: { id: input.actorUserId, activo: true }, select: { id: true } }),
-      tx.user.findFirst({ where: { id: input.abogadoId, activo: true }, select: { id: true, rol: true } }),
+      tx.user.findFirst({
+        where: { id: input.abogadoId, activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(organizationId, Array.from(ALLOWED_RESPONSIBLE_ROLES)) } },
+        select: { id: true, ...organizationMembershipRoleSelect(organizationId) },
+      }),
       input.notariaId ? tx.notaria.findFirst({ where: { id: input.notariaId, activa: true, archived_at: null }, select: { id: true } }) : Promise.resolve(null),
       tx.formularioVersion.findFirst({ where: { tipo_acto_id: input.tipoActoId }, orderBy: { version: 'desc' } }),
       tx.flujoVersion.findFirst({ where: { tipo_acto_id: input.tipoActoId }, orderBy: { version: 'desc' } }),
@@ -48,7 +54,8 @@ export class ExpedienteOpeningService {
     ]);
     if (!tipoActo) throw new ExpedienteOpeningError('El tipo de acto ya no está disponible.', 'EXPEDIENTE_ACT_TYPE_INVALID', 404);
     if (!actor) throw new ExpedienteOpeningError('Tu sesión ya no está activa.', 'EXPEDIENTE_ACTOR_INVALID', 403);
-    if (!lawyer || !ALLOWED_RESPONSIBLE_ROLES.has(lawyer.rol)) throw new ExpedienteOpeningError('Selecciona un responsable autorizado y activo.', 'EXPEDIENTE_RESPONSIBLE_INVALID');
+    const effectiveLawyer = userWithEffectiveMembershipRole(lawyer);
+    if (!effectiveLawyer || !ALLOWED_RESPONSIBLE_ROLES.has(effectiveLawyer.rol)) throw new ExpedienteOpeningError('Selecciona un responsable autorizado y activo.', 'EXPEDIENTE_RESPONSIBLE_INVALID');
     if (input.notariaId && !notary) throw new ExpedienteOpeningError('La notaría seleccionada ya no está disponible.', 'EXPEDIENTE_NOTARY_INVALID');
     if (input.comparecienteId && !selectedParty) throw new ExpedienteOpeningError('El cliente seleccionado ya no está disponible.', 'EXPEDIENTE_PARTY_INVALID');
 
@@ -66,7 +73,7 @@ export class ExpedienteOpeningService {
     let expediente = await tx.expediente.create({ data: {
       numero_pravia: numeroPravia,
       tipo_acto_id: tipoActo.id,
-      abogado_id: lawyer.id,
+      abogado_id: effectiveLawyer.id,
       creador_id: actor.id,
       cotizacion_id: input.cotizacionId || null,
       notaria_id: input.notariaId || null,
@@ -91,7 +98,7 @@ export class ExpedienteOpeningService {
         nombre_snapshot: String(firstStage.nombre || 'Apertura de expediente'),
         orden_snapshot: Number(firstStage.orden || 1),
         duracion_esperada_snapshot: Number(firstStage.duracion ?? firstStage.duracion_esperada_dias ?? 0) || null,
-        responsable_id: lawyer.id,
+        responsable_id: effectiveLawyer.id,
       } });
       expediente = await tx.expediente.update({ where: { id: expediente.id }, data: { expediente_etapa_actual_id: stage.id, etapa_actual_nombre: stage.nombre_snapshot } });
     }
@@ -131,7 +138,7 @@ export class ExpedienteOpeningService {
         accion: 'OPEN_EXPEDIENTE',
         entidad: 'Expediente',
         entidad_id: expediente.id,
-        valores_nuevos: { numero_pravia: numeroPravia, tipo_acto_id: tipoActo.id, abogado_id: lawyer.id, notaria_id: input.notariaId || null },
+        valores_nuevos: { numero_pravia: numeroPravia, tipo_acto_id: tipoActo.id, abogado_id: effectiveLawyer.id, notaria_id: input.notariaId || null },
         correlation_id: input.correlationId,
       } });
     }

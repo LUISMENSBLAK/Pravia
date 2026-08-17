@@ -5,12 +5,17 @@ export type SessionUser = {
   role?: string;
   notary?: string;
   permissions?: string[];
+  organization?: { id: string; name: string };
+  organizations?: Array<{ id: string; name: string }>;
+  membershipId?: string;
+  scope?: 'GLOBAL' | 'ASSIGNED_OBJECTS';
 };
 
 export type LoginCredentials = {
   email: string;
   password: string;
   remember: boolean;
+  organizationId?: string;
 };
 
 export const normalizeUser = (payload: unknown): SessionUser | null => {
@@ -45,5 +50,15 @@ export const normalizeUser = (payload: unknown): SessionUser | null => {
     notary: typeof notaryValue === 'string' ? notaryValue : undefined,
   };
   if (permissions) normalized.permissions = permissions;
+  const organization = candidate.organization && typeof candidate.organization === 'object' ? candidate.organization as Record<string, unknown> : undefined;
+  if (organization && typeof organization.id === 'string' && typeof organization.name === 'string') normalized.organization = { id: organization.id, name: organization.name };
+  const organizations = Array.isArray(candidate.organizations) ? candidate.organizations.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const value = item as Record<string, unknown>;
+    return typeof value.id === 'string' && typeof value.name === 'string' ? [{ id: value.id, name: value.name }] : [];
+  }) : undefined;
+  if (organizations) normalized.organizations = organizations;
+  if (typeof candidate.membership_id === 'string') normalized.membershipId = candidate.membership_id;
+  if (candidate.scope === 'GLOBAL' || candidate.scope === 'ASSIGNED_OBJECTS') normalized.scope = candidate.scope;
   return normalized;
 };

@@ -1,8 +1,9 @@
 import { PrismaClient } from '@prisma/client';
 import { resolveRuntimeConfig } from './runtime';
+import { tenantIsolationMiddleware } from './tenantPrisma';
 
 // Prevent multiple instances of Prisma Client in development
-const globalForPrisma = global as unknown as { prisma: PrismaClient };
+const globalForPrisma = global as unknown as { prisma: PrismaClient; tenantMiddlewareRegistered?: boolean };
 
 export const DEFAULT_DATABASE_SCHEMA = 'pravia_os';
 
@@ -45,6 +46,11 @@ export const prisma =
     datasourceUrl: buildPrismaDatasourceUrl(),
     log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
   });
+
+if (!globalForPrisma.tenantMiddlewareRegistered) {
+  prisma.$use(tenantIsolationMiddleware);
+  globalForPrisma.tenantMiddlewareRegistered = true;
+}
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
 

@@ -1070,7 +1070,7 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
     }
 
     const uniqueSuffix = Date.now() + '_' + Math.random().toString(36).substring(2, 9);
-    uploadedStorageKey = `${uniqueSuffix}_${file.originalname.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
+    uploadedStorageKey = `organizations/${req.user!.organizationId}/documentos/expedientes/${id}/${uniqueSuffix}_${file.originalname.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
 
     try {
       await uploadFile(fileBuffer, uploadedStorageKey, file.mimetype);
@@ -1668,7 +1668,7 @@ export const uploadMovimientoAdjuntoFile = async (req: Request, res: Response) =
     }
 
     const cleanName = file.originalname.replace(/[^a-zA-Z0-9_.-]/g, '_');
-    uploadedStorageKey = `finanzas/${id}/${movimientoId}/${Date.now()}_${cleanName}`;
+    uploadedStorageKey = `organizations/${req.user!.organizationId}/finanzas/${id}/${movimientoId}/${Date.now()}_${cleanName}`;
     await uploadFile(file.buffer, uploadedStorageKey, file.mimetype);
 
     const updateData: Prisma.MovimientoFinancieroUpdateInput = {};

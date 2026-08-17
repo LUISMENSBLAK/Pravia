@@ -15,6 +15,7 @@ type LocationState = { from?: { pathname?: string } };
 
 const loginErrorMessage = (error: unknown) => {
   if (error instanceof ApiError) {
+    if (error.status === 409) return 'Selecciona la organización con la que deseas trabajar.';
     if (error.status === 401) return 'No pudimos iniciar sesión con esos datos. Verifica tu correo y contraseña.';
     if (error.status === 403) return 'El entorno local no está autorizado para comunicarse con el backend. Revisa el proxy de desarrollo.';
     if ([502, 503, 504].includes(error.status)) return 'El backend no está disponible en este momento. Intenta nuevamente en unos minutos.';
@@ -38,12 +39,16 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [emailError, setEmailError] = useState('');
+  const [organizationId, setOrganizationId] = useState('');
+  const [organizations, setOrganizations] = useState<Array<{ id: string; name: string }>>([]);
 
   const destination = (location.state as LocationState | null)?.from?.pathname ?? '/mi-dia';
 
   useEffect(() => {
     if (error) setError('');
   // eslint-disable-next-line react-hooks/exhaustive-deps
+    setOrganizations([]);
+    setOrganizationId('');
   }, [email, password]);
 
   if (status === 'checking') return <AuthSplash />;
@@ -58,9 +63,18 @@ export function LoginPage() {
     setSubmitting(true);
     setError('');
     try {
-      await login({ email: email.trim(), password, remember });
+      await login({ email: email.trim(), password, remember, organizationId: organizationId || undefined });
       navigate(destination, { replace: true });
     } catch (loginError) {
+      if (loginError instanceof ApiError && loginError.status === 409 && loginError.payload && typeof loginError.payload === 'object') {
+        const options = (loginError.payload as { organizations?: unknown }).organizations;
+        if (Array.isArray(options)) {
+          const authorized = options.flatMap((item) => item && typeof item === 'object' && typeof (item as any).id === 'string' && typeof (item as any).name === 'string'
+            ? [{ id: (item as any).id, name: (item as any).name }] : []);
+          setOrganizations(authorized);
+          setOrganizationId(authorized[0]?.id || '');
+        }
+      }
       setError(loginErrorMessage(loginError));
     } finally {
       setSubmitting(false);
@@ -118,6 +132,12 @@ export function LoginPage() {
               disabled={submitting}
               required
             />
+            {organizations.length > 1 && <label className={styles.organizationField}>
+              <span>Organización</span>
+              <select value={organizationId} onChange={(event) => setOrganizationId(event.target.value)} disabled={submitting} required>
+                {organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
+              </select>
+            </label>}
           </div>
 
           <label className={styles.remember}>

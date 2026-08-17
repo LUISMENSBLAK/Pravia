@@ -8,6 +8,37 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+model Organization {
+  id          String                   @id @default(uuid()) @db.Uuid
+  name        String
+  status      String                   @default("ACTIVE")
+  created_at  DateTime                 @default(now())
+  updated_at  DateTime                 @updatedAt
+  memberships OrganizationMembership[]
+  sessions    AuthSession[]
+
+  @@index([status])
+  @@map("organizations")
+}
+
+model OrganizationMembership {
+  id              String        @id @default(uuid()) @db.Uuid
+  organization_id String        @db.Uuid
+  user_id         String        @db.Uuid
+  rol             Role
+  status          String        @default("ACTIVE")
+  created_at      DateTime      @default(now())
+  updated_at      DateTime      @updatedAt
+  organization    Organization  @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  user            User          @relation(fields: [user_id], references: [id], onDelete: Restrict)
+  sessions        AuthSession[]
+
+  @@unique([organization_id, user_id])
+  @@index([user_id, status])
+  @@index([organization_id, status])
+  @@map("organization_memberships")
+}
+
 model User {
   id                                     String                        @id @default(uuid()) @db.Uuid
   email                                  String                        @unique
@@ -26,6 +57,8 @@ model User {
   requires_password_change               Boolean                       @default(true)
   telefono                               String?
   aiUsageLogs                            AIUsageLog[]
+  assistantConversations                 AssistantConversation[]       @relation("AssistantConversationOwner")
+  assistantAttachments                   AssistantAttachment[]         @relation("AssistantAttachmentUploader")
   auditLogs                              AuditLog[]
   authSessions                           AuthSession[]
   cargasTemporales                       CargaTemporalDocumento[]      @relation("CargaTemporalUsuario")
@@ -98,7 +131,7 @@ model User {
   tareasCreadas                          Tarea[]                       @relation("TareaCreador")
   tramitesPostfirmaGestionados           TareaExterna[]                @relation("TareaExternaGestor")
   transaccionesBancoImportadas           TransaccionEstadoCuenta[]     @relation("TransaccionBancoImportador")
-  invitationAccepted                     UserInvitation?               @relation("InvitationAcceptedUser")
+  invitationsAccepted                    UserInvitation[]              @relation("InvitationAcceptedUser")
   invitationsCreated                     UserInvitation[]              @relation("InvitationCreator")
   calculosISRCreados                     CalculoISR[]                  @relation("CalculoISRCreador")
   calculosISRActualizados                CalculoISR[]                  @relation("CalculoISRActualizador")
@@ -106,26 +139,32 @@ model User {
   calculosISRDocumentos                  CalculoISRDocumento[]         @relation("CalculoISRDocumentoActor")
   calculosISRPropuestasRevisadas         CalculoISRPropuesta[]         @relation("CalculoISRPropuestaRevisor")
   preference                             UserPreference?
+  organizationMemberships                OrganizationMembership[]
 
   @@map("users")
 }
 
 model AuthSession {
-  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  user_id            String    @db.Uuid
-  refresh_token_hash String    @unique
+  id                 String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id            String                  @db.Uuid
+  organization_id    String?                 @db.Uuid
+  membership_id      String?                 @db.Uuid
+  refresh_token_hash String                  @unique
   user_agent         String?
   ip_address         String?
   expires_at         DateTime
-  last_used_at       DateTime  @default(now())
+  last_used_at       DateTime                @default(now())
   revoked_at         DateTime?
   revoked_reason     String?
-  rotated_from_id    String?   @db.Uuid
-  created_at         DateTime  @default(now())
-  persistent         Boolean   @default(false)
-  user               User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  rotated_from_id    String?                 @db.Uuid
+  created_at         DateTime                @default(now())
+  persistent         Boolean                 @default(false)
+  user               User                    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  organization       Organization?           @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  membership         OrganizationMembership? @relation(fields: [membership_id], references: [id], onDelete: Restrict)
 
   @@index([user_id, revoked_at, expires_at], map: "auth_sessions_user_revoked_expires_idx")
+  @@index([organization_id, revoked_at, expires_at], map: "auth_sessions_org_revoked_expires_idx")
   @@map("auth_sessions")
 }
 
@@ -162,6 +201,7 @@ model UserPreference {
 
 model UserInvitation {
   id               String    @id @default(uuid()) @db.Uuid
+  organization_id  String?   @db.Uuid
   email            String
   nombre           String
   apellido         String
@@ -171,28 +211,30 @@ model UserInvitation {
   accepted_at      DateTime?
   revoked_at       DateTime?
   created_by_id    String    @db.Uuid
-  accepted_user_id String?   @unique @db.Uuid
+  accepted_user_id String?   @db.Uuid
   created_at       DateTime  @default(now())
   accepted_user    User?     @relation("InvitationAcceptedUser", fields: [accepted_user_id], references: [id])
   created_by       User      @relation("InvitationCreator", fields: [created_by_id], references: [id])
 
+  @@unique([organization_id, accepted_user_id], map: "user_invitations_org_accepted_user_key")
   @@index([email, accepted_at, revoked_at, expires_at])
   @@index([created_by_id], map: "idx_user_invitations_created_by_fk")
   @@map("user_invitations")
 }
 
 model Notification {
-  id            String    @id @default(uuid()) @db.Uuid
-  recipient_id  String    @db.Uuid
-  created_by_id String?   @db.Uuid
-  type          String
-  title         String
-  body          String
-  href          String?
-  read_at       DateTime?
-  created_at    DateTime  @default(now())
-  created_by    User?     @relation("NotificationCreator", fields: [created_by_id], references: [id])
-  recipient     User      @relation("NotificationRecipient", fields: [recipient_id], references: [id], onDelete: Cascade)
+  id              String    @id @default(uuid()) @db.Uuid
+  organization_id String?   @db.Uuid
+  recipient_id    String    @db.Uuid
+  created_by_id   String?   @db.Uuid
+  type            String
+  title           String
+  body            String
+  href            String?
+  read_at         DateTime?
+  created_at      DateTime  @default(now())
+  created_by      User?     @relation("NotificationCreator", fields: [created_by_id], references: [id])
+  recipient       User      @relation("NotificationRecipient", fields: [recipient_id], references: [id], onDelete: Cascade)
 
   @@index([recipient_id, read_at, created_at])
   @@index([created_by_id], map: "idx_notifications_created_by_fk")
@@ -201,6 +243,7 @@ model Notification {
 
 model Prospecto {
   id                       String                     @id @default(uuid()) @db.Uuid
+  organization_id          String?                    @db.Uuid
   nombre                   String
   telefono                 String?
   email                    String?
@@ -263,6 +306,7 @@ model ProspectoServicioCatalogo {
 
 model ProspectoSeguimiento {
   id                        String    @id @default(uuid()) @db.Uuid
+  organization_id           String?   @db.Uuid
   prospecto_id              String    @db.Uuid
   tipo                      String
   contenido                 String
@@ -279,69 +323,71 @@ model ProspectoSeguimiento {
 }
 
 model Notaria {
-  id                        String                       @id @default(uuid()) @db.Uuid
-  nombre                    String
-  ciudad                    String?
-  contacto_principal        String?
-  dias_respuesta_estimados  Int                          @default(5)
-  requisitos_frecuentes     String?
-  created_at                DateTime                     @default(now())
-  updated_at                DateTime                     @updatedAt
-  activa                    Boolean                      @default(true)
-  archived_at               DateTime?
-  codigo_postal             String?
-  color_identificador       String?                      @default("#D4AF37")
-  correo_general            String?
-  correo_proyectos          String?
-  demarcacion               String?
-  dias_atencion             String?
-  direccion                 String?
-  entidad_federativa        String                       @default("Nayarit")
-  horario                   String?
-  horario_semanal           Json?
-  instituciones_json        Json?
-  instrucciones_especiales  String?
-  municipio                 String                       @default("Tepic")
-  municipios_atendidos_json Json?
-  notario_titular           String?
-  numero_notaria            String?
-  observaciones_generales   String?
-  pagina_web                String?
-  predeterminada            Boolean                      @default(false)
-  telefono                  String?
-  tiempo_firma              String?
-  tiempo_presupuesto        String?
-  tiempo_respuesta          String?
+  id                         String                       @id @default(uuid()) @db.Uuid
+  organization_id            String?                      @db.Uuid
+  nombre                     String
+  ciudad                     String?
+  contacto_principal         String?
+  dias_respuesta_estimados   Int                          @default(5)
+  requisitos_frecuentes      String?
+  created_at                 DateTime                     @default(now())
+  updated_at                 DateTime                     @updatedAt
+  activa                     Boolean                      @default(true)
+  archived_at                DateTime?
+  codigo_postal              String?
+  color_identificador        String?                      @default("#D4AF37")
+  correo_general             String?
+  correo_proyectos           String?
+  demarcacion                String?
+  dias_atencion              String?
+  direccion                  String?
+  entidad_federativa         String                       @default("Nayarit")
+  horario                    String?
+  horario_semanal            Json?
+  instituciones_json         Json?
+  instrucciones_especiales   String?
+  municipio                  String                       @default("Tepic")
+  municipios_atendidos_json  Json?
+  notario_titular            String?
+  numero_notaria             String?
+  observaciones_generales    String?
+  pagina_web                 String?
+  predeterminada             Boolean                      @default(false)
+  telefono                   String?
+  tiempo_firma               String?
+  tiempo_presupuesto         String?
+  tiempo_respuesta           String?
   dias_presupuesto_estimados Int?
   dias_firma_estimados       Int?
-  tipos_acto_json           Json?
-  whatsapp                  String?
-  cotizaciones              Cotizacion[]
-  expedientes               Expediente[]
-  honorariosGenerados       HonorarioGenerado[]
-  movimientosFinancieros    MovimientoFinanciero[]
-  contacto_principal_id     String?                      @db.Uuid
-  contacto_principal_ref    NotariaContacto?             @relation("NotariaContactoPrincipal", fields: [contacto_principal_id], references: [id], onDelete: SetNull)
-  contactos                 NotariaContacto[]            @relation("NotariaContactos")
-  plantillaDocumentales     PlantillaDocumentalVersion[]
+  tipos_acto_json            Json?
+  whatsapp                   String?
+  cotizaciones               Cotizacion[]
+  expedientes                Expediente[]
+  honorariosGenerados        HonorarioGenerado[]
+  movimientosFinancieros     MovimientoFinanciero[]
+  contacto_principal_id      String?                      @db.Uuid
+  contacto_principal_ref     NotariaContacto?             @relation("NotariaContactoPrincipal", fields: [contacto_principal_id], references: [id], onDelete: SetNull)
+  contactos                  NotariaContacto[]            @relation("NotariaContactos")
+  plantillaDocumentales      PlantillaDocumentalVersion[]
 
   @@index([contacto_principal_id], map: "idx_notarias_contacto_principal_fk")
   @@map("notarias")
 }
 
 model NotariaContacto {
-  id            String   @id @default(uuid()) @db.Uuid
-  notaria_id    String   @db.Uuid
-  nombre        String
-  cargo         String?
-  telefono      String?
-  whatsapp      String?
-  correo        String?
-  observaciones String?
-  activo        Boolean  @default(true)
-  created_at    DateTime @default(now())
-  notaria       Notaria  @relation("NotariaContactos", fields: [notaria_id], references: [id], onDelete: Cascade)
-  principal_de  Notaria[] @relation("NotariaContactoPrincipal")
+  id              String    @id @default(uuid()) @db.Uuid
+  organization_id String?   @db.Uuid
+  notaria_id      String    @db.Uuid
+  nombre          String
+  cargo           String?
+  telefono        String?
+  whatsapp        String?
+  correo          String?
+  observaciones   String?
+  activo          Boolean   @default(true)
+  created_at      DateTime  @default(now())
+  notaria         Notaria   @relation("NotariaContactos", fields: [notaria_id], references: [id], onDelete: Cascade)
+  principal_de    Notaria[] @relation("NotariaContactoPrincipal")
 
   @@index([notaria_id], map: "idx_notaria_contactos_notaria_fk")
   @@map("notaria_contactos")
@@ -349,6 +395,7 @@ model NotariaContacto {
 
 model Cotizacion {
   id                             String                  @id @default(uuid()) @db.Uuid
+  organization_id                String?                 @db.Uuid
   prospecto_id                   String?                 @unique @db.Uuid
   user_id                        String                  @db.Uuid
   estado                         CotizacionEstado        @default(BORRADOR)
@@ -389,6 +436,7 @@ model Cotizacion {
 
 model CotizacionVersion {
   id                  String              @id @default(uuid()) @db.Uuid
+  organization_id     String?             @db.Uuid
   cotizacion_id       String              @db.Uuid
   version             Int
   total_cliente       Decimal             @db.Decimal(14, 2)
@@ -411,6 +459,7 @@ model CotizacionVersion {
 
 model CotizacionSeguimiento {
   id                        String     @id @default(uuid()) @db.Uuid
+  organization_id           String?    @db.Uuid
   cotizacion_id             String     @db.Uuid
   usuario_id                String     @db.Uuid
   tipo                      String
@@ -581,6 +630,7 @@ model ChecklistItem {
 
 model Expediente {
   id                         String                      @id @default(uuid()) @db.Uuid
+  organization_id            String?                     @db.Uuid
   numero_pravia              String                      @unique
   numero_notaria             String?
   tipo_acto_id               String                      @db.Uuid
@@ -662,6 +712,7 @@ model Expediente {
 
 model ExpedienteEstatus_Log {
   id               String             @id @default(uuid()) @db.Uuid
+  organization_id  String?            @db.Uuid
   expediente_id    String             @db.Uuid
   estatus_anterior ExpedienteEstatus?
   estatus_nuevo    ExpedienteEstatus
@@ -677,6 +728,7 @@ model ExpedienteEstatus_Log {
 
 model ExpedienteEtapa {
   id                         String        @id @default(uuid()) @db.Uuid
+  organization_id            String?       @db.Uuid
   expediente_id              String        @db.Uuid
   flujo_etapa_id             String?       @db.Uuid
   flujo_version_id           String?       @db.Uuid
@@ -707,6 +759,7 @@ model ExpedienteEtapa {
 
 model Documento {
   id                           String                        @id @default(uuid()) @db.Uuid
+  organization_id              String?                       @db.Uuid
   nombre_original              String
   nombre_interno               String                        @unique
   tipo                         String
@@ -748,6 +801,7 @@ model Documento {
   tramitesEvidencia            TareaExterna[]                @relation("TareaExternaEvidencia")
   calculosISRVinculos          CalculoISRDocumento[]
   calculosISRPropuestas        CalculoISRPropuesta[]
+  assistantAttachments         AssistantAttachment[]
 
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
   @@index([cotizacion_id], map: "idx_documentos_cotizacion_fk")
@@ -759,6 +813,7 @@ model Documento {
 
 model ExpedienteDocumento {
   id                  String         @id @default(uuid()) @db.Uuid
+  organization_id     String?        @db.Uuid
   expediente_id       String         @db.Uuid
   documento_id        String         @db.Uuid
   tipo_vinculo        String
@@ -781,6 +836,7 @@ model ExpedienteDocumento {
 
 model CotizacionDocumento {
   id                  String         @id @default(uuid()) @db.Uuid
+  organization_id     String?        @db.Uuid
   cotizacion_id       String         @db.Uuid
   documento_id        String         @db.Uuid
   tipo_vinculo        String
@@ -803,6 +859,7 @@ model CotizacionDocumento {
 
 model ProspectoDocumento {
   id                  String         @id @default(uuid()) @db.Uuid
+  organization_id     String?        @db.Uuid
   prospecto_id        String         @db.Uuid
   documento_id        String         @db.Uuid
   tipo_vinculo        String
@@ -825,6 +882,7 @@ model ProspectoDocumento {
 
 model RequisitoDocumentoVinculo {
   id                  String                 @id @default(uuid()) @db.Uuid
+  organization_id     String?                @db.Uuid
   requisito_id        String                 @db.Uuid
   documento_id        String                 @db.Uuid
   fecha_vinculo       DateTime               @default(now())
@@ -846,6 +904,7 @@ model RequisitoDocumentoVinculo {
 
 model MovimientoDocumento {
   id                  String               @id @default(uuid()) @db.Uuid
+  organization_id     String?              @db.Uuid
   movimiento_id       String               @db.Uuid
   documento_id        String               @db.Uuid
   tipo_vinculo        String
@@ -868,6 +927,7 @@ model MovimientoDocumento {
 
 model ComunicacionDocumento {
   id                  String         @id @default(uuid()) @db.Uuid
+  organization_id     String?        @db.Uuid
   comunicacion_id     String         @db.Uuid
   documento_id        String         @db.Uuid
   tipo_vinculo        String
@@ -890,6 +950,7 @@ model ComunicacionDocumento {
 
 model Compareciente {
   id                                String                            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id                   String?                           @db.Uuid
   tipo_persona                      TipoPersona                       @default(FISICA)
   nombre_busqueda                   String                            @db.VarChar(255)
   observaciones                     String?
@@ -925,6 +986,7 @@ model Compareciente {
 
 model PersonaFisica {
   id                            String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id               String?                     @db.Uuid
   compareciente_id              String                      @unique @db.Uuid
   nombre                        String                      @db.VarChar(100)
   apellido_paterno              String?                     @db.VarChar(100)
@@ -963,6 +1025,7 @@ model PersonaFisica {
 
 model RelacionConyugal {
   id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id      String?             @db.Uuid
   persona_1_id         String              @db.Uuid
   persona_2_id         String              @db.Uuid
   regimen_matrimonial  RegimenMatrimonial? @default(SOCIEDAD_CONYUGAL)
@@ -985,6 +1048,7 @@ model RelacionConyugal {
 
 model PersonaMoral {
   id                          String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id             String?                     @db.Uuid
   compareciente_id            String                      @unique @db.Uuid
   razon_social                String                      @db.VarChar(255)
   nombre_comercial            String?                     @db.VarChar(255)
@@ -1011,6 +1075,7 @@ model PersonaMoral {
 
 model PersonaMoralInstrumento {
   id                          String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id             String?                     @db.Uuid
   persona_moral_id            String                      @db.Uuid
   tipo_instrumento            TipoInstrumentoMoral        @default(CONSTITUCION)
   estatus_instrumento         EstatusInstrumento          @default(VIGENTE_REPRESENTACION)
@@ -1048,6 +1113,7 @@ model PersonaMoralInstrumento {
 
 model ComparecienteDomicilio {
   id                       String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id          String?       @db.Uuid
   compareciente_id         String        @db.Uuid
   tipo                     TipoDomicilio @default(PARTICULAR)
   pais                     String?       @default("México") @db.VarChar(100)
@@ -1081,6 +1147,7 @@ model ComparecienteDomicilio {
 
 model ComparecienteContacto {
   id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String?       @db.Uuid
   compareciente_id String        @db.Uuid
   tipo             TipoContacto  @default(TELEFONO)
   valor            String        @db.VarChar(200)
@@ -1101,6 +1168,7 @@ model ComparecienteContacto {
 
 model ComparecienteIdentificacion {
   id                  String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id     String?                @db.Uuid
   compareciente_id    String                 @db.Uuid
   tipo_identificacion TipoIdentificacion     @default(INE)
   numero              String?                @db.VarChar(100)
@@ -1130,6 +1198,7 @@ model ComparecienteIdentificacion {
 
 model ComparecienteDocumento {
   id                String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id   String?                    @db.Uuid
   compareciente_id  String                     @db.Uuid
   documento_id      String                     @db.Uuid
   categoria         TipoDocumentoCompareciente @default(IDENTIFICACION)
@@ -1159,6 +1228,7 @@ model ComparecienteDocumento {
 
 model PersonaMoralRepresentante {
   id                              String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id                 String?                  @db.Uuid
   persona_moral_id                String                   @db.Uuid
   representante_persona_fisica_id String                   @db.Uuid
   caracter_representacion_id      String?                  @db.Uuid
@@ -1233,6 +1303,7 @@ model TipoActoCaracterCompareciente {
 
 model ExpedienteCompareciente {
   id                                String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id                   String?                    @db.Uuid
   expediente_id                     String                     @db.Uuid
   compareciente_id                  String                     @db.Uuid
   caracter_id                       String                     @db.Uuid
@@ -1266,6 +1337,7 @@ model ExpedienteCompareciente {
 
 model ExpedienteRepresentacion {
   id                                        String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id                           String?                  @db.Uuid
   expediente_id                             String                   @db.Uuid
   representado_compareciente_id             String                   @db.Uuid
   representante_compareciente_id            String                   @db.Uuid
@@ -1307,6 +1379,7 @@ model ExpedienteRepresentacion {
 
 model ExpedienteRequisitoDoc {
   id                  String                      @id @default(uuid()) @db.Uuid
+  organization_id     String?                     @db.Uuid
   expediente_id       String                      @db.Uuid
   nombre              String
   categoria           DocCategoria                @default(PROYECTO)
@@ -1326,6 +1399,7 @@ model ExpedienteRequisitoDoc {
 
 model MovimientoFinanciero {
   id                   String                   @id @default(uuid()) @db.Uuid
+  organization_id      String?                  @db.Uuid
   expediente_id        String?                  @db.Uuid
   cotizacion_id        String?                  @db.Uuid
   tipo_movimiento      TipoMovimiento
@@ -1398,16 +1472,17 @@ model MovimientoFinanciero {
 }
 
 model CategoriaFinanciera {
-  id             String                        @id @default(uuid()) @db.Uuid
-  clave          String                        @unique
-  nombre         String
-  naturaleza     NaturalezaCategoriaFinanciera
-  direccion      DireccionCategoriaFinanciera  @default(AMBAS)
-  activa         Boolean                       @default(true)
-  orden          Int                           @default(0)
-  created_at     DateTime                      @default(now())
-  updated_at     DateTime                      @updatedAt
-  distribuciones MovimientoDistribucion[]
+  id              String                        @id @default(uuid()) @db.Uuid
+  organization_id String?                       @db.Uuid
+  clave           String                        @unique
+  nombre          String
+  naturaleza      NaturalezaCategoriaFinanciera
+  direccion       DireccionCategoriaFinanciera  @default(AMBAS)
+  activa          Boolean                       @default(true)
+  orden           Int                           @default(0)
+  created_at      DateTime                      @default(now())
+  updated_at      DateTime                      @updatedAt
+  distribuciones  MovimientoDistribucion[]
 
   @@index([activa, orden])
   @@map("categorias_financieras")
@@ -1415,6 +1490,7 @@ model CategoriaFinanciera {
 
 model CuentaFinanciera {
   id                 String                    @id @default(uuid()) @db.Uuid
+  organization_id    String?                   @db.Uuid
   institucion        String
   alias              String
   tipo               String
@@ -1438,6 +1514,7 @@ model CuentaFinanciera {
 
 model HonorarioGenerado {
   id                    String                   @id @default(uuid()) @db.Uuid
+  organization_id       String?                  @db.Uuid
   clave_origen          String                   @unique
   cotizacion_id         String                   @unique @db.Uuid
   cotizacion_version_id String                   @db.Uuid
@@ -1469,20 +1546,21 @@ model HonorarioGenerado {
 }
 
 model MetaHonorario {
-  id             String               @id @default(uuid()) @db.Uuid
-  alcance        MetaHonorarioAlcance
-  usuario_id     String?              @db.Uuid
-  periodo_inicio DateTime
-  periodo_fin    DateTime
-  importe        Decimal              @db.Decimal(14, 2)
-  moneda         String               @default("MXN")
-  base           MetaHonorarioBase    @default(GENERADOS)
-  activa         Boolean              @default(true)
-  creada_por_id  String               @db.Uuid
-  created_at     DateTime             @default(now())
-  updated_at     DateTime             @updatedAt
-  creada_por     User                 @relation("MetaHonorarioCreador", fields: [creada_por_id], references: [id])
-  usuario        User?                @relation("MetaHonorarioUsuario", fields: [usuario_id], references: [id])
+  id              String               @id @default(uuid()) @db.Uuid
+  organization_id String?              @db.Uuid
+  alcance         MetaHonorarioAlcance
+  usuario_id      String?              @db.Uuid
+  periodo_inicio  DateTime
+  periodo_fin     DateTime
+  importe         Decimal              @db.Decimal(14, 2)
+  moneda          String               @default("MXN")
+  base            MetaHonorarioBase    @default(GENERADOS)
+  activa          Boolean              @default(true)
+  creada_por_id   String               @db.Uuid
+  created_at      DateTime             @default(now())
+  updated_at      DateTime             @updatedAt
+  creada_por      User                 @relation("MetaHonorarioCreador", fields: [creada_por_id], references: [id])
+  usuario         User?                @relation("MetaHonorarioUsuario", fields: [usuario_id], references: [id])
 
   @@unique([alcance, usuario_id, periodo_inicio, periodo_fin, base], map: "metas_honorarios_alcance_usuario_id_periodo_inicio_periodo_fin_")
   @@index([activa, periodo_inicio, periodo_fin])
@@ -1492,6 +1570,7 @@ model MetaHonorario {
 
 model MovimientoDistribucion {
   id                    String               @id @default(uuid()) @db.Uuid
+  organization_id       String?              @db.Uuid
   movimiento_id         String               @db.Uuid
   categoria_id          String               @db.Uuid
   honorario_generado_id String?              @db.Uuid
@@ -1510,6 +1589,7 @@ model MovimientoDistribucion {
 
 model ComprobanteFinanciero {
   id                String                      @id @default(uuid()) @db.Uuid
+  organization_id   String?                     @db.Uuid
   folio             String                      @unique
   movimiento_id     String                      @unique @db.Uuid
   tipo              NaturalezaMovimiento
@@ -1539,6 +1619,7 @@ model ComprobanteFinanciero {
 
 model TransaccionEstadoCuenta {
   id               String                   @id @default(uuid()) @db.Uuid
+  organization_id  String?                  @db.Uuid
   cuenta_id        String                   @db.Uuid
   fecha            DateTime
   importe          Decimal                  @db.Decimal(14, 2)
@@ -1560,6 +1641,7 @@ model TransaccionEstadoCuenta {
 
 model ConciliacionFinanciera {
   id                      String                       @id @default(uuid()) @db.Uuid
+  organization_id         String?                      @db.Uuid
   movimiento_id           String                       @db.Uuid
   transaccion_bancaria_id String                       @db.Uuid
   estado                  EstadoConciliacionFinanciera @default(SUGERIDA)
@@ -1581,6 +1663,7 @@ model ConciliacionFinanciera {
 
 model Pago {
   id                String           @id @default(uuid()) @db.Uuid
+  organization_id   String?          @db.Uuid
   expediente_id     String?          @db.Uuid
   categoria_ingreso CategoriaIngreso
   concepto          String
@@ -1603,16 +1686,17 @@ model Pago {
 }
 
 model ExpedienteActividad {
-  id            String        @id @default(uuid()) @db.Uuid
-  expediente_id String        @db.Uuid
-  usuario_id    String        @db.Uuid
-  tipo          TipoActividad
-  titulo        String
-  descripcion   String
-  metadatos     Json?
-  created_at    DateTime      @default(now())
-  expediente    Expediente    @relation(fields: [expediente_id], references: [id])
-  usuario       User          @relation(fields: [usuario_id], references: [id])
+  id              String        @id @default(uuid()) @db.Uuid
+  organization_id String?       @db.Uuid
+  expediente_id   String        @db.Uuid
+  usuario_id      String        @db.Uuid
+  tipo            TipoActividad
+  titulo          String
+  descripcion     String
+  metadatos       Json?
+  created_at      DateTime      @default(now())
+  expediente      Expediente    @relation(fields: [expediente_id], references: [id])
+  usuario         User          @relation(fields: [usuario_id], references: [id])
 
   @@index([expediente_id], map: "idx_exp_actividades_expediente_fk")
   @@index([usuario_id], map: "idx_exp_actividades_usuario_fk")
@@ -1621,6 +1705,7 @@ model ExpedienteActividad {
 
 model AuditLog {
   id                 String   @id @default(uuid()) @db.Uuid
+  organization_id    String?  @db.Uuid
   user_id            String   @db.Uuid
   accion             String
   entidad            String
@@ -1642,6 +1727,7 @@ model AuditLog {
 
 model CalculoISR {
   id                     String                @id @default(uuid()) @db.Uuid
+  organization_id        String?               @db.Uuid
   folio                  String                @unique
   tipo_operacion         ISRTipoOperacion
   estado                 ISREstadoCalculo      @default(BORRADOR)
@@ -1677,6 +1763,7 @@ model CalculoISR {
 
 model CalculoISRVersion {
   id               String        @id @default(uuid()) @db.Uuid
+  organization_id  String?       @db.Uuid
   calculo_id       String        @db.Uuid
   version          Int
   rule_set_id      String        @db.Uuid
@@ -1697,6 +1784,7 @@ model CalculoISRVersion {
 
 model CalculoISRDocumento {
   id                  String         @id @default(uuid()) @db.Uuid
+  organization_id     String?        @db.Uuid
   calculo_id          String         @db.Uuid
   documento_id        String         @db.Uuid
   creado_por_id       String         @db.Uuid
@@ -1716,6 +1804,7 @@ model CalculoISRDocumento {
 
 model CalculoISRPropuesta {
   id                   String             @id @default(uuid()) @db.Uuid
+  organization_id      String?            @db.Uuid
   calculo_id           String             @db.Uuid
   field_path           String
   proposed_value       Json
@@ -1790,40 +1879,42 @@ model FiscalRateBracket {
 }
 
 model DomainEventOutbox {
-  id             String                     @id @default(uuid()) @db.Uuid
-  event_type     String
-  aggregate_type String                     @default("Expediente")
-  aggregate_id   String                     @db.Uuid
-  payload        Json
-  actor_user_id  String?                    @db.Uuid
-  occurred_at    DateTime                   @default(now())
-  processed_at   DateTime?
-  estatus        OutboxEstatus              @default(PENDIENTE)
-  attempts       Int                        @default(0)
-  last_error     String?
-  available_at   DateTime                   @default(now())
-  locked_at      DateTime?
-  locked_by      String?
-  correlation_id String                     @default(uuid()) @db.Uuid
-  created_at     DateTime                   @default(now())
-  actor          User?                      @relation("OutboxActor", fields: [actor_user_id], references: [id])
-  processingLogs DomainEventProcessingLog[]
+  id              String                     @id @default(uuid()) @db.Uuid
+  organization_id String?                    @db.Uuid
+  event_type      String
+  aggregate_type  String                     @default("Expediente")
+  aggregate_id    String                     @db.Uuid
+  payload         Json
+  actor_user_id   String?                    @db.Uuid
+  occurred_at     DateTime                   @default(now())
+  processed_at    DateTime?
+  estatus         OutboxEstatus              @default(PENDIENTE)
+  attempts        Int                        @default(0)
+  last_error      String?
+  available_at    DateTime                   @default(now())
+  locked_at       DateTime?
+  locked_by       String?
+  correlation_id  String                     @default(uuid()) @db.Uuid
+  created_at      DateTime                   @default(now())
+  actor           User?                      @relation("OutboxActor", fields: [actor_user_id], references: [id])
+  processingLogs  DomainEventProcessingLog[]
 
   @@index([actor_user_id], map: "idx_outbox_actor_fk")
   @@map("domain_event_outbox")
 }
 
 model DomainEventProcessingLog {
-  id             String               @id @default(uuid()) @db.Uuid
-  event_id       String               @db.Uuid
-  handler_name   String
-  estatus        ProcessingLogEstatus @default(PENDIENTE)
-  attempts       Int                  @default(0)
-  started_at     DateTime?
-  processed_at   DateTime?
-  last_error     String?
-  correlation_id String?              @db.Uuid
-  event          DomainEventOutbox    @relation(fields: [event_id], references: [id])
+  id              String               @id @default(uuid()) @db.Uuid
+  organization_id String?              @db.Uuid
+  event_id        String               @db.Uuid
+  handler_name    String
+  estatus         ProcessingLogEstatus @default(PENDIENTE)
+  attempts        Int                  @default(0)
+  started_at      DateTime?
+  processed_at    DateTime?
+  last_error      String?
+  correlation_id  String?              @db.Uuid
+  event           DomainEventOutbox    @relation(fields: [event_id], references: [id])
 
   @@unique([event_id, handler_name])
   @@map("domain_event_processing_logs")
@@ -1831,6 +1922,7 @@ model DomainEventProcessingLog {
 
 model Tarea {
   id                String         @id @default(uuid()) @db.Uuid
+  organization_id   String?        @db.Uuid
   expediente_id     String?        @db.Uuid
   asignado_a_id     String         @db.Uuid
   creador_id        String         @db.Uuid
@@ -1857,6 +1949,7 @@ model Tarea {
 
 model EventoAgenda {
   id                 String              @id @default(uuid()) @db.Uuid
+  organization_id    String?             @db.Uuid
   titulo             String
   descripcion        String?
   tipo               TipoEvento
@@ -1891,6 +1984,7 @@ model EventoAgenda {
 
 model TareaExterna {
   id                     String              @id @default(uuid()) @db.Uuid
+  organization_id        String?             @db.Uuid
   expediente_id          String              @db.Uuid
   tipo                   TipoTareaExterna
   descripcion            String
@@ -1922,6 +2016,7 @@ model TareaExterna {
 
 model ExpedienteEntrega {
   id                     String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id        String?    @db.Uuid
   expediente_id          String     @unique @db.Uuid
   receptor_nombre        String
   receptor_caracter      String
@@ -1943,6 +2038,7 @@ model ExpedienteEntrega {
 
 model Comunicacion {
   id                     String                  @id @default(uuid()) @db.Uuid
+  organization_id        String?                 @db.Uuid
   expediente_id          String?                 @db.Uuid
   user_id                String                  @db.Uuid
   canal                  String
@@ -1961,34 +2057,37 @@ model Comunicacion {
 }
 
 model Nota {
-  id           String        @id @default(uuid()) @db.Uuid
-  user_id      String        @db.Uuid
-  contenido    String
-  created_at   DateTime      @default(now())
-  estatus      NotaEstatus   @default(PENDIENTE)
-  fecha_limite DateTime?
-  prioridad    NotaPrioridad @default(MEDIA)
-  updated_at   DateTime      @updatedAt
-  usuario      User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  id              String        @id @default(uuid()) @db.Uuid
+  organization_id String?       @db.Uuid
+  user_id         String        @db.Uuid
+  contenido       String
+  created_at      DateTime      @default(now())
+  estatus         NotaEstatus   @default(PENDIENTE)
+  fecha_limite    DateTime?
+  prioridad       NotaPrioridad @default(MEDIA)
+  updated_at      DateTime      @updatedAt
+  usuario         User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@index([user_id], map: "idx_notas_user_fk")
   @@map("notas")
 }
 
 model MemoriaDespacho {
-  id          String   @id @default(uuid()) @db.Uuid
-  categoria   String
-  contenido   String
-  tipo_acto   String?
-  institucion String?
-  tags        String[] @default([])
-  created_at  DateTime @default(now())
+  id              String   @id @default(uuid()) @db.Uuid
+  organization_id String?  @db.Uuid
+  categoria       String
+  contenido       String
+  tipo_acto       String?
+  institucion     String?
+  tags            String[] @default([])
+  created_at      DateTime @default(now())
 
   @@map("memoria_despacho")
 }
 
 model ComparecienteAltaSession {
   id                   String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id      String?                  @db.Uuid
   usuario_id           String                   @db.Uuid
   tipo_persona         TipoPersona?
   estatus              AltaComparecienteEstatus @default(BORRADOR)
@@ -2016,20 +2115,23 @@ model ComparecienteAltaSession {
 
 model AIUsageLog {
   id                            String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id               String?                   @db.Uuid
   provider                      String                    @default("OPENAI")
   modelo                        String
   operacion                     String
+  operation_id                  String?                   @unique
   estatus                       String                    @default("COMPLETADO")
   usuario_id                    String?                   @db.Uuid
   expediente_id                 String?                   @db.Uuid
   compareciente_alta_session_id String?                   @db.Uuid
+  assistant_conversation_id     String?                   @db.Uuid
   input_tokens                  Int                       @default(0)
   cached_input_tokens           Int                       @default(0)
   output_tokens                 Int                       @default(0)
   reasoning_tokens              Int                       @default(0)
   total_tokens                  Int                       @default(0)
   duracion_ms                   Int                       @default(0)
-  costo_estimado_usd            Decimal                   @default(0) @db.Decimal(12, 6)
+  costo_estimado_usd            Decimal?                  @db.Decimal(12, 6)
   documentos_enviados           Int                       @default(0)
   escalamiento_utilizado        Boolean                   @default(false)
   escalamiento_motivo           String?
@@ -2037,6 +2139,7 @@ model AIUsageLog {
   metadata                      Json?
   created_at                    DateTime                  @default(now())
   comparecienteAltaSession      ComparecienteAltaSession? @relation(fields: [compareciente_alta_session_id], references: [id], onUpdate: NoAction)
+  assistantConversation         AssistantConversation?    @relation(fields: [assistant_conversation_id], references: [id], onUpdate: NoAction)
   expediente                    Expediente?               @relation(fields: [expediente_id], references: [id], onUpdate: NoAction)
   usuario                       User?                     @relation(fields: [usuario_id], references: [id], onUpdate: NoAction)
 
@@ -2045,7 +2148,94 @@ model AIUsageLog {
   @@index([usuario_id, created_at])
   @@index([expediente_id, created_at])
   @@index([compareciente_alta_session_id], map: "idx_ai_usage_alta_session_fk")
+  @@index([organization_id, created_at], map: "idx_ai_usage_org_created")
+  @@index([organization_id, assistant_conversation_id, created_at], map: "idx_ai_usage_conversation_created")
   @@map("ai_usage_logs")
+}
+
+model AssistantConversation {
+  id                 String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id    String                @db.Uuid
+  owner_user_id      String                @db.Uuid
+  title              String                @default("Nueva conversación")
+  status             String                @default("ACTIVE")
+  context            Json?
+  summary            String?
+  summary_updated_at DateTime?
+  last_message_at    DateTime              @default(now())
+  message_count      Int                   @default(0)
+  archived_at        DateTime?
+  trashed_at         DateTime?
+  restored_at        DateTime?
+  created_at         DateTime              @default(now())
+  updated_at         DateTime              @default(now()) @updatedAt
+  owner              User                  @relation("AssistantConversationOwner", fields: [owner_user_id], references: [id], onDelete: Restrict)
+  messages           AssistantMessage[]
+  attachments        AssistantAttachment[]
+  aiUsageLogs        AIUsageLog[]
+
+  @@index([organization_id, owner_user_id, status, last_message_at], map: "idx_assistant_conversations_owner_status_last")
+  @@map("assistant_conversations")
+}
+
+model AssistantMessage {
+  id                     String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id        String                @db.Uuid
+  conversation_id        String                @db.Uuid
+  role                   String
+  content                String
+  status                 String                @default("COMPLETE")
+  client_message_id      String?
+  in_reply_to_message_id String?               @unique(map: "assistant_messages_reply_to_key") @db.Uuid
+  sources                Json?
+  context_snapshot       Json?
+  provider_response_id   String?
+  model                  String?
+  prompt_version         String?
+  created_at             DateTime              @default(now())
+  conversation           AssistantConversation @relation(fields: [conversation_id], references: [id], onDelete: Restrict)
+  attachments            AssistantAttachment[]
+
+  @@unique([conversation_id, client_message_id], map: "assistant_messages_conversation_client_key")
+  @@index([organization_id, conversation_id, created_at], map: "idx_assistant_messages_conversation_created")
+  @@map("assistant_messages")
+}
+
+model AssistantAttachment {
+  id                  String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id     String                   @db.Uuid
+  conversation_id     String                   @db.Uuid
+  message_id          String?                  @db.Uuid
+  uploaded_by_id      String                   @db.Uuid
+  source              String                   @default("TEMPORARY_UPLOAD")
+  documento_id        String?                  @db.Uuid
+  original_name       String
+  storage_key         String?
+  mime_type           String
+  size_bytes          Int
+  sha256              String
+  status              String                   @default("AVAILABLE")
+  extraction          Json?
+  transcription       String?
+  transcription_model String?
+  transcribed_at      DateTime?
+  expires_at          DateTime?
+  promoted_at         DateTime?
+  archived_at         DateTime?
+  storage_deleted_at  DateTime?
+  cleanup_error       String?
+  created_at          DateTime                 @default(now())
+  conversation        AssistantConversation    @relation(fields: [conversation_id], references: [id], onDelete: Restrict)
+  message             AssistantMessage?        @relation(fields: [message_id], references: [id], onDelete: SetNull)
+  uploadedBy          User                     @relation("AssistantAttachmentUploader", fields: [uploaded_by_id], references: [id], onDelete: Restrict)
+  documento           Documento?               @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  compensationJobs    StorageCompensationJob[]
+
+  @@unique([conversation_id, sha256, source], map: "assistant_attachments_conversation_hash_source_key")
+  @@index([organization_id, conversation_id, status, created_at], map: "idx_assistant_attachments_conversation_status_created")
+  @@index([documento_id], map: "idx_assistant_attachments_documento")
+  @@index([expires_at, status], map: "idx_assistant_attachments_expiry_status")
+  @@map("assistant_attachments")
 }
 
 model ComplianceRuleSet {
@@ -2081,6 +2271,7 @@ model ComplianceRuleSet {
 
 model ComplianceReview {
   id                    String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id       String?              @db.Uuid
   expediente_id         String               @db.Uuid
   rule_set_id           String               @db.Uuid
   tipo                  String
@@ -2119,6 +2310,7 @@ model ComplianceReview {
 
 model ComplianceDecision {
   id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id    String?          @db.Uuid
   review_id          String           @db.Uuid
   decision           String
   observaciones      String?
@@ -2137,6 +2329,7 @@ model ComplianceDecision {
 
 model ComplianceEvidence {
   id              String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String?           @db.Uuid
   review_id       String           @db.Uuid
   documento_id    String           @db.Uuid
   tipo_evidencia  String
@@ -2156,6 +2349,7 @@ model ComplianceEvidence {
 
 model CargaTemporalDocumento {
   id                     String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id        String?                   @db.Uuid
   alta_session_id        String                    @db.Uuid
   usuario_id             String                    @db.Uuid
   tipo_documento         String
@@ -2185,26 +2379,31 @@ model CargaTemporalDocumento {
 }
 
 model StorageCompensationJob {
-  id                   String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  carga_temporal_id    String?                    @db.Uuid
-  storage_key          String
-  tipo_operacion       String                     @default("ELIMINAR_TEMPORAL")
-  estatus              StorageCompensationEstatus @default(PENDIENTE)
-  intentos             Int                        @default(0)
-  ultimo_error         String?
-  proxima_ejecucion_at DateTime                   @default(now())
-  correlation_id       String?
-  created_at           DateTime                   @default(now())
-  updated_at           DateTime                   @default(now()) @updatedAt
-  cargaTemporal        CargaTemporalDocumento?    @relation(fields: [carga_temporal_id], references: [id], map: "fk_storage_job_carga_temporal")
+  id                      String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id         String?                    @db.Uuid
+  carga_temporal_id       String?                    @db.Uuid
+  assistant_attachment_id String?                    @unique @db.Uuid
+  storage_key             String
+  tipo_operacion          String                     @default("ELIMINAR_TEMPORAL")
+  estatus                 StorageCompensationEstatus @default(PENDIENTE)
+  intentos                Int                        @default(0)
+  ultimo_error            String?
+  proxima_ejecucion_at    DateTime                   @default(now())
+  correlation_id          String?
+  created_at              DateTime                   @default(now())
+  updated_at              DateTime                   @default(now()) @updatedAt
+  cargaTemporal           CargaTemporalDocumento?    @relation(fields: [carga_temporal_id], references: [id], map: "fk_storage_job_carga_temporal")
+  assistantAttachment     AssistantAttachment?       @relation(fields: [assistant_attachment_id], references: [id], map: "fk_storage_job_assistant_attachment")
 
   @@index([estatus, proxima_ejecucion_at], map: "idx_storage_compensation_jobs_estatus_exec")
   @@index([carga_temporal_id], map: "idx_storage_jobs_carga_fk")
+  @@index([assistant_attachment_id], map: "idx_storage_jobs_assistant_attachment_fk")
   @@map("storage_compensation_jobs")
 }
 
 model ComparecienteDatoFuente {
   id                  String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id     String?                 @db.Uuid
   compareciente_id    String                  @db.Uuid
   campo               String
   entidad_destino     String?
@@ -2240,6 +2439,7 @@ model ComparecienteDatoFuente {
 
 model ComparecienteAlias {
   id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String?       @db.Uuid
   compareciente_id String        @db.Uuid
   alias            String
   tipo             String?       @default("COMERCIAL_O_CONOCIDO")
@@ -2270,6 +2470,7 @@ model ActividadEconomica {
 
 model ComparecienteActividadEconomica {
   id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String?            @db.Uuid
   compareciente_id String             @db.Uuid
   actividad_id     String             @db.Uuid
   principal        Boolean            @default(true)

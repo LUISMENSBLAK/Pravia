@@ -1,18 +1,29 @@
 import prisma from '../config/prisma';
+import { runWithPlatformOperation } from '../auth/actorContext';
 
 export async function seedExpedientesConfig() {
   console.log('🌱 Inicializando seeders idempotentes para el Motor de Expedientes...');
 
   const seedActorId = String(process.env.PRAVIA_SEED_ACTOR_USER_ID || '').trim();
-  if (!seedActorId) {
-    throw new Error('PRAVIA_SEED_ACTOR_USER_ID es obligatorio para versionar el motor sin elegir un usuario por defecto.');
+  const seedOrganizationId = String(process.env.PRAVIA_SEED_ORGANIZATION_ID || '').trim();
+  if (!seedActorId || !seedOrganizationId) {
+    throw new Error('PRAVIA_SEED_ACTOR_USER_ID y PRAVIA_SEED_ORGANIZATION_ID son obligatorios para versionar el motor sin elegir usuario ni organización por defecto.');
   }
-  const seedActor = await prisma.user.findFirst({
-    where: { id: seedActorId, activo: true, rol: { in: ['DIRECCION', 'ADMINISTRACION'] } },
-  });
+  const seedMembership = await runWithPlatformOperation('EXPEDIENTE_CONFIG_SEED_ACTOR', () => prisma.organizationMembership.findFirst({
+    where: {
+      user_id: seedActorId,
+      organization_id: seedOrganizationId,
+      status: 'ACTIVE',
+      rol: { in: ['DIRECCION', 'ADMINISTRACION'] },
+      user: { activo: true },
+      organization: { status: 'ACTIVE' },
+    },
+    include: { user: true },
+  }));
+  const seedActor = seedMembership?.user;
 
   if (!seedActor) {
-    throw new Error('PRAVIA_SEED_ACTOR_USER_ID debe identificar una cuenta activa de Dirección o Administración.');
+    throw new Error('El actor del seed debe tener una Membership activa de Dirección o Administración en PRAVIA_SEED_ORGANIZATION_ID.');
   }
 
   const tiposActoDefinidos = [

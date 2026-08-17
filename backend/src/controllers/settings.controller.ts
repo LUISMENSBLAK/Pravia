@@ -59,7 +59,7 @@ export class SettingsController {
       id: true, email: true, nombre: true, apellido: true, telefono: true, avatar_url: true, rol: true,
       activo: true, last_login_at: true, password_changed_at: true, created_at: true,
     } });
-    return res.json({ user, permissions: req.user.permissions, scope: ['DIRECCION', 'ADMINISTRACION', 'CONSULTA'].includes(req.user.rol) ? 'GLOBAL' : 'ASSIGNED_OBJECTS' });
+    return res.json({ user: user ? { ...user, rol: req.user.rol } : null, permissions: req.user.permissions, scope: req.user.scope });
   }
 
   static async updateProfile(req: Request, res: Response) {
@@ -75,7 +75,7 @@ export class SettingsController {
       await tx.auditLog.create({ data: { user_id: req.user!.id, accion: 'PROFILE_UPDATED', entidad: 'User', entidad_id: req.user!.id, valores_anteriores: before ?? undefined, valores_nuevos: { nombre, apellido, telefono }, correlation_id: req.correlationId, session_id: req.user!.sessionId } });
       return updated;
     });
-    return res.json({ success: true, user });
+    return res.json({ success: true, user: { ...user, rol: req.user.rol } });
   }
 
   static async preferences(req: Request, res: Response) {

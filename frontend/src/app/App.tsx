@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from '../components/layout/AppShell';
 import { AuthProvider } from '../features/auth/AuthProvider';
+import { useAuth } from '../features/auth/AuthProvider';
 import { LoginPage } from '../features/auth/LoginPage';
 import { ProtectedRoute } from '../features/auth/ProtectedRoute';
 import { AssistantProvider } from '../features/assistant/AssistantProvider';
@@ -29,6 +30,11 @@ const SettingsPage = lazy(() => import('../features/settings/SettingsPage').then
 const UserDetailPage = lazy(() => import('../features/settings/UserDetailPage').then((module) => ({ default: module.UserDetailPage })));
 const ActivationPage = lazy(() => import('../features/settings/ActivationPage').then((module) => ({ default: module.ActivationPage })));
 
+export function TenantScopedShell() {
+  const { user } = useAuth();
+  return <AssistantProvider key={user?.organization?.id || 'organization'}><AppShell /></AssistantProvider>;
+}
+
 export function App() {
   return (
     <AuthProvider>
@@ -38,7 +44,7 @@ export function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/activar" element={<ActivationPage />} />
           <Route element={<ProtectedRoute />}>
-            <Route element={<AssistantProvider><AppShell /></AssistantProvider>}>
+            <Route element={<TenantScopedShell />}>
               <Route index element={<Navigate to="/mi-dia" replace />} />
               <Route path="/mi-dia" element={<MyDayPage />} />
               <Route path="/prospectos" element={<ProspectsPage />} />

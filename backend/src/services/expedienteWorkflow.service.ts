@@ -7,6 +7,7 @@ import {
   DeliveryInput,
   validateDeliveryInput,
 } from '../domain/expedienteAuthorization';
+import { requireActorContext, TenantContextError } from '../auth/actorContext';
 
 export interface TransicionPayload {
   expedienteId: string;
@@ -46,6 +47,10 @@ export class ExpedienteWorkflowService {
    */
   public async ejecutarTransicion(payload: TransicionPayload) {
     const correlationId = payload.correlationId || crypto.randomUUID();
+    const actorContext = requireActorContext();
+    if (payload.actorUserId !== actorContext.userId) {
+      throw new TenantContextError('La operación intentó actuar con una identidad distinta de la sesión activa.');
+    }
 
     // 1. Obtener y verificar usuario autenticado en BD
     const actorUser = await this.prisma.user.findUnique({
@@ -81,7 +86,7 @@ export class ExpedienteWorkflowService {
       }
 
       // 4. Validar matriz de permisos por rol autenticado
-      assertSpecializedTransition(actorUser.rol, exp.estatus, payload.nuevoEstatus);
+      assertSpecializedTransition(actorContext.role, exp.estatus, payload.nuevoEstatus);
 
       // 5. Validar exclusivamente contra la versión congelada del flujo.
       let flujoEtapaSnapshot: any = null;
@@ -372,12 +377,16 @@ export class ExpedienteWorkflowService {
    */
   public async reabrirExpediente(payload: ReabrirPayload) {
     const correlationId = payload.correlationId || crypto.randomUUID();
+    const actorContext = requireActorContext();
+    if (payload.actorUserId !== actorContext.userId) {
+      throw new TenantContextError('La operación intentó actuar con una identidad distinta de la sesión activa.');
+    }
 
     const actorUser = await this.prisma.user.findUnique({
       where: { id: payload.actorUserId }
     });
 
-    if (!actorUser || actorUser.rol !== 'DIRECCION') {
+    if (!actorUser || actorContext.role !== 'DIRECCION') {
       throw new Error('Únicamente los usuarios con rol DIRECCION pueden autorizar la reapertura de expedientes');
     }
 

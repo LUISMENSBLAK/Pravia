@@ -16,6 +16,7 @@ import {
 import { validateCurp, validateOptionalDate, validateRfc } from '../domain/mexicanIdentity';
 import { consolidateExtractedFields } from '../domain/documentExtraction';
 import { recordAIFailure, recordAIUsages } from './aiUsage.service';
+import { requireActorContext } from '../auth/actorContext';
 
 const EXPIRATION_HOURS = parseInt(process.env.COMPARECIENTE_ALTA_EXPIRATION_HOURS || '24', 10);
 
@@ -206,7 +207,7 @@ export class ComparecienteAltaSessionService {
 
     const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
     const extension = path.extname(nombreOriginal) || '.pdf';
-    const storageKey = `temporales/comparecientes/${sessionId}/${Date.now()}_${crypto.randomBytes(4).toString('hex')}${extension}`;
+    const storageKey = `organizations/${requireActorContext().organizationId}/temporales/comparecientes/${sessionId}/${Date.now()}_${crypto.randomBytes(4).toString('hex')}${extension}`;
 
     await uploadFile(buffer, storageKey, mimeType);
 

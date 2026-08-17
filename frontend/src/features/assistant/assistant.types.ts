@@ -35,6 +35,51 @@ export type AssistantMessage = {
   timestamp: string;
   sources?: AssistantSource[];
   confirmation?: AssistantConfirmation;
+  attachments?: AssistantAttachment[];
+};
+
+export type AssistantConversationStatus = 'ACTIVE' | 'ARCHIVED' | 'TRASHED';
+
+export type AssistantAttachment = {
+  id: string;
+  message_id?: string | null;
+  source: 'TEMPORARY_UPLOAD' | 'OFFICIAL_DOCUMENT';
+  documento_id?: string | null;
+  original_name: string;
+  mime_type: string;
+  size_bytes: number;
+  status: 'AVAILABLE' | 'LINKED' | 'ARCHIVED' | 'FAILED';
+  transcription?: string | null;
+  transcribed_at?: string | null;
+  expires_at?: string | null;
+  created_at: string;
+  duplicate?: boolean;
+};
+
+export type AssistantConversation = {
+  id: string;
+  title: string;
+  status: AssistantConversationStatus;
+  context?: Partial<AssistantContext> | null;
+  last_message_at: string;
+  message_count: number;
+  archived_at?: string | null;
+  trashed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AssistantConversationDetail = AssistantConversation & {
+  messages: Array<{
+    id: string;
+    role: 'USER' | 'ASSISTANT';
+    content: string;
+    sources?: AssistantSource[] | null;
+    status: 'COMPLETE' | 'FAILED';
+    created_at: string;
+    attachments?: AssistantAttachment[];
+  }>;
+  attachments: AssistantAttachment[];
 };
 
 export type AssistantSuggestion = {
@@ -61,6 +106,8 @@ export type AssistantReply = {
   processLabel?: string;
   sources?: AssistantSource[];
   confirmation?: AssistantConfirmation;
+  conversationId?: string;
+  messageId?: string;
 };
 
 export type AssistantOpenOptions = {

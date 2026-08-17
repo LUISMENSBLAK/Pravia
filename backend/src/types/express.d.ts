@@ -11,6 +11,9 @@ declare global {
         apellido: string;
         rol: Role;
         sessionId: string;
+        organizationId: string;
+        membershipId: string;
+        scope: 'GLOBAL' | 'ASSIGNED_OBJECTS';
         permissions: Permission[];
         requiresPasswordChange: boolean;
       };

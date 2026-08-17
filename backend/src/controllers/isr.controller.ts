@@ -30,7 +30,7 @@ export const uploadISRDocument = async (req: Request, res: Response) => {
     const allowed = ['application/pdf', 'image/png', 'image/jpeg', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword'];
     if (!allowed.includes(req.file.mimetype)) throw new ISRValidationError('DOCUMENT_TYPE_NOT_ALLOWED', 'Este formato no está permitido. Usa PDF, imagen, DOC o DOCX.');
     const extension = path.extname(req.file.originalname).toLowerCase() || '.bin';
-    storageKey = `isr/${current.id}/${crypto.randomUUID()}${extension}`;
+    storageKey = `organizations/${req.user!.organizationId}/isr/${current.id}/${crypto.randomUUID()}${extension}`;
     await uploadFile(req.file.buffer, storageKey, req.file.mimetype);
     const document = await prisma.$transaction(async (tx) => {
       const created = await tx.documento.create({ data: { nombre_original: req.file!.originalname, nombre_interno: path.basename(storageKey), tipo: 'ISR_SOPORTE', categoria: 'SAT', storage_key: storageKey, mime_type: req.file!.mimetype, size_bytes: req.file!.size, subido_por_id: actor(req).id } });

@@ -59,3 +59,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 1500ms; } }
+.organizationField { display: grid; gap: 7px; color: var(--color-text-primary); font-size: 13px; font-weight: 600; }
+.organizationField select { width: 100%; min-height: 44px; border: 1px solid var(--color-border); border-radius: 9px; background: var(--color-surface); color: var(--color-text-primary); padding: 0 12px; font: inherit; }
+.organizationField select:focus { outline: 2px solid rgb(197 145 39 / 20%); border-color: var(--color-gold-500); }

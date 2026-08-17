@@ -8,6 +8,7 @@ export const apiConfig = {
   logoutPath: import.meta.env.VITE_AUTH_LOGOUT_PATH ?? '/auth/logout',
   myDayPath: import.meta.env.VITE_MY_DAY_PATH ?? '/mi-dia',
   assistantMessagePath: import.meta.env.VITE_ASSISTANT_MESSAGE_PATH || '/ia/assistant/messages',
+  assistantConversationsPath: import.meta.env.VITE_ASSISTANT_CONVERSATIONS_PATH || '/ia/assistant/conversations',
   assistantSuggestionsPath: import.meta.env.VITE_ASSISTANT_SUGGESTIONS_PATH || undefined,
   assistantConfirmPath: import.meta.env.VITE_ASSISTANT_CONFIRM_PATH || undefined,
   assistantDismissPath: import.meta.env.VITE_ASSISTANT_DISMISS_PATH || undefined,

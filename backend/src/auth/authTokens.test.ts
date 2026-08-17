@@ -10,12 +10,12 @@ describe('tokens de sesión', () => {
   });
 
   it('firma y verifica identidad, sesión y rol', () => {
-    const token = signAccessToken({ sub: 'user-id', sid: 'session-id', role: 'DIRECCION' });
-    expect(verifyAccessToken(token)).toMatchObject({ sub: 'user-id', sid: 'session-id', role: 'DIRECCION', type: 'access' });
+    const token = signAccessToken({ sub: 'user-id', sid: 'session-id', role: 'DIRECCION', org: 'org-a' });
+    expect(verifyAccessToken(token)).toMatchObject({ sub: 'user-id', sid: 'session-id', role: 'DIRECCION', org: 'org-a', type: 'access' });
   });
 
   it('rechaza un token alterado', () => {
-    const token = signAccessToken({ sub: 'user-id', sid: 'session-id', role: 'ABOGADO' });
+    const token = signAccessToken({ sub: 'user-id', sid: 'session-id', role: 'ABOGADO', org: 'org-a' });
     expect(() => verifyAccessToken(`${token.slice(0, -1)}x`)).toThrow();
   });
 

@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NotariasService, NOTARIA_ACTIVE_EXPEDIENTE_STATUSES } from './notarias.service';
+import { runWithActorContext, TEST_ORGANIZATION_ID } from '../auth/actorContext';
+
+const actorContext = { userId: 'user-1', organizationId: TEST_ORGANIZATION_ID, membershipId: 'membership-1', role: 'ABOGADO' as const, permissions: [], scope: 'ASSIGNED_OBJECTS' as const, sessionId: 'session-1' };
 
 const now = new Date('2026-08-12T18:00:00.000Z');
 const prisma = {
@@ -63,8 +66,8 @@ describe('NotariasService', () => {
     prisma.expediente.findMany.mockResolvedValueOnce([{ id: 'exp-1', numero_pravia: 'EXP-1', updated_at: new Date('2026-08-13'), abogado: { id: 'user-1' }, gestor: null }]).mockResolvedValueOnce([{ id: 'exp-1', numero_pravia: 'EXP-1', fecha_estimada_firma: new Date('2026-08-20') }]);
     prisma.expediente.groupBy.mockResolvedValueOnce([{ abogado_id: 'user-1', _count: { _all: 4 } }]).mockResolvedValueOnce([]);
     prisma.auditLog.findMany.mockResolvedValue([{ id: 'audit-1', accion: 'EDITAR_NOTARIA', created_at: now, usuario: { nombre: 'Ana' } }]);
-    prisma.user.findMany.mockResolvedValue([{ id: 'user-1', nombre: 'Ana', apellido: 'Ruiz', rol: 'ABOGADO' }]);
-    const detail = await new NotariasService(prisma as any).detail('notaria-1', { abogado_id: 'user-1' });
+    prisma.user.findMany.mockResolvedValue([{ id: 'user-1', nombre: 'Ana', apellido: 'Ruiz', organizationMemberships: [{ rol: 'ABOGADO' }] }]);
+    const detail = await runWithActorContext(actorContext, () => new NotariasService(prisma as any).detail('notaria-1', { abogado_id: 'user-1' }));
     expect(detail).toMatchObject({ etiqueta: 'Notaría 12', metrics: { activeCases: 4, historicalCases: 9, quotes: 2, upcomingSignatures: 7 }, responsables: [{ id: 'user-1', expedientes: 4 }] });
     expect(detail?.definitions).toMatchObject({ upcomingSignatures: expect.stringContaining('fecha estimada'), lastActivity: expect.stringContaining('fecha más reciente') });
     expect(prisma.expediente.findMany.mock.calls[0][0].where).toMatchObject({ notaria_id: 'notaria-1', abogado_id: 'user-1' });

@@ -15,14 +15,13 @@ export const authService = {
   async login(credentials: LoginCredentials): Promise<SessionUser> {
     const payload = await apiRequest<AuthPayload>(apiConfig.loginPath, {
       method: 'POST',
-      body: JSON.stringify({ email: credentials.email, password: credentials.password, remember: credentials.remember }),
+      body: JSON.stringify({ email: credentials.email, password: credentials.password, remember: credentials.remember, organizationId: credentials.organizationId }),
       retryOnUnauthorized: false,
     });
 
     const token = extractToken(payload);
     if (token) tokenStore.set(token, credentials.remember);
-    const user = normalizeUser(payload);
-    return user ?? authService.currentUser();
+    return authService.currentUser();
   },
 
   async currentUser(): Promise<SessionUser> {
@@ -36,5 +35,10 @@ export const authService = {
     } finally {
       tokenStore.clear();
     }
+  },
+  async switchOrganization(organizationId: string): Promise<SessionUser> {
+    const payload = await apiRequest<AuthPayload>('/auth/organization', { method: 'POST', body: JSON.stringify({ organizationId }) });
+    const token = extractToken(payload); if (token) tokenStore.set(token, true);
+    return requireUser(payload);
   },
 };

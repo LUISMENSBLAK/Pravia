@@ -10,13 +10,25 @@ const selectUser = {
 };
 
 const validRole = (value: unknown): value is Role => Object.values(Role).includes(String(value) as Role);
+const membershipWhere = (req: Request, extra: Record<string, unknown> = {}) => ({
+  organization_id: req.user!.organizationId, status: 'ACTIVE', ...extra,
+});
+const tenantUserSelect = (req: Request) => ({ ...selectUser, organizationMemberships: {
+  where: { organization_id: req.user!.organizationId }, select: { id: true, rol: true, status: true }, take: 1,
+} });
+const effectiveUser = (record: any) => {
+  const membership = record.organizationMemberships?.[0];
+  if (!membership) return null;
+  const { organizationMemberships: _memberships, ...user } = record;
+  return { ...user, rol: membership.rol, activo: user.activo && membership.status === 'ACTIVE', membership_status: membership.status };
+};
 
 export class UsersController {
   static async list(req: Request, res: Response) {
     const canManage = req.user?.permissions.includes('usuarios.manage');
     if (!canManage) {
-      const users = await prisma.user.findMany({ where: { activo: true }, select: { id: true, nombre: true, apellido: true, email: true, rol: true }, orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }] });
-      return res.json(users);
+      const users = await prisma.user.findMany({ where: { activo: true, organizationMemberships: { some: membershipWhere(req) } }, select: tenantUserSelect(req), orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }] });
+      return res.json(users.map(effectiveUser).filter(Boolean));
     }
     const page = Math.max(1, Math.floor(Number(req.query.page) || 1));
     const size = Math.min(50, Math.max(1, Math.floor(Number(req.query.page_size) || 10)));
@@ -25,35 +37,41 @@ export class UsersController {
     const status = String(req.query.status || 'TODOS');
     const sort = ['nombre', 'email', 'rol', 'created_at', 'last_login_at'].includes(String(req.query.sort)) ? String(req.query.sort) : 'nombre';
     const order = String(req.query.order).toLowerCase() === 'desc' ? 'desc' : 'asc';
+    const membershipStatus = status === 'SUSPENDIDO' ? 'SUSPENDED' : ['ACTIVO', 'BLOQUEADO'].includes(status) ? 'ACTIVE' : undefined;
     const where: any = { AND: [
+      { organizationMemberships: { some: { organization_id: req.user!.organizationId,
+        ...(validRole(role) ? { rol: role } : {}),
+        ...(membershipStatus ? { status: membershipStatus } : {}) } } },
       ...(search ? [{ OR: [{ nombre: { contains: search, mode: 'insensitive' } }, { apellido: { contains: search, mode: 'insensitive' } }, { email: { contains: search, mode: 'insensitive' } }] }] : []),
-      ...(validRole(role) ? [{ rol: role }] : []),
-      ...(status === 'ACTIVO' ? [{ activo: true }, { OR: [{ locked_until: null }, { locked_until: { lte: new Date() } }] }] : status === 'SUSPENDIDO' ? [{ activo: false }] : status === 'BLOQUEADO' ? [{ activo: true, locked_until: { gt: new Date() } }] : []),
+      ...(status === 'ACTIVO' ? [{ activo: true }, { OR: [{ locked_until: null }, { locked_until: { lte: new Date() } }] }] : status === 'BLOQUEADO' ? [{ activo: true, locked_until: { gt: new Date() } }] : []),
     ] };
     const [users, total, active, suspended, pendingInvitations] = await Promise.all([
-      prisma.user.findMany({ where, select: selectUser, orderBy: { [sort]: order }, skip: (page - 1) * size, take: size }),
-      prisma.user.count({ where }), prisma.user.count({ where: { activo: true } }), prisma.user.count({ where: { activo: false } }),
+      prisma.user.findMany({ where, select: tenantUserSelect(req), orderBy: { [sort]: order }, skip: (page - 1) * size, take: size }),
+      prisma.user.count({ where }),
+      prisma.organizationMembership.count({ where: membershipWhere(req, { user: { activo: true } }) }),
+      prisma.organizationMembership.count({ where: { organization_id: req.user!.organizationId, status: 'SUSPENDED' } }),
       prisma.userInvitation.count({ where: { accepted_at: null, revoked_at: null, expires_at: { gt: new Date() } } }),
     ]);
     return res.json({
-      data: users.map((user) => ({ ...user, status: !user.activo ? 'SUSPENDIDO' : user.locked_until && user.locked_until > new Date() ? 'BLOQUEADO' : user.requires_password_change ? 'CAMBIO_REQUERIDO' : 'ACTIVO' })),
+      data: users.map(effectiveUser).filter(Boolean).map((user: any) => ({ ...user, status: !user.activo ? 'SUSPENDIDO' : user.locked_until && user.locked_until > new Date() ? 'BLOQUEADO' : user.requires_password_change ? 'CAMBIO_REQUERIDO' : 'ACTIVO' })),
       metrics: { active, suspended, pending_invitations: pendingInvitations, total: active + suspended },
       meta: { page, page_size: size, total, total_pages: Math.max(1, Math.ceil(total / size)) },
     });
   }
 
   static async detail(req: Request, res: Response) {
-    const user = await prisma.user.findUnique({ where: { id: req.params.id }, select: selectUser });
+    const userRecord = await prisma.user.findUnique({ where: { id: req.params.id }, select: tenantUserSelect(req) });
+    const user = userRecord ? effectiveUser(userRecord) : null;
     if (!user) return res.status(404).json({ code: 'USER_NOT_FOUND', error: 'Usuario no encontrado.' });
     const [sessions, activity] = await Promise.all([
-      prisma.authSession.count({ where: { user_id: user.id, revoked_at: null, expires_at: { gt: new Date() } } }),
+      prisma.authSession.count({ where: { user_id: user.id, organization_id: req.user!.organizationId, revoked_at: null, expires_at: { gt: new Date() } } }),
       prisma.auditLog.findMany({ where: { user_id: user.id }, select: { id: true, accion: true, entidad: true, entidad_id: true, created_at: true }, orderBy: { created_at: 'desc' }, take: 8 }),
     ]);
     return res.json({ user: { ...user, status: !user.activo ? 'SUSPENDIDO' : user.locked_until && user.locked_until > new Date() ? 'BLOQUEADO' : user.requires_password_change ? 'CAMBIO_REQUERIDO' : 'ACTIVO' }, active_sessions: sessions, recent_activity: activity });
   }
 
   static async impact(req: Request, res: Response) {
-    const current = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true, activo: true, rol: true } });
+    const current = await prisma.user.findUnique({ where: { id: req.params.id }, select: { id: true, activo: true, rol: true, organizationMemberships: { where: { organization_id: req.user!.organizationId }, select: { rol: true }, take: 1 } } });
     if (!current) return res.status(404).json({ code: 'USER_NOT_FOUND', error: 'Usuario no encontrado.' });
     const [expedientes, tasks, events, reviews] = await Promise.all([
       prisma.expediente.count({ where: { archived_at: null, estatus: { notIn: ['ENTREGADO', 'CANCELADO'] }, OR: [{ abogado_id: current.id }, { gestor_id: current.id }] } }),
@@ -80,7 +98,7 @@ export class UsersController {
     const token = newOpaqueToken();
     const expiresAt = new Date(Date.now() + 72 * 60 * 60 * 1000);
     const invitation = await prisma.$transaction(async (tx) => {
-      const created = await tx.userInvitation.create({ data: { email, nombre, apellido, rol, token_hash: hashOpaqueToken(token), expires_at: expiresAt, created_by_id: req.user!.id }, select: { id: true, email: true, nombre: true, apellido: true, rol: true, expires_at: true, created_at: true } });
+      const created = await tx.userInvitation.create({ data: { organization_id: req.user!.organizationId, email, nombre, apellido, rol, token_hash: hashOpaqueToken(token), expires_at: expiresAt, created_by_id: req.user!.id }, select: { id: true, email: true, nombre: true, apellido: true, rol: true, expires_at: true, created_at: true } });
       await tx.auditLog.create({ data: { user_id: req.user!.id, accion: 'USER_INVITED', entidad: 'UserInvitation', entidad_id: created.id, valores_nuevos: { email, nombre, apellido, rol, expires_at: expiresAt }, correlation_id: req.correlationId, session_id: req.user!.sessionId } });
       return created;
     });
@@ -113,14 +131,16 @@ export class UsersController {
 
   static async update(req: Request, res: Response) {
     if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
-    const current = await prisma.user.findUnique({ where: { id: req.params.id } });
+    const current = await prisma.user.findUnique({ where: { id: req.params.id }, include: { organizationMemberships: { where: { organization_id: req.user.organizationId }, take: 1 } } });
     if (!current) return res.status(404).json({ code: 'USER_NOT_FOUND', error: 'Usuario no encontrado.' });
-    const rol = req.body.rol === undefined ? current.rol : String(req.body.rol);
-    const activo = req.body.activo === undefined ? current.activo : req.body.activo === true;
+    const currentMembership = current.organizationMemberships[0];
+    if (!currentMembership) return res.status(404).json({ code: 'USER_NOT_FOUND', error: 'Usuario no encontrado.' });
+    const rol = req.body.rol === undefined ? currentMembership.rol : String(req.body.rol);
+    const activo = req.body.activo === undefined ? currentMembership.status === 'ACTIVE' : req.body.activo === true;
     if (!validRole(rol)) return res.status(400).json({ code: 'USER_ROLE_INVALID', error: 'El rol no es válido.' });
     if (current.id === req.user.id && !activo) return res.status(409).json({ code: 'SELF_DEACTIVATION_DENIED', error: 'No puedes desactivar tu propia cuenta.' });
-    if (current.rol === 'DIRECCION' && current.activo && (!activo || rol !== 'DIRECCION')) {
-      const activeDirectors = await prisma.user.count({ where: { rol: 'DIRECCION', activo: true } });
+    if (currentMembership.rol === 'DIRECCION' && current.activo && (!activo || rol !== 'DIRECCION')) {
+      const activeDirectors = await prisma.organizationMembership.count({ where: membershipWhere(req, { rol: 'DIRECCION', user: { activo: true } }) });
       if (activeDirectors <= 1) return res.status(409).json({ code: 'LAST_DIRECTOR_REQUIRED', error: 'Debe permanecer al menos una cuenta activa de Dirección.' });
     }
     if (current.activo && !activo && req.body.confirm_impact !== true) {
@@ -135,17 +155,18 @@ export class UsersController {
     const apellido = req.body.apellido === undefined ? current.apellido : String(req.body.apellido).trim();
     if (nombre.length < 2 || apellido.length < 2) return res.status(400).json({ code: 'USER_NAME_INVALID', error: 'Nombre y apellido son obligatorios.' });
     const user = await prisma.$transaction(async (tx) => {
-      const updated = await tx.user.update({ where: { id: current.id }, data: { nombre, apellido, rol, activo }, select: selectUser });
-      if (!activo || rol !== current.rol) await tx.authSession.updateMany({ where: { user_id: current.id, revoked_at: null }, data: { revoked_at: new Date(), revoked_reason: !activo ? 'USER_DEACTIVATED' : 'ROLE_CHANGED' } });
+      const updated = await tx.user.update({ where: { id: current.id }, data: { nombre, apellido }, select: selectUser });
+      await tx.organizationMembership.update({ where: { organization_id_user_id: { organization_id: req.user!.organizationId, user_id: current.id } }, data: { rol, status: activo ? 'ACTIVE' : 'SUSPENDED' } });
+      if (!activo || rol !== currentMembership.rol) await tx.authSession.updateMany({ where: { user_id: current.id, organization_id: req.user!.organizationId, revoked_at: null }, data: { revoked_at: new Date(), revoked_reason: !activo ? 'USER_DEACTIVATED' : 'ROLE_CHANGED' } });
       await tx.auditLog.create({ data: {
         user_id: req.user!.id, accion: 'UPDATE_USER', entidad: 'User', entidad_id: current.id,
-        valores_anteriores: { nombre: current.nombre, apellido: current.apellido, rol: current.rol, activo: current.activo },
+        valores_anteriores: { nombre: current.nombre, apellido: current.apellido, rol: currentMembership.rol, activo: currentMembership.status === 'ACTIVE' },
         valores_nuevos: { nombre, apellido, rol, activo }, correlation_id: req.correlationId, session_id: req.user!.sessionId,
       } });
-      if (!activo || rol !== current.rol) await tx.notification.create({ data: { recipient_id: current.id, created_by_id: req.user!.id, type: !activo ? 'ACCOUNT_SUSPENDED' : 'ROLE_CHANGED', title: !activo ? 'Cuenta suspendida' : 'Tu rol cambió', body: !activo ? 'Dirección suspendió el acceso a tu cuenta.' : `Tu rol ahora es ${rol}.`, href: '/configuracion/perfil' } });
+      if (!activo || rol !== currentMembership.rol) await tx.notification.create({ data: { organization_id: req.user!.organizationId, recipient_id: current.id, created_by_id: req.user!.id, type: !activo ? 'ACCOUNT_SUSPENDED' : 'ROLE_CHANGED', title: !activo ? 'Cuenta suspendida' : 'Tu rol cambió', body: !activo ? 'Dirección suspendió el acceso a tu cuenta.' : `Tu rol ahora es ${rol}.`, href: '/configuracion/perfil' } });
       return updated;
     });
-    return res.json({ success: true, usuario: user });
+    return res.json({ success: true, usuario: { ...user, rol, activo } });
   }
 
 }

@@ -12,7 +12,7 @@ vi.mock('../utils/auditLogger', () => audit);
 import { getProspectoDocumentos, uploadDocumento } from './documentos.controller';
 
 const response = () => { const res: any = {}; res.status = vi.fn(() => res); res.json = vi.fn(() => res); return res; };
-const user = { id: 'user-1', rol: 'ABOGADO', permissions: ['documentos.write'] };
+const user = { id: 'user-1', organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', rol: 'ABOGADO', permissions: ['documentos.write'] };
 
 describe('documentos de Prospectos', () => {
   beforeEach(() => { vi.clearAllMocks(); storage.uploadFile.mockResolvedValue('private/object.pdf'); access.canAttachDocumento.mockResolvedValue(true); audit.logAudit.mockResolvedValue(undefined); });
@@ -31,6 +31,7 @@ describe('documentos de Prospectos', () => {
     const req: any = { user, file: { originalname: 'archivo.pdf', buffer: Buffer.from('pdf'), mimetype: 'application/pdf', size: 3 }, body: { tipo, prospecto_id: 'prospect-1' } };
     const res = response();
     await uploadDocumento(req, res);
+    expect(storage.uploadFile).toHaveBeenCalledWith(expect.any(Buffer), expect.stringMatching(/^organizations\/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\/documentos\//), 'application/pdf');
     expect(tx.prospectoDocumento.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ prospecto_id: 'prospect-1', tipo_vinculo: tipo }) }));
     expect(tx.prospecto.update).toHaveBeenCalledWith({ where: { id: 'prospect-1' }, data: expectedFlag });
     expect(audit.logAudit).toHaveBeenCalledWith('user-1', 'UPLOAD', 'Documento', 'doc-1', expect.objectContaining({ prospecto_id: 'prospect-1', tipo }));

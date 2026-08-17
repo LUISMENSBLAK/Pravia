@@ -28,4 +28,26 @@ describe('assistant service adapter', () => {
       history: [{ role: 'assistant', content: '¿En qué puedo ayudarte?' }],
     });
   });
+
+  it('consulta el historial persistente y conserva el estado solicitado', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{
+      id: 'conversation-1', title: 'Consulta', status: 'TRASHED', last_message_at: '2026-08-17T10:00:00Z',
+      message_count: 2, created_at: '2026-08-17T10:00:00Z', updated_at: '2026-08-17T10:00:00Z',
+    }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(assistantService.listConversations('TRASHED')).resolves.toEqual([expect.objectContaining({ id: 'conversation-1', status: 'TRASHED' })]);
+    expect(fetchMock).toHaveBeenCalledWith('/api/ia/assistant/conversations?status=TRASHED', expect.any(Object));
+  });
+
+  it('sube adjuntos temporales como multipart sin forzar Content-Type JSON', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: {
+      id: 'attachment-1', source: 'TEMPORARY_UPLOAD', original_name: 'archivo.pdf', mime_type: 'application/pdf', size_bytes: 7,
+      status: 'AVAILABLE', created_at: '2026-08-17T10:00:00Z',
+    } }), { status: 201, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    await assistantService.uploadAttachment('conversation-1', new File(['archivo'], 'archivo.pdf', { type: 'application/pdf' }));
+    const options = fetchMock.mock.calls[0][1];
+    expect(options.body).toBeInstanceOf(FormData);
+    expect((options.headers as Headers).has('Content-Type')).toBe(false);
+  });
 });

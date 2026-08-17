@@ -18,6 +18,7 @@ type AccessClaims = {
   sub: string;
   sid: string;
   role: Role;
+  org: string;
   type: 'access';
 };
 

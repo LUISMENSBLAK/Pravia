@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
+import { activeOrganizationMembershipWhere, organizationMembershipRoleSelect, usersWithEffectiveMembershipRoles } from '../auth/organizationMembership';
 import { FinanceDomainError } from '../domain/financeCore';
 import { BankReconciliationService } from '../services/bankReconciliation.service';
 import { FinanceAnalyticsService, resolveFinancePeriod } from '../services/financeAnalytics.service';
@@ -162,9 +163,13 @@ export class FinanceLedgerController {
         prisma.cuentaFinanciera.findMany({ where: { activa: true }, select: { id: true, institucion: true, alias: true, ultimos_cuatro: true, moneda: true, tipo: true, predeterminada: true }, orderBy: [{ predeterminada: 'desc' }, { alias: 'asc' }] }),
         prisma.expediente.findMany({ where: { archived_at: null }, select: { id: true, numero_pravia: true, cliente_alias: true, notaria_id: true, abogado_id: true, cotizacion_id: true }, orderBy: { updated_at: 'desc' }, take: 200 }),
         prisma.notaria.findMany({ where: { activa: true }, select: { id: true, nombre: true, numero_notaria: true }, orderBy: { nombre: 'asc' } }),
-        prisma.user.findMany({ where: { activo: true, rol: { in: ['DIRECCION', 'ADMINISTRACION', 'ABOGADO'] } }, select: { id: true, nombre: true, apellido: true, rol: true }, orderBy: { nombre: 'asc' } }),
+        prisma.user.findMany({
+          where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(req.user!.organizationId, ['DIRECCION', 'ADMINISTRACION', 'ABOGADO']) } },
+          select: { id: true, nombre: true, apellido: true, ...organizationMembershipRoleSelect(req.user!.organizationId) },
+          orderBy: { nombre: 'asc' },
+        }),
       ]);
-      return res.json({ success: true, data: { categories, accounts, expedientes, notarias, responsables, permisos: { escribir: Boolean(req.user?.permissions.includes('finanzas.write')), aplicar: Boolean(req.user?.permissions.includes('finanzas.validate')), conciliar: Boolean(req.user?.permissions.includes('finanzas.validate')), expedientesLeer: Boolean(req.user?.permissions.includes('expedientes.read')), documentosLeer: Boolean(req.user?.permissions.includes('documentos.read')), documentosEscribir: Boolean(req.user?.permissions.includes('documentos.write')), documentosEliminar: Boolean(req.user?.permissions.includes('documentos.unlink')) }, invoiceIntegration: { configured: false, status: 'PENDIENTE_CONFIGURACION', message: 'Integración de facturación pendiente de configuración.' }, bankImport: { configured: false, message: 'Formato de importación bancaria pendiente de confirmar con el cliente.' } } });
+      return res.json({ success: true, data: { categories, accounts, expedientes, notarias, responsables: usersWithEffectiveMembershipRoles(responsables), permisos: { escribir: Boolean(req.user?.permissions.includes('finanzas.write')), aplicar: Boolean(req.user?.permissions.includes('finanzas.validate')), conciliar: Boolean(req.user?.permissions.includes('finanzas.validate')), expedientesLeer: Boolean(req.user?.permissions.includes('expedientes.read')), documentosLeer: Boolean(req.user?.permissions.includes('documentos.read')), documentosEscribir: Boolean(req.user?.permissions.includes('documentos.write')), documentosEliminar: Boolean(req.user?.permissions.includes('documentos.unlink')) }, invoiceIntegration: { configured: false, status: 'PENDIENTE_CONFIGURACION', message: 'Integración de facturación pendiente de configuración.' }, bankImport: { configured: false, message: 'Formato de importación bancaria pendiente de confirmar con el cliente.' } } });
     } catch (error) { return failure(res, error, 'No pudimos cargar los catálogos financieros.'); }
   }
 

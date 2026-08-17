@@ -197,7 +197,7 @@ const OPENAI_PRICING_USD_PER_MILLION: Record<string, { input: number; cached: nu
   'gpt-5.4-mini-2026-03-17': { input: 0.75, cached: 0.075, output: 4.50 },
 };
 
-function buildUsageMetrics(
+export function buildUsageMetrics(
   data: any,
   model: string,
   startedAt: number,

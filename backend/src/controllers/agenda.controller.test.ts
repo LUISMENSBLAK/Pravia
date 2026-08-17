@@ -16,6 +16,7 @@ const response = () => { const res: any = {}; res.status = vi.fn(() => res); res
 const baseUser = {
   id: 'user-1', rol: 'ABOGADO', permissions: ['agenda.read', 'agenda.write', 'expedientes.read', 'comparecientes.read'],
   email: 'ana@pravia.mx', nombre: 'Ana', apellido: 'Ruiz', sessionId: 'session-1', requiresPasswordChange: false,
+  organizationId: '00000000-0000-4000-8000-000000000010', membershipId: 'membership-1', scope: 'ASSIGNED_OBJECTS',
 };
 const event = {
   id: 'event-1', titulo: 'Firma de escritura', descripcion: null, tipo: 'FIRMA', estatus: 'ACTIVO',
@@ -46,10 +47,10 @@ describe('Agenda endpoints', () => {
   });
 
   it('aplica scope de comparecientes y expone catálogos operativos sin nombres hardcodeados', async () => {
-    db.user.findMany.mockResolvedValue([{ id: 'user-1', nombre: 'Ana', apellido: 'Ruiz', rol: 'ABOGADO' }]);
+    db.user.findMany.mockResolvedValue([{ id: 'user-1', nombre: 'Ana', apellido: 'Ruiz', organizationMemberships: [{ rol: 'ABOGADO' }] }]);
     db.expediente.findMany.mockResolvedValue([]); db.compareciente.findMany.mockResolvedValue([]);
     const req: any = { query: {}, user: baseUser }; const res = response(); await AgendaController.catalogs(req, res);
-    expect(db.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { activo: true, id: 'user-1' } }));
+    expect(db.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ activo: true, id: 'user-1', organizationMemberships: { some: expect.objectContaining({ organization_id: baseUser.organizationId }) } }) }));
     expect(db.compareciente.findMany.mock.calls[0][0].where.OR).toBeDefined();
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ catalogos: expect.objectContaining({ timezone: 'America/Mexico_City', permisos: { gestionar_equipo: false, escribir: true } }) }));
   });

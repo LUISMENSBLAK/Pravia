@@ -1,4 +1,6 @@
 import { Prisma, PrismaClient, type ExpedienteEstatus } from '@prisma/client';
+import { organizationMembershipRoleSelect, usersWithEffectiveMembershipRoles } from '../auth/organizationMembership';
+import { requireActorContext } from '../auth/actorContext';
 
 export const NOTARIA_ACTIVE_EXPEDIENTE_STATUSES: ExpedienteEstatus[] = [
   'ABIERTO', 'EN_INTEGRACION', 'EN_PROCESO', 'PENDIENTE_CLIENTE', 'PENDIENTE_NOTARIA',
@@ -158,7 +160,11 @@ export class NotariasService {
       ...(lawyerGroups as any[]).map((item) => item.abogado_id),
       ...(managerGroups as any[]).map((item) => item.gestor_id),
     ].filter(Boolean)));
-    const users = userIds.length ? await this.prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, nombre: true, apellido: true, rol: true } }) : [];
+    const organizationId = requireActorContext().organizationId;
+    const users = userIds.length ? await this.prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, nombre: true, apellido: true, ...organizationMembershipRoleSelect(organizationId, { activeOnly: false }) },
+    }) : [];
     const counts = new Map<string, number>();
     [...(lawyerGroups as any[]), ...(managerGroups as any[])].forEach((item) => {
       const userId = item.abogado_id || item.gestor_id;
@@ -176,7 +182,7 @@ export class NotariasService {
       metrics: { activeCases: activeCount, historicalCases: historicalCount, quotes: record._count.cotizaciones, upcomingSignatures: upcomingSignatureCount, lastActivity },
       expedientes: recentCases,
       proximasFirmas: upcomingSignatures,
-      responsables: users.map((user: any) => ({ ...user, expedientes: counts.get(user.id) || 0 })).sort((a: any, b: any) => b.expedientes - a.expedientes),
+      responsables: usersWithEffectiveMembershipRoles(users).map((user: any) => ({ ...user, expedientes: counts.get(user.id) || 0 })).sort((a: any, b: any) => b.expedientes - a.expedientes),
       actividad: activity,
       definitions: {
         activeCases: 'Expedientes no archivados cuyo estatus no es Entregado ni Cancelado, dentro del alcance del usuario.',

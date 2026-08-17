@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { AuthController } from '../controllers/auth.controller';
 import { authenticate } from '../middleware/auth.middleware';
+import { runWithPlatformOperation } from '../auth/actorContext';
 
 const router = Router();
+const platformAuthOperation = (req: any, _res: any, next: any) => runWithPlatformOperation(`AUTH_${req.path}`, () => next());
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 const limitLogin = (req: any, res: any, next: any) => {
   const key = String(req.ip || req.socket?.remoteAddress || 'unknown');
@@ -18,14 +20,15 @@ const limitLogin = (req: any, res: any, next: any) => {
   return next();
 };
 
-router.post('/login', limitLogin, AuthController.login);
-router.get('/activation', AuthController.activationInfo);
-router.post('/activation', AuthController.activate);
-router.post('/refresh', AuthController.refresh);
-router.post('/logout', AuthController.logout);
+router.post('/login', platformAuthOperation, limitLogin, AuthController.login);
+router.get('/activation', platformAuthOperation, AuthController.activationInfo);
+router.post('/activation', platformAuthOperation, AuthController.activate);
+router.post('/refresh', platformAuthOperation, AuthController.refresh);
+router.post('/logout', platformAuthOperation, AuthController.logout);
 router.get('/me', authenticate, AuthController.me);
+router.post('/organization', authenticate, AuthController.switchOrganization);
 router.post('/change-password', authenticate, AuthController.changePassword);
-router.post('/request-recovery', AuthController.requestRecovery);
-router.post('/reset-password', AuthController.resetPassword);
+router.post('/request-recovery', platformAuthOperation, AuthController.requestRecovery);
+router.post('/reset-password', platformAuthOperation, AuthController.resetPassword);
 
 export default router;

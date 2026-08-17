@@ -205,7 +205,7 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
     if (!expediente) return res.status(404).json({ error: 'Expediente no encontrado o archivado.' });
 
     const safeName = path.basename(file.originalname).replace(/[^a-zA-Z0-9_.-]/g, '_');
-    uploadedStorageKey = `expedientes/${id}/proyectos/${crypto.randomUUID()}_${safeName}`;
+    uploadedStorageKey = `organizations/${req.user!.organizationId}/documentos/expedientes/${id}/proyectos/${crypto.randomUUID()}_${safeName}`;
     await uploadFile(file.buffer, uploadedStorageKey, file.mimetype);
 
     const createdDocument = await prisma.$transaction(async (tx) => {
@@ -658,7 +658,7 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
 
     const reportBuffer = await Packer.toBuffer(reportDoc);
     assertPersistentProjectStorage();
-    uploadedReportKey = `expedientes/${id}/reportes-ia/${crypto.randomUUID()}_${reportFileName}`;
+    uploadedReportKey = `organizations/${req.user!.organizationId}/documentos/expedientes/${id}/reportes-ia/${crypto.randomUUID()}_${reportFileName}`;
     await uploadFile(reportBuffer, uploadedReportKey, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     const reportName = `Observaciones IA - Expediente ${exp.numero_pravia.replace('EXP-', '')} - Proyecto V${vigente.version_numero}.docx`;
     const reportDocument = await prisma.$transaction(async (tx) => {
@@ -1204,7 +1204,7 @@ export const generarProyectoConIA = async (req: Request, res: Response) => {
       });
     }
 
-    uploadedProjectKey = `expedientes/${id}/proyectos/${crypto.randomUUID()}_${newFilename}`;
+    uploadedProjectKey = `organizations/${req.user!.organizationId}/documentos/expedientes/${id}/proyectos/${crypto.randomUUID()}_${newFilename}`;
     await uploadFile(outBuffer, uploadedProjectKey, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     const created = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:proyecto-version:${id}`}))`);

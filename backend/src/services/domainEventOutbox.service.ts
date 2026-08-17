@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { DomainEventBus, DomainEvent } from '../events/domainEventBus';
+import { runWithOrganizationSystemContext, runWithPlatformOperation } from '../auth/actorContext';
 
 export class DomainEventOutboxService {
   private prisma: PrismaClient;
@@ -15,15 +16,16 @@ export class DomainEventOutboxService {
   public async processPendingOutboxEvents(batchSize: number = 10, workerId: string = `worker-${process.pid}`): Promise<number> {
     // 1. Reclamación Atómica de Eventos usando FOR UPDATE SKIP LOCKED
     // Esto garantiza que múltiples workers concurrentes nunca reclamen ni procesen el mismo evento.
-    const claimedEvents: any[] = await this.prisma.$queryRawUnsafe(`
-      UPDATE "domain_event_outbox"
+    const claimedEvents: any[] = await runWithPlatformOperation('DOMAIN_OUTBOX_CLAIM', () => this.prisma.$queryRawUnsafe(`
+      UPDATE pravia_os."domain_event_outbox"
       SET "estatus" = 'PROCESANDO',
           "locked_at" = NOW(),
           "locked_by" = $1,
           "attempts" = "attempts" + 1
       WHERE "id" IN (
-        SELECT "id" FROM "domain_event_outbox"
+        SELECT "id" FROM pravia_os."domain_event_outbox"
         WHERE "attempts" < 5
+          AND "organization_id" IS NOT NULL
           AND (
             ("estatus" IN ('PENDIENTE', 'FALLIDO') AND "available_at" <= NOW())
             OR ("estatus" = 'PROCESANDO' AND "locked_at" < NOW() - INTERVAL '5 minutes')
@@ -33,7 +35,7 @@ export class DomainEventOutboxService {
         LIMIT $2
       )
       RETURNING *;
-    `, workerId, batchSize);
+    `, workerId, batchSize));
 
     if (!claimedEvents || claimedEvents.length === 0) {
       return 0;
@@ -42,6 +44,8 @@ export class DomainEventOutboxService {
     let processedCount = 0;
 
     for (const outboxRecord of claimedEvents) {
+      if (!outboxRecord.organization_id) continue;
+      const completed = await runWithOrganizationSystemContext(outboxRecord.organization_id, 'DOMAIN_OUTBOX_EVENT', async () => {
       const handlers = DomainEventBus.getHandlers(outboxRecord.event_type);
       if (handlers.length === 0) {
         const retryDelayMs = Math.min(60_000 * 2 ** Math.max(outboxRecord.attempts - 1, 0), 3_600_000);
@@ -55,7 +59,7 @@ export class DomainEventOutboxService {
             locked_by: null,
           },
         });
-        continue;
+        return false;
       }
       let allHandlersSucceeded = true;
       let lastErrorMsg: string | null = null;
@@ -150,7 +154,7 @@ export class DomainEventOutboxService {
             locked_by: null
           }
         });
-        processedCount++;
+        return true;
       } else {
         const retryDelayMs = Math.min(60_000 * 2 ** Math.max(outboxRecord.attempts - 1, 0), 3_600_000);
         await this.prisma.domainEventOutbox.update({
@@ -163,7 +167,10 @@ export class DomainEventOutboxService {
             locked_by: null
           }
         });
+        return false;
       }
+      });
+      if (completed) processedCount++;
     }
 
     return processedCount;

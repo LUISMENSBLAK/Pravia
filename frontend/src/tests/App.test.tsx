@@ -64,4 +64,29 @@ describe('App auth flow', () => {
     await user.click(screen.getByRole('button', { name: 'Iniciar sesión' }));
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('El backend no está disponible en este momento.'));
   });
+
+  it('solicita una organización autorizada cuando la identidad tiene varias Memberships', async () => {
+    const calls: Array<{ url: string; body?: string }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input); calls.push({ url, body: typeof init?.body === 'string' ? init.body : undefined });
+      if (url.endsWith('/auth/login')) {
+        const body = JSON.parse(String(init?.body || '{}'));
+        if (!body.organizationId) return jsonResponse({ code: 'ORGANIZATION_SELECTION_REQUIRED', error: 'Selecciona una organización.', organizations: [{ id: 'org-a', name: 'Despacho A' }, { id: 'org-b', name: 'Despacho B' }] }, 409);
+        return jsonResponse({ access_token: 'access-token' }, 200);
+      }
+      if (url.endsWith('/auth/me') && calls.some((call) => call.url.endsWith('/auth/login') && call.body?.includes('organizationId'))) {
+        return jsonResponse({ user: { id: 'user-a', nombre: 'Ana', apellido: 'A', rol: 'DIRECCION', organization: { id: 'org-a', name: 'Despacho A' }, organizations: [{ id: 'org-a', name: 'Despacho A' }, { id: 'org-b', name: 'Despacho B' }] } }, 200);
+      }
+      return jsonResponse({ message: 'No session' }, 401);
+    }));
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/login']}><App /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'Bienvenido a PRAVIA OS' });
+    await user.type(screen.getByLabelText('Correo electrónico'), 'persona@notaria.mx');
+    await user.type(screen.getByLabelText('Contraseña'), 'contraseña-segura');
+    await user.click(screen.getByRole('button', { name: 'Iniciar sesión' }));
+    expect(await screen.findByLabelText('Organización')).toHaveValue('org-a');
+    await user.click(screen.getByRole('button', { name: 'Iniciar sesión' }));
+    await waitFor(() => expect(calls.some((call) => call.body?.includes('"organizationId":"org-a"'))).toBe(true));
+  });
 });

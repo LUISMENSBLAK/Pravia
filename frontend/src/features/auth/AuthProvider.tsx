@@ -10,6 +10,7 @@ type AuthContextValue = {
   user: SessionUser | null;
   login: (credentials: LoginCredentials) => Promise<void>;
   logout: () => Promise<void>;
+  switchOrganization: (organizationId: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -46,7 +47,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setStatus('anonymous');
   }, []);
 
-  const value = useMemo(() => ({ status, user, login, logout }), [login, logout, status, user]);
+  const switchOrganization = useCallback(async (organizationId: string) => {
+    const sessionUser = await authService.switchOrganization(organizationId);
+    sessionStorage.removeItem('pravia.assistant.suppressed-suggestions');
+    setUser((current) => ({ ...sessionUser, organizations: current?.organizations || sessionUser.organizations }));
+    window.dispatchEvent(new CustomEvent('pravia:organization-changed', { detail: { organizationId } }));
+  }, []);
+
+  const value = useMemo(() => ({ status, user, login, logout, switchOrganization }), [login, logout, status, switchOrganization, user]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

@@ -4,6 +4,7 @@ import { validateCurp, validateOptionalDate, validateRfc } from '../domain/mexic
 import { consolidateExtractedFields } from '../domain/documentExtraction';
 import { extraerMultiplesDocumentos, type DocumentoParaExtraccion } from './openaiDocument.service';
 import { recordAIFailure, recordAIUsages } from './aiUsage.service';
+import { requireActorContext } from '../auth/actorContext';
 
 type IdentityState = 'VERIFICADA' | 'PENDIENTE' | 'OBSERVACION';
 type HealthState = 'COMPLETO' | 'PENDIENTE' | 'OBSERVACION' | 'NO_APLICA' | 'NO_CONFIGURADO';
@@ -1248,7 +1249,7 @@ export class ComparecienteService {
     const fechaEmision = validateOptionalDate(params.fechaEmision, 'La fecha de emisión');
     const fechaVencimiento = validateOptionalDate(params.fechaVencimiento, 'La fecha de vencimiento');
     const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-180) || 'documento';
-    const storageKey = `documentos/comparecientes/${comparecienteId}/${Date.now()}_${crypto.randomUUID()}_${safeFileName}`;
+    const storageKey = `organizations/${requireActorContext().organizationId}/documentos/comparecientes/${comparecienteId}/${Date.now()}_${crypto.randomUUID()}_${safeFileName}`;
     const { uploadFile, deleteFile } = await import('./supabase.service');
     await uploadFile(buffer, storageKey, mimeType);
 

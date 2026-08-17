@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
+import { activeOrganizationMembershipWhere, organizationMembershipRoleSelect, usersWithEffectiveMembershipRoles } from '../auth/organizationMembership';
 import { AGENDA_TIME_ZONE } from '../domain/agenda';
 import type { CanonicalMovement, EconomicNature } from '../domain/financeCore';
 import {
@@ -240,8 +241,8 @@ export class ReportingService {
     const global = user.permissions.includes('reportes.global.read');
     const [users, notarias] = await Promise.all([
       this.db.user.findMany({
-        where: { activo: true, rol: { in: ['DIRECCION', 'ADMINISTRACION', 'ABOGADO'] }, ...(!global ? { id: user.id } : {}) },
-        select: { id: true, nombre: true, apellido: true, rol: true },
+        where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(user.organizationId, ['DIRECCION', 'ADMINISTRACION', 'ABOGADO']) }, ...(!global ? { id: user.id } : {}) },
+        select: { id: true, nombre: true, apellido: true, ...organizationMembershipRoleSelect(user.organizationId) },
         orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }],
       }),
       global ? this.db.notaria.findMany({
@@ -251,7 +252,7 @@ export class ReportingService {
       }) : Promise.resolve([]),
     ]);
     return {
-      usuarios: users,
+      usuarios: usersWithEffectiveMembershipRoles(users),
       notarias,
       scope: {
         global,
@@ -481,7 +482,7 @@ export class ReportingService {
     const { week, previousWeek, month, nextMonth } = reportingCalendarRanges(AGENDA_TIME_ZONE, now);
     const [users, expedientes, snapshot, currentSnapshot, targets] = await Promise.all([
       this.db.user.findMany({
-        where: { activo: true, rol: { in: ['DIRECCION', 'ADMINISTRACION', 'ABOGADO'] }, ...(ctx.scope.lawyerId ? { id: ctx.scope.lawyerId } : {}) },
+        where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(user.organizationId, ['DIRECCION', 'ADMINISTRACION', 'ABOGADO']) }, ...(ctx.scope.lawyerId ? { id: ctx.scope.lawyerId } : {}) },
         select: { id: true, nombre: true, apellido: true },
         orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }],
       }),

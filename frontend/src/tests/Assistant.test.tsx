@@ -4,7 +4,7 @@ import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import { AssistantProvider, useAssistant } from '../features/assistant/AssistantProvider';
 import type { AssistantService } from '../features/assistant/assistant.service';
-import type { AssistantReply, AssistantSuggestion } from '../features/assistant/assistant.types';
+import type { AssistantAttachment, AssistantConversation, AssistantReply, AssistantSuggestion } from '../features/assistant/assistant.types';
 import { AssistantLayer } from '../features/assistant/components/AssistantLayer';
 
 const suggestion: AssistantSuggestion = {
@@ -14,12 +14,31 @@ const suggestion: AssistantSuggestion = {
   cta: { label: 'Revisar', prompt: 'Revisar requisitos pendientes.' }, timestamp: '2026-08-12T10:00:00Z',
 };
 
+const conversation: AssistantConversation = {
+  id: 'conversation-1', title: 'Nueva conversación', status: 'ACTIVE', last_message_at: '2026-08-12T10:00:00Z',
+  message_count: 0, created_at: '2026-08-12T10:00:00Z', updated_at: '2026-08-12T10:00:00Z',
+};
+const attachment: AssistantAttachment = {
+  id: 'attachment-1', source: 'TEMPORARY_UPLOAD', original_name: 'archivo.pdf', mime_type: 'application/pdf', size_bytes: 10,
+  status: 'AVAILABLE', expires_at: '2026-09-12T10:00:00Z', created_at: '2026-08-12T10:00:00Z',
+};
+
 const makeService = (overrides: Partial<AssistantService> = {}): AssistantService => ({
   getSuggestions: vi.fn(async () => []),
   sendMessage: vi.fn(async (): Promise<AssistantReply> => ({ status: 'idle', message: 'Respuesta disponible.' })),
   confirmAction: vi.fn(async (): Promise<AssistantReply> => ({ status: 'success', message: 'Acción completada correctamente.' })),
   dismissSuggestion: vi.fn(async () => undefined),
   snoozeSuggestion: vi.fn(async () => undefined),
+  createConversation: vi.fn(async () => conversation),
+  listConversations: vi.fn(async () => []),
+  getConversation: vi.fn(async () => ({ ...conversation, messages: [], attachments: [] })),
+  renameConversation: vi.fn(async (_id, title) => ({ ...conversation, title })),
+  archiveConversation: vi.fn(async (): Promise<AssistantConversation> => ({ ...conversation, status: 'ARCHIVED' })),
+  trashConversation: vi.fn(async (): Promise<AssistantConversation> => ({ ...conversation, status: 'TRASHED' })),
+  restoreConversation: vi.fn(async () => conversation),
+  uploadAttachment: vi.fn(async () => attachment),
+  archiveAttachment: vi.fn(async (): Promise<AssistantAttachment> => ({ ...attachment, status: 'ARCHIVED' })),
+  transcribeAttachment: vi.fn(async () => ({ attachmentId: 'attachment-1', transcript: 'Texto transcrito.' })),
   ...overrides,
 });
 
@@ -28,6 +47,11 @@ function ContextProbe() {
   const location = useLocation();
   const navigate = useNavigate();
   return <><output data-testid="context">{context.module}:{context.entityId ?? 'none'}:{location.pathname}</output><button onClick={() => navigate('/expedientes/abc-123')}>Cambiar contexto</button></>;
+}
+
+function VoiceProbe() {
+  const assistant = useAssistant();
+  return <><output data-testid="voice-draft">{assistant.draft}</output><button type="button" onClick={() => void assistant.transcribeAudio(new File(['audio'], 'voz.webm', { type: 'audio/webm' }))}>Transcribir prueba</button></>;
 }
 
 const renderAssistant = (service = makeService(), extra?: React.ReactNode) => render(
@@ -140,6 +164,64 @@ describe('PRAVIA IA global', () => {
     expect(await screen.findByText('Tienes dos pendientes reales.')).toBeInTheDocument();
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(sendMessage).toHaveBeenLastCalledWith(expect.objectContaining({ message: 'Muéstrame mis pendientes de hoy.' }), expect.any(AbortSignal));
+    expect(sendMessage.mock.calls[1][0].clientMessageId).toBe(sendMessage.mock.calls[0][0].clientMessageId);
+  });
+
+  it('muestra historial privado archivado y permite restaurarlo', async () => {
+    const archived: AssistantConversation = { ...conversation, id: 'conversation-archived', title: 'Revisión de escritura', status: 'ARCHIVED', message_count: 4 };
+    const listConversations = vi.fn(async (status = 'ACTIVE') => status === 'ARCHIVED' ? [archived] : []);
+    const restoreConversation = vi.fn(async () => ({ ...archived, status: 'ACTIVE' as const }));
+    const user = userEvent.setup();
+    renderAssistant(makeService({ listConversations, restoreConversation }));
+    await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA' }));
+    await user.click(screen.getByRole('button', { name: 'Ver historial de conversaciones' }));
+    await user.click(screen.getByRole('tab', { name: 'Archivadas' }));
+    expect(await screen.findByText('Revisión de escritura')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Restaurar Revisión de escritura' }));
+    expect(restoreConversation).toHaveBeenCalledWith('conversation-archived');
+  });
+
+  it('distingue los adjuntos temporales de un documento oficial antes de enviarlos', async () => {
+    const service = makeService();
+    const user = userEvent.setup();
+    const view = renderAssistant(service);
+    await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA' }));
+    const input = view.container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+    await user.upload(input!, new File(['archivo'], 'identificacion.pdf', { type: 'application/pdf' }));
+    expect(await screen.findByText('Temporal · no forma parte del expediente')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Pregúntame algo...'), 'Revisa este documento.');
+    await user.click(screen.getByRole('button', { name: 'Enviar mensaje' }));
+    await waitFor(() => expect(service.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ attachmentIds: ['attachment-1'] }), expect.any(AbortSignal)));
+  });
+
+  it('marca como abandonados los adjuntos pendientes al iniciar otra conversación', async () => {
+    const service = makeService();
+    const user = userEvent.setup();
+    const view = renderAssistant(service);
+    await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA' }));
+    const input = view.container.querySelector<HTMLInputElement>('input[type="file"]');
+    await user.upload(input!, new File(['archivo'], 'temporal.pdf', { type: 'application/pdf' }));
+    await screen.findByText('Temporal · no forma parte del expediente');
+    await user.click(screen.getByRole('button', { name: 'Nueva conversación' }));
+    await waitFor(() => expect(service.archiveAttachment).toHaveBeenCalledWith(conversation.id, attachment.id));
+  });
+
+  it('coloca la transcripción de voz en el borrador para revisión humana antes de enviar', async () => {
+    const service = makeService();
+    const user = userEvent.setup();
+    renderAssistant(service, <VoiceProbe />);
+    await user.click(screen.getByRole('button', { name: 'Transcribir prueba' }));
+    expect(await screen.findByTestId('voice-draft')).toHaveTextContent('Texto transcrito.');
+    expect(service.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('explica humanamente cuando el navegador no permite usar el micrófono', async () => {
+    const user = userEvent.setup();
+    renderAssistant();
+    await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA' }));
+    await user.click(screen.getByRole('button', { name: 'Grabar mensaje de voz' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('No pude acceder al micrófono');
   });
 
   it('envía historial acotado para un follow-up contextual', async () => {
