@@ -48,6 +48,10 @@ describe('Cotizaciones', () => {
     expect(await screen.findByRole('heading', { name: 'Cotizaciones' })).toBeInTheDocument(); await screen.findByText('Lista de cotizaciones');
     expect(screen.getByText('Total cotizaciones')).toBeInTheDocument(); expect(screen.getByText('Importe total')).toBeInTheDocument();
     expect(screen.getAllByText('$120,000.00').length).toBeGreaterThan(0); expect(screen.getByRole('heading', { name: 'Conversión de cotizaciones' })).toBeInTheDocument();
+    const help = screen.getByRole('button', { name: 'Tasa = cotizaciones aceptadas / cotizaciones enviadas al cliente.' });
+    help.focus();
+    expect(help).toHaveFocus();
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Tasa = cotizaciones aceptadas / cotizaciones enviadas al cliente.');
   });
 
   it('consulta búsqueda y filtros en servidor', async () => {

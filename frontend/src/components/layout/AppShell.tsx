@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type MouseEvent } from 'react';
 import { Outlet } from 'react-router-dom';
 import { useAuth } from '../../features/auth/AuthProvider';
 import { Sidebar } from './Sidebar';
@@ -19,13 +19,21 @@ export function AppShell() {
 
   if (!user) return null;
 
+  const skipToContent = (event: MouseEvent<HTMLAnchorElement>) => {
+    const main = document.getElementById('main-content');
+    if (!main) return;
+    event.preventDefault();
+    main.focus();
+    main.scrollIntoView?.({ block: 'start' });
+  };
+
   return (
     <div className={`${styles.shell} ${collapsed ? styles.collapsed : ''}`} key={user.organization?.id || 'organization'}>
-      <a className={styles.skipLink} href="#main-content">Saltar al contenido</a>
+      <a className={styles.skipLink} href="#main-content" onClick={skipToContent}>Saltar al contenido</a>
       <Sidebar user={user} collapsed={collapsed} mobileOpen={mobileOpen} onToggle={() => setCollapsed((value) => !value)} onCloseMobile={() => setMobileOpen(false)} />
       <div className={styles.main}>
         <Topbar user={user} onOpenMobile={() => setMobileOpen(true)} onLogout={logout} onSwitchOrganization={switchOrganization} />
-        <main className={styles.workspace} id="main-content"><Outlet /></main>
+        <main className={styles.workspace} id="main-content" tabIndex={-1}><Outlet /></main>
       </div>
       <AssistantLayer mobileSidebarOpen={mobileOpen} />
     </div>

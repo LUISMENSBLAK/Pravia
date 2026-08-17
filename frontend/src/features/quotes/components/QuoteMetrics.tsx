@@ -15,7 +15,7 @@ export function QuoteMetrics({ meta }: { meta: QuoteListMeta }) {
   return <section className={styles.metrics} aria-label="Indicadores de cotizaciones">
     {items.map(({ label, value, exactValue, icon: Icon, tone, help }) => <article className={styles.metric} key={label}>
       <span className={`${styles.metricIcon} ${styles[tone]}`}><Icon size={20} aria-hidden="true" /></span>
-      <div><span>{label}{help && <Tooltip label={help}><button className={styles.infoButton} type="button" aria-label={help}>i</button></Tooltip>}</span><strong title={exactValue}>{value}</strong></div>
+      <div><span>{label}{help && <Tooltip label={help} placement="left"><button className={styles.infoButton} type="button" aria-label={help}>i</button></Tooltip>}</span><strong title={exactValue}>{value}</strong></div>
     </article>)}
   </section>;
 }

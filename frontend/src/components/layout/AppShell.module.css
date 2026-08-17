@@ -2,6 +2,8 @@
 .collapsed { --sidebar-width: 76px; }
 .main { min-width: 0; min-height: 100dvh; margin-left: var(--sidebar-width); transition: margin-left var(--motion-standard); }
 .workspace { min-width: 0; min-height: calc(100dvh - var(--topbar-height)); border-radius: 14px 0 0 0; padding: clamp(24px, 2.2vw, 32px); padding-right: max(88px, clamp(24px, 2.2vw, 32px)); padding-bottom: max(104px, clamp(24px, 2.2vw, 32px)); background: var(--color-workspace); }
+.workspace:focus { outline: none; }
+.workspace:focus-visible { outline: 3px solid var(--color-focus); outline-offset: -3px; }
 .skipLink { position: fixed; z-index: var(--layer-skip-link); top: var(--space-3); left: var(--space-3); transform: translateY(-160%); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); color: var(--color-navy-950); background: var(--color-gold-400); font-size: var(--text-sm); font-weight: 700; text-decoration: none; transition: transform var(--motion-fast); }
 .skipLink:focus { transform: translateY(0); outline: 3px solid white; }
 

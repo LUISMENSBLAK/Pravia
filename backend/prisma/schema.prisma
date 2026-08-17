@@ -165,6 +165,7 @@ model AuthSession {
 
   @@index([user_id, revoked_at, expires_at], map: "auth_sessions_user_revoked_expires_idx")
   @@index([organization_id, revoked_at, expires_at], map: "auth_sessions_org_revoked_expires_idx")
+  @@index([membership_id], map: "idx_auth_sessions_membership_fk")
   @@map("auth_sessions")
 }
 
@@ -1758,6 +1759,8 @@ model CalculoISR {
   @@index([compareciente_id], map: "idx_calculos_isr_compareciente")
   @@index([estado, ejercicio], map: "idx_calculos_isr_estado_ejercicio")
   @@index([contribuyente_rfc], map: "idx_calculos_isr_rfc")
+  @@index([creado_por_id], map: "idx_isr_created_by_fk")
+  @@index([actualizado_por_id], map: "idx_isr_updated_by_fk")
   @@map("calculos_isr")
 }
 
@@ -1779,6 +1782,7 @@ model CalculoISRVersion {
 
   @@unique([calculo_id, version])
   @@index([rule_set_id], map: "idx_calculos_isr_version_ruleset")
+  @@index([calculado_por_id], map: "idx_isr_versions_calculated_by_fk")
   @@map("calculos_isr_versiones")
 }
 
@@ -1799,6 +1803,7 @@ model CalculoISRDocumento {
 
   @@unique([calculo_id, documento_id])
   @@index([documento_id], map: "idx_calculos_isr_documento")
+  @@index([creado_por_id], map: "idx_isr_documents_created_by_fk")
   @@map("calculos_isr_documentos")
 }
 
@@ -1825,6 +1830,7 @@ model CalculoISRPropuesta {
 
   @@index([calculo_id, status], map: "idx_calculos_isr_propuestas_estado")
   @@index([source_document_id], map: "idx_calculos_isr_propuestas_documento")
+  @@index([reviewed_by_id], map: "idx_isr_proposals_reviewed_by_fk")
   @@map("calculos_isr_propuestas")
 }
 
@@ -2235,6 +2241,8 @@ model AssistantAttachment {
   @@index([organization_id, conversation_id, status, created_at], map: "idx_assistant_attachments_conversation_status_created")
   @@index([documento_id], map: "idx_assistant_attachments_documento")
   @@index([expires_at, status], map: "idx_assistant_attachments_expiry_status")
+  @@index([message_id], map: "idx_assistant_attachments_message_fk")
+  @@index([uploaded_by_id], map: "idx_assistant_attachments_uploader_fk")
   @@map("assistant_attachments")
 }
 
@@ -2356,6 +2364,7 @@ model ComplianceEvidence {
   @@unique([review_id, documento_id, tipo_evidencia])
   @@index([documento_id])
   @@index([agregado_por_id], map: "idx_compliance_evidence_agregado_fk")
+  @@index([retired_by_id], map: "idx_compliance_evidence_retired_by_fk")
   @@map("compliance_evidence")
 }
 
@@ -2408,7 +2417,9 @@ model ComplianceBeneficialOwner {
   created_at            DateTime  @default(now())
 
   @@index([review_id, status])
-  @@index([compareciente_id])
+  @@index([compareciente_id], map: "idx_uif_beneficial_owners_party_fk")
+  @@index([confirmed_by_id], map: "idx_uif_beneficial_owners_confirmed_by_fk")
+  @@index([support_document_id], map: "idx_uif_beneficial_owners_support_doc_fk")
   @@map("compliance_beneficial_owners")
 }
 
@@ -2430,6 +2441,8 @@ model CompliancePepReview {
 
   @@unique([review_id, compareciente_id])
   @@index([status])
+  @@index([evidence_document_id], map: "idx_uif_pep_evidence_doc_fk")
+  @@index([human_reviewed_by_id], map: "idx_uif_pep_human_reviewer_fk")
   @@map("compliance_pep_reviews")
 }
 
@@ -2450,7 +2463,8 @@ model ComplianceScreeningResult {
   created_at       DateTime  @default(now())
 
   @@index([review_id, status])
-  @@index([compareciente_id])
+  @@index([compareciente_id], map: "idx_uif_screening_party_fk")
+  @@index([reviewed_by_id], map: "idx_uif_screening_reviewer_fk")
   @@map("compliance_screening_results")
 }
 
@@ -2472,6 +2486,8 @@ model CompliancePayment {
   retired_at           DateTime?
 
   @@index([review_id, payment_date])
+  @@index([created_by_id], map: "idx_uif_payments_created_by_fk")
+  @@index([evidence_document_id], map: "idx_uif_payments_evidence_doc_fk")
   @@map("compliance_payments")
 }
 
@@ -2501,6 +2517,9 @@ model ComplianceObligation {
   @@unique([review_id, type])
   @@index([review_id, status])
   @@index([due_at, status])
+  @@index([external_confirmed_by], map: "idx_uif_obligations_external_confirmer_fk")
+  @@index([external_receipt_id], map: "idx_uif_obligations_external_receipt_fk")
+  @@index([responsible_id], map: "idx_uif_obligations_responsible_fk")
   @@map("compliance_obligations")
 }
 
@@ -2516,6 +2535,7 @@ model ComplianceEvent {
   created_at      DateTime @default(now())
 
   @@index([review_id, created_at])
+  @@index([actor_id], map: "idx_uif_events_actor_fk")
   @@map("compliance_events")
 }
 
@@ -2537,6 +2557,9 @@ model ComplianceAiProposal {
   created_at         DateTime  @default(now())
 
   @@index([review_id, created_at])
+  @@index([decided_by_id], map: "idx_uif_ai_proposals_decider_fk")
+  @@index([requested_by_id], map: "idx_uif_ai_proposals_requester_fk")
+  @@index([source_document_id], map: "idx_uif_ai_proposals_source_doc_fk")
   @@map("compliance_ai_proposals")
 }
 

@@ -42,14 +42,25 @@ export function normalizeErrorBody(
     ? source.code.trim()
     : STATUS_CODES[status] || `HTTP_${status}`;
 
+  // Unexpected server failures are always opaque, including in local/staging
+  // environments. Production additionally keeps every upstream 5xx opaque.
+  // Technical context belongs in server-side logs, never in the response.
+  const hideInternalDetails = status === 500 || (production && status >= 500);
+  if (hideInternalDetails) {
+    return {
+      code: STATUS_CODES[status] || 'INTERNAL_ERROR',
+      error: defaultMessage(status),
+      correlation_id: correlationId,
+    };
+  }
+
   delete source.message;
   delete source.stack;
-  if (production && status >= 500) delete source.detail;
 
   return {
     ...source,
     code,
-    error: production && status >= 500 ? defaultMessage(status) : error,
+    error,
     correlation_id: correlationId,
   };
 }

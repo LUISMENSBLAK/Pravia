@@ -19,12 +19,34 @@ describe('normalizeErrorBody', () => {
     });
   });
 
-  it('oculta detalles internos en producción', () => {
-    const result = normalizeErrorBody({ error: 'password=secreto', detail: 'stack interno', stack: 'trace' }, 500, 'corr-3', true);
+  it('oculta todos los detalles internos de un error 500 en cualquier entorno', () => {
+    const result = normalizeErrorBody({
+      error: 'Invalid prisma.expediente.findMany()...',
+      detail: 'relation pravia_os.documentos does not exist',
+      storage_key: 'organizations/org-b/private/file.pdf',
+      entity_id: '22222222-2222-4222-8222-222222222222',
+      cause: 'sk-test-do-not-expose',
+      meta: { table: 'documentos' },
+      stack: 'trace',
+    }, 500, 'corr-3');
     expect(result).toEqual({
       code: 'INTERNAL_ERROR',
       error: 'No fue posible completar la solicitud. Intenta de nuevo.',
       correlation_id: 'corr-3',
+    });
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain('prisma');
+    expect(serialized).not.toContain('pravia_os');
+    expect(serialized).not.toContain('organizations/org-b');
+    expect(serialized).not.toContain('22222222-2222-4222-8222-222222222222');
+    expect(serialized).not.toContain('sk-test-do-not-expose');
+  });
+
+  it('conserva mensajes humanos controlados de errores 4xx', () => {
+    expect(normalizeErrorBody({ code: 'QUOTE_LOCKED', error: 'La cotización ya fue convertida.' }, 409, 'corr-4')).toEqual({
+      code: 'QUOTE_LOCKED',
+      error: 'La cotización ya fue convertida.',
+      correlation_id: 'corr-4',
     });
   });
 

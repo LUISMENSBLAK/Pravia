@@ -86,4 +86,25 @@ describe('Mi Día', () => {
     await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA para hacer una pregunta' }));
     expect(await screen.findByRole('dialog', { name: 'PRAVIA IA' })).toBeInTheDocument();
   });
+
+  it('transfiere el foco al contenido principal desde el skip link', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/auth/me')) return response(session);
+      if (url.endsWith('/mi-dia')) return response({ data: baseDashboard });
+      return response({}, 204);
+    }));
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/mi-dia']}><App /></MemoryRouter>);
+    await screen.findByRole('heading', { name: /Usuario/ });
+    const skipLink = screen.getByRole('link', { name: 'Saltar al contenido' });
+    skipLink.focus();
+    expect(skipLink).toHaveFocus();
+    await user.keyboard('{Enter}');
+    const main = document.getElementById('main-content');
+    expect(main).toHaveAttribute('tabindex', '-1');
+    expect(main).toHaveFocus();
+    await user.tab();
+    expect(main?.contains(document.activeElement)).toBe(true);
+  });
 });
