@@ -16,4 +16,14 @@ export const complianceService = {
   decide: async (id: string, decision: 'CONFIRMAR' | 'REQUIERE_AJUSTES', observaciones: string) => { const response = await apiRequest<{ revision: ComplianceReview }>(`/cumplimiento/revisiones/${id}/revisar`, { method: 'POST', body: JSON.stringify({ decision, observaciones }) }); return response.revision; },
   reevaluate: async (id: string) => { const response = await apiRequest<{ revision: ComplianceReview }>(`/cumplimiento/revisiones/${id}/reevaluar`, { method: 'POST', body: JSON.stringify({ conservar_respuestas: true }) }); return response.revision; },
   addEvidence: async (id: string, body: any) => apiRequest(`/cumplimiento/revisiones/${id}/evidencias`, { method: 'POST', body: JSON.stringify(body) }),
+  addPayment: async (id: string, body: any) => apiRequest(`/cumplimiento/revisiones/${id}/pagos`, { method: 'POST', body: JSON.stringify(body) }),
+  saveBeneficialOwner: async (id: string, body: any) => apiRequest(`/cumplimiento/revisiones/${id}/beneficiarios-controladores`, { method: 'POST', body: JSON.stringify(body) }),
+  savePepReview: async (id: string, body: any) => apiRequest(`/cumplimiento/revisiones/${id}/pep`, { method: 'POST', body: JSON.stringify(body) }),
+  confirmExternalNotice: async (id: string, obligationId: string, body: any) => apiRequest(`/cumplimiento/revisiones/${id}/obligaciones/${obligationId}/presentacion-externa`, { method: 'POST', body: JSON.stringify(body) }),
+  retireEvidence: async (id: string, evidenceId: string, reason: string) => apiRequest(`/cumplimiento/revisiones/${id}/evidencias/${evidenceId}/retirar`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  evidenceBlob: async (id: string, evidenceId: string) => {
+    const response = await fetch(`/api/cumplimiento/revisiones/${encodeURIComponent(id)}/evidencias/${encodeURIComponent(evidenceId)}/archivo`, { credentials: 'include' });
+    if (!response.ok) throw new Error('No fue posible preparar la vista previa protegida.');
+    return response.blob();
+  },
 };

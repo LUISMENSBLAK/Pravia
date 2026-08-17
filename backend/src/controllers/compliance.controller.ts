@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { ComplianceError } from '../domain/compliance';
 import { ComplianceReviewService } from '../services/complianceReview.service';
+import { downloadFile } from '../services/supabase.service';
 
 const actor = (req: Request) => req.user?.id;
 const correlation = (req: Request) => (req as any).correlationId;
@@ -50,5 +51,41 @@ export class ComplianceController {
   static async addEvidence(req: Request, res: Response) {
     try { return res.status(201).json({ success: true, evidencia: await ComplianceReviewService.addEvidence(req.user!, actor(req), req.params.id, req.body, correlation(req)) }); }
     catch (error) { return sendError(res, error, 'COMPLIANCE_EVIDENCE_FAILED'); }
+  }
+
+  static async addPayment(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, payment: await ComplianceReviewService.addPayment(req.user!, actor(req), req.params.id, req.body, correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_PAYMENT_FAILED'); }
+  }
+
+  static async saveBeneficialOwner(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, beneficialOwner: await ComplianceReviewService.saveBeneficialOwner(req.user!, actor(req), req.params.id, req.body, correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_BENEFICIAL_OWNER_FAILED'); }
+  }
+
+  static async savePepReview(req: Request, res: Response) {
+    try { return res.json({ success: true, pepReview: await ComplianceReviewService.savePepReview(req.user!, actor(req), req.params.id, req.body, correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_PEP_REVIEW_FAILED'); }
+  }
+
+  static async confirmExternalNotice(req: Request, res: Response) {
+    try { return res.json({ success: true, obligation: await ComplianceReviewService.confirmExternalNotice(req.user!, actor(req), req.params.id, req.params.obligationId, req.body, correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_NOTICE_CONFIRM_FAILED'); }
+  }
+
+  static async retireEvidence(req: Request, res: Response) {
+    try { return res.json({ success: true, evidence: await ComplianceReviewService.retireEvidence(req.user!, actor(req), req.params.id, req.params.evidenceId, req.body, correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_EVIDENCE_RETIRE_FAILED'); }
+  }
+
+  static async viewEvidence(req: Request, res: Response) {
+    try {
+      const document = await ComplianceReviewService.evidenceDocument(req.user!, req.params.id, req.params.evidenceId);
+      const buffer = await downloadFile(document.storage_key);
+      res.setHeader('Content-Type', document.mime_type || 'application/octet-stream');
+      res.setHeader('Content-Disposition', `${req.query.download === '1' ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(document.nombre_original)}`);
+      res.setHeader('Cache-Control', 'private, no-store');
+      return res.send(buffer);
+    } catch (error) { return sendError(res, error, 'COMPLIANCE_EVIDENCE_VIEW_FAILED'); }
   }
 }

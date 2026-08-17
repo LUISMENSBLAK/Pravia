@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, Check, LoaderCircle, Save, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Check, ChevronRight, LoaderCircle, Save, ShieldCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { PageContainer } from '../../components/layout/PageContainer';
@@ -104,6 +104,7 @@ export function ComparecienteWorkspace(){
         <main className={styles.unifiedInformation}><header><span>Información del compareciente</span><h2>Datos notariales</h2><p>{canWrite?'Edita directamente y guarda cuando hayas terminado.':'Consulta la información disponible dentro de tus permisos.'}</p></header><ComparecienteForm draft={draft} readOnly={!canWrite} lockType={!createMode} sources={sources} onChange={change}/></main>
         <aside><ComparecienteDocuments comparecienteId={createMode?undefined:id} sessionId={sessionId} documents={documents} canUpload={canUpload} canDelete={canDelete} canExtract={canExtract} busy={busy} extractionState={extractionState} onUpload={upload} onDelete={remove} onExtract={extract}/></aside>
       </div>
+      {!createMode&&item&&item.complianceSnapshots.length>0&&<section className={styles.complianceBridge} aria-label="Evaluaciones Riesgos / UIF"><header><div><span>Riesgos / UIF</span><h2>Evaluaciones relacionadas</h2><p>Snapshots históricos vinculados mediante los expedientes de este compareciente.</p></div></header><div>{item.complianceSnapshots.map((review:any)=><Link key={review.id} to={`/riesgos/revisiones/${review.id}`}><ShieldCheck/><span><strong>{review.expediente?.numero_pravia||'Expediente relacionado'}</strong><small>{String(review.estatus||'SIN_EVALUAR').replaceAll('_',' ').toLocaleLowerCase('es-MX')} · solo lectura desde esta ficha</small></span><ChevronRight/></Link>)}</div></section>}
     </form>
   </PageContainer>;
 }

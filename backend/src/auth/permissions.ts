@@ -18,6 +18,9 @@ export const PERMISSIONS = [
   'ai.agenda.read', 'ai.finanzas.read', 'ai.reportes.read', 'ai.isr.read', 'ai.cumplimiento.read', 'ai.work.read',
   'ai.search', 'ai.navigate', 'ai.actions.prepare', 'ai.admin.read',
   'cumplimiento.read', 'cumplimiento.write', 'cumplimiento.confirm',
+  'compliance.read', 'compliance.write', 'compliance.review',
+  'compliance.rules.read', 'compliance.rules.manage',
+  'compliance.notice.prepare', 'compliance.notice.confirm', 'compliance.sensitive.read',
   'usuarios.read', 'usuarios.manage',
   'configuracion.manage',
 ] as const;
@@ -43,7 +46,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'ai.use', 'ai.prospectos.read', 'ai.expedientes.read', 'ai.comparecientes.read', 'ai.documentos.read',
     'ai.agenda.read', 'ai.finanzas.read', 'ai.reportes.read', 'ai.isr.read', 'ai.cumplimiento.read', 'ai.work.read',
     'ai.search', 'ai.navigate', 'ai.actions.prepare', 'ai.admin.read',
-    'cumplimiento.read', 'usuarios.read',
+    'cumplimiento.read', 'compliance.read', 'compliance.rules.read', 'compliance.sensitive.read', 'usuarios.read',
   ],
   ABOGADO: [
     'mi_dia.read', 'prospectos.read', 'prospectos.write',
@@ -57,6 +60,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'ai.use', 'ai.prospectos.read', 'ai.expedientes.read', 'ai.comparecientes.read', 'ai.documentos.read',
     'ai.agenda.read', 'ai.reportes.read', 'ai.isr.read', 'ai.cumplimiento.read', 'ai.work.read', 'ai.search', 'ai.navigate', 'ai.actions.prepare',
     'cumplimiento.read', 'cumplimiento.write', 'cumplimiento.confirm',
+    'compliance.read', 'compliance.write', 'compliance.review', 'compliance.rules.read', 'compliance.notice.prepare', 'compliance.sensitive.read',
     'usuarios.read',
   ],
   RECEPCION: [
@@ -76,7 +80,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   CONSULTA: [
     'mi_dia.read', 'expedientes.read', 'expedientes.project.read', 'documentos.read',
     'comparecientes.read', 'notarias.read', 'agenda.read',
-    'reportes.read', 'ia.read', 'cumplimiento.read',
+    'reportes.read', 'ia.read', 'cumplimiento.read', 'compliance.read',
     'isr.read',
     'ai.use', 'ai.expedientes.read', 'ai.comparecientes.read', 'ai.documentos.read',
     'ai.agenda.read', 'ai.reportes.read', 'ai.isr.read', 'ai.cumplimiento.read', 'ai.work.read', 'ai.search', 'ai.navigate',

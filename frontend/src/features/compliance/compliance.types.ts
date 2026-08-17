@@ -7,6 +7,7 @@ export type ComplianceReview = {
   cuestionario_json: Record<string, any>; resultado_json?: { clasificacion: string; disclaimer?: string; alertas?: ComplianceAlert[]; faltantes?: string[]; [key: string]: any };
   explicacion?: string; revisado_at?: string; expediente: any; ruleSet: any; creado_por: any; revisado_por?: any; evidencias: any[]; decisiones: any[]; supersedes?: any;
 };
-export type ComplianceList = { revisiones: ComplianceReview[]; meta: { page: number; pageSize: number; total: number; totalPages: number }; metrics: { requieren_revision: number; pendientes: number; observaciones: number; confirmadas: number } };
+export type ComplianceList = { revisiones: ComplianceReview[]; meta: { page: number; pageSize: number; total: number; totalPages: number }; metrics: { expedientes_evaluados: number; requieren_revision: number; avisos_por_presentar: number; obligaciones_vencidas: number } };
 export type ComplianceCatalogs = { reglas: any[]; expedientes: any[]; usuarios: any[]; documentos: any[] };
-export type ComplianceDetail = { revision: ComplianceReview; historial: ComplianceReview[] };
+export type ComplianceWorkspace = { parties: any[]; beneficialOwners: any[]; pepReviews: any[]; screenings: any[]; payments: any[]; obligations: any[]; events: any[]; aiProposals: any[]; sensitiveRedacted: boolean };
+export type ComplianceDetail = { revision: ComplianceReview; historial: ComplianceReview[]; workspace?: ComplianceWorkspace };

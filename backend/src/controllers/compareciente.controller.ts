@@ -63,7 +63,7 @@ export class ComparecienteController {
         data.documentos = [];
         data.datosFuente = [];
       }
-      if (!req.user?.permissions?.includes('cumplimiento.read')) {
+      if (!req.user?.permissions?.some((permission) => ['compliance.read', 'cumplimiento.read'].includes(permission))) {
         data.complianceSnapshots = [];
         data.cumplimiento = 'NO_CONFIGURADO';
         data.health = data.health.map((item: any) => item.key === 'CUMPLIMIENTO' ? { ...item, state: 'NO_CONFIGURADO' } : item);

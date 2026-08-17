@@ -243,7 +243,7 @@ app.use('/api/agenda', authorizeByMethod('agenda.read', 'agenda.write'), agendaR
 app.use('/api/reportes', requirePermission('reportes.read'), reportesRoutes);
 app.use('/api/mi-dia', requirePermission('mi_dia.read'), miDiaRoutes);
 app.use('/api/ia', aiRoutes);
-app.use('/api/cumplimiento', authorizeByMethod('cumplimiento.read', 'cumplimiento.write'), complianceRoutes);
+app.use('/api/cumplimiento', requirePermission('compliance.read'), complianceRoutes);
 app.use('/api/isr', isrRoutes);
 
 // 404 handler
