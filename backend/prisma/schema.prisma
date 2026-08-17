@@ -884,6 +884,7 @@ model Compareciente {
   id                                String                            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   tipo_persona                      TipoPersona                       @default(FISICA)
   nombre_busqueda                   String                            @db.VarChar(255)
+  observaciones                     String?
   estatus                           ComparecienteEstatus              @default(ACTIVO)
   creado_por_id                     String                            @db.Uuid
   created_at                        DateTime?                         @default(now()) @db.Timestamptz(6)

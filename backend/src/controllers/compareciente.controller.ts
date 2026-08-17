@@ -29,14 +29,12 @@ export class ComparecienteController {
 
   public static async listarMaster(req: Request, res: Response) {
     try {
-      const { tipo_persona, search, page, pageSize, limit, identidad, cumplimiento, actualizacion, sort } = req.query;
+      const { tipo_persona, search, page, pageSize, limit, actualizacion, sort } = req.query;
       const result = await comparecienteService.listarMaster({
         tipo_persona: tipo_persona as any,
         search: search as string,
         page: page ? parseInt(page as string, 10) : 1,
         limit: pageSize ? parseInt(pageSize as string, 10) : limit ? parseInt(limit as string, 10) : 25,
-        identidad: identidad as any,
-        cumplimiento: cumplimiento as any,
         actualizacion: actualizacion as any,
         sort: sort as string,
         accessWhere: req.user ? comparecienteObjectWhere(req.user) : undefined,
@@ -51,13 +49,20 @@ export class ComparecienteController {
     try {
       const { id } = req.params;
       const data: any = await comparecienteService.obtenerPorId(id);
-      const canWrite = req.user?.permissions?.includes('comparecientes.write') || false;
+      const permissions = req.user?.permissions || [];
+      const canWrite = permissions.includes('comparecientes.write');
       data.capabilities = {
         ...data.capabilities,
         canEdit: canWrite,
-        canUploadDocuments: canWrite,
-        canLinkCases: canWrite && (req.user?.permissions?.includes('expedientes.write') || false),
+        canUploadDocuments: canWrite && permissions.includes('documentos.write'),
+        canReadDocuments: permissions.includes('documentos.read'),
+        canDeleteDocuments: canWrite && permissions.includes('documentos.unlink'),
+        canExtractWithAI: canWrite && permissions.includes('documentos.read') && permissions.includes('ia.execute'),
       };
+      if (!permissions.includes('documentos.read')) {
+        data.documentos = [];
+        data.datosFuente = [];
+      }
       if (!req.user?.permissions?.includes('cumplimiento.read')) {
         data.complianceSnapshots = [];
         data.cumplimiento = 'NO_CONFIGURADO';
@@ -229,6 +234,28 @@ export class ComparecienteController {
       return res.status(201).json({ success: true, data: result });
     } catch (err: any) {
       return res.status(400).json({ success: false, error: err.message });
+    }
+  }
+
+  public static async eliminarDocumentoMaster(req: Request, res: Response) {
+    try {
+      const actor = authenticatedActor(req);
+      if (!actor) return res.status(401).json({ success: false, error: 'Tu sesión no es válida.' });
+      const data = await comparecienteService.eliminarDocumentoMaster(req.params.id, req.params.documentoId, actor.id);
+      return res.status(200).json({ success: true, data });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, error: err.message || 'No pudimos eliminar el documento.' });
+    }
+  }
+
+  public static async extraerDocumentosConIA(req: Request, res: Response) {
+    try {
+      const actor = authenticatedActor(req);
+      if (!actor) return res.status(401).json({ success: false, error: 'Tu sesión no es válida.' });
+      const data = await comparecienteService.extraerDocumentosExistentesConIA(req.params.id, actor.id);
+      return res.status(200).json({ success: true, data });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, error: err.message || 'No pudimos extraer la información de los documentos.' });
     }
   }
 

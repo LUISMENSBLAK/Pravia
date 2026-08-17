@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { ComparecienteController } from '../controllers/compareciente.controller';
 import { requireComparecienteObjectAccess } from '../middleware/objectAccess.middleware';
-import { requireExpedienteAccess } from '../middleware/auth.middleware';
+import { requireExpedienteAccess, requirePermission } from '../middleware/auth.middleware';
 
 const upload = multer({ limits: { fileSize: 25 * 1024 * 1024 } });
 const router = Router();
@@ -17,10 +17,12 @@ router.patch('/:id', ComparecienteController.actualizarMaster);
 router.patch('/:id/provenance/:sourceId/resolve', ComparecienteController.resolverConflictoDato);
 
 // Archivo Documental del Compareciente
-router.get('/:id/documentos', ComparecienteController.obtenerArchivoDocumental);
-router.get('/:id/documentos/:documentoId/descargar', ComparecienteController.descargarDocumentoMaster);
-router.get('/:id/documentos/:documentoId/visualizar', ComparecienteController.visualizarDocumentoMaster);
-router.post('/:id/documentos', upload.single('file'), ComparecienteController.subirDocumentoMaster);
+router.get('/:id/documentos', requirePermission('documentos.read'), ComparecienteController.obtenerArchivoDocumental);
+router.get('/:id/documentos/:documentoId/descargar', requirePermission('documentos.read'), ComparecienteController.descargarDocumentoMaster);
+router.get('/:id/documentos/:documentoId/visualizar', requirePermission('documentos.read'), ComparecienteController.visualizarDocumentoMaster);
+router.post('/:id/documentos', requirePermission('documentos.write'), upload.single('file'), ComparecienteController.subirDocumentoMaster);
+router.delete('/:id/documentos/:documentoId', requirePermission('documentos.unlink'), ComparecienteController.eliminarDocumentoMaster);
+router.post('/:id/extraer-ia', requirePermission('documentos.read'), requirePermission('ia.execute'), ComparecienteController.extraerDocumentosConIA);
 
 // Endpoints de creación
 router.post('/persona-fisica', ComparecienteController.crearPersonaFisica);

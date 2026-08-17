@@ -9,21 +9,19 @@ export type ComparecienteListItem = {
   rfc: string | null;
   curp: string | null;
   expedientes_vinculados: number;
-  identidad: IdentityState;
-  documentos: { total: number; vigentes: number; con_observacion: number };
-  cumplimiento: HealthState;
+  documentos: { total: number };
   updated_at: string;
 };
 
 export type ComparecienteListResult = {
   data: ComparecienteListItem[];
-  metrics: { total: number; verified: number; pending: number; observed: number };
+  metrics: { total: number; physical: number; legal: number };
   meta: { total: number; page: number; limit: number; pageSize: number; totalPages: number; hasPreviousPage: boolean; hasNextPage: boolean };
   definitions: Record<string, string>;
 };
 
 export type ComparecienteFilters = {
-  search?: string; type?: string; identity?: string; compliance?: string; updated?: string; sort?: string; page?: number; pageSize?: number;
+  search?: string; type?: string; updated?: string; sort?: string; page?: number; pageSize?: number;
 };
 
 export type DuplicateCandidate = {
@@ -40,7 +38,8 @@ export type ComparecienteDetail = ComparecienteListItem & {
   documentos: Array<Record<string, any>>; expedientes: Array<Record<string, any>>; datosFuente: Array<Record<string, any>>;
   representacionesComoRepresentante: Array<Record<string, any>>; representacionesComoRepresentado: Array<Record<string, any>>;
   complianceSnapshots: Array<Record<string, any>>; actividad: Array<Record<string, any>>; health: HealthDimension[];
-  capabilities: { canEdit?: boolean; canUploadDocuments: boolean; canLinkCases?: boolean; canArchive: boolean; allowsSoftDuplicateOverride: boolean; blocksExactIdentityDuplicate: boolean };
+  observaciones?: string | null;
+  capabilities: { canEdit?: boolean; canUploadDocuments: boolean; canReadDocuments?: boolean; canDeleteDocuments?: boolean; canExtractWithAI?: boolean; canArchive: boolean; allowsSoftDuplicateOverride: boolean; blocksExactIdentityDuplicate: boolean };
 };
 
 export type NewComparecienteDraft = Record<string, string> & { tipo_persona: PersonType };

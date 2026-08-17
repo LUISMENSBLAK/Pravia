@@ -34,4 +34,27 @@ describe('consolidateExtractedFields', () => {
     expect(result.needsEscalation).toBe(true);
     expect(result.escalationDocumentIds).toEqual(['doc-3']);
   });
+
+  it('combina campos sustentados por documentos distintos sin inventar ausentes', () => {
+    const result = consolidateExtractedFields([
+      { campo: 'nombre', valor: 'MARÍA LÓPEZ', confianza: 'LECTURA_CLARA', fuente: 'INE.pdf', documento_id: 'doc-ine' },
+      { campo: 'rfc', valor: 'LOPM900101AA1', confianza: 'LECTURA_CLARA', fuente: 'Constancia Fiscal.pdf', documento_id: 'doc-csf' },
+      { campo: 'dom_fiscal_codigo_postal', valor: '63000', confianza: 'LECTURA_CLARA', fuente: 'Constancia Fiscal.pdf', documento_id: 'doc-csf' },
+    ]);
+    expect(result.values).toMatchObject({ nombre: 'MARÍA LÓPEZ', rfc: 'LOPM900101AA1', dom_fiscal_codigo_postal: '63000' });
+    expect(result.values).not.toHaveProperty('estado_civil');
+    expect(result.values).not.toHaveProperty('pep_estado');
+    expect(result.proposals.nombre.documento_id).toBe('doc-ine');
+    expect(result.proposals.rfc.documento_id).toBe('doc-csf');
+  });
+
+  it('descarta campos vacíos de documentos ilegibles', () => {
+    const result = consolidateExtractedFields([
+      { campo: 'nombre', valor: '', confianza: 'LECTURA_DEFICIENTE', fuente: 'scan-ilegible.jpg', documento_id: 'doc-bad' },
+      { campo: '', valor: 'valor sin campo', confianza: 'LECTURA_DEFICIENTE', fuente: 'scan-ilegible.jpg', documento_id: 'doc-bad' },
+    ]);
+    expect(result.values).toEqual({});
+    expect(result.proposals).toEqual({});
+    expect(result.conflicts).toEqual([]);
+  });
 });

@@ -183,6 +183,18 @@ export class ComparecienteAltaSessionService {
   }) {
     const { sessionId, usuarioId, buffer, nombreOriginal, mimeType, tipoDocumento } = params;
 
+    const allowedMimeTypes = new Set([
+      'application/pdf',
+      'image/jpeg',
+      'image/png',
+      'image/bmp',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    ]);
+    if (!allowedMimeTypes.has(mimeType)) {
+      throw new Error('Tipo de archivo no permitido. Usa PDF, JPG/JPEG, PNG, BMP, DOC o DOCX.');
+    }
+
     const sesion = await prisma.comparecienteAltaSession.findUnique({ where: { id: sessionId } });
     if (!sesion) throw new Error('Sesión de alta no encontrada');
 
@@ -668,7 +680,12 @@ export class ComparecienteAltaSessionService {
     } = datosFormulario;
 
     const esFisica = tipo_persona === 'FISICA';
-    const nombreCompleto = esFisica ? `${nombre || ''} ${apellido_paterno || ''} ${apellido_materno || ''}`.trim() : (razon_social || '');
+    const upper = (value: unknown) => String(value ?? '').trim().toLocaleUpperCase('es-MX');
+    const nombreNormalizado = upper(nombre);
+    const apellidoPaternoNormalizado = upper(apellido_paterno);
+    const apellidoMaternoNormalizado = upper(apellido_materno);
+    const razonSocialNormalizada = upper(razon_social);
+    const nombreCompleto = esFisica ? `${nombreNormalizado} ${apellidoPaternoNormalizado} ${apellidoMaternoNormalizado}`.trim() : razonSocialNormalizada;
     if (!nombreCompleto) throw new Error(esFisica ? 'El nombre de la persona física es obligatorio.' : 'La razón social es obligatoria.');
     const cleanCurp = esFisica ? validateCurp(curp) : null;
     const cleanRfc = validateRfc(rfc, esFisica ? 'FISICA' : 'MORAL');
@@ -704,6 +721,7 @@ export class ComparecienteAltaSessionService {
         data: {
           tipo_persona: tipo_persona || 'FISICA',
           nombre_busqueda: nombreCompleto.toUpperCase(),
+          observaciones: String(observaciones || '').trim() || null,
           estatus: 'ACTIVO',
           creado_por_id: finalUsuarioId
         }
@@ -716,9 +734,9 @@ export class ComparecienteAltaSessionService {
         await tx.personaFisica.create({
           data: {
             compareciente_id: compareciente.id,
-            nombre,
-            apellido_paterno: apellido_paterno || null,
-            apellido_materno: apellido_materno || null,
+            nombre: nombreNormalizado,
+            apellido_paterno: apellidoPaternoNormalizado || null,
+            apellido_materno: apellidoMaternoNormalizado || null,
             nombre_completo_calculado: nombreCompleto,
             sexo: sexoNormalizado,
             fecha_nacimiento: birthDate,
@@ -743,19 +761,21 @@ export class ComparecienteAltaSessionService {
         await tx.personaMoral.create({
           data: {
             compareciente_id: compareciente.id,
-            razon_social,
-            nombre_comercial: nombre_comercial || null,
+            razon_social: razonSocialNormalizada,
+            nombre_comercial: upper(nombre_comercial) || null,
             tipo_societario: tipo_societario || null,
             rfc: cleanRfc,
             nacionalidad: nacionalidad_moral || 'Mexicana',
             fecha_constitucion: incorporationDate,
             duracion: duracion_moral || 'Indefinida',
-            objeto_social_resumido: objeto_social_resumido || null
+            objeto_social_resumido: objeto_social_resumido || null,
+            folio_mercantil: folio_mercantil || null,
+            fecha_inscripcion_mercantil: validateOptionalDate(fecha_inscripcion, 'La fecha de inscripción mercantil'),
           }
         });
       }
 
-      for (const [index, alias] of (Array.isArray(aliases) ? aliases : []).map((value: unknown) => String(value).trim()).filter(Boolean).entries()) {
+      for (const [index, alias] of (Array.isArray(aliases) ? aliases : []).map((value: unknown) => upper(value)).filter(Boolean).entries()) {
         await tx.comparecienteAlias.create({
           data: { compareciente_id: compareciente.id, alias, principal: index === 0 },
         });
@@ -781,12 +801,12 @@ export class ComparecienteAltaSessionService {
       const {
         dom_particular_calle, dom_particular_exterior, dom_particular_interior,
         dom_particular_colonia, dom_particular_cp, dom_particular_municipio,
-        dom_particular_estado, dom_particular_pais, dom_particular_referencias,
+        dom_particular_ciudad, dom_particular_localidad, dom_particular_estado, dom_particular_pais, dom_particular_referencias,
         dom_particular_documento,
 
         dom_fiscal_calle, dom_fiscal_exterior, dom_fiscal_interior,
         dom_fiscal_colonia, dom_fiscal_cp, dom_fiscal_municipio,
-        dom_fiscal_estado, dom_fiscal_pais, dom_fiscal_referencias,
+        dom_fiscal_ciudad, dom_fiscal_localidad, dom_fiscal_estado, dom_fiscal_pais, dom_fiscal_referencias,
         dom_fiscal_documento
       } = datosFormulario;
 
@@ -814,6 +834,7 @@ export class ComparecienteAltaSessionService {
             colonia: partColonia || null,
             codigo_postal: partCp || null,
             municipio: partMunicipio || null,
+            localidad: dom_particular_localidad || dom_particular_ciudad || domicilio_ciudad || null,
             estado: partEstado || null,
             pais: partPais || 'México',
             referencia: partRef || null,
@@ -836,6 +857,7 @@ export class ComparecienteAltaSessionService {
             colonia: dom_fiscal_colonia || null,
             codigo_postal: dom_fiscal_cp || null,
             municipio: dom_fiscal_municipio || null,
+            localidad: dom_fiscal_localidad || dom_fiscal_ciudad || null,
             estado: dom_fiscal_estado || null,
             pais: dom_fiscal_pais || 'México',
             referencia: dom_fiscal_referencias || null,
@@ -869,6 +891,7 @@ export class ComparecienteAltaSessionService {
               colonia: d.colonia || null,
               codigo_postal: d.codigo_postal || null,
               municipio: d.municipio || null,
+              localidad: d.localidad || d.ciudad || null,
               estado: d.estado || null,
               pais: d.pais || 'México',
               comprobado: d.tipo_sugerido === 'COMPROBADO',
@@ -910,6 +933,14 @@ export class ComparecienteAltaSessionService {
         });
 
         for (const tempDoc of temporalesIntegrar) {
+          const hint = String(tempDoc.tipo_documento || '').toUpperCase();
+          const categoria = hint.includes('FISCAL') || hint.includes('CSF') ? 'CONSTANCIA_FISCAL'
+            : hint.includes('DOMICILIO') || hint.includes('CFE') ? 'COMPROBANTE_DOMICILIO'
+              : hint.includes('CURP') ? 'CURP'
+                : hint.includes('NACIMIENTO') ? 'ACTA_NACIMIENTO'
+                  : hint.includes('CONSTITUT') ? 'ACTA_CONSTITUTIVA'
+                    : hint.includes('INE') || hint.includes('PASAPORTE') || hint.includes('IDENTIFICACION') ? 'IDENTIFICACION'
+                      : 'OTROS';
           const docMaestro = await tx.documento.create({
             data: {
               nombre_original: tempDoc.nombre_original,
@@ -927,10 +958,16 @@ export class ComparecienteAltaSessionService {
             data: {
               compareciente_id: compareciente.id,
               documento_id: docMaestro.id,
-              categoria: 'IDENTIFICACION',
+              categoria: categoria as any,
               creado_por_id: finalUsuarioId
             }
           });
+          await tx.auditLog.create({ data: {
+            user_id: finalUsuarioId, accion: 'CARGAR_DOCUMENTO_COMPARECIENTE', entidad: 'Documento', entidad_id: docMaestro.id,
+            valores_nuevos: { nombre: tempDoc.nombre_original, categoria },
+            detalles: { modulo: 'COMPARECIENTES', compareciente_id: compareciente.id, origen: 'ALTA_SESSION' },
+            correlation_id: sesion.correlation_id,
+          } });
           documentosDefinitivos.set(tempDoc.id, docMaestro.id);
 
           await tx.cargaTemporalDocumento.update({
@@ -1015,6 +1052,12 @@ export class ComparecienteAltaSessionService {
           confirmado_at: new Date()
         }
       });
+      await tx.auditLog.create({ data: {
+        user_id: finalUsuarioId, accion: esFisica ? 'CREAR_PERSONA_FISICA' : 'CREAR_PERSONA_MORAL', entidad: 'Compareciente', entidad_id: compareciente.id,
+        valores_nuevos: { tipo_persona: tipo_persona || 'FISICA', nombre_busqueda: nombreCompleto, documentos_integrados: docsIntegradosCount },
+        detalles: { modulo: 'COMPARECIENTES', origen: 'WORKSPACE_UNICO', campos_confirmados: Object.keys(datosFormulario) },
+        correlation_id: sesion.correlation_id,
+      } });
 
       return {
         compareciente,

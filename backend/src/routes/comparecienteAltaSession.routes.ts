@@ -32,44 +32,53 @@ router.delete('/session/:sessionId', ComparecienteAltaSessionController.cancelar
 // 2. DOCUMENTOS TEMPORALES (Soporta /:sessionId/documentos, /altas/:sessionId/documentos, /session/:sessionId/documentos)
 router.post(
   '/:sessionId/documentos',
+  requirePermission('documentos.write'),
   upload.single('archivo'),
   ComparecienteAltaSessionController.subirDocumentoTemporal
 );
 router.post(
   '/altas/:sessionId/documentos',
+  requirePermission('documentos.write'),
   upload.single('archivo'),
   ComparecienteAltaSessionController.subirDocumentoTemporal
 );
 router.post(
   '/session/:sessionId/documentos',
+  requirePermission('documentos.write'),
   upload.single('archivo'),
   ComparecienteAltaSessionController.subirDocumentoTemporal
 );
 
 router.delete(
   '/:sessionId/documentos/:cargaId',
+  requirePermission('documentos.unlink'),
   ComparecienteAltaSessionController.eliminarDocumentoTemporal
 );
 router.delete(
   '/altas/:sessionId/documentos/:cargaId',
+  requirePermission('documentos.unlink'),
   ComparecienteAltaSessionController.eliminarDocumentoTemporal
 );
 router.delete(
   '/session/:sessionId/documentos/:cargaId',
+  requirePermission('documentos.unlink'),
   ComparecienteAltaSessionController.eliminarDocumentoTemporal
 );
 
 // STREAMING DE DOCUMENTOS PARA VISOR INTERNO (PDF Viewer)
 router.get(
   '/:sessionId/documentos/:cargaId/stream',
+  requirePermission('documentos.read'),
   ComparecienteAltaSessionController.streamDocumentoTemporal
 );
 router.get(
   '/altas/:sessionId/documentos/:cargaId/stream',
+  requirePermission('documentos.read'),
   ComparecienteAltaSessionController.streamDocumentoTemporal
 );
 router.get(
   '/session/:sessionId/documentos/:cargaId/stream',
+  requirePermission('documentos.read'),
   ComparecienteAltaSessionController.streamDocumentoTemporal
 );
 
@@ -89,32 +98,38 @@ router.put(
 // 3. EXTRACCIÓN MEDIANTE IA
 router.post(
   '/:sessionId/extraer-ia',
+  requirePermission('documentos.read'),
   requirePermission('ia.execute'),
   ComparecienteAltaSessionController.extraerIA
 );
 router.post(
   '/altas/:sessionId/extraer-ia',
+  requirePermission('documentos.read'),
   requirePermission('ia.execute'),
   ComparecienteAltaSessionController.extraerIA
 );
 router.post(
   '/session/:sessionId/extraer-ia',
+  requirePermission('documentos.read'),
   requirePermission('ia.execute'),
   ComparecienteAltaSessionController.extraerIA
 );
 
 router.post(
   '/:sessionId/extraer',
+  requirePermission('documentos.read'),
   requirePermission('ia.execute'),
   ComparecienteAltaSessionController.extraerIA
 );
 router.post(
   '/altas/:sessionId/extraer',
+  requirePermission('documentos.read'),
   requirePermission('ia.execute'),
   ComparecienteAltaSessionController.extraerIA
 );
 router.post(
   '/session/:sessionId/extraer',
+  requirePermission('documentos.read'),
   requirePermission('ia.execute'),
   ComparecienteAltaSessionController.extraerIA
 );

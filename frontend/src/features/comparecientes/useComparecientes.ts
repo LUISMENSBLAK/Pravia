@@ -11,7 +11,7 @@ export function useComparecientes(filters: ComparecienteFilters) {
     if (!loaded.current) setStatus('loading');
     try { setResult(await comparecientesService.list({ ...filters, search: deferredSearch }, signal)); loaded.current = true; setStatus('ready'); }
     catch (error) { if (!(error instanceof DOMException && error.name === 'AbortError')) setStatus('error'); }
-  }, [deferredSearch, filters.type, filters.identity, filters.compliance, filters.updated, filters.sort, filters.page]);
+  }, [deferredSearch, filters.type, filters.updated, filters.sort, filters.page]);
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
   return { result, status, reload: () => load() };
 }

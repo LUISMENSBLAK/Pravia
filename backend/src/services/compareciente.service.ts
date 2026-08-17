@@ -1,6 +1,9 @@
 import { Prisma, PrismaClient, TipoPersona, FormaComparecencia, TipoDocumentoCompareciente } from '@prisma/client';
 import * as crypto from 'crypto';
 import { validateCurp, validateOptionalDate, validateRfc } from '../domain/mexicanIdentity';
+import { consolidateExtractedFields } from '../domain/documentExtraction';
+import { extraerMultiplesDocumentos, type DocumentoParaExtraccion } from './openaiDocument.service';
+import { recordAIFailure, recordAIUsages } from './aiUsage.service';
 
 type IdentityState = 'VERIFICADA' | 'PENDIENTE' | 'OBSERVACION';
 type HealthState = 'COMPLETO' | 'PENDIENTE' | 'OBSERVACION' | 'NO_APLICA' | 'NO_CONFIGURADO';
@@ -37,6 +40,42 @@ function complianceState(record: any): HealthState {
   return 'PENDIENTE';
 }
 
+function normalizedComparableValue(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleUpperCase('es-MX');
+}
+
+function submittedWorkspaceValue(dto: Record<string, any>, field: string): unknown {
+  if (Object.prototype.hasOwnProperty.call(dto, field)) return dto[field];
+
+  const addressMatch = field.match(/^dom_(particular|fiscal)_(.+)$/);
+  if (addressMatch) {
+    const [, kind, rawKey] = addressMatch;
+    const keyAliases: Record<string, string> = {
+      cp: 'codigo_postal',
+      ciudad: 'localidad',
+      numero_exterior: 'exterior',
+      numero_interior: 'interior',
+    };
+    const key = keyAliases[rawKey] || rawKey;
+    return dto[`domicilio_${kind}`]?.[key];
+  }
+
+  const identificationAliases: Record<string, string> = {
+    folio_identificacion: 'numero',
+    tipo_identificacion: 'tipo_identificacion',
+    autoridad_emisora: 'autoridad_emisora',
+    pais_emisor: 'pais_emisor',
+    fecha_expedicion_identificacion: 'fecha_expedicion',
+    fecha_vencimiento_identificacion: 'fecha_vencimiento',
+  };
+  const identificationKey = identificationAliases[field];
+  return identificationKey ? dto.identificacion?.[identificationKey] : undefined;
+}
+
 export class ComparecienteService {
   private prisma: PrismaClient;
 
@@ -53,6 +92,11 @@ export class ComparecienteService {
       .toUpperCase()
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '');
+  }
+
+  private uppercase(value?: unknown): string | null {
+    const normalized = String(value ?? '').trim().toLocaleUpperCase('es-MX');
+    return normalized || null;
   }
 
   /**
@@ -121,8 +165,6 @@ export class ComparecienteService {
     search?: string;
     page?: number;
     limit?: number;
-    identidad?: IdentityState;
-    cumplimiento?: HealthState;
     actualizacion?: 'HOY' | '7_DIAS' | '30_DIAS';
     sort?: string;
     accessWhere?: Record<string, unknown>;
@@ -151,29 +193,13 @@ export class ComparecienteService {
       ];
     }
 
-    const observationWhere: any = { OR: [{ identificaciones: { some: OBSERVED_IDENTIFICATION } }, { datosFuente: { some: { archived_at: null, estado: 'EN_CONFLICTO' } } }] };
-    if (params.identidad === 'VERIFICADA') whereClause.identificaciones = { some: VERIFIED_IDENTIFICATION };
-    if (params.identidad === 'OBSERVACION') (whereClause.AND ||= []).push(observationWhere);
-    if (params.identidad === 'PENDIENTE') (whereClause.AND ||= []).push({ identificaciones: { none: VERIFIED_IDENTIFICATION } }, { NOT: observationWhere });
-
-    if (params.cumplimiento && params.cumplimiento !== 'NO_APLICA') {
-      const reviewState = params.cumplimiento === 'COMPLETO' ? 'CONFIRMADO' : params.cumplimiento === 'OBSERVACION' ? 'REQUIERE_AJUSTES' : undefined;
-      if (reviewState) whereClause.expedientes = { some: { archived_at: null, estatus: 'ACTIVO', expediente: { complianceReviews: { some: { estatus: reviewState } } } } };
-      if (params.cumplimiento === 'PENDIENTE') whereClause.expedientes = { some: { archived_at: null, estatus: 'ACTIVO', expediente: { complianceReviews: { some: { estatus: { in: ['BORRADOR', 'PENDIENTE_REVISION'] } } } } } };
-      if (params.cumplimiento === 'NO_CONFIGURADO') whereClause.expedientes = { none: { archived_at: null, estatus: 'ACTIVO', expediente: { complianceReviews: { some: {} } } } };
-    }
-
     if (params.actualizacion) {
       const days = params.actualizacion === 'HOY' ? 1 : params.actualizacion === '7_DIAS' ? 7 : 30;
       whereClause.updated_at = { gte: new Date(Date.now() - days * 86_400_000) };
     }
 
     const baseWhere: any = { archived_at: null, ...(params.accessWhere && Object.keys(params.accessWhere).length ? { AND: [params.accessWhere] } : {}) };
-    const verifiedWhere: any = { ...baseWhere, identificaciones: { some: VERIFIED_IDENTIFICATION } };
-    const observedWhere: any = { ...baseWhere, ...observationWhere };
-    const pendingWhere: any = { ...baseWhere, AND: [...(baseWhere.AND || []), { identificaciones: { none: VERIFIED_IDENTIFICATION } }, { NOT: observationWhere }] };
-
-    const [total, data, totalScoped, verified, observed, pending] = await Promise.all([
+    const [total, data, totalScoped, physical, legal] = await Promise.all([
       this.prisma.compareciente.count({ where: whereClause }),
       this.prisma.compareciente.findMany({
         where: whereClause,
@@ -193,9 +219,8 @@ export class ComparecienteService {
         take: limit,
       }),
       this.prisma.compareciente.count({ where: baseWhere }),
-      this.prisma.compareciente.count({ where: verifiedWhere }),
-      this.prisma.compareciente.count({ where: observedWhere }),
-      this.prisma.compareciente.count({ where: pendingWhere }),
+      this.prisma.compareciente.count({ where: { ...baseWhere, tipo_persona: 'FISICA' } }),
+      this.prisma.compareciente.count({ where: { ...baseWhere, tipo_persona: 'MORAL' } }),
     ]);
 
     const rows = data.map((record: any) => {
@@ -213,16 +238,14 @@ export class ComparecienteService {
         rfc: record.personaFisica?.rfc || record.personaMoral?.rfc || null,
         curp: record.personaFisica?.curp || null,
         expedientes_vinculados: record.expedientes.length,
-        identidad: identityState(record),
-        documentos: { total: record.documentos.length, vigentes: record.documentos.filter((item: any) => ['VIGENTE', 'POR_VENCER'].includes(item.documento.estatus)).length, con_observacion: record.documentos.filter((item: any) => ['VENCIDO', 'RECHAZADO'].includes(item.documento.estatus)).length },
-        cumplimiento: complianceState(record),
+        documentos: { total: record.documentos.length },
         updated_at: lastMaterialUpdate.toISOString(),
       };
     });
 
     return {
       data: rows,
-      metrics: { total: totalScoped, verified, pending, observed },
+      metrics: { total: totalScoped, physical, legal },
       meta: {
         total,
         page,
@@ -232,13 +255,7 @@ export class ComparecienteService {
         hasPreviousPage: page > 1,
         hasNextPage: page * limit < total,
       },
-      definitions: {
-        verified: 'Identificación vigente o por vencer con confirmación humana registrada.',
-        pending: 'Sin identificación validada y sin conflicto o documento rechazado/vencido.',
-        observed: 'Identificación vencida/rechazada o dato documental en conflicto.',
-        documents: 'Conteo descriptivo de documentos vinculados; no existe catálogo global de requeridos por persona.',
-        materialUpdate: 'Máxima fecha disponible entre ficha, identidad, procedencia, documentos y vínculos visibles.',
-      },
+      definitions: { documents: 'Documentos activos vinculados al compareciente.', materialUpdate: 'Última modificación material disponible.' },
     };
   }
 
@@ -416,9 +433,16 @@ export class ComparecienteService {
     domicilio_principal?: any;
     contacto_principal?: any;
     identificacion_principal?: any;
+    domicilio_fiscal?: any;
+    telefono?: string;
+    correo?: string;
+    observaciones?: string;
     creado_por_id: string;
   }) {
-    const nombreCompleto = [dto.nombre, dto.apellido_paterno, dto.apellido_materno]
+    const cleanName = this.uppercase(dto.nombre) || '';
+    const cleanFirstSurname = this.uppercase(dto.apellido_paterno);
+    const cleanSecondSurname = this.uppercase(dto.apellido_materno);
+    const nombreCompleto = [cleanName, cleanFirstSurname, cleanSecondSurname]
       .filter(Boolean)
       .join(' ')
       .trim();
@@ -451,6 +475,7 @@ export class ComparecienteService {
         data: {
           tipo_persona: TipoPersona.FISICA,
           nombre_busqueda: nombreBusqueda,
+          observaciones: dto.observaciones?.trim() || null,
           creado_por_id: dto.creado_por_id
         }
       });
@@ -459,9 +484,9 @@ export class ComparecienteService {
       const personaFisica = await tx.personaFisica.create({
         data: {
           compareciente_id: compareciente.id,
-          nombre: dto.nombre.trim(),
-          apellido_paterno: dto.apellido_paterno?.trim(),
-          apellido_materno: dto.apellido_materno?.trim(),
+          nombre: cleanName,
+          apellido_paterno: cleanFirstSurname,
+          apellido_materno: cleanSecondSurname,
           nombre_completo_calculado: nombreCompleto,
           sexo: dto.sexo,
           fecha_nacimiento: birthDate,
@@ -499,14 +524,27 @@ export class ComparecienteService {
             interior: dto.domicilio_principal.interior,
             colonia: dto.domicilio_principal.colonia,
             municipio: dto.domicilio_principal.municipio,
+            localidad: dto.domicilio_principal.localidad || null,
             estado: dto.domicilio_principal.estado,
             codigo_postal: dto.domicilio_principal.codigo_postal,
+            pais: dto.domicilio_principal.pais || 'México',
             comprobado: Boolean(dto.domicilio_principal.comprobado),
             documento_comprobante_id: dto.domicilio_principal.documento_comprobante_id || null,
             principal: true,
             creado_por_id: dto.creado_por_id
           }
         });
+      }
+
+      if (dto.domicilio_fiscal) {
+        await tx.comparecienteDomicilio.create({ data: {
+          compareciente_id: compareciente.id, tipo: 'FISCAL', principal: false,
+          calle: dto.domicilio_fiscal.calle || null, exterior: dto.domicilio_fiscal.exterior || null,
+          interior: dto.domicilio_fiscal.interior || null, colonia: dto.domicilio_fiscal.colonia || null,
+          municipio: dto.domicilio_fiscal.municipio || null, localidad: dto.domicilio_fiscal.localidad || null,
+          estado: dto.domicilio_fiscal.estado || null, codigo_postal: dto.domicilio_fiscal.codigo_postal || null,
+          pais: dto.domicilio_fiscal.pais || 'México', creado_por_id: dto.creado_por_id,
+        } });
       }
 
       // 4. Crear Contacto principal si se proporciona
@@ -520,6 +558,14 @@ export class ComparecienteService {
             creado_por_id: dto.creado_por_id
           }
         });
+      }
+      for (const contact of [
+        dto.telefono ? { tipo: 'TELEFONO' as const, valor: dto.telefono.trim() } : null,
+        dto.correo ? { tipo: 'CORREO' as const, valor: dto.correo.trim().toLowerCase() } : null,
+      ].filter((item): item is { tipo: 'TELEFONO' | 'CORREO'; valor: string } => Boolean(item?.valor))) {
+        if (!dto.contacto_principal || dto.contacto_principal.tipo !== contact.tipo) {
+          await tx.comparecienteContacto.create({ data: { compareciente_id: compareciente.id, tipo: contact.tipo, valor: contact.valor, principal: !dto.contacto_principal, creado_por_id: dto.creado_por_id } });
+        }
       }
 
       // 5. La identificación existe como registro pendiente hasta que una persona la valide.
@@ -585,10 +631,18 @@ export class ComparecienteService {
     folio_mercantil?: string;
     objeto_social_resumido?: string;
     domicilio_principal?: any;
+    domicilio_fiscal?: any;
     contacto_principal?: any;
+    telefono?: string;
+    correo?: string;
+    duracion?: string;
+    fecha_inscripcion_mercantil?: string;
+    estatus_societario?: string;
+    observaciones?: string;
     creado_por_id: string;
   }) {
-    const nombreBusqueda = this.normalizeSearchString(dto.razon_social);
+    const cleanLegalName = this.uppercase(dto.razon_social) || '';
+    const nombreBusqueda = this.normalizeSearchString(cleanLegalName);
     if (!nombreBusqueda) throw new Error('La razón social es obligatoria.');
     const cleanRfc = validateRfc(dto.rfc, 'MORAL');
     const incorporationDate = validateOptionalDate(dto.fecha_constitucion, 'La fecha de constitución');
@@ -609,6 +663,7 @@ export class ComparecienteService {
         data: {
           tipo_persona: TipoPersona.MORAL,
           nombre_busqueda: nombreBusqueda,
+          observaciones: dto.observaciones?.trim() || null,
           creado_por_id: dto.creado_por_id
         }
       });
@@ -617,14 +672,17 @@ export class ComparecienteService {
       const personaMoral = await tx.personaMoral.create({
         data: {
           compareciente_id: compareciente.id,
-          razon_social: dto.razon_social.trim(),
-          nombre_comercial: dto.nombre_comercial?.trim(),
+          razon_social: cleanLegalName,
+          nombre_comercial: this.uppercase(dto.nombre_comercial),
           tipo_societario: dto.tipo_societario,
           nacionalidad: dto.nacionalidad || 'Mexicana',
           rfc: cleanRfc,
           fecha_constitucion: incorporationDate,
+          duracion: dto.duracion?.trim() || 'Indefinida',
           folio_mercantil: dto.folio_mercantil,
-          objeto_social_resumido: dto.objeto_social_resumido
+          objeto_social_resumido: dto.objeto_social_resumido,
+          fecha_inscripcion_mercantil: validateOptionalDate(dto.fecha_inscripcion_mercantil, 'La fecha de inscripción mercantil'),
+          estatus_societario: dto.estatus_societario?.trim() || 'ACTIVA',
         }
       });
 
@@ -647,6 +705,16 @@ export class ComparecienteService {
           },
         });
       }
+      if (dto.domicilio_fiscal) {
+        await tx.comparecienteDomicilio.create({ data: {
+          compareciente_id: compareciente.id, tipo: 'FISCAL', principal: true,
+          pais: dto.domicilio_fiscal.pais || 'México', estado: dto.domicilio_fiscal.estado || null,
+          municipio: dto.domicilio_fiscal.municipio || null, localidad: dto.domicilio_fiscal.localidad || null,
+          colonia: dto.domicilio_fiscal.colonia || null, calle: dto.domicilio_fiscal.calle || null,
+          exterior: dto.domicilio_fiscal.exterior || null, interior: dto.domicilio_fiscal.interior || null,
+          codigo_postal: dto.domicilio_fiscal.codigo_postal || null, creado_por_id: dto.creado_por_id,
+        } });
+      }
       if (dto.contacto_principal?.valor) {
         await tx.comparecienteContacto.create({
           data: {
@@ -657,6 +725,12 @@ export class ComparecienteService {
             creado_por_id: dto.creado_por_id,
           },
         });
+      }
+      for (const contact of [
+        dto.telefono ? { tipo: 'TELEFONO' as const, valor: dto.telefono.trim() } : null,
+        dto.correo ? { tipo: 'CORREO' as const, valor: dto.correo.trim().toLowerCase() } : null,
+      ].filter((item): item is { tipo: 'TELEFONO' | 'CORREO'; valor: string } => Boolean(item?.valor))) {
+        if (!dto.contacto_principal || dto.contacto_principal.tipo !== contact.tipo) await tx.comparecienteContacto.create({ data: { compareciente_id: compareciente.id, tipo: contact.tipo, valor: contact.valor, principal: !dto.contacto_principal, creado_por_id: dto.creado_por_id } });
       }
 
       // 3. Registrar Evento de Auditoría y Outbox
@@ -695,13 +769,20 @@ export class ComparecienteService {
   /** Edición explícita del dato maestro. No altera snapshots de cumplimiento ni relaciones históricas. */
   public async actualizarMaster(id: string, dto: Record<string, any>, actorUserId: string) {
     return this.prisma.$transaction(async (tx) => {
-      const current = await tx.compareciente.findFirst({ where: { id, archived_at: null }, include: { personaFisica: true, personaMoral: true } });
+      const current = await tx.compareciente.findFirst({ where: { id, archived_at: null }, include: {
+        personaFisica: true, personaMoral: true,
+        domicilios: { where: { archived_at: null, vigente: true } },
+        contactos: { where: { archived_at: null, activo: true } },
+        identificaciones: { where: { archived_at: null, principal: true }, take: 1 },
+        aliases: { where: { archived_at: null, activo: true } },
+        datosFuente: { where: { archived_at: null, estado: { in: ['PENDIENTE_CONFIRMACION', 'EN_CONFLICTO'] } } },
+      } });
       if (!current) throw new Error('Compareciente no encontrado.');
       let nombreBusqueda = current.nombre_busqueda;
       if (current.tipo_persona === 'FISICA' && current.personaFisica) {
-        const nombre = String(dto.nombre ?? current.personaFisica.nombre).trim();
-        const apellidoPaterno = dto.apellido_paterno === undefined ? current.personaFisica.apellido_paterno : String(dto.apellido_paterno || '').trim() || null;
-        const apellidoMaterno = dto.apellido_materno === undefined ? current.personaFisica.apellido_materno : String(dto.apellido_materno || '').trim() || null;
+        const nombre = this.uppercase(dto.nombre ?? current.personaFisica.nombre) || '';
+        const apellidoPaterno = dto.apellido_paterno === undefined ? current.personaFisica.apellido_paterno : this.uppercase(dto.apellido_paterno);
+        const apellidoMaterno = dto.apellido_materno === undefined ? current.personaFisica.apellido_materno : this.uppercase(dto.apellido_materno);
         if (!nombre) throw new Error('El nombre es obligatorio.');
         const completo = [nombre, apellidoPaterno, apellidoMaterno].filter(Boolean).join(' ');
         nombreBusqueda = this.normalizeSearchString(completo);
@@ -709,26 +790,106 @@ export class ComparecienteService {
           nombre, apellido_paterno: apellidoPaterno, apellido_materno: apellidoMaterno, nombre_completo_calculado: completo,
           rfc: dto.rfc === undefined ? current.personaFisica.rfc : validateRfc(dto.rfc, 'FISICA'),
           curp: dto.curp === undefined ? current.personaFisica.curp : validateCurp(dto.curp),
-          nacionalidad: dto.nacionalidad === undefined ? current.personaFisica.nacionalidad : String(dto.nacionalidad || 'Mexicana'),
+          sexo: dto.sexo === undefined ? current.personaFisica.sexo : dto.sexo || null,
+          fecha_nacimiento: dto.fecha_nacimiento === undefined ? current.personaFisica.fecha_nacimiento : validateOptionalDate(dto.fecha_nacimiento, 'La fecha de nacimiento'),
+          lugar_nacimiento: dto.lugar_nacimiento === undefined ? current.personaFisica.lugar_nacimiento : String(dto.lugar_nacimiento || '').trim() || null,
+          pais_nacimiento: dto.pais_nacimiento === undefined ? current.personaFisica.pais_nacimiento : String(dto.pais_nacimiento || '').trim() || null,
+          nacionalidad: dto.nacionalidad === undefined ? current.personaFisica.nacionalidad : String(dto.nacionalidad || 'Mexicana').trim(),
+          estado_civil: dto.estado_civil === undefined ? current.personaFisica.estado_civil : dto.estado_civil || null,
+          regimen_matrimonial: dto.regimen_matrimonial === undefined ? current.personaFisica.regimen_matrimonial : dto.regimen_matrimonial || null,
           ocupacion: dto.ocupacion === undefined ? current.personaFisica.ocupacion : String(dto.ocupacion || '').trim() || null,
+          escolaridad: dto.escolaridad === undefined ? current.personaFisica.escolaridad : String(dto.escolaridad || '').trim() || null,
+          actividad_economica: dto.actividad_economica === undefined ? current.personaFisica.actividad_economica : String(dto.actividad_economica || '').trim() || null,
+          giro: dto.giro === undefined ? current.personaFisica.giro : String(dto.giro || '').trim() || null,
           pep_estado: dto.pep_estado === undefined ? current.personaFisica.pep_estado : dto.pep_estado,
           pep: dto.pep_estado === undefined ? current.personaFisica.pep : dto.pep_estado === 'SI',
+          relacion_pep: dto.relacion_pep === undefined ? current.personaFisica.relacion_pep : dto.pep_estado === 'SI' ? String(dto.relacion_pep || '').trim() || null : null,
         } });
       }
       if (current.tipo_persona === 'MORAL' && current.personaMoral) {
-        const razonSocial = String(dto.razon_social ?? current.personaMoral.razon_social).trim();
+        const razonSocial = this.uppercase(dto.razon_social ?? current.personaMoral.razon_social) || '';
         if (!razonSocial) throw new Error('La razón social es obligatoria.');
         nombreBusqueda = this.normalizeSearchString(razonSocial);
         await tx.personaMoral.update({ where: { compareciente_id: id }, data: {
           razon_social: razonSocial,
-          nombre_comercial: dto.nombre_comercial === undefined ? current.personaMoral.nombre_comercial : String(dto.nombre_comercial || '').trim() || null,
+          nombre_comercial: dto.nombre_comercial === undefined ? current.personaMoral.nombre_comercial : this.uppercase(dto.nombre_comercial),
           tipo_societario: dto.tipo_societario === undefined ? current.personaMoral.tipo_societario : String(dto.tipo_societario || '').trim() || null,
           rfc: dto.rfc === undefined ? current.personaMoral.rfc : validateRfc(dto.rfc, 'MORAL'),
+          nacionalidad: dto.nacionalidad === undefined ? current.personaMoral.nacionalidad : String(dto.nacionalidad || 'Mexicana').trim(),
+          fecha_constitucion: dto.fecha_constitucion === undefined ? current.personaMoral.fecha_constitucion : validateOptionalDate(dto.fecha_constitucion, 'La fecha de constitución'),
+          duracion: dto.duracion === undefined ? current.personaMoral.duracion : String(dto.duracion || '').trim() || null,
           folio_mercantil: dto.folio_mercantil === undefined ? current.personaMoral.folio_mercantil : String(dto.folio_mercantil || '').trim() || null,
           objeto_social_resumido: dto.objeto_social_resumido === undefined ? current.personaMoral.objeto_social_resumido : String(dto.objeto_social_resumido || '').trim() || null,
+          fecha_inscripcion_mercantil: dto.fecha_inscripcion_mercantil === undefined ? current.personaMoral.fecha_inscripcion_mercantil : validateOptionalDate(dto.fecha_inscripcion_mercantil, 'La fecha de inscripción mercantil'),
+          estatus_societario: dto.estatus_societario === undefined ? current.personaMoral.estatus_societario : String(dto.estatus_societario || '').trim() || null,
         } });
       }
-      const header = await tx.compareciente.update({ where: { id }, data: { nombre_busqueda: nombreBusqueda, version: { increment: 1 } } });
+
+      if (Array.isArray(dto.aliases)) {
+        await tx.comparecienteAlias.updateMany({ where: { compareciente_id: id, archived_at: null }, data: { activo: false, archived_at: new Date() } });
+        for (const [index, alias] of dto.aliases.map((value: unknown) => this.uppercase(value)).filter(Boolean).entries()) {
+          await tx.comparecienteAlias.create({ data: { compareciente_id: id, alias: alias!, principal: index === 0 } });
+        }
+      }
+
+      for (const [type, field] of [['TELEFONO', 'telefono'], ['CORREO', 'correo']] as const) {
+        if (dto[field] === undefined) continue;
+        const value = String(dto[field] || '').trim();
+        const existing = current.contactos.find((item) => item.tipo === type);
+        if (!value && existing) await tx.comparecienteContacto.update({ where: { id: existing.id }, data: { activo: false, archived_at: new Date() } });
+        if (value && existing) await tx.comparecienteContacto.update({ where: { id: existing.id }, data: { valor: type === 'CORREO' ? value.toLowerCase() : value } });
+        if (value && !existing) await tx.comparecienteContacto.create({ data: { compareciente_id: id, tipo: type, valor: type === 'CORREO' ? value.toLowerCase() : value, principal: true, creado_por_id: actorUserId } });
+      }
+
+      for (const [type, field] of [['PARTICULAR', 'domicilio_particular'], ['FISCAL', 'domicilio_fiscal']] as const) {
+        if (dto[field] === undefined) continue;
+        const address = dto[field] || {};
+        const existing = current.domicilios.find((item) => item.tipo === type);
+        const data = {
+          pais: String(address.pais || 'México').trim(), estado: String(address.estado || '').trim() || null,
+          municipio: String(address.municipio || '').trim() || null, localidad: String(address.localidad || '').trim() || null,
+          colonia: String(address.colonia || '').trim() || null, calle: String(address.calle || '').trim() || null,
+          exterior: String(address.exterior || '').trim() || null, interior: String(address.interior || '').trim() || null,
+          codigo_postal: String(address.codigo_postal || '').trim() || null, referencia: String(address.referencia || '').trim() || null,
+        };
+        if (existing) await tx.comparecienteDomicilio.update({ where: { id: existing.id }, data });
+        else if (Object.values(data).some((value) => value && value !== 'México')) await tx.comparecienteDomicilio.create({ data: { ...data, compareciente_id: id, tipo: type, principal: type === 'PARTICULAR', creado_por_id: actorUserId } });
+      }
+
+      if (dto.identificacion !== undefined) {
+        const identification = dto.identificacion || {};
+        const existing = current.identificaciones[0];
+        const data = {
+          tipo_identificacion: identification.tipo_identificacion || 'INE', numero: String(identification.numero || '').trim() || null,
+          autoridad_emisora: String(identification.autoridad_emisora || '').trim() || null, pais_emisor: String(identification.pais_emisor || 'México').trim(),
+          fecha_expedicion: validateOptionalDate(identification.fecha_expedicion, 'La fecha de expedición'),
+          fecha_vencimiento: validateOptionalDate(identification.fecha_vencimiento, 'La fecha de vencimiento'),
+        };
+        if (existing) await tx.comparecienteIdentificacion.update({ where: { id: existing.id }, data });
+        else if (data.numero) await tx.comparecienteIdentificacion.create({ data: { ...data, compareciente_id: id, principal: true, creado_por_id: actorUserId } });
+      }
+
+      const header = await tx.compareciente.update({ where: { id }, data: {
+        nombre_busqueda: nombreBusqueda,
+        observaciones: dto.observaciones === undefined ? current.observaciones : String(dto.observaciones || '').trim() || null,
+        version: { increment: 1 },
+      } });
+
+      for (const source of current.datosFuente) {
+        const submittedValue = submittedWorkspaceValue(dto, source.campo);
+        if (submittedValue === undefined) continue;
+        const confirmedValue = String(submittedValue ?? '').trim() || null;
+        const matchesProposal = normalizedComparableValue(confirmedValue) === normalizedComparableValue(source.valor_detectado);
+        await tx.comparecienteDatoFuente.update({
+          where: { id: source.id },
+          data: {
+            estado: matchesProposal ? 'CONFIRMADO' : 'EDITADO_MANUALMENTE',
+            valor_confirmado: confirmedValue,
+            confirmado_por_id: actorUserId,
+            confirmado_at: new Date(),
+          },
+        });
+      }
       await tx.auditLog.create({ data: { user_id: actorUserId, accion: 'EDITAR_COMPARECIENTE', entidad: 'Compareciente', entidad_id: id, valores_anteriores: { version: current.version }, valores_nuevos: { version: header.version, campos: Object.keys(dto) }, detalles: { modulo: 'COMPARECIENTES' }, correlation_id: crypto.randomUUID() } });
       return header;
     });
@@ -1056,21 +1217,23 @@ export class ComparecienteService {
     buffer: Buffer;
     fileName: string;
     mimeType: string;
-    categoria: string;
+    categoria?: string;
     fechaEmision?: string;
     fechaVencimiento?: string;
     observaciones?: string;
   }) {
-    const { comparecienteId, userId, buffer, fileName, mimeType, categoria } = params;
+    const { comparecienteId, userId, buffer, fileName, mimeType } = params;
+    const categoria = params.categoria || 'OTROS';
     const allowedMimeTypes = new Set([
       'application/pdf',
       'image/jpeg',
       'image/png',
+      'image/bmp',
       'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     ]);
     if (!allowedMimeTypes.has(mimeType)) {
-      throw new Error('Tipo de archivo no permitido. Usa PDF, JPG/JPEG, PNG, DOC o DOCX.');
+      throw new Error('Tipo de archivo no permitido. Usa PDF, JPG/JPEG, PNG, BMP, DOC o DOCX.');
     }
     if (!Object.values(TipoDocumentoCompareciente).includes(categoria as TipoDocumentoCompareciente)) {
       throw new Error('La categoría documental seleccionada no es válida.');
@@ -1120,6 +1283,11 @@ export class ComparecienteService {
             creado_por_id: actor.id,
           },
         });
+        await tx.auditLog.create({ data: {
+          user_id: actor.id, accion: 'CARGAR_DOCUMENTO_COMPARECIENTE', entidad: 'ComparecienteDocumento', entidad_id: vinculo.id,
+          valores_nuevos: { documento_id: docMaster.id, nombre: fileName, categoria },
+          detalles: { modulo: 'COMPARECIENTES', compareciente_id: comparecienteId }, correlation_id: crypto.randomUUID(),
+        } });
         return { docMaster, vinculo };
       });
     } catch (error) {
@@ -1128,6 +1296,84 @@ export class ComparecienteService {
       } catch (cleanupError) {
         console.error('[COMPARECIENTE_DOCUMENT_STORAGE_CLEANUP_FAILED]', cleanupError);
       }
+      throw error;
+    }
+  }
+
+  /** Retiro lógico auditable: conserva el archivo maestro y su trazabilidad. */
+  public async eliminarDocumentoMaster(comparecienteId: string, documentoId: string, actorUserId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const link = await tx.comparecienteDocumento.findFirst({
+        where: { compareciente_id: comparecienteId, documento_id: documentoId, archived_at: null, estatus: 'ACTIVO' },
+        include: { documento: { select: { nombre_original: true } } },
+      });
+      if (!link) throw new Error('El documento ya no está vinculado a este compareciente.');
+      const archived = await tx.comparecienteDocumento.update({ where: { id: link.id }, data: { estatus: 'INACTIVO', archived_at: new Date() } });
+      await tx.auditLog.create({ data: {
+        user_id: actorUserId, accion: 'ELIMINAR_DOCUMENTO_COMPARECIENTE', entidad: 'ComparecienteDocumento', entidad_id: link.id,
+        valores_anteriores: { documento_id: documentoId, nombre: link.documento.nombre_original, estatus: link.estatus },
+        valores_nuevos: { estatus: 'INACTIVO', archivado: true },
+        detalles: { modulo: 'COMPARECIENTES', compareciente_id: comparecienteId, eliminacion: 'LOGICA' }, correlation_id: crypto.randomUUID(),
+      } });
+      return archived;
+    });
+  }
+
+  /**
+   * Analiza todos los documentos activos de una ficha. Devuelve un borrador;
+   * nunca modifica los datos maestros hasta que una persona guarda el formulario.
+   */
+  public async extraerDocumentosExistentesConIA(comparecienteId: string, actorUserId: string) {
+    const links = await this.prisma.comparecienteDocumento.findMany({
+      where: { compareciente_id: comparecienteId, archived_at: null, estatus: 'ACTIVO' },
+      include: { documento: true },
+    });
+    if (!links.length) throw new Error('Carga al menos un documento antes de extraer información.');
+    const { downloadFile } = await import('./supabase.service');
+    const readable: DocumentoParaExtraccion[] = [];
+    const skipped: string[] = [];
+    for (const link of links) {
+      try {
+        const buffer = await downloadFile(link.documento.storage_key);
+        if (!buffer.length) throw new Error('Archivo vacío');
+        readable.push({ buffer, mimeType: link.documento.mime_type || 'application/octet-stream', tipoDocumento: String(link.categoria || link.documento.tipo || 'OTRO'), documentoId: link.documento.id, nombreOriginal: link.documento.nombre_original });
+      } catch {
+        skipped.push(link.documento.nombre_original);
+      }
+    }
+    if (!readable.length) throw new Error('No fue posible leer los documentos disponibles.');
+    const started = Date.now();
+    try {
+      const extraction = await extraerMultiplesDocumentos(readable);
+      const consolidated = consolidateExtractedFields(extraction.campos || []);
+      await recordAIUsages(extraction.usos || (extraction.uso ? [extraction.uso] : []), {
+        operacion: 'COMPARECIENTE_DOCUMENT_EXTRACTION', usuarioId: actorUserId,
+        metadata: { compareciente_id: comparecienteId, documentos: readable.length, omitidos: skipped.length },
+      });
+      await this.prisma.$transaction(async (tx) => {
+        for (const [field, proposal] of Object.entries(consolidated.proposals)) {
+          const alternatives = proposal.estado === 'EN_CONFLICTO' ? proposal.alternativas : [proposal];
+          for (const alternative of alternatives) {
+            await tx.comparecienteDatoFuente.create({ data: {
+              compareciente_id: comparecienteId, campo: field, entidad_destino: 'ComparecienteWorkspace',
+              valor_detectado: alternative.valor || null, documento_id: alternative.documento_id || null,
+              proveedor_ia: extraction.proveedor, modelo_ia: extraction.modelo, confianza: alternative.confianza || null,
+              estado: proposal.estado === 'EN_CONFLICTO' ? 'EN_CONFLICTO' : 'PENDIENTE_CONFIRMACION', correlation_id: crypto.randomUUID(),
+            } });
+          }
+        }
+        await tx.auditLog.create({ data: {
+          user_id: actorUserId, accion: 'EXTRAER_DATOS_COMPARECIENTE_IA', entidad: 'Compareciente', entidad_id: comparecienteId,
+          valores_nuevos: { campos_propuestos: Object.keys(consolidated.proposals), conflictos: consolidated.conflicts.length, documentos: readable.length },
+          detalles: { modulo: 'COMPARECIENTES', persistencia_maestra: false }, correlation_id: crypto.randomUUID(),
+        } });
+      });
+      return {
+        values: consolidated.values, proposals: consolidated.proposals, conflicts: consolidated.conflicts,
+        domicilios_detectados: extraction.domicilios_detectados || [], documentos_omitidos: skipped,
+      };
+    } catch (error) {
+      await recordAIFailure({ operacion: 'COMPARECIENTE_DOCUMENT_EXTRACTION', usuarioId: actorUserId, modelo: process.env.OPENAI_DOCUMENT_MODEL || 'configured-document-model', durationMs: Date.now() - started, metadata: { compareciente_id: comparecienteId } });
       throw error;
     }
   }
