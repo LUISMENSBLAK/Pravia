@@ -195,37 +195,65 @@ model Notification {
 }
 
 model Prospecto {
-  id                     String                 @id @default(uuid()) @db.Uuid
-  nombre                 String
-  telefono               String?
-  email                  String?
-  tipo_acto              String?
-  necesidad              String?
-  documentos_disponibles String?
-  tiene_antecedente      Boolean?
-  tiene_predial          Boolean?
-  puede_compartir_docs   Boolean?
-  tiempo_estimado        String?
-  estado                 ProspectoEstado        @default(NUEVO)
-  user_id                String                 @db.Uuid
-  created_at             DateTime               @default(now())
-  updated_at             DateTime               @updatedAt
-  archived_at            DateTime?
-  archived_by            String?                @db.Uuid
-  ciudad                 String?
-  fuente                 String?
-  motivo_archivo         String?
-  prioridad              ProspectoPrioridad     @default(MEDIA)
-  cotizacion             Cotizacion?
-  documentos             Documento[]
-  prospectoDocumentos    ProspectoDocumento[]
-  seguimientos           ProspectoSeguimiento[]
-  archived_by_user       User?                  @relation("ProspectoArchivedBy", fields: [archived_by], references: [id])
-  atendido_por           User                   @relation(fields: [user_id], references: [id])
+  id                       String                     @id @default(uuid()) @db.Uuid
+  nombre                   String
+  telefono                 String?
+  email                    String?
+  tipo_acto                String?
+  necesidad                String?
+  documentos_disponibles   String?
+  tiene_antecedente        Boolean?
+  tiene_predial            Boolean?
+  puede_compartir_docs     Boolean?
+  tiempo_estimado          String?
+  estado                   ProspectoEstado            @default(NUEVO)
+  user_id                  String                     @db.Uuid
+  created_at               DateTime                   @default(now())
+  updated_at               DateTime                   @updatedAt
+  archived_at              DateTime?
+  archived_by              String?                    @db.Uuid
+  ciudad                   String?
+  fuente                   String?
+  motivo_archivo           String?
+  prioridad                ProspectoPrioridad         @default(MEDIA)
+  etapa_operativa_codigo   String?
+  servicio_catalogo_codigo String?
+  cotizacion               Cotizacion?
+  documentos               Documento[]
+  prospectoDocumentos      ProspectoDocumento[]
+  seguimientos             ProspectoSeguimiento[]
+  archived_by_user         User?                      @relation("ProspectoArchivedBy", fields: [archived_by], references: [id])
+  atendido_por             User                       @relation(fields: [user_id], references: [id])
+  etapa_operativa          ProspectoEtapaCatalogo?    @relation(fields: [etapa_operativa_codigo], references: [codigo])
+  servicio_catalogo        ProspectoServicioCatalogo? @relation(fields: [servicio_catalogo_codigo], references: [codigo])
 
   @@index([archived_by], map: "idx_prospectos_archivado_por_fk")
   @@index([user_id], map: "idx_prospectos_user_fk")
+  @@index([etapa_operativa_codigo], map: "idx_prospectos_etapa_operativa_fk")
+  @@index([servicio_catalogo_codigo], map: "idx_prospectos_servicio_catalogo_fk")
   @@map("prospectos")
+}
+
+model ProspectoEtapaCatalogo {
+  codigo     String      @id
+  label      String      @unique
+  orden      Int         @unique
+  activo     Boolean     @default(true)
+  prospectos Prospecto[]
+
+  @@map("prospecto_etapas_catalogo")
+}
+
+model ProspectoServicioCatalogo {
+  codigo        String      @id
+  label         String      @unique
+  orden         Int         @unique
+  activo        Boolean     @default(true)
+  estados       String[]
+  tipos_persona String[]
+  prospectos    Prospecto[]
+
+  @@map("prospecto_servicios_catalogo")
 }
 
 model ProspectoSeguimiento {

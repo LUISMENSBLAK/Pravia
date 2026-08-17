@@ -4,6 +4,8 @@ import { uploadFile, getSignedUrl, deleteFile } from '../services/supabase.servi
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import { canAttachDocumento } from '../services/objectAccess.service';
+import { logAudit } from '../utils/auditLogger';
+import { prospectDocumentFlagsForType } from '../domain/prospectCatalog';
 
 /**
  * Subir un documento a Supabase Storage y crear registro en DB
@@ -75,7 +77,11 @@ export const uploadDocumento = async (req: Request, res: Response) => {
       const documento = await prisma.$transaction(async (tx) => {
         const created = await tx.documento.create({ data: documentoData });
         const common = { documento_id: created.id, creado_por_id: actorUserId, tipo_vinculo: tipo, estatus: 'ACTIVO' as const };
-        if (prospecto_id) await tx.prospectoDocumento.create({ data: { ...common, prospecto_id } });
+        if (prospecto_id) {
+          await tx.prospectoDocumento.create({ data: { ...common, prospecto_id } });
+          const availability = prospectDocumentFlagsForType(tipo);
+          if (Object.keys(availability).length) await tx.prospecto.update({ where: { id: prospecto_id }, data: availability });
+        }
         if (cotizacion_id) await tx.cotizacionDocumento.create({ data: { ...common, cotizacion_id } });
         if (expediente_id) await tx.expedienteDocumento.create({ data: { ...common, expediente_id } });
         if (compareciente_id) await tx.comparecienteDocumento.create({
@@ -87,6 +93,11 @@ export const uploadDocumento = async (req: Request, res: Response) => {
         });
       });
 
+      await logAudit(actorUserId, 'UPLOAD', 'Documento', documento.id, {
+        prospecto_id: prospecto_id || null,
+        tipo,
+        nombre_original: documento.nombre_original,
+      });
       res.status(201).json(documento);
     } catch (dbError: any) {
       console.error('DOCUMENTO CREATE ERROR');
@@ -129,14 +140,24 @@ export const getDocumentoUrl = async (req: Request, res: Response) => {
 export const getProspectoDocumentos = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const documentos = await prisma.documento.findMany({
-      where: { prospecto_id: id },
-      orderBy: { fecha_carga: 'desc' },
-      include: { subido_por: { select: { nombre: true, id: true } } }
-    });
-    res.json(documentos);
+    const [links, direct] = await Promise.all([
+      prisma.prospectoDocumento.findMany({
+        where: { prospecto_id: id, estatus: 'ACTIVO' },
+        orderBy: { fecha_vinculo: 'desc' },
+        include: { documento: { include: { subido_por: { select: { nombre: true, id: true } } } } },
+      }),
+      prisma.documento.findMany({
+        where: { prospecto_id: id },
+        orderBy: { fecha_carga: 'desc' },
+        include: { subido_por: { select: { nombre: true, id: true } } },
+      }),
+    ]);
+    const merged = new Map<string, any>();
+    for (const document of direct) merged.set(document.id, document);
+    for (const link of links) merged.set(link.documento.id, { ...link.documento, tipo: link.tipo_vinculo || link.documento.tipo });
+    return res.json([...merged.values()].sort((a, b) => b.fecha_carga.getTime() - a.fecha_carga.getTime()));
   } catch (error: any) {
-    res.status(500).json({ error: 'Error al listar documentos', detail: error.message });
+    return res.status(500).json({ error: 'Error al listar documentos', detail: error.message });
   }
 };
 

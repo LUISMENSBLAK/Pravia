@@ -24,11 +24,13 @@ export type ProspectListQuery = {
   sortOrder: 'asc' | 'desc';
   search: string;
   exactId?: string;
-  states: ProspectoEstado[];
+  substatuses: ProspectoEstado[];
   priorities: ProspectoPrioridad[];
-  service?: string;
+  serviceCode?: string;
+  operationalStageCode?: string;
   source?: string;
   withoutQuote: boolean;
+  includeSummary: boolean;
 };
 
 export function parseProspectListQuery(query: Record<string, unknown>): ProspectListQuery {
@@ -48,10 +50,13 @@ export function parseProspectListQuery(query: Record<string, unknown>): Prospect
     sortOrder: requestedOrder === 'asc' ? 'asc' : 'desc',
     search,
     ...(uuidPattern.test(search) ? { exactId: search } : {}),
-    states: enumList(query.estado, Object.values(ProspectoEstado)),
+    // `estado` is the legacy API/DB name for the detailed prospect substatus.
+    substatuses: enumList(query.estado, Object.values(ProspectoEstado)),
     priorities: enumList(query.prioridad, Object.values(ProspectoPrioridad)),
-    ...(typeof query.servicio === 'string' && query.servicio.trim() ? { service: query.servicio.trim() } : {}),
+    ...(typeof query.servicio === 'string' && query.servicio.trim() ? { serviceCode: query.servicio.trim() } : {}),
+    ...(typeof query.etapa === 'string' && query.etapa.trim() ? { operationalStageCode: query.etapa.trim() } : {}),
     ...(typeof query.origen === 'string' && query.origen.trim() ? { source: query.origen.trim() } : {}),
     withoutQuote: String(query.sinCotizacion ?? query.withoutQuote ?? '') === 'true',
+    includeSummary: String(query.summary ?? 'true') !== 'false',
   };
 }

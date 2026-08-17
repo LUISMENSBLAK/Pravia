@@ -5,7 +5,8 @@ import {
   getProspectoById, 
   updateProspecto, 
   deleteProspecto,
-  addSeguimiento
+  addSeguimiento,
+  getProspectCatalogs
 } from '../controllers/prospectos.controller';
 import { getProspectoDocumentos, unlinkProspectoDocumento } from '../controllers/documentos.controller';
 import { requireProspectoObjectAccess } from '../middleware/objectAccess.middleware';
@@ -17,6 +18,7 @@ router.param('id', requireProspectoObjectAccess);
 
 router.get('/', getProspectos);
 router.post('/', createProspecto);
+router.get('/catalogos', getProspectCatalogs);
 router.get('/:id', getProspectoById);
 router.put('/:id', updateProspecto);
 router.delete('/:id', deleteProspecto);

@@ -1,5 +1,5 @@
 import { apiRequest } from '../../services/api/client';
-import type { FollowUpInput, NewProspectInput, Prospect, ProspectDocument, ProspectFollowUp, ProspectListFilters, ProspectListResult } from './prospects.types';
+import type { FollowUpInput, NewProspectInput, Prospect, ProspectCatalogs, ProspectDocument, ProspectFollowUp, ProspectListFilters, ProspectListResult, UpdateProspectInput } from './prospects.types';
 
 const asObject = (value: unknown): Record<string, unknown> | null => value && typeof value === 'object' ? value as Record<string, unknown> : null;
 
@@ -16,17 +16,25 @@ const queryString = (filters: ProspectListFilters) => {
   const params = new URLSearchParams();
   if (filters.search?.trim()) params.set('busqueda', filters.search.trim());
   if (filters.priority) params.set('prioridad', filters.priority);
-  if (filters.states?.length) params.set('estado', filters.states.join(','));
-  if (filters.service) params.set('servicio', filters.service);
-  if (filters.source) params.set('origen', filters.source);
+  if (filters.substatuses?.length) params.set('estado', filters.substatuses.join(','));
+  if (filters.serviceCode) params.set('servicio', filters.serviceCode);
+  if (filters.operationalStageCode) params.set('etapa', filters.operationalStageCode);
   params.set('page', String(filters.page ?? 1));
   params.set('pageSize', String(filters.pageSize ?? 24));
+  if (filters.includeSummary === false) params.set('summary', 'false');
   params.set('sort', 'updated_at:desc');
   const value = params.toString();
   return value ? `?${value}` : '';
 };
 
 export const prospectsService = {
+  async catalogs(signal?: AbortSignal): Promise<ProspectCatalogs> {
+    const payload = await apiRequest<Partial<ProspectCatalogs>>('/prospectos/catalogos', { signal });
+    return {
+      stages: Array.isArray(payload?.stages) ? payload.stages : [],
+      services: Array.isArray(payload?.services) ? payload.services : [],
+    };
+  },
   async list(filters: ProspectListFilters = {}, signal?: AbortSignal): Promise<ProspectListResult> {
     const payload = await apiRequest<unknown>(`/prospectos${queryString(filters)}`, { signal });
     const data = normalizeProspects(payload);
@@ -66,6 +74,21 @@ export const prospectsService = {
   },
   async create(input: NewProspectInput): Promise<Prospect> {
     return apiRequest<Prospect>('/prospectos', { method: 'POST', body: JSON.stringify(input) });
+  },
+  async update(id: string, input: UpdateProspectInput): Promise<Prospect> {
+    return apiRequest<Prospect>(`/prospectos/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) });
+  },
+  async uploadDocument(id: string, file: File, type: 'PREDIAL' | 'ANTECEDENTE'): Promise<ProspectDocument> {
+    const body = new FormData();
+    body.append('archivo', file);
+    body.append('tipo', type);
+    body.append('categoria', 'PROYECTO');
+    body.append('prospecto_id', id);
+    return apiRequest<ProspectDocument>('/documentos', { method: 'POST', body });
+  },
+  async getDocumentUrl(id: string): Promise<string> {
+    const result = await apiRequest<{ url: string }>(`/documentos/${encodeURIComponent(id)}/url`);
+    return result.url;
   },
   async addFollowUp(id: string, input: FollowUpInput): Promise<ProspectFollowUp> {
     return apiRequest<ProspectFollowUp>(`/prospectos/${encodeURIComponent(id)}/seguimientos`, {
