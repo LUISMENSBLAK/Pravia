@@ -4,18 +4,18 @@ import type { AssistantAction, AssistantContext, AssistantModule } from './assis
 const labels: Record<AssistantModule, string> = {
   'mi-dia': 'Mi Día', prospectos: 'Prospectos', cotizaciones: 'Cotizaciones', expedientes: 'Expedientes',
   notarias: 'Notarías', comparecientes: 'Comparecientes', finanzas: 'Finanzas', agenda: 'Agenda',
-  reportes: 'Reportes', compliance: 'Riesgos / UIF', configuracion: 'Configuración', unknown: 'PRAVIA OS',
+  reportes: 'Reportes', isr: 'Cálculo ISR', compliance: 'Riesgos / UIF', configuracion: 'Configuración', unknown: 'PRAVIA OS',
 };
 
 const entityRoutes = new Map<string, AssistantContext['entityType']>([
   ['expedientes', 'expediente'], ['comparecientes', 'compareciente'], ['notarias', 'notaria'],
-  ['prospectos', 'prospecto'], ['cotizaciones', 'cotizacion'],
+  ['prospectos', 'prospecto'], ['cotizaciones', 'cotizacion'], ['calculo-isr', 'isrCalculation'],
 ]);
 
 export function resolveAssistantContext(location: Pick<Location, 'pathname' | 'hash'>): AssistantContext {
   const segments = location.pathname.split('/').filter(Boolean);
   const first = segments[0] ?? '';
-  const module = (first === 'riesgos' ? 'compliance' : first === 'mi-dia' ? 'mi-dia' : first in labels ? first : 'unknown') as AssistantModule;
+  const module = (first === 'riesgos' ? 'compliance' : first === 'calculo-isr' ? 'isr' : first === 'mi-dia' ? 'mi-dia' : first in labels ? first : 'unknown') as AssistantModule;
   const agendaEventId = module === 'agenda' ? new URLSearchParams(location.hash.replace(/^#/, '')).get('evento') : null;
   const entityType = agendaEventId ? 'evento' : first === 'riesgos' && segments[1] === 'revisiones' && segments[2] ? 'complianceReview' : segments[1] ? entityRoutes.get(first) : undefined;
   return {
@@ -82,6 +82,12 @@ const actions: Partial<Record<AssistantModule, AssistantAction[]>> = {
     { id: 'reports-collections', label: 'Analizar cobranza', prompt: 'Analiza la cobranza del periodo visible y señala los saldos con mayor prioridad.' },
     { id: 'reports-signatures', label: 'Analizar firmas', prompt: 'Resume las firmas realizadas, pendientes y programadas del periodo visible.' },
     { id: 'reports-potential', label: 'Clientes potenciales', prompt: 'Muéstrame las cotizaciones sin anticipo y prioriza el seguimiento con datos del reporte.' },
+  ],
+  isr: [
+    { id: 'isr-missing', label: '¿Qué falta?', prompt: '¿Qué falta para calcular este ISR? Usa únicamente datos confirmados y no modifiques nada.' },
+    { id: 'isr-explain', label: 'Explicar cálculo', prompt: 'Explícame este cálculo ISR y su versión normativa con los datos disponibles.' },
+    { id: 'isr-sources', label: 'Ver fuentes', prompt: '¿De qué documentos salieron los datos propuestos de este cálculo?' },
+    { id: 'isr-deductions', label: 'Deducciones usadas', prompt: 'Muéstrame las deducciones incluidas y su fundamento, sin cambiar el cálculo.' },
   ],
   compliance: [
     { id: 'compliance-pending', label: '¿Qué requiere revisión?', prompt: 'Muéstrame las revisiones de cumplimiento pendientes dentro de mi alcance.' },

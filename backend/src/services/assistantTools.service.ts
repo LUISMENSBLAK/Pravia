@@ -7,6 +7,7 @@ import { comparecienteObjectWhere, prospectoObjectWhere } from './objectAccess.s
 import { calculateFinancialPosition } from '../domain/financialLedger';
 import { ReportingService } from './reporting.service';
 import { resolveAssistantTimeRange, safeAssistantTimezone } from './assistantTime';
+import { isrObjectWhere } from './isr.service';
 
 type AuthUser = NonNullable<Request['user']>;
 export type AssistantToolName =
@@ -15,13 +16,13 @@ export type AssistantToolName =
   | 'searchComparecientes' | 'getComparecienteSummary' | 'getExpedienteDocuments'
   | 'getAgenda' | 'getUpcomingEvents' | 'getFinancialSummary' | 'getOutstandingBalances'
   | 'getReportingSummary'
-  | 'getComplianceSummary' | 'getCurrentUserWork' | 'globalSearch'
+  | 'getISRCalculation' | 'getComplianceSummary' | 'getCurrentUserWork' | 'globalSearch'
   | 'navigateToEntity' | 'prepareTask' | 'prepareAppointment' | 'prepareFollowUp';
 
 export type AssistantContextInput = {
   route?: string;
   module?: string;
-  entity_type?: 'expediente' | 'compareciente' | 'cotizacion' | 'notaria' | 'complianceReview';
+  entity_type?: 'expediente' | 'compareciente' | 'cotizacion' | 'notaria' | 'isrCalculation' | 'complianceReview';
   entity_id?: string;
   selected_ids?: string[];
 };
@@ -65,6 +66,7 @@ export const ASSISTANT_TOOL_REGISTRY: Record<AssistantToolName, ToolDefinition> 
   getFinancialSummary: { capability: 'ai.finanzas.read', systemPermissions: ['finanzas.read', 'expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'FINANCIAL', mode: 'READ' },
   getOutstandingBalances: { capability: 'ai.finanzas.read', systemPermissions: ['finanzas.read', 'expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'FINANCIAL', mode: 'READ' },
   getReportingSummary: { capability: 'ai.reportes.read', systemPermissions: ['reportes.read'], objectScope: 'USER', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'FINANCIAL', mode: 'READ' },
+  getISRCalculation: { capability: 'ai.isr.read', systemPermissions: ['isr.read'], objectScope: 'DYNAMIC', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'FINANCIAL', mode: 'READ' },
   getComplianceSummary: { capability: 'ai.cumplimiento.read', systemPermissions: ['cumplimiento.read', 'expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'SUMMARY', maxResults: 25, sensitivity: 'COMPLIANCE', mode: 'READ' },
   getCurrentUserWork: { capability: 'ai.work.read', systemPermissions: ['mi_dia.read'], objectScope: 'USER', resultType: 'SUMMARY', maxResults: 25, sensitivity: 'INTERNAL', mode: 'READ' },
   globalSearch: { capability: 'ai.search', anySystemPermission: ['expedientes.read', 'comparecientes.read', 'notarias.read'], objectScope: 'DYNAMIC', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'PERSONAL', mode: 'READ' },
@@ -170,6 +172,12 @@ const readFinancial: ToolExecutor = async (db, input) => {
 };
 
 const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
+  getISRCalculation: async (db, input) => {
+    const id = resolveContextId(input.args || {}, input.context, 'calculo_id', 'isrCalculation');
+    const record = await db.calculoISR.findFirst({ where: { id, archived_at: null, ...isrObjectWhere(input.user) }, select: { id: true, folio: true, tipo_operacion: true, estado: true, ejercicio: true, input_data: true, datos_modificados: true, ultima_version: true, expediente: { select: { id: true, numero_pravia: true } }, versiones: { orderBy: { version: 'desc' }, take: 1, select: { version: true, calculated_at: true, result: true, breakdown: true, ruleset_snapshot: true } }, propuestas: { where: { status: { in: ['PENDIENTE', 'CONFLICTO', 'ACEPTADA'] } }, select: { field_path: true, proposed_value: true, status: true, source_document_name: true, source_page: true } }, documentos: { where: { estatus: 'ACTIVO' }, select: { documento: { select: { id: true, nombre_original: true } } } } } });
+    if (!record) throw new AssistantToolError('El cálculo ISR no existe o está fuera de tu alcance.', 'AI_ISR_SCOPE_DENIED', 403);
+    return { data: { ...record, limitaciones: ['Solo lectura: la IA no modifica datos fiscales.', 'Las propuestas documentales requieren confirmación humana.', 'El resultado no constituye presentación ni acuse SAT.'] }, provenance: [source('CalculoISR', record.id, record.folio, `/calculo-isr/${record.id}`), ...record.documentos.map((link) => source('Documento', link.documento.id, link.documento.nombre_original, `/calculo-isr/${record.id}`))], truncated: false };
+  },
   getProspectFollowUps: async (db, input) => {
     const limit = boundedLimit(input.args?.limit);
     const timezone = await userTimezone(db, input.user.id);

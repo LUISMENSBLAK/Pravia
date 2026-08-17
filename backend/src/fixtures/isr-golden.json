@@ -1,0 +1,33 @@
+[
+  {
+    "name": "operación ordinaria con costo y gastos confirmados",
+    "source": "LISR 119, 121 y 126; Anexo 8 RMF 2026 A.I",
+    "input": {
+      "salePrice": "2000000.00",
+      "yearsElapsed": 10,
+      "deductions": [
+        { "id": "costo", "concept": "Costo de adquisición actualizado", "historicalAmount": "900000.00", "updatedAmount": "1100000.00", "expenseDate": "2016-03-01", "updateOrigin": "MANUAL_CONFIRMED", "updateMethod": "Importe actualizado proporcionado por el usuario", "treatment": "COSTO_ADQUISICION_ACTUALIZADO", "included": true, "confirmed": true, "supportDocumentId": "doc-costo", "reason": "LISR 121-I y 124", "confirmedBy": "fixture-user", "confirmedAt": "2026-08-17T15:30:00.000Z" },
+        { "id": "gastos", "concept": "Gastos notariales actualizados", "historicalAmount": "80000.00", "updatedAmount": "100000.00", "expenseDate": "2016-03-01", "updateOrigin": "MANUAL_CONFIRMED", "updateMethod": "Importe actualizado proporcionado por el usuario", "treatment": "GASTOS_NOTARIALES_IMPUESTOS_DERECHOS_AVALUO_ACTUALIZADOS", "included": true, "confirmed": true, "supportDocumentId": "doc-gastos", "reason": "LISR 121-III y tratamiento aplicable", "confirmedBy": "fixture-user", "confirmedAt": "2026-08-17T15:30:00.000Z" }
+      ]
+    },
+    "expected": { "gain": "800000.00", "tariffBase": "80000.00", "yearsConsidered": 10, "provisionalFederalISR": "46659.42", "bracket": 2 }
+  },
+  {
+    "name": "límite superior exacto del primer rango",
+    "source": "Anexo 8 RMF 2026 A.I",
+    "input": { "salePrice": "20135.11", "yearsElapsed": 1, "deductions": [{ "id": "costo", "concept": "Costo actualizado", "historicalAmount": "9000.00", "updatedAmount": "10000.00", "expenseDate": "2016-03-01", "updateOrigin": "MANUAL_CONFIRMED", "updateMethod": "Importe actualizado proporcionado por el usuario", "treatment": "COSTO_ADQUISICION_ACTUALIZADO", "included": true, "confirmed": true, "supportDocumentId": "doc-costo", "reason": "LISR 121-I y 124", "confirmedBy": "fixture-user", "confirmedAt": "2026-08-17T15:30:00.000Z" }] },
+    "expected": { "gain": "10135.11", "tariffBase": "10135.11", "yearsConsidered": 1, "provisionalFederalISR": "194.59", "bracket": 1 }
+  },
+  {
+    "name": "tope legal de veinte años",
+    "source": "LISR 126, primer párrafo; Anexo 8 RMF 2026 A.I",
+    "input": { "salePrice": "6000000.00", "yearsElapsed": 25, "deductions": [{ "id": "costo", "concept": "Costo actualizado", "historicalAmount": "800000.00", "updatedAmount": "1000000.00", "expenseDate": "2001-03-01", "updateOrigin": "MANUAL_CONFIRMED", "updateMethod": "Importe actualizado proporcionado por el usuario", "treatment": "COSTO_ADQUISICION_ACTUALIZADO", "included": true, "confirmed": true, "supportDocumentId": "doc-costo", "reason": "LISR 121-I y 124", "confirmedBy": "fixture-user", "confirmedAt": "2026-08-17T15:30:00.000Z" }] },
+    "expected": { "gain": "5000000.00", "tariffBase": "250000.00", "yearsConsidered": 20, "provisionalFederalISR": "614798.19", "bracket": 6 }
+  },
+  {
+    "name": "centavos y partida excluida",
+    "source": "LISR 121 y 126; Anexo 8 RMF 2026 A.I",
+    "input": { "salePrice": "500000.99", "yearsElapsed": 5, "deductions": [{ "id": "costo", "concept": "Costo actualizado", "historicalAmount": "200000.25", "updatedAmount": "250000.49", "expenseDate": "2021-03-01", "updateOrigin": "MANUAL_CONFIRMED", "updateMethod": "Importe actualizado proporcionado por el usuario", "treatment": "COSTO_ADQUISICION_ACTUALIZADO", "included": true, "confirmed": true, "supportDocumentId": "doc-costo", "reason": "LISR 121-I y 124", "confirmedBy": "fixture-user", "confirmedAt": "2026-08-17T15:30:00.000Z" }, { "id": "no", "concept": "Conservación", "historicalAmount": "1000.00", "updatedAmount": "1000.00", "expenseDate": "2025-03-01", "updateOrigin": "MANUAL_CONFIRMED", "updateMethod": "Sin actualización", "treatment": "NO_DEDUCIBLE", "included": false, "confirmed": true, "supportDocumentId": "doc-no", "reason": "No incluida", "confirmedBy": "fixture-user", "confirmedAt": "2026-08-17T15:30:00.000Z" }] },
+    "expected": { "gain": "250000.50", "tariffBase": "50000.10", "yearsConsidered": 5, "provisionalFederalISR": "13729.74", "bracket": 2 }
+  }
+]

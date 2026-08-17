@@ -100,6 +100,11 @@ model User {
   transaccionesBancoImportadas           TransaccionEstadoCuenta[]     @relation("TransaccionBancoImportador")
   invitationAccepted                     UserInvitation?               @relation("InvitationAcceptedUser")
   invitationsCreated                     UserInvitation[]              @relation("InvitationCreator")
+  calculosISRCreados                     CalculoISR[]                  @relation("CalculoISRCreador")
+  calculosISRActualizados                CalculoISR[]                  @relation("CalculoISRActualizador")
+  calculosISRVersiones                   CalculoISRVersion[]           @relation("CalculoISRVersionActor")
+  calculosISRDocumentos                  CalculoISRDocumento[]         @relation("CalculoISRDocumentoActor")
+  calculosISRPropuestasRevisadas         CalculoISRPropuesta[]         @relation("CalculoISRPropuestaRevisor")
   preference                             UserPreference?
 
   @@map("users")
@@ -641,6 +646,7 @@ model Expediente {
   pagos                      Pago[]
   tareas                     Tarea[]
   tareas_externas            TareaExterna[]
+  calculosISR                CalculoISR[]
 
   @@index([abogado_id], map: "idx_expedientes_abogado_fk")
   @@index([archived_by], map: "idx_expedientes_archivado_por_fk")
@@ -740,6 +746,8 @@ model Documento {
   matrimoniosSoporte           RelacionConyugal[]
   requisitoVinculos            RequisitoDocumentoVinculo[]
   tramitesEvidencia            TareaExterna[]                @relation("TareaExternaEvidencia")
+  calculosISRVinculos          CalculoISRDocumento[]
+  calculosISRPropuestas        CalculoISRPropuesta[]
 
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
   @@index([cotizacion_id], map: "idx_documentos_cotizacion_fk")
@@ -905,6 +913,7 @@ model Compareciente {
   representacionesComoRepresentado  ExpedienteRepresentacion[]        @relation("RepresentadoExpediente")
   representacionesComoRepresentante ExpedienteRepresentacion[]        @relation("RepresentanteExpediente")
   movimientosFinancieros            MovimientoFinanciero[]
+  calculosISR                       CalculoISR[]
   personaFisica                     PersonaFisica?
   personaMoral                      PersonaMoral?
 
@@ -1631,6 +1640,155 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+model CalculoISR {
+  id                     String                @id @default(uuid()) @db.Uuid
+  folio                  String                @unique
+  tipo_operacion         ISRTipoOperacion
+  estado                 ISREstadoCalculo      @default(BORRADOR)
+  ejercicio              Int
+  expediente_id          String?               @db.Uuid
+  compareciente_id       String?               @db.Uuid
+  contribuyente_nombre   String?
+  contribuyente_rfc      String?
+  inmueble_descripcion   String?
+  contribuyente_snapshot Json?
+  input_data             Json
+  ultima_version         Int                   @default(0)
+  datos_modificados      Boolean               @default(false)
+  creado_por_id          String                @db.Uuid
+  actualizado_por_id     String                @db.Uuid
+  created_at             DateTime              @default(now())
+  updated_at             DateTime              @updatedAt
+  archived_at            DateTime?
+  expediente             Expediente?           @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  compareciente          Compareciente?        @relation(fields: [compareciente_id], references: [id], onDelete: Restrict)
+  creado_por             User                  @relation("CalculoISRCreador", fields: [creado_por_id], references: [id])
+  actualizado_por        User                  @relation("CalculoISRActualizador", fields: [actualizado_por_id], references: [id])
+  versiones              CalculoISRVersion[]
+  documentos             CalculoISRDocumento[]
+  propuestas             CalculoISRPropuesta[]
+
+  @@index([expediente_id], map: "idx_calculos_isr_expediente")
+  @@index([compareciente_id], map: "idx_calculos_isr_compareciente")
+  @@index([estado, ejercicio], map: "idx_calculos_isr_estado_ejercicio")
+  @@index([contribuyente_rfc], map: "idx_calculos_isr_rfc")
+  @@map("calculos_isr")
+}
+
+model CalculoISRVersion {
+  id               String        @id @default(uuid()) @db.Uuid
+  calculo_id       String        @db.Uuid
+  version          Int
+  rule_set_id      String        @db.Uuid
+  input_snapshot   Json
+  ruleset_snapshot Json
+  breakdown        Json
+  result           Json
+  calculado_por_id String        @db.Uuid
+  calculated_at    DateTime      @default(now())
+  calculo          CalculoISR    @relation(fields: [calculo_id], references: [id], onDelete: Restrict)
+  rule_set         FiscalRuleSet @relation(fields: [rule_set_id], references: [id], onDelete: Restrict)
+  calculado_por    User          @relation("CalculoISRVersionActor", fields: [calculado_por_id], references: [id])
+
+  @@unique([calculo_id, version])
+  @@index([rule_set_id], map: "idx_calculos_isr_version_ruleset")
+  @@map("calculos_isr_versiones")
+}
+
+model CalculoISRDocumento {
+  id                  String         @id @default(uuid()) @db.Uuid
+  calculo_id          String         @db.Uuid
+  documento_id        String         @db.Uuid
+  creado_por_id       String         @db.Uuid
+  estatus             VinculoEstatus @default(ACTIVO)
+  fecha_vinculo       DateTime       @default(now())
+  inactivado_at       DateTime?
+  inactivado_por_id   String?        @db.Uuid
+  motivo_inactivacion String?
+  calculo             CalculoISR     @relation(fields: [calculo_id], references: [id], onDelete: Restrict)
+  documento           Documento      @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  creado_por          User           @relation("CalculoISRDocumentoActor", fields: [creado_por_id], references: [id])
+
+  @@unique([calculo_id, documento_id])
+  @@index([documento_id], map: "idx_calculos_isr_documento")
+  @@map("calculos_isr_documentos")
+}
+
+model CalculoISRPropuesta {
+  id                   String             @id @default(uuid()) @db.Uuid
+  calculo_id           String             @db.Uuid
+  field_path           String
+  proposed_value       Json
+  status               ISRPropuestaEstado @default(PENDIENTE)
+  source_document_id   String             @db.Uuid
+  source_document_name String
+  source_page          Int?
+  confidence           Decimal?           @db.Decimal(5, 4)
+  model_version        String
+  source_fragment      String?
+  conflict_group       String?
+  extracted_at         DateTime           @default(now())
+  reviewed_at          DateTime?
+  reviewed_by_id       String?            @db.Uuid
+  calculo              CalculoISR         @relation(fields: [calculo_id], references: [id], onDelete: Restrict)
+  source_document      Documento          @relation(fields: [source_document_id], references: [id], onDelete: Restrict)
+  reviewed_by          User?              @relation("CalculoISRPropuestaRevisor", fields: [reviewed_by_id], references: [id])
+
+  @@index([calculo_id, status], map: "idx_calculos_isr_propuestas_estado")
+  @@index([source_document_id], map: "idx_calculos_isr_propuestas_documento")
+  @@map("calculos_isr_propuestas")
+}
+
+model FiscalRuleSet {
+  id                 String              @id @default(uuid()) @db.Uuid
+  clave              String
+  version            String
+  ejercicio          Int
+  tipo_operacion     ISRTipoOperacion
+  jurisdiccion       String              @default("MX-FED")
+  vigencia_desde     DateTime            @db.Date
+  vigencia_hasta     DateTime?           @db.Date
+  fuente_normativa   String
+  fuente_url         String
+  incorporado_at     DateTime            @default(now())
+  activo             Boolean             @default(true)
+  parametros         Json
+  rate_tables        FiscalRateTable[]
+  calculos_versiones CalculoISRVersion[]
+
+  @@unique([clave, version])
+  @@index([ejercicio, tipo_operacion, activo], map: "idx_fiscal_rulesets_lookup")
+  @@map("fiscal_rule_sets")
+}
+
+model FiscalRateTable {
+  id          String              @id @default(uuid()) @db.Uuid
+  rule_set_id String              @db.Uuid
+  clave       String
+  nombre      String
+  moneda      String              @default("MXN")
+  escala      Int                 @default(2)
+  rate_set    FiscalRuleSet       @relation(fields: [rule_set_id], references: [id], onDelete: Restrict)
+  brackets    FiscalRateBracket[]
+
+  @@unique([rule_set_id, clave])
+  @@map("fiscal_rate_tables")
+}
+
+model FiscalRateBracket {
+  id              String          @id @default(uuid()) @db.Uuid
+  rate_table_id   String          @db.Uuid
+  orden           Int
+  limite_inferior Decimal         @db.Decimal(18, 2)
+  limite_superior Decimal?        @db.Decimal(18, 2)
+  cuota_fija      Decimal         @db.Decimal(18, 2)
+  porcentaje      Decimal         @db.Decimal(9, 6)
+  rate_table      FiscalRateTable @relation(fields: [rate_table_id], references: [id], onDelete: Restrict)
+
+  @@unique([rate_table_id, orden])
+  @@map("fiscal_rate_brackets")
+}
+
 model DomainEventOutbox {
   id             String                     @id @default(uuid()) @db.Uuid
   event_type     String
@@ -2135,6 +2293,26 @@ enum Role {
   RECEPCION
   GESTORIA
   CONSULTA
+}
+
+enum ISRTipoOperacion {
+  ENAJENACION_INMUEBLE
+  ADQUISICION_INMUEBLE
+  CASO_ESPECIAL
+}
+
+enum ISREstadoCalculo {
+  BORRADOR
+  LISTO_PARA_CALCULAR
+  CALCULADO
+  REQUIERE_REVISION
+}
+
+enum ISRPropuestaEstado {
+  PENDIENTE
+  ACEPTADA
+  RECHAZADA
+  CONFLICTO
 }
 
 enum ProspectoPrioridad {

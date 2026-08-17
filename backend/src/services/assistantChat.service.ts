@@ -70,7 +70,7 @@ const READ_TOOL_NAMES = new Set<AssistantToolName>([
   'getProspectFollowUps',
   'searchExpedientes', 'getExpedienteSummary', 'getExpedientePendingItems', 'getExpedientesRequiringAttention',
   'searchComparecientes', 'getComparecienteSummary', 'getExpedienteDocuments', 'getAgenda', 'getUpcomingEvents',
-  'getFinancialSummary', 'getOutstandingBalances', 'getReportingSummary', 'getComplianceSummary', 'getCurrentUserWork', 'globalSearch',
+  'getFinancialSummary', 'getOutstandingBalances', 'getReportingSummary', 'getISRCalculation', 'getComplianceSummary', 'getCurrentUserWork', 'globalSearch',
 ]);
 
 const TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -87,6 +87,7 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   getFinancialSummary: 'Obtiene el resumen financiero real de un expediente autorizado concreto.',
   getOutstandingBalances: 'Obtiene saldos reales por cobrar dentro del alcance autorizado.',
   getReportingSummary: 'Obtiene indicadores canónicos reales de Reportes para el periodo solicitado. Úsala para resúmenes financieros globales autorizados.',
+  getISRCalculation: 'Obtiene un cálculo ISR real dentro del alcance del usuario: faltantes, snapshot, propuestas, documentos, desglose, resultado y versión normativa. Solo lectura.',
   getComplianceSummary: 'Obtiene revisiones y evidencia de cumplimiento persistidas para un expediente autorizado concreto.',
   getCurrentUserWork: 'Obtiene tareas del periodo, tareas vencidas, tareas completadas y eventos del usuario autenticado, separados por categoría.',
   globalSearch: 'Busca una referencia textual en expedientes, comparecientes y notarías respetando permisos.',
@@ -112,6 +113,7 @@ const TOOL_PROPERTIES: Record<string, Record<string, unknown>> = {
   getFinancialSummary: { expediente_id: { type: 'string' } },
   getOutstandingBalances: { limit: { type: 'integer', minimum: 1, maximum: 25 } },
   getReportingSummary: { periodo: { type: 'string' }, fecha_desde: { type: 'string' }, fecha_hasta: { type: 'string' }, abogado_id: { type: 'string' }, notaria_id: { type: 'string' } },
+  getISRCalculation: { calculo_id: { type: 'string' } },
   getComplianceSummary: { expediente_id: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 25 } },
   getCurrentUserWork: { period: PERIOD_PROPERTY, limit: { type: 'integer', minimum: 1, maximum: 25 } },
   globalSearch: { query: { type: 'string', minLength: 2 }, limit: { type: 'integer', minimum: 1, maximum: 25 } },

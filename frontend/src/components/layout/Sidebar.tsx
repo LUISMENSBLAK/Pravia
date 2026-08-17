@@ -1,6 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import {
-  CalendarDays, ChartNoAxesColumnIncreasing, CircleDollarSign, ContactRound, FileText,
+  CalendarDays, Calculator, ChartNoAxesColumnIncreasing, CircleDollarSign, ContactRound, FileText,
   FolderClosed, Landmark, PanelLeftClose, PanelLeftOpen, Settings, ShieldCheck, Sun, UsersRound,
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
@@ -21,6 +21,7 @@ const navigation: NavItem[] = [
   { label: 'Finanzas', to: '/finanzas', icon: CircleDollarSign },
   { label: 'Agenda', to: '/agenda', icon: CalendarDays },
   { label: 'Reportes', to: '/reportes', icon: ChartNoAxesColumnIncreasing },
+  { label: 'Cálculo ISR', to: '/calculo-isr', icon: Calculator },
   { label: 'Riesgos / UIF', to: '/riesgos', icon: ShieldCheck },
 ];
 
@@ -49,10 +50,12 @@ type SidebarProps = {
 };
 
 export function Sidebar({ collapsed, mobileOpen, onToggle, onCloseMobile, user }: SidebarProps) {
+  const localISRFixture = import.meta.env.DEV && window.location.pathname.startsWith('/calculo-isr') && new URLSearchParams(window.location.search).get('visual') === '1';
   const visibleNavigation = navigation.filter((item) => {
     if (!user?.permissions) return true;
     if (item.to === '/finanzas') return user.permissions.includes('finanzas.read');
     if (item.to === '/reportes') return user.permissions.includes('reportes.read');
+    if (item.to === '/calculo-isr') return localISRFixture || user.permissions.includes('isr.read');
     return true;
   });
   return (

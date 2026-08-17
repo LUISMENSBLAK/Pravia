@@ -23,6 +23,8 @@ const FinancePage = lazy(() => import('../features/finance/FinancePage').then((m
 const ReportsPage = lazy(() => import('../features/reports/ReportsPage').then((module) => ({ default: module.ReportsPage })));
 const CompliancePage = lazy(() => import('../features/compliance/CompliancePage').then((module) => ({ default: module.CompliancePage })));
 const ComplianceReviewPage = lazy(() => import('../features/compliance/ComplianceReviewPage').then((module) => ({ default: module.ComplianceReviewPage })));
+const ISRDirectoryPage = lazy(() => import('../features/isr/ISRDirectoryPage').then((module) => ({ default: module.ISRDirectoryPage })));
+const ISRWorkspacePage = lazy(() => import('../features/isr/ISRWorkspacePage').then((module) => ({ default: module.ISRWorkspacePage })));
 const SettingsPage = lazy(() => import('../features/settings/SettingsPage').then((module) => ({ default: module.SettingsPage })));
 const UserDetailPage = lazy(() => import('../features/settings/UserDetailPage').then((module) => ({ default: module.UserDetailPage })));
 const ActivationPage = lazy(() => import('../features/settings/ActivationPage').then((module) => ({ default: module.ActivationPage })));
@@ -54,6 +56,8 @@ export function App() {
               <Route path="/reportes" element={<ReportsPage />} />
               <Route path="/riesgos" element={<CompliancePage />} />
               <Route path="/riesgos/revisiones/:id" element={<ComplianceReviewPage />} />
+              <Route path="/calculo-isr" element={<ISRDirectoryPage />} />
+              <Route path="/calculo-isr/:id" element={<ISRWorkspacePage />} />
               <Route path="/configuracion" element={<SettingsPage />} />
               <Route path="/configuracion/:section" element={<SettingsPage />} />
               <Route path="/configuracion/usuarios/:id" element={<UserDetailPage />} />

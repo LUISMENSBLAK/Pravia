@@ -19,6 +19,7 @@ import reportesRoutes from './routes/reportes.routes';
 import miDiaRoutes from './routes/miDia.routes';
 import aiRoutes from './routes/ai.routes';
 import complianceRoutes from './routes/compliance.routes';
+import isrRoutes from './routes/isr.routes';
 import authRoutes from './routes/auth.routes';
 import usersRoutes from './routes/users.routes';
 import storageRoutes from './routes/storage.routes';
@@ -243,6 +244,7 @@ app.use('/api/reportes', requirePermission('reportes.read'), reportesRoutes);
 app.use('/api/mi-dia', requirePermission('mi_dia.read'), miDiaRoutes);
 app.use('/api/ia', aiRoutes);
 app.use('/api/cumplimiento', authorizeByMethod('cumplimiento.read', 'cumplimiento.write'), complianceRoutes);
+app.use('/api/isr', isrRoutes);
 
 // 404 handler
 app.use((req: Request, res: Response) => {
