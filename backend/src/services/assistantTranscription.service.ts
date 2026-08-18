@@ -21,7 +21,7 @@ const ALLOWED_MODELS = new Set([
   'whisper-1',
 ]);
 
-function configuredModel() {
+export function getAssistantTranscriptionModelName() {
   const value = String(process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe').trim();
   return ALLOWED_MODELS.has(value) ? value : 'gpt-4o-mini-transcribe';
 }
@@ -30,7 +30,7 @@ export function createAssistantTranscriptionService(fetchImpl: typeof fetch = fe
   return async function transcribe(input: { buffer: Buffer; mimeType: string; filename: string }): Promise<TranscriptionResult> {
     const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
     if (!apiKey) throw new AssistantTranscriptionError('La transcripción de voz no está disponible en este momento.', 'AI_PROVIDER_NOT_CONFIGURED', 503);
-    const model = configuredModel();
+    const model = getAssistantTranscriptionModelName();
     const startedAt = Date.now();
     const form = new FormData();
     form.append('file', new Blob([new Uint8Array(input.buffer)], { type: input.mimeType }), input.filename);

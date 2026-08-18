@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('../config/prisma', () => ({ default: { auditLog: { create: mocks.auditCreate }, assistantMessage: { findFirst: mocks.assistantMessageFind }, userPreference: { findUnique: mocks.preferenceFind } } }));
 vi.mock('../services/openaiDocument.service', () => ({
+  getOpenAIAssistantModelName: () => 'model-assistant',
   getOpenAIEscalationModelName: () => 'model-escalation',
   getOpenAIModelName: () => 'model-primary',
 }));

@@ -178,6 +178,11 @@ export function getOpenAIModelName(): string {
   return /^gpt-5\.4-nano(?:-|$)/.test(configured) ? configured : 'gpt-5.4-nano';
 }
 
+export function getOpenAIAssistantModelName(): string {
+  const configured = (process.env.OPENAI_ASSISTANT_MODEL || '').trim();
+  return /^gpt-5\.4-(?:nano|mini)(?:-|$)/.test(configured) ? configured : 'gpt-5.4-mini';
+}
+
 export function getOpenAIEscalationModelName(): string {
   const configured = (process.env.OPENAI_ESCALATION_MODEL || '').trim();
   return /^gpt-5\.4-mini(?:-|$)/.test(configured) ? configured : 'gpt-5.4-mini';

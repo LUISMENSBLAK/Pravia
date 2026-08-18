@@ -1,5 +1,5 @@
 import type { Request } from 'express';
-import { buildUsageMetrics, getOpenAIModelName, type AIUsageMetrics } from './openaiDocument.service';
+import { buildUsageMetrics, getOpenAIAssistantModelName, type AIUsageMetrics } from './openaiDocument.service';
 import {
   AssistantToolError,
   assistantToolCatalog,
@@ -130,11 +130,6 @@ const TOOL_PROPERTIES: Record<string, Record<string, unknown>> = {
   getCurrentUserWork: { period: PERIOD_PROPERTY, limit: { type: 'integer', minimum: 1, maximum: 25 } },
   globalSearch: { query: { type: 'string', minLength: 2 }, limit: { type: 'integer', minimum: 1, maximum: 25 } },
 };
-
-function providerModel() {
-  const configured = String(process.env.OPENAI_ASSISTANT_MODEL || '').trim();
-  return /^gpt-5\.4-(?:nano|mini)(?:-|$)/.test(configured) ? configured : getOpenAIModelName();
-}
 
 function reasoningEffort(): 'none' | 'low' | 'medium' | 'high' | 'xhigh' {
   const value = String(process.env.OPENAI_REASONING_EFFORT || 'high').trim().toLowerCase();
@@ -347,7 +342,7 @@ export function createAssistantChatService(dependencies: ChatDependencies = {}) 
     if (!apiKey) throw new AssistantChatError('PRAVIA IA no está disponible en este momento.', 'AI_PROVIDER_NOT_CONFIGURED', 503);
 
     const startedAt = Date.now();
-    const model = providerModel();
+    const model = getOpenAIAssistantModelName();
     const usages: AIUsageMetrics[] = [];
     const configuredTimeout = Number(process.env.AI_ASSISTANT_TIMEOUT_MS || process.env.AI_DOCUMENT_TIMEOUT_MS || MAX_QUERY_TIMEOUT_MS);
     const overallTimeout = Math.min(Math.max(configuredTimeout, 10_000), MAX_QUERY_TIMEOUT_MS);

@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma';
-import { getOpenAIEscalationModelName, getOpenAIModelName } from '../services/openaiDocument.service';
+import { getOpenAIAssistantModelName, getOpenAIEscalationModelName, getOpenAIModelName } from '../services/openaiDocument.service';
 import { ASSISTANT_TOOL_REGISTRY, AssistantToolError, assistantToolCatalog, canUseAssistantTool, executeAssistantTool, type AssistantToolName } from '../services/assistantTools.service';
 import { AssistantChatError, sendAssistantMessage } from '../services/assistantChat.service';
 import { prepareAssistantAttachmentContext } from '../services/assistantAttachmentContext.service';
@@ -103,7 +103,7 @@ export class AIController {
       if (req.user && conversationId) await recordAIFailure({
         operacion: 'ASSISTANT_CHAT', usuarioId: req.user.id, assistantConversationId: conversationId,
         organizationId: req.user.organizationId, operationId: `assistant-chat-failure:${req.correlationId || conversationId}`,
-        modelo: process.env.OPENAI_ASSISTANT_MODEL || process.env.OPENAI_DOCUMENT_MODEL || 'not-configured',
+        modelo: getOpenAIAssistantModelName(),
         errorCode: error?.code || 'AI_ASSISTANT_FAILED',
         metadata: { correlation_id: req.correlationId },
       }).catch(() => undefined);
