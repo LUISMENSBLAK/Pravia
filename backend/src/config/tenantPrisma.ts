@@ -20,6 +20,9 @@ export const TENANT_SCOPED_MODELS = new Set([
   'ComplianceBeneficialOwner', 'CompliancePepReview', 'ComplianceScreeningResult', 'CompliancePayment',
   'ComplianceObligation', 'ComplianceEvent', 'ComplianceAiProposal', 'CargaTemporalDocumento',
   'StorageCompensationJob', 'ComparecienteDatoFuente', 'ComparecienteAlias', 'ComparecienteActividadEconomica',
+  'ConfiguracionActo', 'ConfiguracionEtapa', 'ConfiguracionActividad', 'ConfiguracionDependencia',
+  'ConfiguracionExcepcion', 'ConfiguracionExcepcionDependencia', 'CatalogoInstitucion', 'CatalogoCarpeta',
+  'CatalogoArtefacto', 'CatalogoArtefactoVersion', 'CatalogoArtefactoActo', 'CatalogoArtefactoRegla',
 ]);
 
 const READ_OR_WRITE_WITH_WHERE = new Set([
@@ -28,6 +31,7 @@ const READ_OR_WRITE_WITH_WHERE = new Set([
 ]);
 
 const WRITES_WITH_DATA = new Set(['update', 'updateMany']);
+export const SHARED_OR_TENANT_MODELS = new Set(['TipoActo']);
 
 function tenantWhere(args: any, organizationId: string) {
   args.where = { ...(args.where || {}), organization_id: organizationId };
@@ -84,6 +88,34 @@ export const tenantIsolationMiddleware: Prisma.Middleware = async (params, next)
     }
     params.args ||= {};
     if (READ_OR_WRITE_WITH_WHERE.has(params.action)) params.args.where = { ...(params.args.where || {}), id: actor.organizationId };
+    return next(params);
+  }
+  if (SHARED_OR_TENANT_MODELS.has(params.model)) {
+    if (!actor?.organizationId) throw new TenantContextError();
+    params.args ||= {};
+    if (['update', 'updateMany', 'delete', 'deleteMany'].includes(params.action)) {
+      const requestedWhere = params.args.where || {};
+      params.args.where = { AND: [requestedWhere, { organization_id: actor.organizationId }] };
+    } else if (READ_OR_WRITE_WITH_WHERE.has(params.action)) {
+      const requestedWhere = params.args.where || {};
+      params.args.where = {
+        AND: [requestedWhere, { OR: [{ organization_id: null }, { organization_id: actor.organizationId }] }],
+      };
+    }
+    if (params.action === 'create') tenantData(params.args.data, actor.organizationId);
+    if (params.action === 'createMany') {
+      const rows = Array.isArray(params.args.data) ? params.args.data : [params.args.data];
+      rows.forEach((row: any) => tenantData(row, actor.organizationId));
+    }
+    if (WRITES_WITH_DATA.has(params.action) && params.args.data?.organization_id !== undefined) {
+      tenantData(params.args.data, actor.organizationId);
+    }
+    if (params.action === 'upsert') {
+      const requestedWhere = params.args.where || {};
+      params.args.where = { AND: [requestedWhere, { organization_id: actor.organizationId }] };
+      tenantData(params.args.create, actor.organizationId);
+      if (params.args.update?.organization_id !== undefined) tenantData(params.args.update, actor.organizationId);
+    }
     return next(params);
   }
   if (!TENANT_SCOPED_MODELS.has(params.model)) return next(params);

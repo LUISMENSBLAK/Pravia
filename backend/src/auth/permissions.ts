@@ -23,6 +23,9 @@ export const PERMISSIONS = [
   'compliance.notice.prepare', 'compliance.notice.confirm', 'compliance.sensitive.read',
   'usuarios.read', 'usuarios.manage',
   'configuracion.manage',
+  'configuracion.catalogos.read',
+  'configuracion.actos_tiempos.manage',
+  'configuracion.plantillas_formatos.manage',
 ] as const;
 
 export type Permission = typeof PERMISSIONS[number];
@@ -47,6 +50,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'ai.agenda.read', 'ai.finanzas.read', 'ai.reportes.read', 'ai.isr.read', 'ai.cumplimiento.read', 'ai.work.read',
     'ai.search', 'ai.navigate', 'ai.actions.prepare', 'ai.admin.read',
     'cumplimiento.read', 'compliance.read', 'compliance.rules.read', 'compliance.sensitive.read', 'usuarios.read',
+    'configuracion.catalogos.read', 'configuracion.actos_tiempos.manage', 'configuracion.plantillas_formatos.manage',
   ],
   ABOGADO: [
     'mi_dia.read', 'prospectos.read', 'prospectos.write',
@@ -61,7 +65,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'ai.agenda.read', 'ai.reportes.read', 'ai.isr.read', 'ai.cumplimiento.read', 'ai.work.read', 'ai.search', 'ai.navigate', 'ai.actions.prepare',
     'cumplimiento.read', 'cumplimiento.write', 'cumplimiento.confirm',
     'compliance.read', 'compliance.write', 'compliance.review', 'compliance.rules.read', 'compliance.notice.prepare', 'compliance.sensitive.read',
-    'usuarios.read',
+    'usuarios.read', 'configuracion.catalogos.read',
   ],
   RECEPCION: [
     'mi_dia.read', 'prospectos.read', 'prospectos.write',
@@ -69,13 +73,13 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'expedientes.read', 'expedientes.deliver',
     'ai.use', 'ai.prospectos.read', 'ai.expedientes.read', 'ai.documentos.read', 'ai.agenda.read', 'ai.work.read', 'ai.search', 'ai.navigate', 'ai.actions.prepare',
     'documentos.read', 'documentos.write',
-    'notarias.read', 'agenda.read', 'agenda.write', 'usuarios.read',
+    'notarias.read', 'agenda.read', 'agenda.write', 'usuarios.read', 'configuracion.catalogos.read',
   ],
   GESTORIA: [
     'mi_dia.read', 'expedientes.read', 'expedientes.postfirma.manage',
     'ai.use', 'ai.expedientes.read', 'ai.documentos.read', 'ai.agenda.read', 'ai.work.read', 'ai.search', 'ai.navigate', 'ai.actions.prepare',
     'documentos.read', 'documentos.write',
-    'notarias.read', 'agenda.read', 'agenda.write', 'usuarios.read',
+    'notarias.read', 'agenda.read', 'agenda.write', 'usuarios.read', 'configuracion.catalogos.read',
   ],
   CONSULTA: [
     'mi_dia.read', 'expedientes.read', 'expedientes.project.read', 'documentos.read',
@@ -84,6 +88,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
     'isr.read',
     'ai.use', 'ai.expedientes.read', 'ai.comparecientes.read', 'ai.documentos.read',
     'ai.agenda.read', 'ai.reportes.read', 'ai.isr.read', 'ai.cumplimiento.read', 'ai.work.read', 'ai.search', 'ai.navigate',
+    'configuracion.catalogos.read',
   ],
 };
 

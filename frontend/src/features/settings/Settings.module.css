@@ -147,7 +147,7 @@
   .layout { display: block; }
   .settingsNav { position: static; display: flex; flex-direction: row; gap: 6px; margin-bottom: 16px; padding: 7px; overflow-x: auto; overscroll-behavior-inline: contain; scroll-snap-type: x proximity; scrollbar-width: none; }
   .settingsNav::-webkit-scrollbar { display: none; }
-  .settingsNav a { flex: 0 0 auto; display: inline-flex; min-height: 38px; scroll-margin-inline: 7px; scroll-snap-align: center; white-space: nowrap; }
+  .settingsNav a { flex: 0 0 auto; display: inline-flex; min-height: 44px; scroll-margin-inline: 7px; scroll-snap-align: center; white-space: nowrap; }
   .settingsNav a svg:last-child, .navGroup small { display: none; }
   .navGroup { display: contents; }
   .settingsNav a.settingsActive { box-shadow: inset 0 -2px var(--color-gold-500); }

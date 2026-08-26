@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { runWithActorContext, TenantContextError } from '../auth/actorContext';
-import { TENANT_SCOPED_MODELS, tenantIsolationMiddleware } from '../config/tenantPrisma';
+import { SHARED_OR_TENANT_MODELS, TENANT_SCOPED_MODELS, tenantIsolationMiddleware } from '../config/tenantPrisma';
 import { ExpedienteWorkflowService } from '../services/expedienteWorkflow.service';
 
 const ORG_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -10,6 +10,15 @@ const ORG_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const actorA = {
   userId: '11111111-1111-4111-8111-111111111111', organizationId: ORG_A, membershipId: 'membership-a',
   role: 'DIRECCION' as const, permissions: [], scope: 'GLOBAL' as const, sessionId: 'session-a',
+};
+
+const readAllMigrations = () => {
+  const root = resolve(process.cwd(), 'prisma/migrations');
+  return readdirSync(root, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((entry) => readFileSync(resolve(root, entry.name, 'migration.sql'), 'utf8'))
+    .join('\n');
 };
 
 const invoke = (model: string, action: string, args: Record<string, unknown>, next = vi.fn(async (params) => params)) =>
@@ -86,6 +95,23 @@ describe('frontera tenant canónica', () => {
     expect(catalogNext.mock.calls[0][0].args.where).toEqual({ activo: true });
   });
 
+  it('expone actos canónicos globales y actos privados del tenant sin filtrar identidades de otra organización', async () => {
+    const next = vi.fn(async (params) => params);
+    await invoke('TipoActo', 'findMany', { where: { activo: true } }, next);
+    expect(next.mock.calls[0][0].args.where).toEqual({
+      AND: [{ activo: true }, { OR: [{ organization_id: null }, { organization_id: ORG_A }] }],
+    });
+    const create = vi.fn(async (params) => params);
+    await invoke('TipoActo', 'create', { data: { nombre: 'Acto privado' } }, create);
+    expect(create.mock.calls[0][0].args.data.organization_id).toBe(ORG_A);
+
+    const update = vi.fn(async (params) => params);
+    await invoke('TipoActo', 'update', { where: { id: 'global-or-tenant-act' }, data: { nombre: 'Cambio' } }, update);
+    expect(update.mock.calls[0][0].args.where).toEqual({
+      AND: [{ id: 'global-or-tenant-act' }, { organization_id: ORG_A }],
+    });
+  });
+
   it('la migración valida sin inferir tenant y bloquea relaciones cross-tenant críticas', () => {
     const sql = readFileSync(resolve(process.cwd(), 'prisma/migrations/20260817045000_create_multitenancy_foundation/migration.sql'), 'utf8');
     expect(sql).not.toContain('NEW.organization_id := parent_org');
@@ -103,30 +129,31 @@ describe('frontera tenant canónica', () => {
 
   it('mantiene alineados schema, middleware, FKs e índices para cada modelo tenant-owned', () => {
     const schema = readFileSync(resolve(process.cwd(), 'prisma/schema.prisma'), 'utf8');
-    const foundation = readFileSync(resolve(process.cwd(), 'prisma/migrations/20260817045000_create_multitenancy_foundation/migration.sql'), 'utf8');
-    const assistant = readFileSync(resolve(process.cwd(), 'prisma/migrations/20260817050000_create_assistant_conversations/migration.sql'), 'utf8');
+    const migrations = readAllMigrations();
+    const normalizedMigrations = migrations.replaceAll('"', '').replace(/\s+/g, ' ');
     for (const model of TENANT_SCOPED_MODELS) {
       const block = schema.match(new RegExp(`model\\s+${model}\\s+\\{([\\s\\S]*?)\\n\\}`))?.[1] || '';
       expect(block, `${model} debe existir en Prisma`).not.toBe('');
       expect(block, `${model} debe declarar organization_id`).toMatch(/organization_id\s+String/);
       const table = block.match(/@@map\("([^"]+)"\)/)?.[1];
       expect(table, `${model} debe declarar @@map`).toBeTruthy();
-      const migration = model.startsWith('Assistant') ? assistant : foundation;
-      expect(migration, `${model}/${table} debe estar en la migración tenant`).toContain(String(table));
-      if (!model.startsWith('Assistant')) expect(foundation).toContain(`'idx_' || table_name || '_organization'`);
+      expect(migrations, `${model}/${table} debe estar en alguna migración tenant`).toContain(String(table));
+      const hasGenericTenantIndex = migrations.includes(`'idx_' || table_name || '_organization'`);
+      const hasExplicitTenantIndex = normalizedMigrations.includes(`ON pravia_os.${table}(organization_id`)
+        || normalizedMigrations.includes(`ON pravia_os.${table} (organization_id`);
+      expect(hasGenericTenantIndex || hasExplicitTenantIndex, `${model}/${table} debe indexar organization_id`).toBe(true);
     }
     const schemaTenantModels = [...schema.matchAll(/^model\s+(\w+)\s*\{([\s\S]*?)^\}/gm)]
       .filter(([, name, body]) => /^\s*organization_id\s+/m.test(body) && !['OrganizationMembership', 'AuthSession'].includes(name))
       .map(([, name]) => name)
       .sort();
-    expect([...TENANT_SCOPED_MODELS].sort()).toEqual(schemaTenantModels);
+    expect([...TENANT_SCOPED_MODELS, ...SHARED_OR_TENANT_MODELS].sort()).toEqual(schemaTenantModels);
   });
 
   it('cubre con constraints todas las relaciones tenant↔tenant y tenant↔usuario', () => {
     const schema = readFileSync(resolve(process.cwd(), 'prisma/schema.prisma'), 'utf8');
-    const foundation = readFileSync(resolve(process.cwd(), 'prisma/migrations/20260817045000_create_multitenancy_foundation/migration.sql'), 'utf8');
-    const assistant = readFileSync(resolve(process.cwd(), 'prisma/migrations/20260817050000_create_assistant_conversations/migration.sql'), 'utf8');
-    const migrations = `${foundation}\n${assistant}`;
+    const migrations = readAllMigrations();
+    const normalizedMigrations = migrations.replaceAll('"', '').replace(/\s+/g, ' ');
     const models = new Map<string, { body: string; table: string; tenant: boolean }>();
     for (const match of schema.matchAll(/^model\s+(\w+)\s*\{([\s\S]*?)^\}/gm)) {
       const [, name, body] = match;
@@ -146,10 +173,15 @@ describe('frontera tenant canónica', () => {
             const tuple = `('${model.table}','${field}')`;
             const explicitTrigger = new RegExp(`ON\\s+pravia_os\\.${model.table}[\\s\\S]{0,220}enforce_organization_membership\\('${field}'\\)`);
             expect(migrations.includes(tuple) || explicitTrigger.test(migrations), `${model.table}.${field} debe exigir Membership`).toBe(true);
+          } else if (SHARED_OR_TENANT_MODELS.has(parentName)) {
+            expect(normalizedMigrations).toContain(`FOREIGN KEY (${field}) REFERENCES pravia_os.${parent.table}(id)`);
           } else if (parent.tenant) {
             const tuple = `('${model.table}','${parent.table}','${field}')`;
             const explicitTrigger = new RegExp(`ON\\s+pravia_os\\.${model.table}[\\s\\S]{0,220}enforce_same_organization\\('${parent.table}','${field}'\\)`);
-            expect(migrations.includes(tuple) || explicitTrigger.test(migrations), `${model.table}.${field} debe coincidir con ${parent.table}`).toBe(true);
+            const compositeFk = normalizedMigrations.includes(
+              `FOREIGN KEY (${field}, organization_id) REFERENCES pravia_os.${parent.table}(id, organization_id)`,
+            );
+            expect(migrations.includes(tuple) || explicitTrigger.test(migrations) || compositeFk, `${model.table}.${field} debe coincidir con ${parent.table}`).toBe(true);
           }
         }
       }

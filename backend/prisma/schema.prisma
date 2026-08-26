@@ -300,8 +300,11 @@ model ProspectoServicioCatalogo {
   activo        Boolean     @default(true)
   estados       String[]
   tipos_persona String[]
+  tipo_acto_id  String      @db.Uuid
   prospectos    Prospecto[]
+  tipo_acto     TipoActo    @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
 
+  @@index([tipo_acto_id], map: "idx_prospecto_servicios_tipo_acto_fk")
   @@map("prospecto_servicios_catalogo")
 }
 
@@ -481,6 +484,8 @@ model CotizacionSeguimiento {
 
 model TipoActo {
   id                              String                          @id @default(uuid()) @db.Uuid
+  organization_id                 String?                         @db.Uuid
+  codigo_catalogo                 String?                         @unique
   nombre                          String
   descripcion                     String?
   machote_referencia              String?
@@ -489,12 +494,14 @@ model TipoActo {
   created_at                      DateTime                        @default(now())
   updated_at                      DateTime                        @default(now()) @updatedAt
   checklist                       ChecklistItem[]
+  configuracionesOperativas       ConfiguracionActo[]
   expedientes                     Expediente[]
   flujoEtapas                     FlujoEtapa[]
   flujoVersiones                  FlujoVersion[]
   formularioSecciones             FormularioSeccion[]
   formularioVersiones             FormularioVersion[]
   plantillaDocVersiones           PlantillaDocumentalVersion[]
+  serviciosProspecto              ProspectoServicioCatalogo[]
   tipoActoCaracteresCompareciente TipoActoCaracterCompareciente[]
 
   @@map("tipos_acto")
@@ -613,6 +620,242 @@ model PlantillaDocumentalVersion {
   @@index([creado_por_id], map: "idx_plantilla_versiones_creador_fk")
   @@index([tipo_acto_id, notaria_id, activa], map: "plantilla_documental_versiones_tipo_acto_id_notaria_id_activa_i")
   @@map("plantilla_documental_versiones")
+}
+
+model ConfiguracionActo {
+  id                 String               @id @default(uuid()) @db.Uuid
+  organization_id    String               @db.Uuid
+  tipo_acto_id       String               @db.Uuid
+  activa             Boolean              @default(true)
+  requiere_revision  Boolean              @default(true)
+  revision           Int                  @default(1)
+  nombre_personalizado String?
+  descripcion_personalizada String?
+  creado_por_id      String               @db.Uuid
+  actualizado_por_id String               @db.Uuid
+  created_at         DateTime             @default(now())
+  updated_at         DateTime             @updatedAt
+  etapas             ConfiguracionEtapa[]
+  tipo_acto          TipoActo             @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
+
+  @@unique([organization_id, tipo_acto_id], map: "uq_config_acto_org_tipo")
+  @@index([tipo_acto_id], map: "idx_config_actos_tipo_acto_fk")
+  @@map("configuracion_actos")
+}
+
+model ConfiguracionEtapa {
+  id               String                   @id @default(uuid()) @db.Uuid
+  organization_id  String                   @db.Uuid
+  configuracion_id String                   @db.Uuid
+  nombre           String
+  orden            Int
+  activa           Boolean                  @default(true)
+  created_at       DateTime                 @default(now())
+  updated_at       DateTime                 @updatedAt
+  configuracion    ConfiguracionActo        @relation(fields: [configuracion_id], references: [id], onDelete: Cascade)
+  actividades      ConfiguracionActividad[]
+
+  @@unique([configuracion_id, orden], map: "uq_config_etapas_orden")
+  @@index([organization_id, configuracion_id], map: "idx_config_etapas_tenant_parent")
+  @@map("configuracion_etapas")
+}
+
+model ConfiguracionActividad {
+  id                     String                              @id @default(uuid()) @db.Uuid
+  organization_id        String                              @db.Uuid
+  etapa_id               String                              @db.Uuid
+  nombre                 String
+  descripcion            String?
+  duracion_estimada      Int
+  tipo_dias              ConfiguracionTipoDias
+  margen_seguridad       Int                                 @default(0)
+  responsable_rol        Role?
+  responsable_usuario_id String?                             @db.Uuid
+  aplica_por_defecto     Boolean                             @default(true)
+  activa                 Boolean                             @default(true)
+  created_at             DateTime                            @default(now())
+  updated_at             DateTime                            @updatedAt
+  etapa                  ConfiguracionEtapa                  @relation(fields: [etapa_id], references: [id], onDelete: Cascade)
+  dependencias           ConfiguracionDependencia[]          @relation("ActividadDependiente")
+  dependientes           ConfiguracionDependencia[]          @relation("ActividadPrerequisito")
+  excepciones            ConfiguracionExcepcion[]
+  excepcionDependencias  ConfiguracionExcepcionDependencia[] @relation("ExcepcionPrerequisito")
+
+  @@index([organization_id, etapa_id], map: "idx_config_actividades_tenant_etapa")
+  @@map("configuracion_actividades")
+}
+
+model ConfiguracionDependencia {
+  id                   String                 @id @default(uuid()) @db.Uuid
+  organization_id      String                 @db.Uuid
+  actividad_id         String                 @db.Uuid
+  depende_actividad_id String                 @db.Uuid
+  bloqueante           Boolean                @default(true)
+  created_at           DateTime               @default(now())
+  actividad            ConfiguracionActividad @relation("ActividadDependiente", fields: [actividad_id], references: [id], onDelete: Cascade)
+  depende_actividad    ConfiguracionActividad @relation("ActividadPrerequisito", fields: [depende_actividad_id], references: [id], onDelete: Restrict)
+
+  @@unique([actividad_id, depende_actividad_id], map: "uq_config_dependencia")
+  @@index([organization_id, actividad_id], map: "idx_config_dependencias_tenant_actividad")
+  @@index([depende_actividad_id], map: "idx_config_dependencias_prerequisito_fk")
+  @@map("configuracion_dependencias")
+}
+
+model ConfiguracionExcepcion {
+  id                       String                              @id @default(uuid()) @db.Uuid
+  organization_id          String                              @db.Uuid
+  actividad_id             String                              @db.Uuid
+  selector_tipo            ConfiguracionSelectorExcepcion
+  institucion_id           String?                             @db.Uuid
+  notaria_id               String?                             @db.Uuid
+  jurisdiccion             String?
+  duracion                 Int
+  tipo_dias                ConfiguracionTipoDias
+  margen_seguridad         Int                                 @default(0)
+  activa                   Boolean                             @default(true)
+  created_at               DateTime                            @default(now())
+  updated_at               DateTime                            @updatedAt
+  actividad                ConfiguracionActividad              @relation(fields: [actividad_id], references: [id], onDelete: Cascade)
+  dependencias_adicionales ConfiguracionExcepcionDependencia[]
+
+  @@index([organization_id, actividad_id], map: "idx_config_excepciones_tenant_actividad")
+  @@index([institucion_id], map: "idx_config_excepciones_institucion_fk")
+  @@index([notaria_id], map: "idx_config_excepciones_notaria_fk")
+  @@map("configuracion_excepciones")
+}
+
+model ConfiguracionExcepcionDependencia {
+  id                   String                 @id @default(uuid()) @db.Uuid
+  organization_id      String                 @db.Uuid
+  excepcion_id         String                 @db.Uuid
+  depende_actividad_id String                 @db.Uuid
+  bloqueante           Boolean                @default(true)
+  created_at           DateTime               @default(now())
+  excepcion            ConfiguracionExcepcion @relation(fields: [excepcion_id], references: [id], onDelete: Cascade)
+  depende_actividad    ConfiguracionActividad @relation("ExcepcionPrerequisito", fields: [depende_actividad_id], references: [id], onDelete: Restrict)
+
+  @@unique([excepcion_id, depende_actividad_id], map: "uq_config_excepcion_dependencia")
+  @@index([organization_id, excepcion_id], map: "idx_config_excepcion_deps_tenant")
+  @@index([depende_actividad_id], map: "idx_config_excepcion_deps_prerequisito_fk")
+  @@map("configuracion_excepcion_dependencias")
+}
+
+model CatalogoInstitucion {
+  id              String                  @id @default(uuid()) @db.Uuid
+  organization_id String                  @db.Uuid
+  nombre          String
+  tipo            CatalogoInstitucionTipo
+  activa          Boolean                 @default(true)
+  created_at      DateTime                @default(now())
+  updated_at      DateTime                @updatedAt
+
+  @@unique([organization_id, nombre], map: "uq_catalogo_institucion_org_nombre")
+  @@index([organization_id, tipo, activa], map: "idx_catalogo_instituciones_org_tipo")
+  @@map("catalogo_instituciones")
+}
+
+model CatalogoCarpeta {
+  id               String                  @id @default(uuid()) @db.Uuid
+  organization_id  String                  @db.Uuid
+  propietario_tipo CatalogoPropietarioTipo
+  tipo             CatalogoArtefactoTipo
+  notaria_id       String?                 @db.Uuid
+  institucion_id   String?                 @db.Uuid
+  parent_id        String?                 @db.Uuid
+  nombre           String
+  activa           Boolean                 @default(true)
+  created_at       DateTime                @default(now())
+  updated_at       DateTime                @updatedAt
+  parent           CatalogoCarpeta?        @relation("CarpetasJerarquia", fields: [parent_id], references: [id], onDelete: Restrict)
+  children         CatalogoCarpeta[]       @relation("CarpetasJerarquia")
+  artefactos       CatalogoArtefacto[]
+
+  @@index([organization_id, propietario_tipo, notaria_id, institucion_id, parent_id], map: "idx_catalogo_carpetas_explorer")
+  @@map("catalogo_carpetas")
+}
+
+model CatalogoArtefacto {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  organization_id    String                     @db.Uuid
+  tipo               CatalogoArtefactoTipo
+  propietario_tipo   CatalogoPropietarioTipo
+  notaria_id         String?                    @db.Uuid
+  institucion_id     String?                    @db.Uuid
+  carpeta_id         String?                    @db.Uuid
+  nombre             String
+  descripcion        String?
+  activo             Boolean                    @default(true)
+  creado_por_id      String                     @db.Uuid
+  actualizado_por_id String                     @db.Uuid
+  created_at         DateTime                   @default(now())
+  updated_at         DateTime                   @updatedAt
+  carpeta            CatalogoCarpeta?           @relation(fields: [carpeta_id], references: [id], onDelete: Restrict)
+  versiones          CatalogoArtefactoVersion[]
+  actos              CatalogoArtefactoActo[]
+  reglas             CatalogoArtefactoRegla[]
+
+  @@index([organization_id, propietario_tipo, notaria_id, institucion_id, carpeta_id], map: "idx_catalogo_artefactos_explorer")
+  @@map("catalogo_artefactos")
+}
+
+model CatalogoArtefactoVersion {
+  id              String            @id @default(uuid()) @db.Uuid
+  organization_id String            @db.Uuid
+  artefacto_id    String            @db.Uuid
+  version         Int
+  nombre_original String
+  storage_key     String
+  mime_type       String
+  size_bytes      Int
+  checksum_sha256 String
+  origen          String
+  activa          Boolean           @default(true)
+  creado_por_id   String            @db.Uuid
+  created_at      DateTime          @default(now())
+  artefacto       CatalogoArtefacto @relation(fields: [artefacto_id], references: [id], onDelete: Cascade)
+
+  @@unique([artefacto_id, version], map: "uq_catalogo_artefacto_version")
+  @@unique([organization_id, storage_key], map: "uq_catalogo_storage_key_org")
+  @@index([organization_id, artefacto_id], map: "idx_catalogo_versiones_tenant_artefacto")
+  @@map("catalogo_artefacto_versiones")
+}
+
+model CatalogoArtefactoActo {
+  id              String            @id @default(uuid()) @db.Uuid
+  organization_id String            @db.Uuid
+  artefacto_id    String            @db.Uuid
+  tipo_acto_id    String            @db.Uuid
+  created_at      DateTime          @default(now())
+  artefacto       CatalogoArtefacto @relation(fields: [artefacto_id], references: [id], onDelete: Cascade)
+
+  @@unique([artefacto_id, tipo_acto_id], map: "uq_catalogo_artefacto_acto")
+  @@index([tipo_acto_id], map: "idx_catalogo_artefacto_actos_tipo_fk")
+  @@index([organization_id, artefacto_id], map: "idx_catalogo_artefacto_actos_tenant")
+  @@map("catalogo_artefacto_actos")
+}
+
+model CatalogoArtefactoRegla {
+  id                        String                @id @default(uuid()) @db.Uuid
+  organization_id           String                @db.Uuid
+  artefacto_id              String                @db.Uuid
+  tipo_persona              TipoPersona?
+  caracter_compareciente_id String?               @db.Uuid
+  etapa_requerida_id        String?               @db.Uuid
+  momento_limite_etapa_id   String?               @db.Uuid
+  obligatoria               Boolean               @default(false)
+  multiplicidad             CatalogoMultiplicidad @default(EXPEDIENTE)
+  cantidad_fija             Int?
+  condiciones_json          Json?
+  activa                    Boolean               @default(true)
+  created_at                DateTime              @default(now())
+  updated_at                DateTime              @updatedAt
+  artefacto                 CatalogoArtefacto     @relation(fields: [artefacto_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id, artefacto_id], map: "idx_catalogo_reglas_tenant_artefacto")
+  @@index([caracter_compareciente_id], map: "idx_catalogo_reglas_caracter_fk")
+  @@index([etapa_requerida_id], map: "idx_catalogo_reglas_etapa_fk")
+  @@index([momento_limite_etapa_id], map: "idx_catalogo_reglas_limite_fk")
+  @@map("catalogo_artefacto_reglas")
 }
 
 model ChecklistItem {
@@ -3162,4 +3405,38 @@ enum PepEstado {
 enum ComparecePor {
   PROPIO_DERECHO
   REPRESENTACION
+}
+
+enum ConfiguracionTipoDias {
+  HABILES
+  NATURALES
+}
+
+enum ConfiguracionSelectorExcepcion {
+  INSTITUCION
+  NOTARIA
+  JURISDICCION
+}
+
+enum CatalogoInstitucionTipo {
+  BANCO
+  FIDUCIARIA
+  OTRA
+}
+
+enum CatalogoPropietarioTipo {
+  NOTARIA
+  INSTITUCION
+}
+
+enum CatalogoArtefactoTipo {
+  PLANTILLA
+  FORMATO
+}
+
+enum CatalogoMultiplicidad {
+  EXPEDIENTE
+  COMPARECIENTE
+  INMUEBLE
+  CANTIDAD_FIJA
 }

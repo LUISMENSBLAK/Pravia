@@ -53,6 +53,7 @@
   .sidebar.collapsed .link { justify-content: flex-start; padding-inline: var(--space-4); }
   .sidebar.collapsed .label { display: inline; opacity: 1; }
   .collapseButton { display: none; }
+  .footer { padding-bottom: calc(var(--space-4) + 64px + env(safe-area-inset-bottom)); }
   .backdrop { display: block; position: fixed; inset: 0; z-index: calc(var(--layer-sidebar) - 1); border: 0; opacity: 0; pointer-events: none; background: rgb(2 10 24 / 58%); transition: opacity var(--motion-standard); }
   .backdropVisible { opacity: 1; pointer-events: auto; }
 }

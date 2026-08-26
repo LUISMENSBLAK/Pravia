@@ -23,8 +23,8 @@
 @keyframes suggestion-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 767px) {
   .layer { inset: 0; }
-  .launcher { right: max(18px, calc(env(safe-area-inset-right) + 12px)); bottom: max(18px, calc(env(safe-area-inset-bottom) + 12px)); width: 48px; height: 48px; border-radius: 15px; padding: 4px; }
-  .launcherWithMobileSidebar { right: auto; left: 208px; bottom: max(88px, calc(env(safe-area-inset-bottom) + 88px)); }
+  .launcher { right: max(14px, calc(env(safe-area-inset-right) + 14px)); bottom: max(12px, calc(env(safe-area-inset-bottom) + 12px)); width: 48px; height: 48px; border-radius: 15px; padding: 4px; }
+  .launcherWithMobileSidebar { right: auto; left: 208px; bottom: max(12px, calc(env(safe-area-inset-bottom) + 12px)); }
   .launcherStatus { top: 5px; right: 5px; width: 7px; height: 7px; }
   .suggestion { right: max(14px, env(safe-area-inset-right)); bottom: calc(var(--assistant-mobile-dock-height, 68px) + env(safe-area-inset-bottom) + 10px); }
   .suggestion header > button { width: 44px; height: 44px; flex-basis: 44px; }
