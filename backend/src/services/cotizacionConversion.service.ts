@@ -99,7 +99,6 @@ export class CotizacionConversionService {
         datosOperacion: frozenBudget ? { presupuesto: frozenBudget } : undefined,
         proximaAccion: 'Integrar documentación y comparecientes',
         correlationId,
-        source: 'COTIZACION',
       });
       const numeroPravia = expediente.numero_pravia;
 

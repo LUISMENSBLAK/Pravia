@@ -1,6 +1,6 @@
 import { apiRequest, tokenStore } from '../../services/api/client';
 import { apiUrl } from '../../services/api/config';
-import type { ActTypeOption, ExpedienteDetail, ExpedienteListFilters, ExpedienteListResult, NotaryOption, OpenExpedienteInput, PartyOption, PersonOption, ProjectState } from './expedientes.types';
+import type { EligibleQuoteCandidate, ExpedienteDetail, ExpedienteListFilters, ExpedienteListResult, ProjectState } from './expedientes.types';
 
 const query = (filters: ExpedienteListFilters) => {
   const params = new URLSearchParams();
@@ -13,26 +13,17 @@ const query = (filters: ExpedienteListFilters) => {
   Object.entries(values).forEach(([key, value]) => { if (value !== undefined && value !== '') params.set(key, String(value)); });
   return params.toString();
 };
-const unwrapArray = <T>(payload: unknown): T[] => {
-  if (Array.isArray(payload)) return payload as T[];
-  if (payload && typeof payload === 'object' && Array.isArray((payload as any).data)) return (payload as any).data as T[];
-  return [];
-};
-
 export const expedientesService = {
   list(filters: ExpedienteListFilters, signal?: AbortSignal) { return apiRequest<ExpedienteListResult>(`/expedientes?${query(filters)}`, { signal }); },
   detail(id: string, signal?: AbortSignal) { return apiRequest<ExpedienteDetail>(`/expedientes/${encodeURIComponent(id)}`, { signal }); },
-  types(signal?: AbortSignal) { return apiRequest<ActTypeOption[]>('/expedientes/tipos-acto', { signal }); },
-  users(signal?: AbortSignal) { return apiRequest<PersonOption[]>('/usuarios', { signal }).then((items) => items.filter((item) => ['DIRECCION', 'ADMINISTRACION', 'ABOGADO'].includes(item.rol || ''))); },
-  notaries(search = '', signal?: AbortSignal) {
-    const params = new URLSearchParams({ activa: 'true', paginated: 'true', page: '1', limit: '30' }); if (search.trim()) params.set('search', search.trim());
-    return apiRequest<unknown>(`/notarias?${params}`, { signal }).then(unwrapArray<NotaryOption>);
+  eligibleQuotes(signal?: AbortSignal) {
+    return apiRequest<{ data: EligibleQuoteCandidate[]; total: number }>('/expedientes/cotizaciones-elegibles', { signal });
   },
-  parties(search: string, signal?: AbortSignal) {
-    const params = new URLSearchParams({ page: '1', limit: '25', search: search.trim() });
-    return apiRequest<unknown>(`/comparecientes?${params}`, { signal }).then(unwrapArray<PartyOption>);
+  convertQuote(cotizacionId: string) {
+    return apiRequest<ExpedienteDetail & { idempotent?: boolean }>('/expedientes/convertir-cotizacion', {
+      method: 'POST', body: JSON.stringify({ cotizacion_id: cotizacionId }),
+    });
   },
-  create(input: OpenExpedienteInput) { return apiRequest<ExpedienteDetail>('/expedientes', { method: 'POST', body: JSON.stringify(input) }); },
   transition(id: string, input: { expected_version: number; nuevo_estatus: string; nueva_etapa_clave?: string; notas?: string; fecha_efectiva?: string; datos_firma?: { fecha_firma: string; lugar: string } }) {
     return apiRequest<ExpedienteDetail>(`/expedientes/${encodeURIComponent(id)}/transicion-estatus`, { method: 'POST', body: JSON.stringify(input) });
   },

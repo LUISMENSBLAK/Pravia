@@ -7,7 +7,7 @@ import { calculateExpedienteProgress } from '../services/expedienteProgress.serv
 import { downloadFile, uploadFile, deleteFile } from '../services/supabase.service';
 import prisma from '../config/prisma';
 import { CotizacionConversionService } from '../services/cotizacionConversion.service';
-import { CotizacionBusinessError } from '../domain/cotizacionWorkflow';
+import { CotizacionBusinessError, evaluateConversionEligibility } from '../domain/cotizacionWorkflow';
 import {
   EXPEDIENTE_STATUS_LABELS,
   ExpedienteWorkflowError,
@@ -19,16 +19,14 @@ import {
   validateMovementSemantics,
 } from '../domain/financialLedger';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
-import { canAccessCotizacion } from '../services/objectAccess.service';
+import { canAccessCotizacion, cotizacionObjectWhere } from '../services/objectAccess.service';
 import { complianceAttention, complianceLabel, macrophaseForStatus, parseExpedienteQuery } from '../domain/expedienteReadModel';
 import { ExpedienteReadService } from '../services/expedienteRead.service';
-import { ExpedienteOpeningError, ExpedienteOpeningService } from '../services/expedienteOpening.service';
 import { buildExpedienteReadiness } from '../services/expedienteReadiness.service';
 import { calculateFinanceAggregates, legacyFinanceAllocations, type EconomicNature } from '../domain/financeCore';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
 const expedienteReadService = new ExpedienteReadService(prisma);
-const expedienteOpeningService = new ExpedienteOpeningService(prisma);
 
 async function assertRequestExpedienteScope(req: Request, expedienteId: string) {
   if (!req.user) throw new ExpedienteUpdateError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
@@ -79,6 +77,46 @@ export const getExpedientes = async (req: Request, res: Response) => {
     return res.json(await expedienteReadService.list(req.user, parseExpedienteQuery(req.query)));
   } catch (error: any) {
     res.status(500).json({ error: 'No pudimos cargar los expedientes.', code: 'EXPEDIENTE_LIST_FAILED' });
+  }
+};
+
+export const getEligibleCotizacionesForExpediente = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Inicia sesión para continuar.', code: 'AUTH_REQUIRED' });
+    const cotizaciones = await prisma.cotizacion.findMany({
+      where: { ...cotizacionObjectWhere(req.user), expediente: null },
+      include: {
+        prospecto: { select: { id: true, nombre: true, tipo_acto: true, email: true, telefono: true } },
+        notaria: { select: { id: true, nombre: true, numero_notaria: true, municipio: true } },
+        creada_por: { select: { id: true, nombre: true, apellido: true } },
+        versiones: { orderBy: { version: 'desc' } },
+        pagos: {
+          where: { categoria_ingreso: 'ANTICIPO_NOTARIA' },
+          select: { id: true, monto: true, estatus: true, categoria_ingreso: true },
+        },
+        expediente: { select: { id: true, numero_pravia: true } },
+      },
+      orderBy: { updated_at: 'desc' },
+      take: 100,
+    });
+    const eligible = cotizaciones.flatMap((cotizacion) => {
+      const conversion = evaluateConversionEligibility(cotizacion);
+      if (!conversion.eligible) return [];
+      return [{
+        id: cotizacion.id,
+        numero_solicitud: cotizacion.numero_solicitud,
+        numero_cotizacion: cotizacion.numero_cotizacion,
+        total_cliente: cotizacion.total_cliente,
+        updated_at: cotizacion.updated_at,
+        prospecto: cotizacion.prospecto,
+        notaria: cotizacion.notaria,
+        creada_por: cotizacion.creada_por,
+        conversion,
+      }];
+    });
+    return res.json({ data: eligible, total: eligible.length });
+  } catch {
+    return res.status(500).json({ error: 'No pudimos cargar las cotizaciones elegibles.', code: 'ELIGIBLE_QUOTES_LOAD_FAILED' });
   }
 };
 
@@ -307,43 +345,14 @@ export const getExpedienteById = async (req: Request, res: Response) => {
   }
 };
 
-// 3. Creación Directa de Expediente
+// Contrato conservado temporalmente para rechazar consumidores legacy de forma explícita.
 export const createExpediente = async (req: Request, res: Response) => {
-  try {
-    const {
-      tipo_acto_id,
-      abogado_id,
-      cliente_alias,
-      compareciente_id,
-      caracter_id,
-      descripcion,
-      notaria_id,
-      datos_operacion
-    } = req.body;
-
-    const creador_id = req.user?.id;
-    if (!creador_id) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
-    const assignedLawyerId = req.user?.rol === 'ABOGADO' ? req.user.id : abogado_id;
-
-    const expediente = await expedienteOpeningService.open({
-      tipoActoId: String(tipo_acto_id || ''),
-      abogadoId: String(assignedLawyerId || ''),
-      actorUserId: creador_id,
-      clienteAlias: String(cliente_alias || ''),
-      notariaId: notaria_id ? String(notaria_id) : null,
-      comparecienteId: compareciente_id ? String(compareciente_id) : null,
-      caracterId: caracter_id ? String(caracter_id) : null,
-      descripcion: descripcion ? String(descripcion) : null,
-      datosOperacion: datos_operacion,
-      correlationId: (req as any).correlationId,
-      source: 'DIRECTO',
-    });
-
-    res.status(201).json(expediente);
-  } catch (error: any) {
-    const status = error instanceof ExpedienteOpeningError ? error.status : 500;
-    res.status(status).json({ error: error instanceof ExpedienteOpeningError ? error.message : 'No pudimos crear el expediente.', code: error.code || 'EXPEDIENTE_OPEN_FAILED' });
-  }
+  if (!req.user) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
+  return res.status(409).json({
+    error: 'Todo expediente nuevo debe originarse desde una cotización elegible.',
+    code: 'EXPEDIENTE_QUOTE_ORIGIN_REQUIRED',
+    conversion_endpoint: '/api/cotizaciones/:id/convertir',
+  });
 };
 
 // 4. Conversión de Cotización Aceptada a Expediente

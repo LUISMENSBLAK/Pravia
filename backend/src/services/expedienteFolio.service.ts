@@ -11,12 +11,19 @@ export async function reserveExpedienteFolio(
   const year = effectiveDate.getFullYear();
   await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:expediente-folio:${year}`}))`);
   const yearlyFolios = await tx.expediente.findMany({
-    where: { numero_pravia: { startsWith: `EXP-${year}-` } },
+    where: {
+      OR: [
+        { numero_pravia: { startsWith: `EXP-${year}-` } },
+        { AND: [{ numero_pravia: { startsWith: 'EXP-' } }, { numero_pravia: { endsWith: `-${year}` } }] },
+      ],
+    },
     select: { numero_pravia: true },
   });
   const nextSequence = yearlyFolios.reduce((highest, expediente) => {
-    const match = expediente.numero_pravia.match(new RegExp(`^EXP-${year}-(\\d+)$`));
-    return Math.max(highest, match ? Number(match[1]) : 0);
+    const historical = expediente.numero_pravia.match(new RegExp(`^EXP-${year}-(\\d+)$`));
+    const current = expediente.numero_pravia.match(new RegExp(`^EXP-(\\d+)-${year}$`));
+    const sequence = historical?.[1] || current?.[1];
+    return Math.max(highest, sequence ? Number(sequence) : 0);
   }, 0) + 1;
-  return `EXP-${year}-${String(nextSequence).padStart(4, '0')}`;
+  return `EXP-${String(nextSequence).padStart(4, '0')}-${year}`;
 }

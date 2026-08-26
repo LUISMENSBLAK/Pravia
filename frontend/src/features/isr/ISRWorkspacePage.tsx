@@ -6,6 +6,7 @@ import { Button } from '../../components/ui/Button';
 import { Badge } from '../../components/ui/Badge';
 import { DocumentViewer } from '../../components/documents/DocumentViewer';
 import { useAuth } from '../auth/AuthProvider';
+import { resolveExpedienteReturn } from '../cases/expedienteNavigation';
 import { emptyISRInput, fixtureRecord } from './isr.fixtures';
 import { isrService } from './isr.service';
 import type { ISRDeduction, ISRInput, ISRProposal, ISRRecord } from './isr.types';
@@ -36,6 +37,7 @@ function FieldSource({ proposal }: { proposal?: ISRProposal }) {
 
 export function ISRWorkspacePage() {
   const { id = 'nuevo' } = useParams(); const navigate = useNavigate(); const location = useLocation(); const { user } = useAuth();
+  const returnPath = resolveExpedienteReturn(location.search);
   const query = new URLSearchParams(location.search); const mode = query.get('fixture') || ''; const fixture = import.meta.env.DEV && Boolean(mode); const localVisualAccess = fixture && query.get('visual') === '1';
   const [record, setRecord] = useState<ISRRecord | null>(fixture && id !== 'nuevo' ? fixtureRecord(mode) : null);
   const [input, setInput] = useState<ISRInput>(() => mode === 'new' || id === 'nuevo' ? emptyISRInput(2026) : fixtureRecord(mode).input_data);
@@ -101,11 +103,11 @@ export function ISRWorkspacePage() {
   return <PageContainer title="" subtitle="">
     <form className={styles.workspace} onSubmit={(event)=>{event.preventDefault();void save();}}>
       <header className={styles.workspaceHeader}>
-        <button type="button" className={styles.backButton} onClick={()=>navigate('/calculo-isr')}><ArrowLeft/><span>Volver</span></button>
+        <button type="button" className={styles.backButton} onClick={()=>navigate(returnPath || '/calculo-isr')}><ArrowLeft/><span>Volver</span></button>
         <div className={styles.workspaceTitle}><div><span>Cálculo fiscal notarial</span><h1>{title}</h1></div><Badge tone={record?.estado==='CALCULADO'?'success':record?.estado==='REQUIERE_REVISION'?'danger':'warning'}>{statusLabel[record?.estado || 'BORRADOR']}</Badge></div>
         <div className={styles.headerMeta}><span><strong>Ejercicio</strong>{input.taxYear}</span><span><strong>Operación</strong>{operationLabel[input.operationType]}</span><span><strong>Expediente</strong>{record?.expediente?.numero_pravia || 'Sin vincular'}</span><span><strong>Última actualización</strong>{record ? new Date(record.updated_at).toLocaleString('es-MX',{dateStyle:'medium',timeStyle:'short'}) : 'Sin guardar'}</span></div>
         {record?.datos_modificados && <div className={styles.warning} role="status"><AlertTriangle/>Los datos cambiaron desde el último cálculo. Guarda y recalcula para crear una nueva versión.</div>}
-        <div className={styles.headerActions}><Button type="button" variant="ghost" onClick={()=>navigate('/calculo-isr')}>Cancelar</Button><Button type="submit" variant="secondary" disabled={!canWrite||Boolean(busy)}><Save/>Guardar borrador</Button><Button type="button" onClick={calculate} disabled={!canCalculate||Boolean(busy)}><Calculator/>{record?.ultima_version?'Recalcular':'Generar cálculo ISR'}</Button></div>
+        <div className={styles.headerActions}><Button type="button" variant="ghost" onClick={()=>navigate(returnPath || '/calculo-isr')}>Cancelar</Button><Button type="submit" variant="secondary" disabled={!canWrite||Boolean(busy)}><Save/>Guardar borrador</Button><Button type="button" onClick={calculate} disabled={!canCalculate||Boolean(busy)}><Calculator/>{record?.ultima_version?'Recalcular':'Generar cálculo ISR'}</Button></div>
       </header>
 
       {(error||notice) && <div className={error?styles.error:styles.successNotice} role={error?'alert':'status'}>{error||notice}</div>}

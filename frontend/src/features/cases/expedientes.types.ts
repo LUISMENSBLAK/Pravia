@@ -23,10 +23,23 @@ export type ExpedienteListResult = {
 };
 export type ExpedienteListFilters = { search?: string; macrophase?: string; stage?: string; responsible?: string; notary?: string; risk?: string; dateFrom?: string; dateTo?: string; actType?: string; client?: string; status?: string; page?: number; pageSize?: number; sort?: string };
 
+export type EligibleQuoteCandidate = {
+  id: string;
+  numero_solicitud?: string | null;
+  numero_cotizacion?: string | null;
+  total_cliente?: number | string | null;
+  updated_at: string;
+  prospecto: { id: string; nombre: string; tipo_acto?: string | null; email?: string | null; telefono?: string | null };
+  notaria?: { id: string; nombre: string; numero_notaria?: string | null; municipio?: string | null } | null;
+  creada_por: { id: string; nombre: string; apellido?: string | null };
+  conversion: { eligible: true; validatedAdvanceTotal: number };
+};
+
 export type ReadinessIndicator = { key: string; label: string; state: 'COMPLETO' | 'PENDIENTE' | 'NO_APLICA' | 'NO_CONFIGURADO'; detail: string };
 export type ExpedienteTransition = { status: ExpedienteStatus; label: string; stage?: { clave: string; nombre: string; orden: number } | null; requires_signature_data: boolean; requires_effective_date: boolean; requires_notes: boolean };
 export type ExpedienteDetail = ExpedienteListItem & {
   descripcion?: string | null; created_at: string; fecha_apertura: string; fecha_real_firma?: string | null; fecha_entrega_cliente?: string | null;
+  datos_operacion?: Record<string, unknown> | null;
   abogado: PersonOption; gestor?: PersonOption | null; creador?: PersonOption; notaria?: NotaryOption | null;
   flujoVersion?: { id: string; version: number } | null;
   comparecientes: Array<any>; expedienteRepresentaciones?: Array<any>;
@@ -40,4 +53,3 @@ export type ExpedienteDetail = ExpedienteListItem & {
 };
 export type ProjectVersion = { id: string; version_numero: number; nombre_original?: string; nota_version?: string; es_vigente: boolean; es_version_final?: boolean; subido_por_nombre?: string; created_at: string };
 export type ProjectState = { vigente: ProjectVersion | null; historial: ProjectVersion[]; ultimoReporte?: unknown };
-export type OpenExpedienteInput = { tipo_acto_id: string; abogado_id: string; cliente_alias: string; compareciente_id?: string; caracter_id?: string; notaria_id?: string };

@@ -1,6 +1,7 @@
 import express from 'express';
 import {
   getExpedientes,
+  getEligibleCotizacionesForExpediente,
   getExpedienteById,
   createExpediente,
   convertCotizacionToExpediente,
@@ -48,6 +49,7 @@ const router = express.Router();
 router.param('id', requireExpedienteAccess);
 
 router.get('/tipos-acto', getTiposActo);
+router.get('/cotizaciones-elegibles', requirePermission('expedientes.write'), getEligibleCotizacionesForExpediente);
 router.get('/', getExpedientes);
 router.get('/:id', getExpedienteById);
 router.post('/', createExpediente);

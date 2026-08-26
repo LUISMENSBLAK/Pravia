@@ -18,10 +18,9 @@ export type OpenExpedienteInput = {
   descripcion?: string | null;
   valorOperacion?: number | null;
   datosOperacion?: Prisma.InputJsonValue;
-  cotizacionId?: string | null;
+  cotizacionId: string;
   proximaAccion?: string | null;
   correlationId?: string;
-  source?: 'DIRECTO' | 'COTIZACION';
 };
 
 const ALLOWED_RESPONSIBLE_ROLES = new Set<Role>(['DIRECCION', 'ADMINISTRACION', 'ABOGADO']);
@@ -29,15 +28,18 @@ const ALLOWED_RESPONSIBLE_ROLES = new Set<Role>(['DIRECCION', 'ADMINISTRACION', 
 export class ExpedienteOpeningService {
   constructor(private readonly prisma: PrismaClient) {}
 
-  async open(input: OpenExpedienteInput) {
-    return this.prisma.$transaction((tx) => this.openInTransaction(tx, input), { timeout: 20_000 });
-  }
-
   async openInTransaction(tx: Prisma.TransactionClient, input: OpenExpedienteInput) {
     const { organizationId } = requireActorContext();
     const alias = input.clienteAlias?.trim();
+    if (!input.cotizacionId) {
+      throw new ExpedienteOpeningError(
+        'Todo expediente nuevo debe originarse desde una cotización elegible.',
+        'EXPEDIENTE_QUOTE_ORIGIN_REQUIRED',
+        409,
+      );
+    }
     if (!input.tipoActoId || !input.abogadoId || !input.actorUserId || !alias) {
-      throw new ExpedienteOpeningError('Completa el tipo de acto, cliente y responsable.', 'EXPEDIENTE_OPEN_REQUIRED');
+      throw new ExpedienteOpeningError('La cotización no contiene los datos necesarios para abrir el expediente.', 'EXPEDIENTE_OPEN_REQUIRED');
     }
     const [tipoActo, actor, lawyer, notary, formVersion, workflowVersion, documentTemplateVersion, selectedParty] = await Promise.all([
       tx.tipoActo.findFirst({ where: { id: input.tipoActoId, activo: true, archived_at: null }, include: { tipoActoCaracteresCompareciente: { include: { caracter: true }, orderBy: [{ sugerido: 'desc' }, { orden: 'asc' }] } } }),
@@ -75,7 +77,7 @@ export class ExpedienteOpeningService {
       tipo_acto_id: tipoActo.id,
       abogado_id: effectiveLawyer.id,
       creador_id: actor.id,
-      cotizacion_id: input.cotizacionId || null,
+      cotizacion_id: input.cotizacionId,
       notaria_id: input.notariaId || null,
       cliente_alias: alias,
       descripcion: input.descripcion?.trim() || null,
@@ -130,18 +132,8 @@ export class ExpedienteOpeningService {
       usuario_id: actor.id,
       tipo: 'CAMBIO_ESTATUS',
       titulo: 'Apertura de expediente',
-      descripcion: `Expediente ${numeroPravia} creado${input.source === 'COTIZACION' ? ' desde una cotización aceptada' : ''}.`,
+      descripcion: `Expediente ${numeroPravia} creado desde una cotización aceptada.`,
     } });
-    if (input.source !== 'COTIZACION') {
-      await tx.auditLog.create({ data: {
-        user_id: actor.id,
-        accion: 'OPEN_EXPEDIENTE',
-        entidad: 'Expediente',
-        entidad_id: expediente.id,
-        valores_nuevos: { numero_pravia: numeroPravia, tipo_acto_id: tipoActo.id, abogado_id: effectiveLawyer.id, notaria_id: input.notariaId || null },
-        correlation_id: input.correlationId,
-      } });
-    }
     return expediente;
   }
 }
