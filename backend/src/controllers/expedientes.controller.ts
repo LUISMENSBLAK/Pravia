@@ -128,7 +128,7 @@ export const getExpedienteById = async (req: Request, res: Response) => {
     const expediente = await prisma.expediente.findUnique({
       where: { id },
       include: {
-        tipo_acto: true,
+        actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: true }, orderBy: { created_at: 'asc' } },
         flujoVersion: true,
         abogado: { select: { id: true, nombre: true, apellido: true, email: true } },
         gestor: { select: { id: true, nombre: true, apellido: true } },
@@ -207,6 +207,7 @@ export const getExpedienteById = async (req: Request, res: Response) => {
     if (!expediente) {
       return res.status(404).json({ error: 'Expediente no encontrado' });
     }
+    const primaryAct = expediente.actos[0]?.tipo_acto || { id: '', nombre: 'Sin acto activo' };
 
     const currentStageOrder = expediente.etapaActual?.orden_snapshot || 0;
     const frozenStages = Array.isArray(expediente.flujoVersion?.etapas_json)
@@ -287,7 +288,8 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         cliente_principal: expediente.cliente_alias || 'Sin cliente',
         comparecientes_adicionales: Math.max(0, expediente.comparecientes.length - 1),
         riesgo: { label: complianceLabel(expediente.complianceReviews[0]?.resultado_json), requires_attention: complianceAttention(expediente.complianceReviews[0]?.resultado_json) },
-        tipo_acto: { id: expediente.tipo_acto.id, nombre: expediente.tipo_acto.nombre },
+        tipo_acto: { id: primaryAct.id, nombre: primaryAct.nombre },
+        actos: expediente.actos,
         notaria: isReception || !expediente.notaria ? null : {
           id: expediente.notaria.id,
           nombre: expediente.notaria.nombre,
@@ -320,6 +322,7 @@ export const getExpedienteById = async (req: Request, res: Response) => {
     }
     res.json({
       ...expediente,
+      tipo_acto: primaryAct,
       macrofase: macrophaseForStatus(expediente.estatus),
       cliente_principal: expediente.comparecientes[0]?.compareciente.personaFisica?.nombre_completo_calculado
         || expediente.comparecientes[0]?.compareciente.personaMoral?.razon_social
@@ -402,7 +405,6 @@ export const transitionEstatus = async (req: Request, res: Response) => {
     const current = await prisma.expediente.findUnique({
       where: { id },
       select: {
-        tipo_acto_id: true,
         estatus: true,
         flujoVersion: { select: { etapas_json: true } },
         etapaActual: { select: { orden_snapshot: true } },
@@ -876,6 +878,14 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
     const cleanNotariaId = notaria_id === undefined ? undefined : (notaria_id ? String(notaria_id).trim() : null);
     const cleanNumeroEscritura = numero_escritura === undefined ? undefined : String(numero_escritura).trim();
 
+    if (tipo_acto_id !== undefined || tipo_acto_nombre !== undefined) {
+      throw new ExpedienteUpdateError(
+        'Los actos se administran desde la sección Actos con revisión de impacto.',
+        'LEGACY_ACT_FIELD_READ_ONLY',
+        409,
+      );
+    }
+
     if (cleanAlias !== undefined && cleanAlias.length === 0) {
       throw new ExpedienteUpdateError('El alias o identificación del expediente no puede quedar vacío.', 'EXPEDIENTE_ALIAS_REQUIRED');
     }
@@ -913,20 +923,6 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
         );
       }
 
-      let cleanTipoActoId = tipo_acto_id ? String(tipo_acto_id).trim() : undefined;
-      if (!cleanTipoActoId && tipo_acto_nombre !== undefined) {
-        const matchingTipo = await tx.tipoActo.findFirst({
-          where: { activo: true, nombre: { equals: String(tipo_acto_nombre).trim(), mode: 'insensitive' } },
-        });
-        if (!matchingTipo) {
-          throw new ExpedienteUpdateError('El tipo de acto seleccionado no existe o está inactivo.', 'EXPEDIENTE_ACT_TYPE_INVALID');
-        }
-        cleanTipoActoId = matchingTipo.id;
-      }
-      if (cleanTipoActoId) {
-        const validType = await tx.tipoActo.findFirst({ where: { id: cleanTipoActoId, activo: true }, select: { id: true } });
-        if (!validType) throw new ExpedienteUpdateError('El tipo de acto seleccionado no existe o está inactivo.', 'EXPEDIENTE_ACT_TYPE_INVALID');
-      }
       if (cleanAbogadoId !== undefined) {
         const lawyer = await tx.user.findFirst({ where: { id: cleanAbogadoId, activo: true }, select: { id: true } });
         if (!lawyer) throw new ExpedienteUpdateError('El abogado seleccionado no existe o está inactivo.', 'EXPEDIENTE_LAWYER_INVALID');
@@ -974,7 +970,6 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
 
       const changes: string[] = [];
       if (cleanAlias !== undefined && cleanAlias !== currentExp.cliente_alias) changes.push('Alias o identificación');
-      if (cleanTipoActoId && cleanTipoActoId !== currentExp.tipo_acto_id) changes.push('Tipo de acto');
       if (cleanAbogadoId !== undefined && cleanAbogadoId !== currentExp.abogado_id) changes.push('Abogado encargado');
       if (cleanNotariaId !== undefined && cleanNotariaId !== currentExp.notaria_id) changes.push('Notaría');
       if (cleanNumeroEscritura !== undefined && cleanNumeroEscritura !== (currentExp.numero_notaria || '')) changes.push('Número de escritura');
@@ -984,7 +979,6 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
         where: { id },
         data: {
           cliente_alias: cleanAlias,
-          tipo_acto_id: cleanTipoActoId,
           abogado_id: cleanAbogadoId,
           notaria_id: cleanNotariaId,
           numero_notaria: cleanNumeroEscritura === undefined ? undefined : (cleanNumeroEscritura || null),
@@ -1890,8 +1884,9 @@ export const downloadMovimientoAdjunto = async (req: Request, res: Response) => 
 
 export const getTiposActo = async (req: Request, res: Response) => {
   try {
+    if (!req.user) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
     const tipos = await prisma.tipoActo.findMany({
-      where: { activo: true, archived_at: null },
+      where: { activo: true, archived_at: null, OR: [{ organization_id: null }, { organization_id: req.user.organizationId }] },
       orderBy: { nombre: 'asc' },
       include: {
         tipoActoCaracteresCompareciente: {

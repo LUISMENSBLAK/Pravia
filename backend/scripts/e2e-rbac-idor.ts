@@ -51,11 +51,13 @@ async function api(token: string, path: string, init: RequestInit = {}, expected
 }
 
 async function main() {
-  const [lawyerA, lawyerB, reception, management, readOnly] = await Promise.all([
+  const [direction, lawyerA, lawyerB, reception, management, readOnly] = await Promise.all([
+    syntheticUser('DIRECCION', 'direccion'),
     syntheticUser('ABOGADO', 'abogado-a'), syntheticUser('ABOGADO', 'abogado-b'),
     syntheticUser('RECEPCION', 'recepcion'), syntheticUser('GESTORIA', 'gestoria'), syntheticUser('CONSULTA', 'consulta'),
   ]);
-  const [tokenA, tokenB, tokenReception, tokenManagement, tokenReadOnly] = await Promise.all([
+  const [tokenDirection, tokenA, tokenB, tokenReception, tokenManagement, tokenReadOnly] = await Promise.all([
+    login(direction.email),
     login(lawyerA.email), login(lawyerB.email), login(reception.email), login(management.email), login(readOnly.email),
   ]);
   checks.push('auth:roles-login');
@@ -73,7 +75,18 @@ async function main() {
   await api(tokenA, `/cotizaciones/${quoteB.id}`, {}, 403);
   checks.push('idor:cotizacion-403');
 
-  const expedienteB = await api(tokenB, '/expedientes', { method: 'POST', body: JSON.stringify({ tipo_acto_id: type.id, abogado_id: lawyerB.id, cliente_alias: `Cliente B ${suffix}` }) }, 201);
+  for (const estado of ['ENVIADA_NOTARIA', 'PRESUPUESTO_RECIBIDO', 'EN_REVISION_ABOGADO']) {
+    await api(tokenDirection, `/cotizaciones/${quoteB.id}/estado`, { method: 'PUT', body: JSON.stringify({ estado }) });
+  }
+  await api(tokenDirection, `/cotizaciones/${quoteB.id}/versiones`, { method: 'POST', body: JSON.stringify({
+    total_notaria: 10_000, honorarios_pravia: 2_000,
+    desglose_notaria: [{ concepto: 'Fixture RBAC aislado', monto: 10_000 }], aprobada: true,
+  }) }, 201);
+  await api(tokenDirection, `/cotizaciones/${quoteB.id}/estado`, { method: 'PUT', body: JSON.stringify({ estado: 'ENVIADA_CLIENTE' }) });
+  await api(tokenDirection, `/cotizaciones/${quoteB.id}/estado`, { method: 'PUT', body: JSON.stringify({ estado: 'ACEPTADA' }) });
+  const advance = await api(tokenDirection, `/cotizaciones/${quoteB.id}/anticipo`, { method: 'POST', body: JSON.stringify({ monto: 1_000 }) }, 201);
+  await api(tokenDirection, `/cotizaciones/pago/${advance.id}/validar`, { method: 'POST', body: JSON.stringify({}) });
+  const expedienteB = await api(tokenDirection, `/cotizaciones/${quoteB.id}/convertir`, { method: 'POST', body: JSON.stringify({ tipo_acto_id: type.id, abogado_id: lawyerB.id }) }, 201);
   await api(tokenA, `/expedientes/${expedienteB.id}`, {}, 403);
   await api(tokenReception, `/expedientes/${expedienteB.id}`, {}, 403);
   await api(tokenManagement, `/expedientes/${expedienteB.id}`, {}, 403);

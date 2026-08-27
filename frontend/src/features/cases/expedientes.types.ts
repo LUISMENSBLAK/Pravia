@@ -4,6 +4,21 @@ export type ExpedienteMacrophase = 'INTEGRACION' | 'PROYECTO' | 'FIRMA' | 'POSTF
 export type PersonOption = { id: string; nombre: string; apellido?: string | null; rol?: string };
 export type NotaryOption = { id: string; nombre: string; numero_notaria?: string | null; municipio?: string | null; entidad_federativa?: string | null };
 export type ActTypeOption = { id: string; nombre: string; descripcion?: string | null; tipoActoCaracteresCompareciente?: Array<{ caracter_id: string; sugerido: boolean; caracter: { id: string; nombre: string } }> };
+export type ExpedienteAct = {
+  id: string; expediente_id: string; tipo_acto_id: string;
+  origen: 'COTIZACION' | 'ADICIONAL' | 'LEGACY_MIGRATION';
+  estatus: 'ACTIVO' | 'RETIRADO'; created_at: string;
+  removed_at?: string | null; removed_reason?: string | null;
+  tipo_acto: { id: string; nombre: string; descripcion?: string | null };
+};
+export type ExpedienteActOperation = 'ADD' | 'CHANGE' | 'REMOVE';
+export type ExpedienteActImpactItem = { key: string; id: string; name: string; source: 'CFG-001' | 'CFG-002' };
+export type ExpedienteActPreview = {
+  fingerprint: string; classification: 'SAFE' | 'REVIEW_REQUIRED' | 'BLOCKED';
+  target_tipo_acto: { id: string; nombre: string } | null;
+  impact: { added: ExpedienteActImpactItem[]; removed_or_no_longer_applicable: ExpedienteActImpactItem[]; retained: ExpedienteActImpactItem[]; protected_work: { count: number; requires_human_confirmation: boolean }; sources: { cfg001: true; cfg002: true } };
+};
+export type ExpedienteActCommand = { operation: ExpedienteActOperation; tipo_acto_id?: string; expediente_acto_id?: string; idempotency_key?: string; preview_fingerprint?: string; confirm_protected_work?: boolean; reason?: string };
 export type PartyOption = { id: string; nombre_busqueda: string; tipo_persona: string; personaFisica?: { nombre_completo_calculado?: string; rfc?: string | null; curp?: string | null } | null; personaMoral?: { razon_social?: string; rfc?: string | null } | null };
 
 export type ExpedienteMetric = { key: string; label: string; value: number; percentage: number | null };
@@ -42,7 +57,7 @@ export type ExpedienteDetail = ExpedienteListItem & {
   datos_operacion?: Record<string, unknown> | null;
   abogado: PersonOption; gestor?: PersonOption | null; creador?: PersonOption; notaria?: NotaryOption | null;
   flujoVersion?: { id: string; version: number } | null;
-  comparecientes: Array<any>; expedienteRepresentaciones?: Array<any>;
+  comparecientes: Array<any>; expedienteRepresentaciones?: Array<any>; actos?: ExpedienteAct[];
   requisitos_docs: Array<any>; expedienteDocumentos?: Array<any>; documentos_autorizados?: Array<any>;
   etapas?: Array<any>; tareas?: Array<any>; tareas_externas?: Array<any>; tareas_postfirma?: Array<any>; entrega?: any;
   movimientosFinancieros?: Array<any>; honorariosGenerados?: Array<any>; financialSummary?: { ingresos_recibidos:number;honorarios_generados:number;honorarios_cobrados:number;honorarios_por_cobrar:number;fondos_terceros:number;otros_destinos:number;fondos_terceros_pendientes:number;egresos:number } | null; actividades?: Array<any>; complianceReviews?: Array<any>;

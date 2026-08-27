@@ -61,13 +61,13 @@ export class FinanzasController {
           archived_at: null,
           ...(notaria_id && typeof notaria_id === 'string' && notaria_id !== 'TODOS' ? { notaria_id } : {}),
           ...(abogado_id && typeof abogado_id === 'string' && abogado_id !== 'TODOS' ? { abogado_id } : {}),
-          ...(tipo_acto_id && typeof tipo_acto_id === 'string' && tipo_acto_id !== 'TODOS' ? { tipo_acto_id } : {}),
+          ...(tipo_acto_id && typeof tipo_acto_id === 'string' && tipo_acto_id !== 'TODOS' ? { actos: { some: { tipo_acto_id, estatus: 'ACTIVO', removed_at: null } } } : {}),
           ...(estatus_expediente && typeof estatus_expediente === 'string' && estatus_expediente !== 'TODOS'
             ? { estatus: estatus_expediente as any }
             : {})
         },
         include: {
-          tipo_acto: true,
+          actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: true }, orderBy: { created_at: 'asc' } },
           notaria: true,
           abogado: { select: { id: true, nombre: true, apellido: true } },
           cotizacion: {
@@ -182,8 +182,8 @@ export class FinanzasController {
           expediente_id: exp.id,
           folio: exp.numero_pravia,
           cliente: nombreCliente,
-          tipo_acto: exp.tipo_acto?.nombre || 'General / No Especificado',
-          tipo_acto_id: exp.tipo_acto_id,
+          tipo_acto: exp.actos.map((acto) => acto.tipo_acto.nombre).join(', ') || 'General / No Especificado',
+          tipo_acto_id: exp.actos[0]?.tipo_acto_id || null,
           notaria: exp.notaria ? exp.notaria.nombre : 'Sin notaría asignada',
           notaria_id: exp.notaria_id,
           notaria_numero: exp.notaria?.numero_notaria || null,
@@ -324,7 +324,7 @@ export class FinanzasController {
               id: true,
               numero_pravia: true,
               cliente_alias: true,
-              tipo_acto: { select: { nombre: true } },
+              actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: { select: { nombre: true } } }, orderBy: { created_at: 'asc' } },
               comparecientes: {
                 include: {
                   compareciente: {
@@ -424,7 +424,7 @@ export class FinanzasController {
       const expedientes = await prisma.expediente.findMany({
         where: { archived_at: null },
         include: {
-          tipo_acto: true,
+          actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: true }, orderBy: { created_at: 'asc' } },
           notaria: true,
           abogado: { select: { id: true, nombre: true, apellido: true } },
           cotizacion: true,
@@ -510,7 +510,7 @@ export class FinanzasController {
             expediente_id: exp.id,
             folio: exp.numero_pravia,
             cliente,
-            tipo_acto: exp.tipo_acto?.nombre || 'General / No Especificado',
+            tipo_acto: exp.actos.map((acto) => acto.tipo_acto.nombre).join(', ') || 'General / No Especificado',
             notaria: exp.notaria ? exp.notaria.nombre : 'Sin notaria',
             abogado,
             total_operacion: totalPresupuestado,
@@ -572,8 +572,7 @@ export class FinanzasController {
               id: true,
               numero_pravia: true,
               cliente_alias: true,
-              notaria: { select: { nombre: true, numero_notaria: true } },
-              tipo_acto: { select: { nombre: true } }
+              notaria: { select: { nombre: true, numero_notaria: true } }
             }
           },
           capturado_por: { select: { id: true, nombre: true, apellido: true } }
@@ -644,10 +643,10 @@ export class FinanzasController {
           archived_at: null,
           ...(abogado_id && typeof abogado_id === 'string' && abogado_id !== 'TODOS' ? { abogado_id } : {}),
           ...(notaria_id && typeof notaria_id === 'string' && notaria_id !== 'TODOS' ? { notaria_id } : {}),
-          ...(tipo_acto_id && typeof tipo_acto_id === 'string' && tipo_acto_id !== 'TODOS' ? { tipo_acto_id } : {})
+          ...(tipo_acto_id && typeof tipo_acto_id === 'string' && tipo_acto_id !== 'TODOS' ? { actos: { some: { tipo_acto_id, estatus: 'ACTIVO', removed_at: null } } } : {})
         },
         include: {
-          tipo_acto: true,
+          actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: true }, orderBy: { created_at: 'asc' } },
           notaria: true,
           abogado: { select: { id: true, nombre: true, apellido: true } },
           cotizacion: true,
@@ -707,8 +706,8 @@ export class FinanzasController {
         porNotaria[notKey].cobrados += praviaCobrado;
 
         // Por Tipo de Acto
-        const actoKey = exp.tipo_acto_id;
-        const actoNombre = exp.tipo_acto?.nombre || 'General';
+        const actoKey = exp.actos[0]?.tipo_acto_id || 'SIN_ACTO';
+        const actoNombre = exp.actos.map((acto) => acto.tipo_acto.nombre).join(', ') || 'General';
         if (!porTipoActo[actoKey]) {
           porTipoActo[actoKey] = { nombre: actoNombre, esperados: 0, generados: 0, cobrados: 0 };
         }

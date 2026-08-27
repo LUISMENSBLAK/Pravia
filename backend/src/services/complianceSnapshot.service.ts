@@ -25,7 +25,7 @@ export async function captureMasterSnapshot(db: any, expedienteId: string) {
   const expediente = await db.expediente.findUnique({
     where: { id: expedienteId },
     include: {
-      tipo_acto: { select: { id: true, nombre: true } },
+      actos: { where: { estatus: 'ACTIVO', removed_at: null }, select: { id: true, origen: true, tipo_acto: { select: { id: true, nombre: true } } }, orderBy: { created_at: 'asc' } },
       notaria: { select: { id: true, numero_notaria: true, nombre: true } },
       abogado: { select: { id: true, nombre: true, apellido: true } },
       comparecientes: {
@@ -80,7 +80,7 @@ export async function captureMasterSnapshot(db: any, expedienteId: string) {
       id: expediente.id,
       version: expediente.version,
       numero_pravia: expediente.numero_pravia,
-      acto: expediente.tipo_acto,
+      actos: expediente.actos.map((item: any) => ({ expediente_acto_id: item.id, origen: item.origen, ...item.tipo_acto })),
       valor_operacion_mxn: expediente.valor_operacion == null ? null : Number(expediente.valor_operacion),
       datos_operacion: expediente.datos_operacion,
       notaria: expediente.notaria,

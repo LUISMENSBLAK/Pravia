@@ -142,7 +142,7 @@ export class NotariasService {
       this.prisma.expediente.count({ where: { notaria_id: id, ...scope } }),
       this.prisma.expediente.findMany({
         where: { notaria_id: id, ...scope }, take: 8, orderBy: { updated_at: 'desc' },
-        select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true, etapa_actual_nombre: true, updated_at: true, tipo_acto: { select: { nombre: true } }, abogado: { select: { id: true, nombre: true, apellido: true } }, gestor: { select: { id: true, nombre: true, apellido: true } } },
+        select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true, etapa_actual_nombre: true, updated_at: true, actos: { where: { estatus: 'ACTIVO', removed_at: null }, select: { tipo_acto: { select: { nombre: true } } }, orderBy: { created_at: 'asc' } }, abogado: { select: { id: true, nombre: true, apellido: true } }, gestor: { select: { id: true, nombre: true, apellido: true } } },
       }),
       this.prisma.expediente.count({
         where: { notaria_id: id, ...activeScope, fecha_estimada_firma: { gte: now } },
@@ -180,7 +180,7 @@ export class NotariasService {
       estatus: record.activa ? 'ACTIVA' : 'INACTIVA',
       contacto: primaryContact(record),
       metrics: { activeCases: activeCount, historicalCases: historicalCount, quotes: record._count.cotizaciones, upcomingSignatures: upcomingSignatureCount, lastActivity },
-      expedientes: recentCases,
+      expedientes: recentCases.map((item) => ({ ...item, tipo_acto: item.actos[0]?.tipo_acto || null })),
       proximasFirmas: upcomingSignatures,
       responsables: usersWithEffectiveMembershipRoles(users).map((user: any) => ({ ...user, expedientes: counts.get(user.id) || 0 })).sort((a: any, b: any) => b.expedientes - a.expedientes),
       actividad: activity,
@@ -199,10 +199,10 @@ export class NotariasService {
     const [data, total] = await Promise.all([
       this.prisma.expediente.findMany({
         where, skip: (options.page - 1) * options.pageSize, take: options.pageSize, orderBy: { updated_at: direction },
-        select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true, etapa_actual_nombre: true, updated_at: true, tipo_acto: { select: { nombre: true } }, abogado: { select: { id: true, nombre: true, apellido: true } }, gestor: { select: { id: true, nombre: true, apellido: true } } },
+        select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true, etapa_actual_nombre: true, updated_at: true, actos: { where: { estatus: 'ACTIVO', removed_at: null }, select: { tipo_acto: { select: { nombre: true } } }, orderBy: { created_at: 'asc' } }, abogado: { select: { id: true, nombre: true, apellido: true } }, gestor: { select: { id: true, nombre: true, apellido: true } } },
       }),
       this.prisma.expediente.count({ where }),
     ]);
-    return { data, meta: { total, page: options.page, pageSize: options.pageSize, totalPages: Math.max(1, Math.ceil(total / options.pageSize)), hasPreviousPage: options.page > 1, hasNextPage: options.page * options.pageSize < total } };
+    return { data: data.map((item) => ({ ...item, tipo_acto: item.actos[0]?.tipo_acto || null })), meta: { total, page: options.page, pageSize: options.pageSize, totalPages: Math.max(1, Math.ceil(total / options.pageSize)), hasPreviousPage: options.page > 1, hasNextPage: options.page * options.pageSize < total } };
   }
 }

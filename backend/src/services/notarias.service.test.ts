@@ -63,7 +63,7 @@ describe('NotariasService', () => {
   it('construye detalle con contactos, expedientes, responsables, firmas y actividad reales', async () => {
     prisma.notaria.findFirst.mockResolvedValue(row);
     prisma.expediente.count.mockResolvedValueOnce(4).mockResolvedValueOnce(9).mockResolvedValueOnce(7);
-    prisma.expediente.findMany.mockResolvedValueOnce([{ id: 'exp-1', numero_pravia: 'EXP-1', updated_at: new Date('2026-08-13'), abogado: { id: 'user-1' }, gestor: null }]).mockResolvedValueOnce([{ id: 'exp-1', numero_pravia: 'EXP-1', fecha_estimada_firma: new Date('2026-08-20') }]);
+    prisma.expediente.findMany.mockResolvedValueOnce([{ id: 'exp-1', numero_pravia: 'EXP-1', updated_at: new Date('2026-08-13'), actos: [{ tipo_acto: { nombre: 'Compraventa' } }], abogado: { id: 'user-1' }, gestor: null }]).mockResolvedValueOnce([{ id: 'exp-1', numero_pravia: 'EXP-1', fecha_estimada_firma: new Date('2026-08-20') }]);
     prisma.expediente.groupBy.mockResolvedValueOnce([{ abogado_id: 'user-1', _count: { _all: 4 } }]).mockResolvedValueOnce([]);
     prisma.auditLog.findMany.mockResolvedValue([{ id: 'audit-1', accion: 'EDITAR_NOTARIA', created_at: now, usuario: { nombre: 'Ana' } }]);
     prisma.user.findMany.mockResolvedValue([{ id: 'user-1', nombre: 'Ana', apellido: 'Ruiz', organizationMemberships: [{ rol: 'ABOGADO' }] }]);
@@ -75,7 +75,7 @@ describe('NotariasService', () => {
   });
 
   it('pagina expedientes relacionados respetando el alcance recibido', async () => {
-    prisma.expediente.findMany.mockResolvedValue([{ id: 'exp-1' }]); prisma.expediente.count.mockResolvedValue(1);
+    prisma.expediente.findMany.mockResolvedValue([{ id: 'exp-1', actos: [{ tipo_acto: { nombre: 'Compraventa' } }] }]); prisma.expediente.count.mockResolvedValue(1);
     const result = await new NotariasService(prisma as any).listCases('notaria-1', { page: 2, pageSize: 10, sort: 'updated_at:desc', expedienteScope: { gestor_id: 'user-2' } });
     expect(prisma.expediente.findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 10, take: 10, where: expect.objectContaining({ notaria_id: 'notaria-1', gestor_id: 'user-2' }) }));
     expect(result.meta).toMatchObject({ total: 1, page: 2, hasPreviousPage: true });

@@ -162,12 +162,23 @@ async function main() {
   if (!repeatedConversion.idempotent || repeatedConversion.id !== expediente.id) throw new Error('La conversión no fue idempotente.');
   steps.push('anticipo:expediente-idempotente');
 
-  const secondExpediente = await post('/expedientes', {
-    tipo_acto_id: tipo.id,
-    abogado_id: login.user.id,
-    cliente_alias: `E2E Reutilización ${suffix}`,
-    descripcion: 'Segundo expediente sintético para probar reutilización',
+  const secondProspect = await post('/prospectos', {
+    nombre: `E2E Reutilización ${suffix}`, prioridad: 'MEDIA', estado: 'NUEVO', tipo_acto: tipo.nombre,
   });
+  const secondQuote = await post('/cotizaciones', { prospecto_id: secondProspect.id, notaria_id: notaria.id });
+  for (const estado of ['ENVIADA_NOTARIA', 'PRESUPUESTO_RECIBIDO', 'EN_REVISION_ABOGADO']) {
+    await put(`/cotizaciones/${secondQuote.id}/estado`, { estado });
+  }
+  await post(`/cotizaciones/${secondQuote.id}/versiones`, {
+    total_notaria: 12_000, honorarios_pravia: 3_000,
+    desglose_notaria: [{ concepto: 'Segundo expediente sintético', monto: 12_000 }],
+    aprobada: true, notas: 'Fixture de reutilización aislado',
+  });
+  await put(`/cotizaciones/${secondQuote.id}/estado`, { estado: 'ENVIADA_CLIENTE' });
+  await put(`/cotizaciones/${secondQuote.id}/estado`, { estado: 'ACEPTADA' });
+  const secondAdvance = await post(`/cotizaciones/${secondQuote.id}/anticipo`, { monto: 1_000, notas: 'Anticipo E2E' });
+  await post(`/cotizaciones/pago/${secondAdvance.id}/validar`, {});
+  const secondExpediente = await post(`/cotizaciones/${secondQuote.id}/convertir`, { tipo_acto_id: tipo.id, abogado_id: login.user.id });
   created.segundo_expediente = secondExpediente.id;
   const person = await post('/comparecientes/persona-fisica', {
     nombre: `Persona E2E ${suffix}`,

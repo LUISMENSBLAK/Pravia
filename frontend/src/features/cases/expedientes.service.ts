@@ -1,6 +1,6 @@
 import { apiRequest, tokenStore } from '../../services/api/client';
 import { apiUrl } from '../../services/api/config';
-import type { EligibleQuoteCandidate, ExpedienteDetail, ExpedienteListFilters, ExpedienteListResult, ProjectState } from './expedientes.types';
+import type { ActTypeOption, EligibleQuoteCandidate, ExpedienteAct, ExpedienteActCommand, ExpedienteActPreview, ExpedienteDetail, ExpedienteListFilters, ExpedienteListResult, ProjectState } from './expedientes.types';
 
 const query = (filters: ExpedienteListFilters) => {
   const params = new URLSearchParams();
@@ -16,6 +16,10 @@ const query = (filters: ExpedienteListFilters) => {
 export const expedientesService = {
   list(filters: ExpedienteListFilters, signal?: AbortSignal) { return apiRequest<ExpedienteListResult>(`/expedientes?${query(filters)}`, { signal }); },
   detail(id: string, signal?: AbortSignal) { return apiRequest<ExpedienteDetail>(`/expedientes/${encodeURIComponent(id)}`, { signal }); },
+  actTypes(signal?: AbortSignal) { return apiRequest<ActTypeOption[]>('/expedientes/tipos-acto', { signal }); },
+  listActs(id: string, signal?: AbortSignal) { return apiRequest<{ data: ExpedienteAct[]; canonical_source: 'ExpedienteActo'; legacy_tipo_acto_id_editable: false }>(`/expedientes/${encodeURIComponent(id)}/actos`, { signal }); },
+  previewAct(id: string, input: ExpedienteActCommand) { return apiRequest<ExpedienteActPreview>(`/expedientes/${encodeURIComponent(id)}/actos/preview`, { method: 'POST', body: JSON.stringify(input) }); },
+  applyAct(id: string, input: ExpedienteActCommand) { return apiRequest<{ acto: ExpedienteAct; idempotent: boolean; version?: number }>(`/expedientes/${encodeURIComponent(id)}/actos/aplicar`, { method: 'POST', body: JSON.stringify(input) }); },
   eligibleQuotes(signal?: AbortSignal) {
     return apiRequest<{ data: EligibleQuoteCandidate[]; total: number }>('/expedientes/cotizaciones-elegibles', { signal });
   },

@@ -2,6 +2,7 @@ import { DocCategoria, Prisma, PrismaClient, Role } from '@prisma/client';
 import { reserveExpedienteFolio } from './expedienteFolio.service';
 import { activeOrganizationMembershipWhere, organizationMembershipRoleSelect, userWithEffectiveMembershipRole } from '../auth/organizationMembership';
 import { requireActorContext } from '../auth/actorContext';
+import { ExpedienteActosService } from './expedienteActos.service';
 
 export class ExpedienteOpeningError extends Error {
   constructor(message: string, readonly code: string, readonly status = 400) { super(message); }
@@ -42,17 +43,17 @@ export class ExpedienteOpeningService {
       throw new ExpedienteOpeningError('La cotización no contiene los datos necesarios para abrir el expediente.', 'EXPEDIENTE_OPEN_REQUIRED');
     }
     const [tipoActo, actor, lawyer, notary, formVersion, workflowVersion, documentTemplateVersion, selectedParty] = await Promise.all([
-      tx.tipoActo.findFirst({ where: { id: input.tipoActoId, activo: true, archived_at: null }, include: { tipoActoCaracteresCompareciente: { include: { caracter: true }, orderBy: [{ sugerido: 'desc' }, { orden: 'asc' }] } } }),
+      tx.tipoActo.findFirst({ where: { id: input.tipoActoId, activo: true, archived_at: null, OR: [{ organization_id: null }, { organization_id: organizationId }] }, include: { tipoActoCaracteresCompareciente: { include: { caracter: true }, orderBy: [{ sugerido: 'desc' }, { orden: 'asc' }] } } }),
       tx.user.findFirst({ where: { id: input.actorUserId, activo: true }, select: { id: true } }),
       tx.user.findFirst({
         where: { id: input.abogadoId, activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(organizationId, Array.from(ALLOWED_RESPONSIBLE_ROLES)) } },
         select: { id: true, ...organizationMembershipRoleSelect(organizationId) },
       }),
-      input.notariaId ? tx.notaria.findFirst({ where: { id: input.notariaId, activa: true, archived_at: null }, select: { id: true } }) : Promise.resolve(null),
+      input.notariaId ? tx.notaria.findFirst({ where: { id: input.notariaId, organization_id: organizationId, activa: true, archived_at: null }, select: { id: true } }) : Promise.resolve(null),
       tx.formularioVersion.findFirst({ where: { tipo_acto_id: input.tipoActoId }, orderBy: { version: 'desc' } }),
       tx.flujoVersion.findFirst({ where: { tipo_acto_id: input.tipoActoId }, orderBy: { version: 'desc' } }),
       tx.plantillaDocumentalVersion.findFirst({ where: { tipo_acto_id: input.tipoActoId, activa: true, OR: [{ notaria_id: input.notariaId || null }, { notaria_id: null }] }, orderBy: [{ notaria_id: 'desc' }, { version: 'desc' }] }),
-      input.comparecienteId ? tx.compareciente.findFirst({ where: { id: input.comparecienteId, estatus: 'ACTIVO', archived_at: null }, select: { id: true } }) : Promise.resolve(null),
+      input.comparecienteId ? tx.compareciente.findFirst({ where: { id: input.comparecienteId, organization_id: organizationId, estatus: 'ACTIVO', archived_at: null }, select: { id: true } }) : Promise.resolve(null),
     ]);
     if (!tipoActo) throw new ExpedienteOpeningError('El tipo de acto ya no está disponible.', 'EXPEDIENTE_ACT_TYPE_INVALID', 404);
     if (!actor) throw new ExpedienteOpeningError('Tu sesión ya no está activa.', 'EXPEDIENTE_ACTOR_INVALID', 403);
@@ -73,8 +74,8 @@ export class ExpedienteOpeningService {
 
     const numeroPravia = await reserveExpedienteFolio(tx);
     let expediente = await tx.expediente.create({ data: {
+      organization_id: organizationId,
       numero_pravia: numeroPravia,
-      tipo_acto_id: tipoActo.id,
       abogado_id: effectiveLawyer.id,
       creador_id: actor.id,
       cotizacion_id: input.cotizacionId,
@@ -89,6 +90,14 @@ export class ExpedienteOpeningService {
       estatus: 'ABIERTO',
       proxima_accion: input.proximaAccion || 'Integrar documentación y comparecientes',
     } });
+
+    await new ExpedienteActosService(this.prisma).createInitial(tx, {
+      organizationId,
+      expedienteId: expediente.id,
+      tipoActoId: tipoActo.id,
+      cotizacionId: input.cotizacionId,
+      actorUserId: actor.id,
+    });
 
     const frozenStages = Array.isArray(workflowVersion?.etapas_json) ? workflowVersion.etapas_json as Array<Record<string, unknown>> : [];
     const firstStage = [...frozenStages].sort((a, b) => Number(a.orden || 0) - Number(b.orden || 0))[0];

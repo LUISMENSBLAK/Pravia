@@ -11,7 +11,33 @@ const allowedRuleStatuses = ['REFERENCIA_VERIFICADA', 'PREPARADO_SIN_CALCULO', '
 const pageValue = (value: unknown, fallback: number, max: number) => Math.min(max, Math.max(1, Number(value) || fallback));
 
 export const complianceReviewInclude = {
-  expediente: { select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true, tipo_acto: { select: { nombre: true } }, notaria: { select: { nombre: true, numero_notaria: true } }, abogado: { select: { id: true, nombre: true, apellido: true } }, comparecientes: { where: { archived_at: null, estatus: 'ACTIVO' }, select: { compareciente: { select: { id: true, personaFisica: { select: { nombre_completo_calculado: true } }, personaMoral: { select: { razon_social: true } } } } } } } },
+  expediente: {
+    select: {
+      id: true,
+      numero_pravia: true,
+      cliente_alias: true,
+      estatus: true,
+      actos: {
+        where: { estatus: 'ACTIVO' as const, removed_at: null },
+        select: { id: true, tipo_acto: { select: { id: true, nombre: true } } },
+        orderBy: { created_at: 'asc' as const },
+      },
+      notaria: { select: { nombre: true, numero_notaria: true } },
+      abogado: { select: { id: true, nombre: true, apellido: true } },
+      comparecientes: {
+        where: { archived_at: null, estatus: 'ACTIVO' },
+        select: {
+          compareciente: {
+            select: {
+              id: true,
+              personaFisica: { select: { nombre_completo_calculado: true } },
+              personaMoral: { select: { razon_social: true } },
+            },
+          },
+        },
+      },
+    },
+  },
   ruleSet: { select: { id: true, tipo: true, clave: true, version: true, nombre: true, vigencia_desde: true, vigencia_hasta: true, fuente_nombre: true, fuente_url: true } },
   creado_por: { select: { id: true, nombre: true, apellido: true } },
   revisado_por: { select: { id: true, nombre: true, apellido: true } },
@@ -21,6 +47,9 @@ export const complianceReviewInclude = {
 };
 
 type User = NonNullable<Request['user']>;
+const withCanonicalAct = (review: any) => review?.expediente
+  ? { ...review, expediente: { ...review.expediente, tipo_acto: review.expediente.actos?.[0]?.tipo_acto || null } }
+  : review;
 
 async function actor(value: unknown) {
   if (!value) throw new ComplianceError('El usuario responsable es obligatorio.', 'COMPLIANCE_ACTOR_REQUIRED', 401);
@@ -32,7 +61,7 @@ async function actor(value: unknown) {
 async function scopedReview(user: User, id: string, include: any = complianceReviewInclude) {
   const review = await prisma.complianceReview.findFirst({ where: { id, expediente: { archived_at: null, ...expedienteAccessWhere(user) } }, include });
   if (!review) throw new ComplianceError('Revisión no encontrada.', 'COMPLIANCE_REVIEW_NOT_FOUND', 404);
-  return review as any;
+  return withCanonicalAct(review);
 }
 
 const currentRule = (snapshot: any) => {
@@ -46,7 +75,7 @@ export class ComplianceReviewService {
     const access = expedienteAccessWhere(user);
     const [rules, expedientes, users, documents] = await Promise.all([
       prisma.complianceRuleSet.findMany({ where: { estatus: { in: allowedRuleStatuses } }, orderBy: [{ tipo: 'asc' }, { vigencia_desde: 'desc' }] }),
-      prisma.expediente.findMany({ where: { archived_at: null, ...access }, select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true, valor_operacion: true, tipo_acto: { select: { nombre: true } }, notaria: { select: { id: true, numero_notaria: true, nombre: true } } }, orderBy: { updated_at: 'desc' }, take: 300 }),
+      prisma.expediente.findMany({ where: { archived_at: null, ...access }, select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true, valor_operacion: true, actos: { where: { estatus: 'ACTIVO', removed_at: null }, select: { tipo_acto: { select: { nombre: true } } }, orderBy: { created_at: 'asc' } }, notaria: { select: { id: true, numero_notaria: true, nombre: true } } }, orderBy: { updated_at: 'desc' }, take: 300 }),
       prisma.user.findMany({
         where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(user.organizationId) }, ...(!['DIRECCION', 'ADMINISTRACION'].includes(user.rol) ? { id: user.id } : {}) },
         select: { id: true, nombre: true, apellido: true, ...organizationMembershipRoleSelect(user.organizationId) },
@@ -54,7 +83,7 @@ export class ComplianceReviewService {
       }),
       prisma.documento.findMany({ where: { OR: [{ expediente: { is: { archived_at: null, ...access } } }, { expedienteVinculos: { some: { estatus: 'ACTIVO', expediente: { archived_at: null, ...access } } } }] }, select: { id: true, nombre_original: true, tipo: true, estatus: true, expediente_id: true, expedienteVinculos: { where: { estatus: 'ACTIVO' }, select: { expediente_id: true } } }, orderBy: { fecha_carga: 'desc' }, take: 1000 }),
     ]);
-    return { reglas: rules, expedientes, usuarios: usersWithEffectiveMembershipRoles(users), documentos: documents };
+    return { reglas: rules, expedientes: expedientes.map((item) => ({ ...item, tipo_acto: item.actos[0]?.tipo_acto || null })), usuarios: usersWithEffectiveMembershipRoles(users), documentos: documents };
   }
 
   static async list(user: User, query: any) {
@@ -86,7 +115,7 @@ export class ComplianceReviewService {
       prisma.complianceObligation.count({ where: { status: { in: ['REQUIERE_AVISO', 'EN_PREPARACION'] }, review_id: { in: scopedReviewIds } } }),
       prisma.complianceObligation.count({ where: { status: { not: 'PRESENTADO_EXTERNAMENTE' }, due_at: { lt: new Date() }, review_id: { in: scopedReviewIds } } }),
     ]);
-    return { revisiones: reviews, meta: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) }, metrics: { expedientes_evaluados: evaluatedCases.length, requieren_revision: reviewRequired, avisos_por_presentar: noticesPending, obligaciones_vencidas: overdue } };
+    return { revisiones: reviews.map(withCanonicalAct), meta: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) }, metrics: { expedientes_evaluados: evaluatedCases.length, requieren_revision: reviewRequired, avisos_por_presentar: noticesPending, obligaciones_vencidas: overdue } };
   }
 
   static async detail(user: User, id: string) {
@@ -134,7 +163,7 @@ export class ComplianceReviewService {
       }
       await tx.complianceEvent.create({ data: { review_id: created.id, event_type: body.supersedes_review_id ? 'REEVALUACION_CREADA' : 'EVALUACION_CREADA', actor_id: actorId, summary: body.supersedes_review_id ? 'Se creó una nueva versión de evaluación.' : 'Se creó la evaluación de cumplimiento.', detail: { rule_version: rule.version, snapshot_at: new Date().toISOString() }, correlation_id: correlationId } });
       await tx.auditLog.create({ data: { user_id: actorId, accion: body.supersedes_review_id ? 'REEVALUATE_COMPLIANCE_REVIEW' : 'CREATE_COMPLIANCE_REVIEW', entidad: 'ComplianceReview', entidad_id: created.id, valores_nuevos: { tipo: type, expediente_id: expediente.id, rule_version: rule.version, supersedes_review_id: body.supersedes_review_id || null }, correlation_id: correlationId } });
-      return created;
+      return withCanonicalAct(created);
     });
   }
 
@@ -171,7 +200,7 @@ export class ComplianceReviewService {
         await tx.complianceEvent.create({ data: { review_id: current.id, event_type: 'ACTIVIDAD_VULNERABLE_EVALUADA', actor_id: actorId, summary: result.requiere_aviso ? 'La evaluación determinó una obligación de Aviso sujeta a revisión.' : 'Se evaluó la actividad vulnerable y su umbral.', detail: { clasificacion: result.clasificacion, version_normativa: result.version_normativa, operaciones_acumuladas: result.operaciones_acumuladas }, correlation_id: correlationId } });
       }
       await tx.auditLog.create({ data: { user_id: actorId, accion: 'EVALUATE_COMPLIANCE_REVIEW', entidad: 'ComplianceReview', entidad_id: review.id, valores_nuevos: { clasificacion: result.clasificacion, rule_version: current.rule_version_snapshot }, correlation_id: correlationId } });
-      return review;
+      return withCanonicalAct(review);
     });
   }
 
@@ -188,7 +217,7 @@ export class ComplianceReviewService {
       const review = await tx.complianceReview.update({ where: { id: current.id }, data: { estatus: status, revisado_por_id: actorId, revisado_at: new Date(), explicacion: String(body.observaciones || current.explicacion || '').trim() || null }, include: complianceReviewInclude });
       await tx.complianceEvent.create({ data: { review_id: current.id, event_type: decision === 'CONFIRMAR' ? 'REVISION_COMPLETADA' : 'AJUSTES_SOLICITADOS', actor_id: actorId, summary: decision === 'CONFIRMAR' ? 'La evaluación fue confirmada por una persona autorizada.' : 'La evaluación requiere ajustes.', detail: { decision, observaciones: body.observaciones || null }, correlation_id: correlationId } });
       await tx.auditLog.create({ data: { user_id: actorId, accion: 'REVIEW_COMPLIANCE_RESULT', entidad: 'ComplianceReview', entidad_id: review.id, valores_nuevos: { decision, observaciones: body.observaciones || null }, correlation_id: correlationId } });
-      return review;
+      return withCanonicalAct(review);
     });
   }
 

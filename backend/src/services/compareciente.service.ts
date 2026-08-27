@@ -320,7 +320,7 @@ export class ComparecienteService {
             expediente: {
               select: {
                 id: true, numero_pravia: true, numero_notaria: true, cliente_alias: true, estatus: true, etapa_actual_nombre: true, updated_at: true,
-                tipo_acto: { select: { id: true, nombre: true } },
+                actos: { where: { estatus: 'ACTIVO', removed_at: null }, select: { id: true, tipo_acto: { select: { id: true, nombre: true } } }, orderBy: { created_at: 'asc' } },
                 notaria: { select: { id: true, nombre: true, numero_notaria: true } },
                 abogado: { select: { id: true, nombre: true, apellido: true } },
                 complianceReviews: {
@@ -383,6 +383,7 @@ export class ComparecienteService {
 
     return {
       ...compareciente,
+      expedientes: compareciente.expedientes.map((link) => ({ ...link, expediente: { ...link.expediente, tipo_acto: link.expediente.actos[0]?.tipo_acto || null } })),
       nombre: compareciente.personaFisica?.nombre_completo_calculado || compareciente.personaMoral?.razon_social || compareciente.nombre_busqueda,
       rfc: rfc || null,
       curp: compareciente.personaFisica?.curp || null,

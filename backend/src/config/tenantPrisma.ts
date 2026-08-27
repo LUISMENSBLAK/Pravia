@@ -23,6 +23,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'ConfiguracionActo', 'ConfiguracionEtapa', 'ConfiguracionActividad', 'ConfiguracionDependencia',
   'ConfiguracionExcepcion', 'ConfiguracionExcepcionDependencia', 'CatalogoInstitucion', 'CatalogoCarpeta',
   'CatalogoArtefacto', 'CatalogoArtefactoVersion', 'CatalogoArtefactoActo', 'CatalogoArtefactoRegla',
+  'ExpedienteActo',
 ]);
 
 const READ_OR_WRITE_WITH_WHERE = new Set([

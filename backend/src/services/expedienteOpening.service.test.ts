@@ -23,6 +23,7 @@ describe('motor único de apertura de expedientes', () => {
       expedienteRequisitoDoc: { createMany: vi.fn().mockResolvedValue({ count: 1 }) },
       expedienteCompareciente: { create: vi.fn().mockResolvedValue({ id: 'link-1' }) },
       expedienteActividad: { create: vi.fn().mockResolvedValue({ id: 'activity-1' }) },
+      expedienteActo: { create: vi.fn().mockResolvedValue({ id: 'exp-act-1' }) },
       auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-1' }) },
     };
     const service = new ExpedienteOpeningService({} as any);
@@ -33,6 +34,8 @@ describe('motor único de apertura de expedientes', () => {
     expect(tx.expedienteCompareciente.create).toHaveBeenCalled();
     expect(tx.expedienteActividad.create).toHaveBeenCalled();
     expect(tx.expediente.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ cotizacion_id: 'quote-1' }) }));
+    expect(tx.expedienteActo.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ expediente_id: 'exp-1', tipo_acto_id: 'act-1', source_cotizacion_id: 'quote-1', origen: 'COTIZACION' }) }));
+    expect(tx.expediente.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.not.objectContaining({ tipo_acto_id: expect.anything() }) }));
   });
 
   it('bloquea una apertura huérfana antes de cualquier consulta o escritura', async () => {

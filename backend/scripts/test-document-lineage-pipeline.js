@@ -8,12 +8,16 @@ async function testDocumentLineagePipeline() {
 
   try {
     // Get active user and notary
-    const user = await prisma.user.findFirst({ where: { activo: true } });
+    const user = await prisma.user.findFirst({
+      where: { activo: true, organizationMemberships: { some: { status: 'ACTIVE' } } },
+      include: { organizationMemberships: { where: { status: 'ACTIVE' }, take: 1 } }
+    });
     const notaria = await prisma.notaria.findFirst({ where: { activa: true } });
 
-    if (!user || !notaria) {
-      throw new Error('Se requiere un usuario y notaria activos en base de datos.');
+    if (!user || !notaria || !user.organizationMemberships[0]) {
+      throw new Error('Se requiere un usuario con organización activa y una notaría activa.');
     }
+    const organizationId = user.organizationMemberships[0].organization_id;
 
     console.log(`👤 Usuario de prueba: ${user.nombre} (${user.id})`);
     console.log(`🏛️ Notaría de prueba: ${notaria.nombre} (${notaria.id})`);
@@ -156,15 +160,25 @@ async function testDocumentLineagePipeline() {
     const expediente = await prisma.$transaction(async (tx) => {
       const exp = await tx.expediente.create({
         data: {
+          organization_id: organizationId,
           numero_pravia,
-          tipo_acto_id: tipoActo.id,
           cotizacion_id: cotizacion.id,
           notaria_id: notaria.id,
           abogado_id: user.id,
           creador_id: user.id,
           cliente_alias: prospecto.nombre,
           valor_operacion: 157782.25,
-          estatus: 'ABIERTO'
+          estatus: 'ABIERTO',
+          actos: {
+            create: {
+              organization_id: organizationId,
+              tipo_acto_id: tipoActo.id,
+              origen: 'COTIZACION',
+              source_cotizacion_id: cotizacion.id,
+              created_by: user.id,
+              idempotency_key: `lineage:${cotizacion.id}:initial-act`
+            }
+          }
         }
       });
 

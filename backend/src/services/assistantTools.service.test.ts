@@ -40,7 +40,7 @@ describe('assistant backend tools', () => {
   });
 
   it('responde estructurado, con procedencia y audita una lectura permitida', async () => {
-    const client = db({ id: 'exp-1', numero_pravia: 'EXP-2026-0001', cliente_alias: 'Cliente', estatus: 'EN_PROCESO', etapa_actual_nombre: 'Integración', tipo_acto: { nombre: 'Compraventa' }, abogado: { nombre: 'Ana', apellido: 'Prueba' }, gestor: null, notaria: null, fecha_apertura: new Date(), fecha_estimada_firma: null, fecha_real_firma: null, fecha_entrega_cliente: null, avance_general: 30, avance_documental: 40, avance_operativo: 20, avance_financiero: 30 });
+    const client = db({ id: 'exp-1', numero_pravia: 'EXP-2026-0001', cliente_alias: 'Cliente', estatus: 'EN_PROCESO', etapa_actual_nombre: 'Integración', actos: [{ id: 'exp-act-1', origen: 'COTIZACION', tipo_acto: { nombre: 'Compraventa' } }], abogado: { nombre: 'Ana', apellido: 'Prueba' }, gestor: null, notaria: null, fecha_apertura: new Date(), fecha_estimada_firma: null, fecha_real_firma: null, fecha_entrega_cliente: null, avance_general: 30, avance_documental: 40, avance_operativo: 20, avance_financiero: 30 });
     const result = await executeAssistantTool({ tool: 'getExpedienteSummary', context: { entity_type: 'expediente', entity_id: 'exp-1' }, user: user(), correlationId: 'corr-4' }, client);
     expect(result).toMatchObject({ success: true, tool: 'getExpedienteSummary', correlation_id: 'corr-4', data: { folio: 'EXP-2026-0001' }, provenance: [{ entity: 'Expediente', id: 'exp-1' }] });
     expect(client.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ accion: 'AI_TOOL_COMPLETED', correlation_id: 'corr-4' }) }));

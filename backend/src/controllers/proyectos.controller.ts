@@ -453,7 +453,7 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
     const exp = await prisma.expediente.findUnique({
       where: { id },
       include: {
-        tipo_acto: true,
+        actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: true }, orderBy: { created_at: 'asc' } },
         requisitos_docs: true,
         movimientosFinancieros: true,
         expedienteDocumentos: {
@@ -568,7 +568,7 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
           new Paragraph({
             children: [
               new TextRun({ text: "Tipo de Acto: ", bold: true }),
-              new TextRun({ text: `${exp.tipo_acto?.nombre || 'Compraventa Inmobiliaria'}` }),
+              new TextRun({ text: `${exp.actos[0]?.tipo_acto.nombre || 'Acto no especificado'}` }),
             ]
           }),
           new Paragraph({
@@ -949,7 +949,7 @@ export const getDatosDetectadosMatrix = async (req: Request, res: Response) => {
     const exp = await prisma.expediente.findUnique({
       where: { id },
       include: {
-        tipo_acto: true,
+        actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: true }, orderBy: { created_at: 'asc' } },
         notaria: true,
         cotizacion: {
           include: { prospecto: true }
@@ -1026,7 +1026,7 @@ export const getDatosDetectadosMatrix = async (req: Request, res: Response) => {
     const cuentaPredial = getDatoExtraido(predialDoc, ['cuenta_predial', 'cuentaPredial', 'clave_catastral']);
     const superficie = getDatoExtraido(escDoc, ['superficie_privativa', 'superficie', 'metros_cuadrados']);
     const notariaNombre = exp.notaria?.nombre || '[PENDIENTE DE ASIGNAR]';
-    const tipoActoNombre = exp.tipo_acto?.nombre || exp.cotizacion?.prospecto?.tipo_acto || '[PENDIENTE DE CONFIRMAR]';
+    const tipoActoNombre = exp.actos[0]?.tipo_acto.nombre || exp.cotizacion?.prospecto?.tipo_acto || '[PENDIENTE DE CONFIRMAR]';
     
     const totalPrecioNum = exp.valor_operacion || exp.cotizacion?.total_cliente;
     const totalPrecioStr = totalPrecioNum
@@ -1138,7 +1138,7 @@ export const generarProyectoConIA = async (req: Request, res: Response) => {
 
     const exp = await prisma.expediente.findUnique({
       where: { id },
-      include: { tipo_acto: true, notaria: true, plantillaDocVersion: true }
+      include: { actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: true }, orderBy: { created_at: 'asc' } }, notaria: true, plantillaDocVersion: true }
     });
 
     if (!exp) return res.status(404).json({ error: 'Expediente no encontrado' });

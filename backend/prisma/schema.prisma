@@ -16,6 +16,7 @@ model Organization {
   updated_at  DateTime                 @updatedAt
   memberships OrganizationMembership[]
   sessions    AuthSession[]
+  expedienteActos ExpedienteActo[]
 
   @@index([status])
   @@map("organizations")
@@ -100,6 +101,8 @@ model User {
   expedientes                            Expediente[]                  @relation("ExpedienteAbogado")
   expedientesArchivados                  Expediente[]                  @relation("ExpedienteArchivedBy")
   expedientesCreados                     Expediente[]                  @relation("ExpedienteCreador")
+  expedienteActosCreados                 ExpedienteActo[]              @relation("ExpedienteActoCreador")
+  expedienteActosRetirados               ExpedienteActo[]              @relation("ExpedienteActoRetirador")
   expedientesGestor                      Expediente[]                  @relation("ExpedienteGestor")
   flujoVersionesCreadas                  FlujoVersion[]                @relation("FlujoVersionCreador")
   formularioVersionesCreadas             FormularioVersion[]           @relation("FormularioVersionCreador")
@@ -429,12 +432,14 @@ model Cotizacion {
   creada_por                     User                    @relation(fields: [user_id], references: [id])
   documentos                     Documento[]
   expediente                     Expediente?
+  expedienteActosOrigen          ExpedienteActo[]
   honorariosGenerados            HonorarioGenerado?
   movimientosFinancieros         MovimientoFinanciero[]
   pagos                          Pago[]
 
   @@index([notaria_id], map: "idx_cotizaciones_notaria_fk")
   @@index([user_id], map: "idx_cotizaciones_user_fk")
+  @@unique([id, organization_id], map: "uq_cotizaciones_id_org")
   @@map("cotizaciones")
 }
 
@@ -496,6 +501,7 @@ model TipoActo {
   checklist                       ChecklistItem[]
   configuracionesOperativas       ConfiguracionActo[]
   expedientes                     Expediente[]
+  expedienteActos                ExpedienteActo[]
   flujoEtapas                     FlujoEtapa[]
   flujoVersiones                  FlujoVersion[]
   formularioSecciones             FormularioSeccion[]
@@ -877,7 +883,7 @@ model Expediente {
   organization_id            String?                     @db.Uuid
   numero_pravia              String                      @unique
   numero_notaria             String?
-  tipo_acto_id               String                      @db.Uuid
+  tipo_acto_id               String?                     @db.Uuid
   abogado_id                 String                      @db.Uuid
   creador_id                 String                      @db.Uuid
   cotizacion_id              String?                     @unique @db.Uuid
@@ -917,6 +923,7 @@ model Expediente {
   documentos                 Documento[]
   eventos                    EventoAgenda[]
   actividades                ExpedienteActividad[]
+  actos                       ExpedienteActo[]
   comparecientes             ExpedienteCompareciente[]
   expedienteDocumentos       ExpedienteDocumento[]
   entrega                    ExpedienteEntrega?
@@ -934,7 +941,7 @@ model Expediente {
   gestor                     User?                       @relation("ExpedienteGestor", fields: [gestor_id], references: [id])
   notaria                    Notaria?                    @relation(fields: [notaria_id], references: [id])
   plantillaDocVersion        PlantillaDocumentalVersion? @relation(fields: [plantilla_doc_version_id], references: [id])
-  tipo_acto                  TipoActo                    @relation(fields: [tipo_acto_id], references: [id])
+  tipo_acto                  TipoActo?                   @relation(fields: [tipo_acto_id], references: [id])
   honorariosGenerados        HonorarioGenerado[]
   movimientosFinancieros     MovimientoFinanciero[]
   pagos                      Pago[]
@@ -951,7 +958,41 @@ model Expediente {
   @@index([notaria_id], map: "idx_expedientes_notaria_fk")
   @@index([plantilla_doc_version_id], map: "idx_expedientes_plantilla_version_fk")
   @@index([tipo_acto_id], map: "idx_expedientes_tipo_acto_fk")
+  @@unique([id, organization_id], map: "uq_expedientes_id_org")
   @@map("expedientes")
+}
+
+model ExpedienteActo {
+  id                    String                 @id @default(uuid()) @db.Uuid
+  organization_id       String                 @db.Uuid
+  expediente_id         String                 @db.Uuid
+  tipo_acto_id           String                 @db.Uuid
+  origen                 ExpedienteActoOrigen
+  estatus                ExpedienteActoEstatus  @default(ACTIVO)
+  source_cotizacion_id   String?                @db.Uuid
+  idempotency_key        String?
+  removal_idempotency_key String?
+  created_by             String                 @db.Uuid
+  created_at             DateTime               @default(now())
+  updated_at             DateTime               @default(now()) @updatedAt
+  removed_at             DateTime?
+  removed_by             String?                @db.Uuid
+  removed_reason         String?
+  organization           Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  expediente             Expediente             @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  tipo_acto              TipoActo               @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
+  source_cotizacion      Cotizacion?             @relation(fields: [source_cotizacion_id], references: [id], onDelete: Restrict)
+  creador                User                    @relation("ExpedienteActoCreador", fields: [created_by], references: [id], onDelete: Restrict)
+  retirado_por           User?                   @relation("ExpedienteActoRetirador", fields: [removed_by], references: [id], onDelete: Restrict)
+
+  @@unique([organization_id, expediente_id, idempotency_key], map: "uq_expediente_actos_idempotency")
+  @@unique([organization_id, expediente_id, removal_idempotency_key], map: "uq_expediente_actos_removal_idempotency")
+  @@index([organization_id, expediente_id, estatus], map: "idx_expediente_actos_tenant_expediente_status")
+  @@index([tipo_acto_id], map: "idx_expediente_actos_tipo_acto_fk")
+  @@index([source_cotizacion_id], map: "idx_expediente_actos_source_quote_fk")
+  @@index([created_by], map: "idx_expediente_actos_created_by_fk")
+  @@index([removed_by], map: "idx_expediente_actos_removed_by_fk")
+  @@map("expediente_actos")
 }
 
 model ExpedienteEstatus_Log {
@@ -3439,4 +3480,15 @@ enum CatalogoMultiplicidad {
   COMPARECIENTE
   INMUEBLE
   CANTIDAD_FIJA
+}
+
+enum ExpedienteActoOrigen {
+  COTIZACION
+  ADICIONAL
+  LEGACY_MIGRATION
+}
+
+enum ExpedienteActoEstatus {
+  ACTIVO
+  RETIRADO
 }

@@ -53,7 +53,7 @@ const eventInclude = {
       version: true,
       fecha_estimada_firma: true,
       fecha_real_firma: true,
-      tipo_acto: { select: { id: true, nombre: true } },
+      actos: { where: { estatus: 'ACTIVO', removed_at: null }, select: { tipo_acto: { select: { id: true, nombre: true } } }, orderBy: { created_at: 'asc' } },
       notaria: { select: { id: true, numero_notaria: true, nombre: true, ciudad: true, municipio: true, entidad_federativa: true } },
     },
   },
@@ -70,6 +70,7 @@ const eventInclude = {
 
 const serializeEvent = (event: any) => ({
   ...event,
+  expediente: event.expediente ? { ...event.expediente, tipo_acto: event.expediente.actos?.[0]?.tipo_acto || null } : null,
   color: EVENT_COLORS[event.tipo] || EVENT_COLORS.OTRO,
   responsable_nombre: event.usuario ? `${event.usuario.nombre} ${event.usuario.apellido}`.trim() : 'Sin responsable',
   compareciente_nombre: event.compareciente
@@ -311,7 +312,7 @@ export class AgendaController {
           select: { id: true, nombre: true, apellido: true, ...organizationMembershipRoleSelect(req.user.organizationId) },
           orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }],
         }),
-        prisma.expediente.findMany({ where: { archived_at: null, ...expedienteScope }, select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true, version: true, fecha_estimada_firma: true, fecha_real_firma: true, abogado_id: true, tipo_acto: { select: { id: true, nombre: true } }, notaria: { select: { id: true, numero_notaria: true, nombre: true, ciudad: true, municipio: true, entidad_federativa: true } } }, orderBy: { updated_at: 'desc' }, take: 300 }),
+        prisma.expediente.findMany({ where: { archived_at: null, ...expedienteScope }, select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true, version: true, fecha_estimada_firma: true, fecha_real_firma: true, abogado_id: true, actos: { where: { estatus: 'ACTIVO', removed_at: null }, select: { tipo_acto: { select: { id: true, nombre: true } } }, orderBy: { created_at: 'asc' } }, notaria: { select: { id: true, numero_notaria: true, nombre: true, ciudad: true, municipio: true, entidad_federativa: true } } }, orderBy: { updated_at: 'desc' }, take: 300 }),
         prisma.compareciente.findMany({
           where: { archived_at: null, ...(!canReadComparecientes ? { id: '00000000-0000-0000-0000-000000000000' } : comparecienteObjectWhere(req.user)) },
           select: {
@@ -329,7 +330,7 @@ export class AgendaController {
         success: true,
         catalogos: {
           usuarios: usersWithEffectiveMembershipRoles(usuarios),
-          expedientes,
+          expedientes: expedientes.map((item) => ({ ...item, tipo_acto: item.actos[0]?.tipo_acto || null })),
           comparecientes: comparecientes.map((item) => ({
             id: item.id,
             tipo_persona: item.tipo_persona,

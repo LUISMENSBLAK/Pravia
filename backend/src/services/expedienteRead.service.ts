@@ -29,7 +29,7 @@ export class ExpedienteReadService {
     if (query.stage) AND.push({ etapaActual: { is: { nombre_snapshot: { equals: query.stage, mode: 'insensitive' } } } });
     if (query.responsibleId) AND.push({ abogado_id: query.responsibleId });
     if (query.notaryId) AND.push({ notaria_id: query.notaryId });
-    if (query.actTypeId) AND.push({ tipo_acto_id: query.actTypeId });
+    if (query.actTypeId) AND.push({ actos: { some: { tipo_acto_id: query.actTypeId, estatus: 'ACTIVO', removed_at: null } } });
     if (query.client) AND.push({ OR: [
       { cliente_alias: { contains: query.client, mode: 'insensitive' } },
       { comparecientes: { some: { archived_at: null, estatus: 'ACTIVO', compareciente: { nombre_busqueda: { contains: query.client, mode: 'insensitive' } } } } },
@@ -48,7 +48,7 @@ export class ExpedienteReadService {
         { numero_pravia: { contains: term, mode: 'insensitive' } },
         { numero_notaria: { contains: term, mode: 'insensitive' } },
         { cliente_alias: { contains: term, mode: 'insensitive' } },
-        { tipo_acto: { nombre: { contains: term, mode: 'insensitive' } } },
+        { actos: { some: { estatus: 'ACTIVO', removed_at: null, tipo_acto: { nombre: { contains: term, mode: 'insensitive' } } } } },
         { notaria: { is: { OR: [
           { numero_notaria: { contains: term, mode: 'insensitive' } },
           { nombre: { contains: term, mode: 'insensitive' } },
@@ -82,7 +82,7 @@ export class ExpedienteReadService {
         take: query.pageSize,
         orderBy: { [sortField]: sortDirection },
         include: {
-          tipo_acto: { select: { id: true, nombre: true } },
+          actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: { select: { id: true, nombre: true } } }, orderBy: { created_at: 'asc' } },
           abogado: { select: { id: true, nombre: true, apellido: true } },
           notaria: { select: { id: true, nombre: true, numero_notaria: true, municipio: true } },
           etapaActual: { select: { id: true, clave_snapshot: true, nombre_snapshot: true, orden_snapshot: true, fecha_inicio: true } },
@@ -97,13 +97,13 @@ export class ExpedienteReadService {
       }),
       this.prisma.expediente.count({ where }),
       this.prisma.expediente.groupBy({ by: ['estatus'], where: baseScope, _count: { _all: true } }),
-      this.prisma.tipoActo.findMany({ where: { activo: true, archived_at: null }, select: { id: true, nombre: true, descripcion: true }, orderBy: { nombre: 'asc' } }),
+      this.prisma.tipoActo.findMany({ where: { activo: true, archived_at: null, OR: [{ organization_id: null }, { organization_id: user.organizationId }] }, select: { id: true, nombre: true, descripcion: true }, orderBy: { nombre: 'asc' } }),
       this.prisma.user.findMany({
         where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(user.organizationId, ['DIRECCION', 'ADMINISTRACION', 'ABOGADO']) } },
         select: { id: true, nombre: true, apellido: true, ...organizationMembershipRoleSelect(user.organizationId) },
         orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }],
       }),
-      this.prisma.notaria.findMany({ where: { activa: true, archived_at: null }, select: { id: true, nombre: true, numero_notaria: true, municipio: true }, orderBy: [{ predeterminada: 'desc' }, { nombre: 'asc' }], take: 150 }),
+      this.prisma.notaria.findMany({ where: { organization_id: user.organizationId, activa: true, archived_at: null }, select: { id: true, nombre: true, numero_notaria: true, municipio: true }, orderBy: [{ predeterminada: 'desc' }, { nombre: 'asc' }], take: 150 }),
       this.prisma.expedienteEtapa.findMany({ where: { expediente: baseScope }, distinct: ['nombre_snapshot'], select: { nombre_snapshot: true }, orderBy: { nombre_snapshot: 'asc' }, take: 100 }),
     ]);
     const counts = new Map<ExpedienteEstatus, number>(grouped.map((item) => [item.estatus, item._count._all]));
@@ -112,6 +112,7 @@ export class ExpedienteReadService {
     const mapped = records.map((record) => {
       const principal = record.comparecientes[0];
       const review = record.complianceReviews[0];
+      const primaryAct = record.actos[0]?.tipo_acto || { id: '', nombre: 'Sin acto activo' };
       return {
         id: record.id,
         numero_pravia: record.numero_pravia,
@@ -127,7 +128,8 @@ export class ExpedienteReadService {
         fecha_entrega_cliente: record.fecha_entrega_cliente,
         created_at: record.created_at,
         updated_at: record.updated_at,
-        tipo_acto: record.tipo_acto,
+        tipo_acto: primaryAct,
+        actos: record.actos,
         abogado: record.abogado,
         notaria: record.notaria,
         etapaActual: record.etapaActual,

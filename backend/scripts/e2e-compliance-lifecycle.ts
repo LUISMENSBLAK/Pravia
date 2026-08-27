@@ -27,6 +27,7 @@ async function api(path: string, init: RequestInit = {}, expected = 200) {
 }
 const post = (path: string, body: unknown, expected = 200) => api(path, { method: 'POST', body: JSON.stringify(body) }, expected);
 const patch = (path: string, body: unknown) => api(path, { method: 'PATCH', body: JSON.stringify(body) });
+const put = (path: string, body: unknown) => api(path, { method: 'PUT', body: JSON.stringify(body) });
 
 async function main() {
   const user = await prisma.user.create({ data: {
@@ -64,10 +65,23 @@ async function main() {
   ]);
   checks.push('rulesets:UIF-ISR-creados-y-separados');
 
-  const expediente = await post('/expedientes', {
-    tipo_acto_id: tipo.id, notaria_id: notaria.id, abogado_id: user.id,
-    cliente_alias: `E2E Compliance ${suffix}`, descripcion: 'Expediente sintético de cumplimiento', valor_operacion: 2_000_000,
+  const prospect = await post('/prospectos', {
+    nombre: `E2E Compliance ${suffix}`, estado: 'NUEVO', prioridad: 'MEDIA', tipo_acto: tipo.nombre,
   }, 201);
+  const quote = await post('/cotizaciones', { prospecto_id: prospect.id, notaria_id: notaria.id }, 201);
+  for (const estado of ['ENVIADA_NOTARIA', 'PRESUPUESTO_RECIBIDO', 'EN_REVISION_ABOGADO']) {
+    await put(`/cotizaciones/${quote.id}/estado`, { estado });
+  }
+  await post(`/cotizaciones/${quote.id}/versiones`, {
+    total_notaria: 2_000_000, honorarios_pravia: 100_000,
+    desglose_notaria: [{ concepto: 'Operación sintética de cumplimiento', monto: 2_000_000 }],
+    aprobada: true, notas: 'Fixture local aislado.',
+  }, 201);
+  await put(`/cotizaciones/${quote.id}/estado`, { estado: 'ENVIADA_CLIENTE' });
+  await put(`/cotizaciones/${quote.id}/estado`, { estado: 'ACEPTADA' });
+  const advance = await post(`/cotizaciones/${quote.id}/anticipo`, { monto: 1_000, notas: 'Anticipo sintético local.' }, 201);
+  await post(`/cotizaciones/pago/${advance.id}/validar`, {});
+  const expediente = await post(`/cotizaciones/${quote.id}/convertir`, { tipo_acto_id: tipo.id, abogado_id: user.id }, 201);
   const person = await post('/comparecientes/persona-fisica', {
     nombre: `PEP Presidente Sintético ${suffix}`, apellido_paterno: 'PRUEBA',
     ocupacion: 'Senador sintético', nacionalidad: 'Mexicana', pep_estado: 'PENDIENTE',

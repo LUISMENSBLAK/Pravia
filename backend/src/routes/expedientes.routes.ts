@@ -44,6 +44,7 @@ import {
   generarProyectoConIA
 } from '../controllers/proyectos.controller';
 import { requireExpedienteAccess, requirePermission } from '../middleware/auth.middleware';
+import { applyExpedienteActoChange, listExpedienteActos, previewExpedienteActoChange } from '../controllers/expedienteActos.controller';
 
 const router = express.Router();
 router.param('id', requireExpedienteAccess);
@@ -52,6 +53,9 @@ router.get('/tipos-acto', getTiposActo);
 router.get('/cotizaciones-elegibles', requirePermission('expedientes.write'), getEligibleCotizacionesForExpediente);
 router.get('/', getExpedientes);
 router.get('/:id', getExpedienteById);
+router.get('/:id/actos', listExpedienteActos);
+router.post('/:id/actos/preview', requirePermission('expedientes.write'), previewExpedienteActoChange);
+router.post('/:id/actos/aplicar', requirePermission('expedientes.write'), applyExpedienteActoChange);
 router.post('/', createExpediente);
 router.patch('/:id', updateExpedienteHeader);
 router.post('/convertir-cotizacion', convertCotizacionToExpediente);
