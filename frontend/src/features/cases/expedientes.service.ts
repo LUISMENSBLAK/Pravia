@@ -1,6 +1,6 @@
 import { apiRequest, tokenStore } from '../../services/api/client';
 import { apiUrl } from '../../services/api/config';
-import type { ActTypeOption, EligibleQuoteCandidate, ExpedienteAct, ExpedienteActCommand, ExpedienteActPreview, ExpedienteDetail, ExpedienteListFilters, ExpedienteListResult, ProjectState } from './expedientes.types';
+import type { ActTypeOption, EligibleQuoteCandidate, ExpedienteAct, ExpedienteActCommand, ExpedienteActPreview, ExpedienteDetail, ExpedienteListFilters, ExpedienteListResult, ExpedientePartyCatalogs, ExpedientePartyCommand, ExpedientePartyPreview, ExpedientePartyRelation, ExpedientePartySearchOption, ProjectState } from './expedientes.types';
 
 const query = (filters: ExpedienteListFilters) => {
   const params = new URLSearchParams();
@@ -20,6 +20,11 @@ export const expedientesService = {
   listActs(id: string, signal?: AbortSignal) { return apiRequest<{ data: ExpedienteAct[]; canonical_source: 'ExpedienteActo'; legacy_tipo_acto_id_editable: false }>(`/expedientes/${encodeURIComponent(id)}/actos`, { signal }); },
   previewAct(id: string, input: ExpedienteActCommand) { return apiRequest<ExpedienteActPreview>(`/expedientes/${encodeURIComponent(id)}/actos/preview`, { method: 'POST', body: JSON.stringify(input) }); },
   applyAct(id: string, input: ExpedienteActCommand) { return apiRequest<{ acto: ExpedienteAct; idempotent: boolean; version?: number }>(`/expedientes/${encodeURIComponent(id)}/actos/aplicar`, { method: 'POST', body: JSON.stringify(input) }); },
+  listParties(id: string, signal?: AbortSignal) { return apiRequest<{ data: ExpedientePartyRelation[]; canonical_source: 'ExpedienteCompareciente'; legacy_pending_act_assignment: number }>(`/expedientes/${encodeURIComponent(id)}/comparecientes`, { signal }); },
+  searchParties(id: string, search: string, signal?: AbortSignal) { const params = new URLSearchParams({ search }); return apiRequest<{ data: ExpedientePartySearchOption[] }>(`/expedientes/${encodeURIComponent(id)}/comparecientes/buscar?${params}`, { signal }); },
+  partyCatalogs(id: string, signal?: AbortSignal) { return apiRequest<{ data: ExpedientePartyCatalogs }>(`/expedientes/${encodeURIComponent(id)}/comparecientes/catalogos`, { signal }).then((payload) => payload.data); },
+  previewParty(id: string, input: ExpedientePartyCommand) { return apiRequest<ExpedientePartyPreview>(`/expedientes/${encodeURIComponent(id)}/comparecientes/preview`, { method: 'POST', body: JSON.stringify(input) }); },
+  applyParty(id: string, input: ExpedientePartyCommand) { return apiRequest<{ relation: ExpedientePartyRelation; idempotent: boolean; version?: number }>(`/expedientes/${encodeURIComponent(id)}/comparecientes/aplicar`, { method: 'POST', body: JSON.stringify(input) }); },
   eligibleQuotes(signal?: AbortSignal) {
     return apiRequest<{ data: EligibleQuoteCandidate[]; total: number }>('/expedientes/cotizaciones-elegibles', { signal });
   },

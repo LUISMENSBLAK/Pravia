@@ -143,6 +143,7 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         etapaActual: true,
         etapas: { orderBy: { orden_snapshot: 'asc' } },
         comparecientes: {
+          where: { archived_at: null, estatus: 'ACTIVO' },
           include: {
             compareciente: {
               include: {
@@ -150,8 +151,17 @@ export const getExpedienteById = async (req: Request, res: Response) => {
                 personaMoral: true
               }
             },
-            caracter: true
-          }
+            caracter: true,
+            expedienteActo: { include: { tipo_acto: true } },
+            representacionesComoRepresentante: {
+              where: { archived_at: null },
+              include: {
+                representado: { include: { personaFisica: true, personaMoral: true } },
+                caracterRepresentacion: true,
+              },
+            },
+          },
+          orderBy: [{ orden_comparecencia: 'asc' }, { created_at: 'asc' }],
         },
         expedienteRepresentaciones: true,
         requisitos_docs: {

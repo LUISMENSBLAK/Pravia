@@ -91,7 +91,7 @@ export class ExpedienteOpeningService {
       proxima_accion: input.proximaAccion || 'Integrar documentación y comparecientes',
     } });
 
-    await new ExpedienteActosService(this.prisma).createInitial(tx, {
+    const initialAct = await new ExpedienteActosService(this.prisma).createInitial(tx, {
       organizationId,
       expedienteId: expediente.id,
       tipoActoId: tipoActo.id,
@@ -126,7 +126,9 @@ export class ExpedienteOpeningService {
 
     if (input.comparecienteId && characterId) {
       await tx.expedienteCompareciente.create({ data: {
+        organization_id: organizationId,
         expediente_id: expediente.id,
+        expediente_acto_id: initialAct.id,
         compareciente_id: input.comparecienteId,
         caracter_id: characterId,
         forma_comparecencia: 'PROPIO_DERECHO',

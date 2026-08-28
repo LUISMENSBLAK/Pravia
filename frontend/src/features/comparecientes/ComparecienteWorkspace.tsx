@@ -1,6 +1,6 @@
 import { AlertTriangle, ArrowLeft, Check, ChevronRight, LoaderCircle, Save, ShieldCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { PageContainer } from '../../components/layout/PageContainer';
 import { useAuth } from '../auth/AuthProvider';
 import { comparecientesService } from './comparecientes.service';
@@ -8,6 +8,7 @@ import type { ComparecienteDetail, NewComparecienteDraft } from './compareciente
 import { ComparecienteDocuments, type WorkspaceDocument } from './components/ComparecienteDocuments';
 import { ComparecienteForm } from './components/ComparecienteForm';
 import styles from './Comparecientes.module.css';
+import { resolveExpedienteCreationContext, resolveExpedienteReturn } from '../cases/expedienteNavigation';
 
 const initialDraft: NewComparecienteDraft = {
   tipo_persona:'FISICA', nombre:'', apellido_paterno:'', apellido_materno:'', razon_social:'', nombre_comercial:'', tipo_societario:'',
@@ -46,7 +47,9 @@ const addressPayload=(draft:NewComparecienteDraft,prefix:string)=>({calle:draft[
 const updatePayload=(draft:NewComparecienteDraft)=>({...draft,aliases:(draft.aliases||'').split(',').map(value=>value.trim()).filter(Boolean),domicilio_particular:addressPayload(draft,'dom_particular'),domicilio_fiscal:addressPayload(draft,'dom_fiscal'),identificacion:{tipo_identificacion:draft.tipo_identificacion,numero:draft.folio_identificacion,autoridad_emisora:draft.autoridad_emisora,pais_emisor:draft.pais_emisor,fecha_expedicion:draft.fecha_expedicion_identificacion,fecha_vencimiento:draft.fecha_vencimiento_identificacion}});
 
 export function ComparecienteWorkspace(){
-  const {id=''}=useParams(); const createMode=id==='nuevo'; const navigate=useNavigate(); const {user}=useAuth();
+  const {id=''}=useParams(); const createMode=id==='nuevo'; const navigate=useNavigate(); const location=useLocation(); const {user}=useAuth();
+  const creationContext=useMemo(()=>createMode?resolveExpedienteCreationContext(location.search):null,[createMode,location.search]);
+  const safeReturn=useMemo(()=>createMode?resolveExpedienteReturn(location.search):null,[createMode,location.search]);
   const [item,setItem]=useState<ComparecienteDetail|null>(null); const [draft,setDraft]=useState<NewComparecienteDraft>(initialDraft); const [status,setStatus]=useState<'loading'|'ready'|'error'>(createMode?'ready':'loading');
   const [sessionId,setSessionId]=useState(''); const [temporaryDocuments,setTemporaryDocuments]=useState<WorkspaceDocument[]>([]); const [busy,setBusy]=useState(false); const [message,setMessage]=useState(''); const [error,setError]=useState(''); const [sources,setSources]=useState<Record<string,any>>({}); const [dirty,setDirty]=useState(false); const [extractionState,setExtractionState]=useState('');
   const canWrite=createMode?Boolean(user?.permissions?.includes('comparecientes.write')):Boolean(item?.capabilities.canEdit);
@@ -58,7 +61,7 @@ export function ComparecienteWorkspace(){
   useEffect(()=>{const controller=new AbortController();void load(controller.signal);return()=>controller.abort()},[id]);
   useEffect(()=>{document.documentElement.scrollTop=0;document.body.scrollTop=0},[id]);
   const change=(name:string,value:string)=>{setDraft(current=>({...current,[name]:value}));setDirty(true);setMessage('');};
-  const ensureSession=async()=>{if(sessionId)return sessionId;const response=await comparecientesService.startAssisted(draft.tipo_persona);setSessionId(response.session.id);return response.session.id;};
+  const ensureSession=async()=>{if(sessionId)return sessionId;const response=await comparecientesService.startAssisted(draft.tipo_persona,creationContext?.expedienteId);setSessionId(response.session.id);return response.session.id;};
   const upload=async(files:File[])=>{setBusy(true);setError('');try{if(createMode){const session=await ensureSession();const uploaded:WorkspaceDocument[]=[];for(const file of files){const response=await comparecientesService.uploadAssisted(session,file);uploaded.push({id:response.documento.id,name:response.documento.nombre_original,mimeType:file.type,size:file.size,temporary:true})}setTemporaryDocuments(current=>[...current,...uploaded]);}else{for(const file of files)await comparecientesService.uploadDocument(id,file,'OTROS');await load();}}finally{setBusy(false)}};
   const remove=async(document:WorkspaceDocument)=>{setBusy(true);try{if(document.temporary){await comparecientesService.deleteAssistedDocument(sessionId,document.id);setTemporaryDocuments(current=>current.filter(entry=>entry.id!==document.id));}else{await comparecientesService.deleteDocument(id,document.id);await load();}}finally{setBusy(false)}};
   const applyExtraction=(response:any)=>{
@@ -78,8 +81,8 @@ export function ComparecienteWorkspace(){
     setDraft(current=>({...current,...safeValues,tipo_persona:current.tipo_persona}));setSources(mappedSources);setDirty(true);
   };
   const extract=async()=>{setBusy(true);setError('');setExtractionState('Preparando documentos');try{await new Promise(resolve=>window.setTimeout(resolve,120));setExtractionState('Analizando');const response=createMode?await comparecientesService.extractAssisted(sessionId,documents.map(document=>document.id)):await comparecientesService.extractExisting(id);setExtractionState('Completando información');applyExtraction(response);setExtractionState('Listo · revisa los datos propuestos');}catch(err){setExtractionState('');setError(err instanceof Error?err.message:'La extracción no pudo completarse. Tus datos permanecen sin cambios.');}finally{setBusy(false)}};
-  const save=async(event:React.FormEvent)=>{event.preventDefault();setError('');setMessage('');setBusy(true);try{if(createMode){const name=draft.tipo_persona==='FISICA'?draft.nombre:draft.razon_social;if(!name?.trim())throw new Error(draft.tipo_persona==='FISICA'?'Escribe el nombre del compareciente.':'Escribe la razón social.');const duplicates=await comparecientesService.duplicates(draft);if(duplicates.some(candidate=>candidate.bloqueo_alta))throw new Error('Ya existe un compareciente con el mismo RFC o CURP. Abre el registro existente.');const session=await ensureSession();const response=await comparecientesService.confirmAssisted(session,draft,documents.map(document=>document.id));navigate(`/comparecientes/${response.compareciente.id}`,{replace:true});return;}await comparecientesService.update(id,updatePayload(draft));setMessage('Cambios guardados correctamente.');await load();}catch(err){setError(err instanceof Error?err.message:'No pudimos guardar los cambios. Tus datos permanecen en pantalla.');}finally{setBusy(false)}};
-  const cancel=async()=>{if(createMode&&sessionId){try{await comparecientesService.cancelAssisted(sessionId)}catch{ /* TTL y compensación garantizan limpieza diferida */ }}navigate('/comparecientes')};
+  const save=async(event:React.FormEvent)=>{event.preventDefault();setError('');setMessage('');setBusy(true);try{if(createMode){const name=draft.tipo_persona==='FISICA'?draft.nombre:draft.razon_social;if(!name?.trim())throw new Error(draft.tipo_persona==='FISICA'?'Escribe el nombre del compareciente.':'Escribe la razón social.');const duplicates=await comparecientesService.duplicates(draft);if(duplicates.some(candidate=>candidate.bloqueo_alta))throw new Error('Ya existe un compareciente con el mismo RFC o CURP. Abre el registro existente.');const session=await ensureSession();const response=await comparecientesService.confirmAssisted(session,draft,documents.map(document=>document.id));if(safeReturn){navigate(safeReturn,{replace:true,state:{exp003NewComparecienteId:response.compareciente.id,exp003ActId:creationContext?.expedienteActoId||null}});return;}navigate(`/comparecientes/${response.compareciente.id}`,{replace:true});return;}await comparecientesService.update(id,updatePayload(draft));setMessage('Cambios guardados correctamente.');await load();}catch(err){setError(err instanceof Error?err.message:'No pudimos guardar los cambios. Tus datos permanecen en pantalla.');}finally{setBusy(false)}};
+  const cancel=async()=>{if(createMode&&sessionId){try{await comparecientesService.cancelAssisted(sessionId)}catch{ /* TTL y compensación garantizan limpieza diferida */ }}navigate(safeReturn||'/comparecientes')};
   if(status==='loading')return <PageContainer title="Compareciente"><div className={styles.workspaceLoading}><LoaderCircle className={styles.spin}/>Cargando ficha…</div></PageContainer>;
   if(status==='error')return <PageContainer title="Compareciente"><section className={styles.pageState} role="alert"><span><AlertTriangle/></span><h2>No pudimos cargar este compareciente.</h2><p>Revisa tus permisos o intenta nuevamente.</p><button type="button" className={styles.secondaryButton} onClick={()=>navigate('/comparecientes')}>Volver al listado</button></section></PageContainer>;
   const title=createMode?'Nuevo compareciente':item?.nombre||'Compareciente';
@@ -87,7 +90,7 @@ export function ComparecienteWorkspace(){
     <form className={styles.unifiedWorkspace} onSubmit={save}>
       <header className={styles.unifiedHeader}>
         <div>
-          <Link to="/comparecientes" onClick={(event)=>{ if(createMode&&sessionId){ event.preventDefault(); void cancel(); } }}><ArrowLeft/>Comparecientes</Link>
+          <Link to={safeReturn||"/comparecientes"} onClick={(event)=>{ if(createMode&&sessionId){ event.preventDefault(); void cancel(); } }}><ArrowLeft/>{safeReturn?'Volver al expediente':'Comparecientes'}</Link>
           <span>{createMode?'Nuevo registro':'Ficha maestra'}</span>
           <h1>{title}</h1>
           {!createMode&&item&&<p>Actualizado {new Intl.DateTimeFormat('es-MX',{dateStyle:'medium'}).format(new Date(item.updated_at_material))} · {item.expedientes.length} expediente{item.expedientes.length===1?'':'s'} vinculado{item.expedientes.length===1?'':'s'}</p>}

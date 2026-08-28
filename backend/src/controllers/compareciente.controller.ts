@@ -132,53 +132,6 @@ export class ComparecienteController {
     }
   }
 
-  public static async vincularAExpediente(req: Request, res: Response) {
-    try {
-      const actor = authenticatedActor(req);
-      if (!actor) {
-        return res.status(401).json({ success: false, error: 'Usuario autenticado requerido' });
-      }
-
-      const vinculo = await comparecienteService.vincularAExpediente({
-        ...req.body,
-        creado_por_id: actor.id
-      });
-      return res.status(200).json({ success: true, data: vinculo });
-    } catch (err: any) {
-      return res.status(400).json({ success: false, error: err.message });
-    }
-  }
-
-  public static async validarVinculoExpediente(req: Request, res: Response) {
-    try {
-      const actor = authenticatedActor(req);
-      if (!actor) return res.status(401).json({ success: false, error: 'Usuario autenticado requerido' });
-      if (typeof req.body.datos_validados !== 'boolean') {
-        return res.status(400).json({ success: false, code: 'VALIDATION_STATUS_REQUIRED', error: 'Indica si los datos fueron validados.' });
-      }
-      const vinculo = await comparecienteService.validarVinculoExpediente(
-        req.params.vinculoId,
-        actor.id,
-        req.body.datos_validados,
-      );
-      return res.status(200).json({ success: true, data: vinculo });
-    } catch (err: any) {
-      return res.status(400).json({ success: false, error: err.message });
-    }
-  }
-
-  public static async desvincularDeExpediente(req: Request, res: Response) {
-    try {
-      const { vinculoId } = req.params;
-      const actor = authenticatedActor(req);
-      if (!actor) return res.status(401).json({ success: false, error: 'Usuario autenticado requerido' });
-      const actualizado = await comparecienteService.desvincularDeExpediente(vinculoId, actor.id);
-      return res.status(200).json({ success: true, data: actualizado });
-    } catch (err: any) {
-      return res.status(400).json({ success: false, error: err.message });
-    }
-  }
-
   public static async obtenerCatalogos(req: Request, res: Response) {
     try {
       const [caracteresCompareciente, caracteresRepresentacion] = await Promise.all([

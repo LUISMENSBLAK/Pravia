@@ -24,3 +24,15 @@ export function resolveExpedienteReturn(search: string) {
   const section = normalizeExpedienteSection(params.get('fromSection'));
   return `/expedientes/${encodeURIComponent(id)}#${section}`;
 }
+
+export function resolveExpedienteCreationContext(search: string) {
+  const params = new URLSearchParams(search);
+  const expedienteId = params.get('fromExpediente');
+  const expedienteActoId = params.get('fromActo');
+  if (!expedienteId || !safeId.test(expedienteId)) return null;
+  return {
+    expedienteId,
+    expedienteActoId: expedienteActoId && safeId.test(expedienteActoId) ? expedienteActoId : null,
+    returnPath: resolveExpedienteReturn(search)!,
+  };
+}

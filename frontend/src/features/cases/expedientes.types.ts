@@ -20,6 +20,20 @@ export type ExpedienteActPreview = {
 };
 export type ExpedienteActCommand = { operation: ExpedienteActOperation; tipo_acto_id?: string; expediente_acto_id?: string; idempotency_key?: string; preview_fingerprint?: string; confirm_protected_work?: boolean; reason?: string };
 export type PartyOption = { id: string; nombre_busqueda: string; tipo_persona: string; personaFisica?: { nombre_completo_calculado?: string; rfc?: string | null; curp?: string | null } | null; personaMoral?: { razon_social?: string; rfc?: string | null } | null };
+export type ExpedientePartySearchOption = { id: string; nombre: string; tipo_persona: 'FISICA' | 'MORAL'; identificador: string };
+export type ExpedientePartyRepresentation = { id?: string; representado_compareciente_id: string; cargo_o_caracter_descripcion: string; caracter_representacion_id?: string | null; facultades_aplicables?: string | null; representado?: { nombre_busqueda?: string; personaFisica?: { nombre_completo_calculado?: string } | null; personaMoral?: { razon_social?: string } | null }; caracterRepresentacion?: { id: string; clave: string; nombre: string } | null };
+export type ExpedientePartyRelation = {
+  id: string; expediente_id: string; expediente_acto_id?: string | null; compareciente_id: string; caracter_id: string;
+  forma_comparecencia: 'PROPIO_DERECHO' | 'EN_REPRESENTACION_PERSONA_MORAL' | 'EN_REPRESENTACION_PERSONA_FISICA' | 'POR_PROPIO_DERECHO_Y_REPRESENTACION' | 'CARACTER_INSTITUCIONAL' | 'OTRO';
+  participacion_porcentaje?: number | string | null; datos_validados: boolean; estatus: string;
+  expedienteActo?: ExpedienteAct | null; caracter: { id: string; clave?: string; nombre: string };
+  compareciente: { id: string; nombre_busqueda: string; tipo_persona: string; personaFisica?: { nombre_completo_calculado?: string } | null; personaMoral?: { razon_social?: string } | null };
+  representacionesComoRepresentante?: ExpedientePartyRepresentation[];
+};
+export type ExpedientePartyCatalogs = { acts: Array<ExpedienteAct & { tipo_acto: ExpedienteAct['tipo_acto'] & { tipoActoCaracteresCompareciente: Array<{ caracter_id: string; sugerido?: boolean; caracter: { id: string; clave?: string; nombre: string } }> } }>; representationCharacters: Array<{ id: string; clave: string; nombre: string }>; appearanceForms: ExpedientePartyRelation['forma_comparecencia'][] };
+export type ExpedientePartyOperation = 'LINK' | 'UPDATE' | 'UNLINK';
+export type ExpedientePartyCommand = { operation: ExpedientePartyOperation; relation_id?: string; expediente_acto_id?: string; compareciente_id?: string; caracter_id?: string; forma_comparecencia?: ExpedientePartyRelation['forma_comparecencia']; participacion_porcentaje?: number | null; representation?: Omit<ExpedientePartyRepresentation, 'id' | 'representado' | 'caracterRepresentacion'> | null; reason?: string; idempotency_key?: string; preview_fingerprint?: string; confirm_protected_work?: boolean };
+export type ExpedientePartyPreview = { fingerprint: string; classification: 'SAFE' | 'REVIEW_REQUIRED' | 'BLOCKED'; impact: { added: Array<{ key: string; id: string; name: string; source: 'CFG-002' }>; removed_or_no_longer_applicable: Array<{ key: string; id: string; name: string; source: 'CFG-002' }>; retained: Array<{ key: string; id: string; name: string; source: 'CFG-002' }>; protected_work: { count: number; requires_human_confirmation: boolean }; sources: { cfg002: true } } };
 
 export type ExpedienteMetric = { key: string; label: string; value: number; percentage: number | null };
 export type ExpedienteListItem = {
@@ -57,7 +71,7 @@ export type ExpedienteDetail = ExpedienteListItem & {
   datos_operacion?: Record<string, unknown> | null;
   abogado: PersonOption; gestor?: PersonOption | null; creador?: PersonOption; notaria?: NotaryOption | null;
   flujoVersion?: { id: string; version: number } | null;
-  comparecientes: Array<any>; expedienteRepresentaciones?: Array<any>; actos?: ExpedienteAct[];
+  comparecientes: ExpedientePartyRelation[]; expedienteRepresentaciones?: Array<any>; actos?: ExpedienteAct[];
   requisitos_docs: Array<any>; expedienteDocumentos?: Array<any>; documentos_autorizados?: Array<any>;
   etapas?: Array<any>; tareas?: Array<any>; tareas_externas?: Array<any>; tareas_postfirma?: Array<any>; entrega?: any;
   movimientosFinancieros?: Array<any>; honorariosGenerados?: Array<any>; financialSummary?: { ingresos_recibidos:number;honorarios_generados:number;honorarios_cobrados:number;honorarios_por_cobrar:number;fondos_terceros:number;otros_destinos:number;fondos_terceros_pendientes:number;egresos:number } | null; actividades?: Array<any>; complianceReviews?: Array<any>;

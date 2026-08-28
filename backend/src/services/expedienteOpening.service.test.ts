@@ -35,6 +35,7 @@ describe('motor único de apertura de expedientes', () => {
     expect(tx.expedienteActividad.create).toHaveBeenCalled();
     expect(tx.expediente.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ cotizacion_id: 'quote-1' }) }));
     expect(tx.expedienteActo.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ expediente_id: 'exp-1', tipo_acto_id: 'act-1', source_cotizacion_id: 'quote-1', origen: 'COTIZACION' }) }));
+    expect(tx.expedienteCompareciente.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ organization_id: TEST_ORGANIZATION_ID, expediente_id: 'exp-1', expediente_acto_id: 'exp-act-1', compareciente_id: 'party-1' }) }));
     expect(tx.expediente.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.not.objectContaining({ tipo_acto_id: expect.anything() }) }));
   });
 

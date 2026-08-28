@@ -984,6 +984,7 @@ model ExpedienteActo {
   source_cotizacion      Cotizacion?             @relation(fields: [source_cotizacion_id], references: [id], onDelete: Restrict)
   creador                User                    @relation("ExpedienteActoCreador", fields: [created_by], references: [id], onDelete: Restrict)
   retirado_por           User?                   @relation("ExpedienteActoRetirador", fields: [removed_by], references: [id], onDelete: Restrict)
+  comparecientes         ExpedienteCompareciente[]
 
   @@unique([organization_id, expediente_id, idempotency_key], map: "uq_expediente_actos_idempotency")
   @@unique([organization_id, expediente_id, removal_idempotency_key], map: "uq_expediente_actos_removal_idempotency")
@@ -1590,9 +1591,11 @@ model ExpedienteCompareciente {
   id                                String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organization_id                   String?                    @db.Uuid
   expediente_id                     String                     @db.Uuid
+  expediente_acto_id                String?                    @db.Uuid
   compareciente_id                  String                     @db.Uuid
   caracter_id                       String                     @db.Uuid
   forma_comparecencia               FormaComparecencia?        @default(PROPIO_DERECHO)
+  participacion_porcentaje          Decimal?                   @db.Decimal(9, 6)
   orden_comparecencia               Int?                       @default(1)
   es_principal                      Boolean?                   @default(true)
   observaciones                     String?
@@ -1601,6 +1604,10 @@ model ExpedienteCompareciente {
   created_at                        DateTime?                  @default(now()) @db.Timestamptz(6)
   updated_at                        DateTime?                  @default(now()) @updatedAt @db.Timestamptz(6)
   archived_at                       DateTime?                  @db.Timestamptz(6)
+  archived_by_id                    String?                    @db.Uuid
+  motivo_desvinculacion             String?
+  idempotency_key                   String?
+  unlink_idempotency_key            String?
   datos_validados                   Boolean                    @default(false)
   validado_por_id                   String?                    @db.Uuid
   validado_at                       DateTime?                  @db.Timestamptz(6)
@@ -1608,11 +1615,15 @@ model ExpedienteCompareciente {
   compareciente                     Compareciente              @relation(fields: [compareciente_id], references: [id], onUpdate: NoAction)
   creado_por                        User                       @relation("ExpedienteComparecienteCreador", fields: [creado_por_id], references: [id], onUpdate: NoAction)
   expediente                        Expediente                 @relation(fields: [expediente_id], references: [id], onUpdate: NoAction)
+  expedienteActo                    ExpedienteActo?            @relation(fields: [expediente_acto_id], references: [id], onDelete: Restrict)
   validado_por                      User?                      @relation("ExpedienteComparecienteValidador", fields: [validado_por_id], references: [id])
   representacionesComoRepresentante ExpedienteRepresentacion[] @relation("ExpedienteRepresentanteVinculo")
   representacionesComoRepresentado  ExpedienteRepresentacion[] @relation("ExpedienteRepresentadoVinculo")
 
-  @@unique([expediente_id, compareciente_id, caracter_id, forma_comparecencia], map: "uq_expediente_compareciente_caracter")
+  @@unique([organization_id, expediente_id, idempotency_key], map: "uq_exp_comparecientes_idempotency")
+  @@unique([organization_id, expediente_id, unlink_idempotency_key], map: "uq_exp_comparecientes_unlink_idempotency")
+  @@index([organization_id, expediente_id, expediente_acto_id, estatus], map: "idx_exp_comparecientes_tenant_act_status")
+  @@index([expediente_acto_id], map: "idx_exp_comparecientes_acto_fk")
   @@index([caracter_id], map: "idx_exp_comparecientes_caracter_fk")
   @@index([compareciente_id], map: "idx_exp_comparecientes_compareciente_fk")
   @@index([creado_por_id], map: "idx_exp_comparecientes_creador_fk")
