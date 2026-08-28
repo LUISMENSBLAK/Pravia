@@ -26,6 +26,17 @@ export const comparecienteObjectWhere = (user: AuthUser) => {
   };
 };
 
+export const predioObjectWhere = (user: AuthUser) => {
+  if (hasGlobalRead(user)) return {};
+  const expedienteScope = expedienteAccessWhere(user);
+  return {
+    OR: [
+      { created_by: user.id },
+      { expedientes: { some: { estatus: 'ACTIVO' as const, expediente: expedienteScope } } },
+    ],
+  };
+};
+
 export async function canAccessProspecto(user: AuthUser, id: string) {
   if (hasGlobalRead(user) || canOperateCommercialCatalog(user)) return true;
   return Boolean(await prisma.prospecto.findFirst({ where: { id, archived_at: null, ...prospectoObjectWhere(user) }, select: { id: true } }));
@@ -48,6 +59,13 @@ export async function canAccessCompareciente(user: AuthUser, id: string) {
   }));
 }
 
+export async function canAccessPredio(user: AuthUser, id: string) {
+  return Boolean(await prisma.predio.findFirst({
+    where: { id, organization_id: user.organizationId, archived_at: null, ...predioObjectWhere(user) },
+    select: { id: true },
+  }));
+}
+
 export async function canAccessDocumento(user: AuthUser, id: string) {
   if (hasGlobalRead(user)) return true;
   const document = await prisma.documento.findUnique({
@@ -64,6 +82,7 @@ export async function canAccessDocumento(user: AuthUser, id: string) {
       expedienteVinculos: { where: { estatus: 'ACTIVO' }, select: { expediente_id: true } },
       comparecienteVinculos: { where: { estatus: 'ACTIVO' }, select: { compareciente_id: true } },
       movimientoVinculos: { where: { estatus: 'ACTIVO' }, select: { movimiento_id: true } },
+      predioVinculos: { where: { estatus: 'ACTIVO' }, select: { predio_id: true } },
     },
   });
   if (!document) return false;
@@ -74,6 +93,7 @@ export async function canAccessDocumento(user: AuthUser, id: string) {
   const expedienteIds = [document.expediente_id, ...document.expedienteVinculos.map((link) => link.expediente_id)].filter(Boolean) as string[];
   const comparecienteIds = [document.compareciente_id, ...document.comparecienteVinculos.map((link) => link.compareciente_id)].filter(Boolean) as string[];
   const movementIds = document.movimientoVinculos.map((link) => link.movimiento_id);
+  const predioIds = document.predioVinculos.map((link) => link.predio_id);
 
   if ((await Promise.all(prospectIds.map((recordId) => canAccessProspecto(user, recordId)))).some(Boolean)) return true;
   if ((await Promise.all(quoteIds.map((recordId) => canAccessCotizacion(user, recordId)))).some(Boolean)) return true;
@@ -85,6 +105,7 @@ export async function canAccessDocumento(user: AuthUser, id: string) {
     });
     if (accessible) return true;
   }
+  if ((await Promise.all(predioIds.map((recordId) => canAccessPredio(user, recordId)))).some(Boolean)) return true;
   if (movementIds.length && user.permissions.includes('finanzas.read') && user.permissions.includes('documentos.read')) {
     const accessible = await prisma.movimientoFinanciero.findFirst({
       where: {
@@ -109,6 +130,7 @@ export async function canAttachDocumento(user: AuthUser, targets: {
   expediente_id?: string | null;
   compareciente_id?: string | null;
   movimiento_id?: string | null;
+  predio_id?: string | null;
 }) {
   if (targets.prospecto_id && !(await canAccessProspecto(user, targets.prospecto_id))) return false;
   if (targets.cotizacion_id && !(await canAccessCotizacion(user, targets.cotizacion_id))) return false;
@@ -136,6 +158,7 @@ export async function canAttachDocumento(user: AuthUser, targets: {
     });
     if (!record) return false;
   }
+  if (targets.predio_id && !(await canAccessPredio(user, targets.predio_id))) return false;
   return true;
 }
 

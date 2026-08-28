@@ -35,6 +35,13 @@ export type ExpedientePartyOperation = 'LINK' | 'UPDATE' | 'UNLINK';
 export type ExpedientePartyCommand = { operation: ExpedientePartyOperation; relation_id?: string; expediente_acto_id?: string; compareciente_id?: string; caracter_id?: string; forma_comparecencia?: ExpedientePartyRelation['forma_comparecencia']; participacion_porcentaje?: number | null; representation?: Omit<ExpedientePartyRepresentation, 'id' | 'representado' | 'caracterRepresentacion'> | null; reason?: string; idempotency_key?: string; preview_fingerprint?: string; confirm_protected_work?: boolean };
 export type ExpedientePartyPreview = { fingerprint: string; classification: 'SAFE' | 'REVIEW_REQUIRED' | 'BLOCKED'; impact: { added: Array<{ key: string; id: string; name: string; source: 'CFG-002' }>; removed_or_no_longer_applicable: Array<{ key: string; id: string; name: string; source: 'CFG-002' }>; retained: Array<{ key: string; id: string; name: string; source: 'CFG-002' }>; protected_work: { count: number; requires_human_confirmation: boolean }; sources: { cfg002: true } } };
 
+export type PredioSummary = { id: string; apodo?: string | null; clave_catastral?: string | null; cuenta_predial?: string | null; folio_real?: string | null; ubicacion_texto?: string | null; calle?: string | null; numero_exterior?: string | null; colonia?: string | null; municipio?: string | null; estado?: string | null };
+export type ExpedientePredioRelation = { id: string; expediente_id: string; predio_id: string; estatus: string; predio: PredioSummary; actos: Array<{ id: string; expediente_acto_id: string; expedienteActo: ExpedienteAct }> };
+export type ExpedientePredioCatalogs = { acts: ExpedienteAct[] };
+export type ExpedientePredioOperation = 'LINK' | 'UPDATE' | 'UNLINK';
+export type ExpedientePredioCommand = { operation: ExpedientePredioOperation; relation_id?: string; predio_id?: string; expediente_acto_ids?: string[]; reason?: string; idempotency_key?: string; preview_fingerprint?: string; confirm_protected_work?: boolean };
+export type ExpedientePredioPreview = { fingerprint: string; classification: 'SAFE' | 'REVIEW_REQUIRED' | 'BLOCKED'; predio_id: string; current_relation_id?: string | null; target_act_ids: string[]; impact: { added: Array<{ key: string; id: string; name: string; source: 'CFG-002' }>; removed_or_no_longer_applicable: Array<{ key: string; id: string; name: string; source: 'CFG-002' }>; retained: Array<{ key: string; id: string; name: string; source: 'CFG-002' }>; protected_work: { count: number; requires_human_confirmation: boolean }; sources: { cfg002: true }; automatic_document_generation: false } };
+
 export type ExpedienteMetric = { key: string; label: string; value: number; percentage: number | null };
 export type ExpedienteListItem = {
   id: string; numero_pravia: string; numero_notaria?: string | null; cliente_alias?: string | null; cliente_principal: string;
@@ -72,6 +79,7 @@ export type ExpedienteDetail = ExpedienteListItem & {
   abogado: PersonOption; gestor?: PersonOption | null; creador?: PersonOption; notaria?: NotaryOption | null;
   flujoVersion?: { id: string; version: number } | null;
   comparecientes: ExpedientePartyRelation[]; expedienteRepresentaciones?: Array<any>; actos?: ExpedienteAct[];
+  predios?: ExpedientePredioRelation[];
   requisitos_docs: Array<any>; expedienteDocumentos?: Array<any>; documentos_autorizados?: Array<any>;
   etapas?: Array<any>; tareas?: Array<any>; tareas_externas?: Array<any>; tareas_postfirma?: Array<any>; entrega?: any;
   movimientosFinancieros?: Array<any>; honorariosGenerados?: Array<any>; financialSummary?: { ingresos_recibidos:number;honorarios_generados:number;honorarios_cobrados:number;honorarios_por_cobrar:number;fondos_terceros:number;otros_destinos:number;fondos_terceros_pendientes:number;egresos:number } | null; actividades?: Array<any>; complianceReviews?: Array<any>;

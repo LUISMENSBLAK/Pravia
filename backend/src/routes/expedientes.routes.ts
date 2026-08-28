@@ -52,6 +52,13 @@ import {
   previewExpedientePartyChange,
   searchExpedienteParties,
 } from '../controllers/expedienteParties.controller';
+import {
+  applyExpedientePredioChange,
+  getExpedientePredioCatalogs,
+  listExpedientePredios,
+  previewExpedientePredioChange,
+  searchExpedientePredios,
+} from '../controllers/expedientePredios.controller';
 
 const router = express.Router();
 router.param('id', requireExpedienteAccess);
@@ -68,6 +75,11 @@ router.get('/:id/comparecientes/buscar', requirePermission('comparecientes.read'
 router.get('/:id/comparecientes/catalogos', requirePermission('comparecientes.read'), getExpedientePartyCatalogs);
 router.post('/:id/comparecientes/preview', requirePermission('expedientes.write'), requirePermission('comparecientes.write'), previewExpedientePartyChange);
 router.post('/:id/comparecientes/aplicar', requirePermission('expedientes.write'), requirePermission('comparecientes.write'), applyExpedientePartyChange);
+router.get('/:id/predios', listExpedientePredios);
+router.get('/:id/predios/buscar', searchExpedientePredios);
+router.get('/:id/predios/catalogos', getExpedientePredioCatalogs);
+router.post('/:id/predios/preview', requirePermission('expedientes.write'), previewExpedientePredioChange);
+router.post('/:id/predios/aplicar', requirePermission('expedientes.write'), applyExpedientePredioChange);
 router.post('/', createExpediente);
 router.patch('/:id', updateExpedienteHeader);
 router.post('/convertir-cotizacion', convertCotizacionToExpediente);

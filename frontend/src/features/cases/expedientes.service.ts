@@ -1,6 +1,6 @@
 import { apiRequest, tokenStore } from '../../services/api/client';
 import { apiUrl } from '../../services/api/config';
-import type { ActTypeOption, EligibleQuoteCandidate, ExpedienteAct, ExpedienteActCommand, ExpedienteActPreview, ExpedienteDetail, ExpedienteListFilters, ExpedienteListResult, ExpedientePartyCatalogs, ExpedientePartyCommand, ExpedientePartyPreview, ExpedientePartyRelation, ExpedientePartySearchOption, ProjectState } from './expedientes.types';
+import type { ActTypeOption, EligibleQuoteCandidate, ExpedienteAct, ExpedienteActCommand, ExpedienteActPreview, ExpedienteDetail, ExpedienteListFilters, ExpedienteListResult, ExpedientePartyCatalogs, ExpedientePartyCommand, ExpedientePartyPreview, ExpedientePartyRelation, ExpedientePartySearchOption, ExpedientePredioCatalogs, ExpedientePredioCommand, ExpedientePredioPreview, ExpedientePredioRelation, PredioSummary, ProjectState } from './expedientes.types';
 
 const query = (filters: ExpedienteListFilters) => {
   const params = new URLSearchParams();
@@ -25,6 +25,11 @@ export const expedientesService = {
   partyCatalogs(id: string, signal?: AbortSignal) { return apiRequest<{ data: ExpedientePartyCatalogs }>(`/expedientes/${encodeURIComponent(id)}/comparecientes/catalogos`, { signal }).then((payload) => payload.data); },
   previewParty(id: string, input: ExpedientePartyCommand) { return apiRequest<ExpedientePartyPreview>(`/expedientes/${encodeURIComponent(id)}/comparecientes/preview`, { method: 'POST', body: JSON.stringify(input) }); },
   applyParty(id: string, input: ExpedientePartyCommand) { return apiRequest<{ relation: ExpedientePartyRelation; idempotent: boolean; version?: number }>(`/expedientes/${encodeURIComponent(id)}/comparecientes/aplicar`, { method: 'POST', body: JSON.stringify(input) }); },
+  listProperties(id: string, signal?: AbortSignal) { return apiRequest<{ data: ExpedientePredioRelation[]; canonical_source: string }>(`/expedientes/${encodeURIComponent(id)}/predios`, { signal }); },
+  searchProperties(id: string, search: string, signal?: AbortSignal) { const params = new URLSearchParams({ search }); return apiRequest<{ data: PredioSummary[] }>(`/expedientes/${encodeURIComponent(id)}/predios/buscar?${params}`, { signal }); },
+  propertyCatalogs(id: string, signal?: AbortSignal) { return apiRequest<{ data: ExpedientePredioCatalogs }>(`/expedientes/${encodeURIComponent(id)}/predios/catalogos`, { signal }).then((payload) => payload.data); },
+  previewProperty(id: string, input: ExpedientePredioCommand) { return apiRequest<ExpedientePredioPreview>(`/expedientes/${encodeURIComponent(id)}/predios/preview`, { method: 'POST', body: JSON.stringify(input) }); },
+  applyProperty(id: string, input: ExpedientePredioCommand) { return apiRequest<{ relation: ExpedientePredioRelation; idempotent: boolean; version?: number }>(`/expedientes/${encodeURIComponent(id)}/predios/aplicar`, { method: 'POST', body: JSON.stringify(input) }); },
   eligibleQuotes(signal?: AbortSignal) {
     return apiRequest<{ data: EligibleQuoteCandidate[]; total: number }>('/expedientes/cotizaciones-elegibles', { signal });
   },

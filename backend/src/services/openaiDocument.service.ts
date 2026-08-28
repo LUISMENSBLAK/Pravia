@@ -73,6 +73,34 @@ export interface ProyectoAnalysisResult {
   uso?: AIUsageMetrics;
 }
 
+export interface PropertyExtractedField {
+  campo: string;
+  valor: string;
+  confianza: 'LECTURA_CLARA' | 'LECTURA_DUDOSA' | 'LECTURA_DEFICIENTE';
+  pagina?: number;
+  seccion?: string;
+  fragmento?: string;
+}
+
+export interface PropertyBoundaryProposal {
+  referencia?: string;
+  medida?: string;
+  unidad?: string;
+  colindante?: string;
+  descripcion?: string;
+  pagina?: number;
+  fragmento?: string;
+}
+
+export interface PropertyExtractionResult {
+  proveedor: 'OpenAI';
+  modelo: string;
+  campos: PropertyExtractedField[];
+  colindancias: PropertyBoundaryProposal[];
+  alertas: string[];
+  uso: AIUsageMetrics;
+}
+
 export interface AIUsageMetrics {
   modelo: string;
   input_tokens: number;
@@ -746,6 +774,85 @@ export async function analizarProyectoNotarialConOpenAI(
     observaciones: Array.isArray(parsed.observaciones) ? parsed.observaciones : [],
     documentos_no_leidos: documentosNoLeidos,
     uso: buildUsageMetrics(data, model, startedAt, 1 + documentosSoporte.length, true),
+  };
+}
+
+/**
+ * Extrae una propuesta inmobiliaria exclusivamente del documento seleccionado.
+ * No recibe expediente, otros documentos ni datos maestros y nunca persiste cambios.
+ */
+export async function extraerPredioDesdeDocumento(
+  documento: DocumentoParaExtraccion
+): Promise<PropertyExtractionResult> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  const model = getOpenAIModelName();
+  const startedAt = Date.now();
+  if (!apiKey) throw new Error('La clave de API de OpenAI no está configurada.');
+
+  const content: any[] = [{
+    type: 'input_text',
+    text: `Extrae únicamente datos de inmueble expresamente sustentados por ESTE documento notarial mexicano. No infieras ni completes datos ausentes. Omite cualquier campo no encontrado. Clave catastral y cuenta predial son conceptos distintos. Conserva folios y datos registrales exactamente. Las colindancias son una lista de longitud variable y la referencia no tiene que ser cardinal. Devuelve evidencia breve, página y sección sólo cuando estén disponibles. Campos permitidos: apodo, clave_catastral, cuenta_predial, folio_real, datos_registrales, ubicacion_texto, calle, numero_exterior, numero_interior, colonia, localidad, municipio, estado, codigo_postal, pais, superficie_terreno_m2, superficie_construccion_m2, superficie_construccion_comercial_m2, valor_catastral, valor_avaluo, valor_operacion, regimen, descripcion.`
+  }];
+  const lowerName = documento.nombreOriginal.toLowerCase();
+  const mime = documento.mimeType.toLowerCase();
+  if (mime.includes('officedocument.wordprocessingml') || lowerName.endsWith('.docx')) {
+    const extracted = await mammoth.extractRawText({ buffer: documento.buffer });
+    content.push({ type: 'input_text', text: `[DOCUMENTO SELECCIONADO: ${documento.nombreOriginal}; ID: ${documento.documentoId}]\n${(extracted.value || '').trim()}` });
+  } else if (mime.includes('pdf') || lowerName.endsWith('.pdf')) {
+    content.push({ type: 'input_file', filename: documento.nombreOriginal, file_data: `data:application/pdf;base64,${documento.buffer.toString('base64')}` });
+  } else if (mime.includes('png') || lowerName.endsWith('.png')) {
+    content.push({ type: 'input_image', detail: 'high', image_url: `data:image/png;base64,${documento.buffer.toString('base64')}` });
+  } else if (mime.includes('jpeg') || mime.includes('jpg') || /\.jpe?g$/.test(lowerName)) {
+    content.push({ type: 'input_image', detail: 'high', image_url: `data:image/jpeg;base64,${documento.buffer.toString('base64')}` });
+  } else {
+    throw new Error('El tipo de documento seleccionado no es compatible con extracción IA.');
+  }
+
+  const evidenceProperties = {
+    campo: { type: 'string' }, valor: { type: 'string' },
+    confianza: { type: 'string', enum: ['LECTURA_CLARA', 'LECTURA_DUDOSA', 'LECTURA_DEFICIENTE'] },
+    pagina: { type: ['integer', 'null'] }, seccion: { type: ['string', 'null'] }, fragmento: { type: ['string', 'null'] },
+  };
+  const boundaryProperties = {
+    referencia: { type: ['string', 'null'] }, medida: { type: ['string', 'null'] }, unidad: { type: ['string', 'null'] },
+    colindante: { type: ['string', 'null'] }, descripcion: { type: ['string', 'null'] }, pagina: { type: ['integer', 'null'] }, fragmento: { type: ['string', 'null'] },
+  };
+  const schema = {
+    type: 'object', additionalProperties: false,
+    properties: {
+      campos: { type: 'array', items: { type: 'object', additionalProperties: false, properties: evidenceProperties, required: Object.keys(evidenceProperties) } },
+      colindancias: { type: 'array', items: { type: 'object', additionalProperties: false, properties: boundaryProperties, required: Object.keys(boundaryProperties) } },
+      alertas: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['campos', 'colindancias', 'alertas'],
+  };
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000)),
+    body: JSON.stringify({
+      model, store: false, input: [{ role: 'user', content }], reasoning: { effort: getReasoningEffort() }, max_output_tokens: 8192,
+      text: { format: { type: 'json_schema', name: 'predio_document_proposal', strict: true, schema } },
+    }),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => 'sin detalle');
+    throw new Error(`OpenAI respondió HTTP ${response.status}: ${detail.slice(0, 300)}`);
+  }
+  const data: any = await response.json();
+  if (data.status === 'incomplete') throw new Error(`OpenAI no completó la extracción: ${data.incomplete_details?.reason || 'causa no especificada'}`);
+  const output = (data.output || []).flatMap((item: any) => item.content || []);
+  const refusal = output.find((item: any) => item.type === 'refusal')?.refusal;
+  if (refusal) throw new Error(`OpenAI rechazó la extracción: ${refusal}`);
+  const raw = output.filter((item: any) => item.type === 'output_text').map((item: any) => item.text || '').join('').trim();
+  if (!raw) throw new Error('OpenAI no devolvió una propuesta analizable.');
+  const parsed = JSON.parse(raw);
+  return {
+    proveedor: 'OpenAI', modelo: model,
+    campos: Array.isArray(parsed.campos) ? parsed.campos : [],
+    colindancias: Array.isArray(parsed.colindancias) ? parsed.colindancias : [],
+    alertas: Array.isArray(parsed.alertas) ? parsed.alertas : [],
+    uso: buildUsageMetrics(data, model, startedAt, 1, false),
   };
 }
 

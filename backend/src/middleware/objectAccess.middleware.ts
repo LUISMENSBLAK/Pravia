@@ -6,6 +6,7 @@ import {
   canAccessCotizacion,
   canAccessDocumento,
   canAccessProspecto,
+  canAccessPredio,
 } from '../services/objectAccess.service';
 
 const deny = (res: Response, code: string, resource: string) =>
@@ -47,6 +48,13 @@ export const requireDocumentoObjectAccess = catchAsync(async (req, res, next) =>
   const id = req.params.documentoId || req.params.id || req.body?.documento_id;
   if (!id || await canAccessDocumento(req.user, String(id))) return next();
   return deny(res, 'DOCUMENTO_ACCESS_DENIED', 'este documento');
+});
+
+export const requirePredioObjectAccess = catchAsync(async (req, res, next) => {
+  if (!req.user) return deny(res, 'AUTH_REQUIRED', 'este inmueble');
+  const id = req.params.predioId || req.params.id || req.body?.predio_id;
+  if (!id || await canAccessPredio(req.user, String(id))) return next();
+  return deny(res, 'PREDIO_ACCESS_DENIED', 'este inmueble');
 });
 
 export const requireAltaSessionObjectAccess = catchAsync(async (req, res, next) => {

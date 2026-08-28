@@ -17,6 +17,12 @@ model Organization {
   memberships OrganizationMembership[]
   sessions    AuthSession[]
   expedienteActos ExpedienteActo[]
+  predios Predio[]
+  predioColindancias PredioColindancia[]
+  expedientePredios ExpedientePredio[]
+  expedienteActoPredios ExpedienteActoPredio[]
+  predioDocumentos PredioDocumento[]
+  predioDatosFuente PredioDatoFuente[]
 
   @@index([status])
   @@map("organizations")
@@ -103,6 +109,13 @@ model User {
   expedientesCreados                     Expediente[]                  @relation("ExpedienteCreador")
   expedienteActosCreados                 ExpedienteActo[]              @relation("ExpedienteActoCreador")
   expedienteActosRetirados               ExpedienteActo[]              @relation("ExpedienteActoRetirador")
+  prediosCreados                         Predio[]                      @relation("PredioCreador")
+  prediosActualizados                    Predio[]                      @relation("PredioActualizador")
+  expedientePrediosCreados               ExpedientePredio[]            @relation("ExpedientePredioCreador")
+  expedientePrediosRetirados             ExpedientePredio[]            @relation("ExpedientePredioRetirador")
+  predioDocumentosCreados                PredioDocumento[]             @relation("PredioDocumentoCreador")
+  predioDocumentosRetirados              PredioDocumento[]             @relation("PredioDocumentoRetirador")
+  predioDatosFuenteDecididos             PredioDatoFuente[]            @relation("PredioDatoFuenteDecisor")
   expedientesGestor                      Expediente[]                  @relation("ExpedienteGestor")
   flujoVersionesCreadas                  FlujoVersion[]                @relation("FlujoVersionCreador")
   formularioVersionesCreadas             FormularioVersion[]           @relation("FormularioVersionCreador")
@@ -923,7 +936,8 @@ model Expediente {
   documentos                 Documento[]
   eventos                    EventoAgenda[]
   actividades                ExpedienteActividad[]
-  actos                       ExpedienteActo[]
+  actos                      ExpedienteActo[]
+  predios                    ExpedientePredio[]
   comparecientes             ExpedienteCompareciente[]
   expedienteDocumentos       ExpedienteDocumento[]
   entrega                    ExpedienteEntrega?
@@ -985,6 +999,7 @@ model ExpedienteActo {
   creador                User                    @relation("ExpedienteActoCreador", fields: [created_by], references: [id], onDelete: Restrict)
   retirado_por           User?                   @relation("ExpedienteActoRetirador", fields: [removed_by], references: [id], onDelete: Restrict)
   comparecientes         ExpedienteCompareciente[]
+  predios                ExpedienteActoPredio[]
 
   @@unique([organization_id, expediente_id, idempotency_key], map: "uq_expediente_actos_idempotency")
   @@unique([organization_id, expediente_id, removal_idempotency_key], map: "uq_expediente_actos_removal_idempotency")
@@ -994,6 +1009,181 @@ model ExpedienteActo {
   @@index([created_by], map: "idx_expediente_actos_created_by_fk")
   @@index([removed_by], map: "idx_expediente_actos_removed_by_fk")
   @@map("expediente_actos")
+}
+
+model Predio {
+  id                                   String              @id @default(uuid()) @db.Uuid
+  organization_id                      String              @db.Uuid
+  apodo                                String?             @db.VarChar(160)
+  clave_catastral                      String?             @db.VarChar(180)
+  cuenta_predial                       String?             @db.VarChar(180)
+  folio_real                           String?             @db.VarChar(180)
+  datos_registrales                    Json?
+  ubicacion_texto                      String?             @db.VarChar(500)
+  calle                                String?             @db.VarChar(180)
+  numero_exterior                      String?             @db.VarChar(80)
+  numero_interior                      String?             @db.VarChar(80)
+  colonia                              String?             @db.VarChar(180)
+  localidad                            String?             @db.VarChar(180)
+  municipio                            String?             @db.VarChar(180)
+  estado                               String?             @db.VarChar(180)
+  codigo_postal                        String?             @db.VarChar(20)
+  pais                                 String?             @default("México") @db.VarChar(120)
+  superficie_terreno_m2                Decimal?            @db.Decimal(18, 4)
+  superficie_construccion_m2           Decimal?            @db.Decimal(18, 4)
+  superficie_construccion_comercial_m2 Decimal?            @db.Decimal(18, 4)
+  valor_catastral                      Decimal?            @db.Decimal(18, 2)
+  valor_avaluo                         Decimal?            @db.Decimal(18, 2)
+  valor_operacion                      Decimal?            @db.Decimal(18, 2)
+  regimen                              String?             @db.VarChar(180)
+  descripcion                          String?
+  version                              Int                 @default(1)
+  created_by                           String              @db.Uuid
+  updated_by                           String              @db.Uuid
+  created_at                           DateTime            @default(now())
+  updated_at                           DateTime            @default(now()) @updatedAt
+  archived_at                          DateTime?
+  organization                         Organization        @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  creador                              User                @relation("PredioCreador", fields: [created_by], references: [id], onDelete: Restrict)
+  actualizador                         User                @relation("PredioActualizador", fields: [updated_by], references: [id], onDelete: Restrict)
+  colindancias                         PredioColindancia[]
+  expedientes                          ExpedientePredio[]
+  documentos                           PredioDocumento[]
+  datosFuente                          PredioDatoFuente[]
+
+  @@unique([id, organization_id], map: "uq_predios_id_org")
+  @@index([organization_id, archived_at], map: "idx_predios_org_archived")
+  @@index([organization_id, clave_catastral], map: "idx_predios_org_clave_catastral")
+  @@index([organization_id, cuenta_predial], map: "idx_predios_org_cuenta_predial")
+  @@index([organization_id, folio_real], map: "idx_predios_org_folio_real")
+  @@index([created_by], map: "idx_predios_created_by")
+  @@index([updated_by], map: "idx_predios_updated_by")
+  @@map("predios")
+}
+
+model PredioColindancia {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  predio_id       String       @db.Uuid
+  orden           Int
+  referencia      String?      @db.VarChar(180)
+  medida          Decimal?     @db.Decimal(18, 4)
+  unidad          String?      @db.VarChar(40)
+  colindante      String?      @db.VarChar(500)
+  descripcion     String?
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @default(now()) @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  predio          Predio       @relation(fields: [predio_id], references: [id], onDelete: Cascade)
+
+  @@unique([predio_id, orden], map: "uq_predio_colindancias_orden")
+  @@index([organization_id, predio_id], map: "idx_predio_colindancias_org_predio")
+  @@map("predio_colindancias")
+}
+
+model ExpedientePredio {
+  id              String                 @id @default(uuid()) @db.Uuid
+  organization_id String                 @db.Uuid
+  expediente_id   String                 @db.Uuid
+  predio_id       String                 @db.Uuid
+  estatus         VinculoEstatus         @default(ACTIVO)
+  idempotency_key String?
+  created_by      String                 @db.Uuid
+  created_at      DateTime               @default(now())
+  updated_at      DateTime               @default(now()) @updatedAt
+  removed_at      DateTime?
+  removed_by      String?                @db.Uuid
+  removed_reason  String?
+  organization    Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  expediente      Expediente             @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  predio          Predio                 @relation(fields: [predio_id], references: [id], onDelete: Restrict)
+  creador         User                   @relation("ExpedientePredioCreador", fields: [created_by], references: [id], onDelete: Restrict)
+  retirado_por    User?                  @relation("ExpedientePredioRetirador", fields: [removed_by], references: [id], onDelete: Restrict)
+  actos           ExpedienteActoPredio[]
+
+  @@unique([organization_id, expediente_id, predio_id], map: "uq_expediente_predios_relation")
+  @@unique([id, organization_id], map: "uq_expediente_predios_id_org")
+  @@unique([organization_id, expediente_id, idempotency_key], map: "uq_expediente_predios_idempotency")
+  @@index([organization_id, expediente_id, estatus], map: "idx_expediente_predios_org_exp_status")
+  @@index([organization_id, predio_id, estatus], map: "idx_expediente_predios_org_predio_status")
+  @@index([created_by], map: "idx_expediente_predios_created_by")
+  @@index([removed_by], map: "idx_expediente_predios_removed_by")
+  @@map("expediente_predios")
+}
+
+model ExpedienteActoPredio {
+  id                   String           @id @default(uuid()) @db.Uuid
+  organization_id      String           @db.Uuid
+  expediente_predio_id String           @db.Uuid
+  expediente_acto_id   String           @db.Uuid
+  estatus              VinculoEstatus   @default(ACTIVO)
+  created_at           DateTime         @default(now())
+  removed_at           DateTime?
+  organization         Organization     @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  expedientePredio     ExpedientePredio @relation(fields: [expediente_predio_id], references: [id], onDelete: Cascade)
+  expedienteActo       ExpedienteActo   @relation(fields: [expediente_acto_id], references: [id], onDelete: Restrict)
+
+  @@unique([organization_id, expediente_predio_id, expediente_acto_id], map: "uq_expediente_acto_predios_relation")
+  @@index([organization_id, expediente_acto_id, estatus], map: "idx_expediente_acto_predios_org_act_status")
+  @@index([expediente_predio_id], map: "idx_expediente_acto_predios_relation")
+  @@map("expediente_acto_predios")
+}
+
+model PredioDocumento {
+  id                  String         @id @default(uuid()) @db.Uuid
+  organization_id     String         @db.Uuid
+  predio_id           String         @db.Uuid
+  documento_id        String         @db.Uuid
+  tipo_vinculo        String         @db.VarChar(120)
+  estatus             VinculoEstatus @default(ACTIVO)
+  creado_por_id       String         @db.Uuid
+  fecha_vinculo       DateTime       @default(now())
+  inactivado_at       DateTime?
+  inactivado_por_id   String?        @db.Uuid
+  motivo_inactivacion String?
+  observaciones       String?
+  organization        Organization   @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  predio              Predio         @relation(fields: [predio_id], references: [id], onDelete: Restrict)
+  documento           Documento      @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  creado_por          User           @relation("PredioDocumentoCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+  inactivado_por      User?          @relation("PredioDocumentoRetirador", fields: [inactivado_por_id], references: [id], onDelete: Restrict)
+
+  @@unique([organization_id, predio_id, documento_id, tipo_vinculo], map: "uq_predio_documentos_relation")
+  @@index([organization_id, predio_id, estatus], map: "idx_predio_documentos_org_predio_status")
+  @@index([documento_id], map: "idx_predio_documentos_documento")
+  @@index([creado_por_id], map: "idx_predio_documentos_creador")
+  @@index([inactivado_por_id], map: "idx_predio_documentos_inactivador")
+  @@map("predio_documentos")
+}
+
+model PredioDatoFuente {
+  id               String           @id @default(uuid()) @db.Uuid
+  organization_id  String           @db.Uuid
+  predio_id        String           @db.Uuid
+  extraccion_id    String           @db.Uuid
+  campo            String           @db.VarChar(120)
+  valor_actual     String?
+  valor_propuesto  String?
+  documento_id     String           @db.Uuid
+  pagina           Int?
+  seccion          String?          @db.VarChar(180)
+  fragmento_fuente String?          @db.VarChar(800)
+  proveedor_ia     String           @db.VarChar(80)
+  modelo_ia        String           @db.VarChar(120)
+  confianza        CalidadLectura?
+  estado           DatoFuenteEstado @default(PENDIENTE_CONFIRMACION)
+  decidido_por_id  String?          @db.Uuid
+  decidido_at      DateTime?
+  created_at       DateTime         @default(now())
+  organization     Organization     @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  predio           Predio           @relation(fields: [predio_id], references: [id], onDelete: Restrict)
+  documento        Documento        @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  decidido_por     User?            @relation("PredioDatoFuenteDecisor", fields: [decidido_por_id], references: [id], onDelete: Restrict)
+
+  @@index([organization_id, predio_id, extraccion_id], map: "idx_predio_datos_fuente_extraccion")
+  @@index([documento_id], map: "idx_predio_datos_fuente_documento")
+  @@index([decidido_por_id], map: "idx_predio_datos_fuente_decisor")
+  @@map("predio_datos_fuente")
 }
 
 model ExpedienteEstatus_Log {
@@ -1088,6 +1278,8 @@ model Documento {
   calculosISRVinculos          CalculoISRDocumento[]
   calculosISRPropuestas        CalculoISRPropuesta[]
   assistantAttachments         AssistantAttachment[]
+  predioVinculos               PredioDocumento[]
+  predioDatosFuente            PredioDatoFuente[]
 
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
   @@index([cotizacion_id], map: "idx_documentos_cotizacion_fk")
