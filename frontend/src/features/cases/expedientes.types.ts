@@ -42,6 +42,19 @@ export type ExpedientePredioOperation = 'LINK' | 'UPDATE' | 'UNLINK';
 export type ExpedientePredioCommand = { operation: ExpedientePredioOperation; relation_id?: string; predio_id?: string; expediente_acto_ids?: string[]; reason?: string; idempotency_key?: string; preview_fingerprint?: string; confirm_protected_work?: boolean };
 export type ExpedientePredioPreview = { fingerprint: string; classification: 'SAFE' | 'REVIEW_REQUIRED' | 'BLOCKED'; predio_id: string; current_relation_id?: string | null; target_act_ids: string[]; impact: { added: Array<{ key: string; id: string; name: string; source: 'CFG-002' }>; removed_or_no_longer_applicable: Array<{ key: string; id: string; name: string; source: 'CFG-002' }>; retained: Array<{ key: string; id: string; name: string; source: 'CFG-002' }>; protected_work: { count: number; requires_human_confirmation: boolean }; sources: { cfg002: true }; automatic_document_generation: false } };
 
+export type ExpedienteDocumentOrigin = 'PROSPECTO' | 'COTIZACION' | 'COTIZACION_NOTARIA' | 'COMPARECIENTE' | 'PREDIO' | 'CFG002' | 'ISR' | 'FINANZAS' | 'EXPEDIENTE';
+export type ExpedienteDocumentAppendixItem = {
+  id: string; documento_id?: string | null; origin: ExpedienteDocumentOrigin; source_name: string;
+  source_entity_type?: string | null; source_entity_id?: string | null; source_context?: string | null;
+  document_version: string; name: string; type: string; status: string; incorporated_at: string;
+  file_available: boolean; snapshot: boolean;
+};
+export type ExpedienteDocumentAppendix = {
+  state: 'SINCRONIZADO_PREFIRMA' | 'CONGELADO_AL_FIRMAR'; frozen_at?: string | null; revision: string;
+  groups: Array<{ origin: ExpedienteDocumentOrigin; label: string; items: ExpedienteDocumentAppendixItem[] }>;
+  sync?: { created: number; reactivated: number; inactivated: number; blob_copies: 0 };
+};
+
 export type ExpedienteMetric = { key: string; label: string; value: number; percentage: number | null };
 export type ExpedienteListItem = {
   id: string; numero_pravia: string; numero_notaria?: string | null; cliente_alias?: string | null; cliente_principal: string;

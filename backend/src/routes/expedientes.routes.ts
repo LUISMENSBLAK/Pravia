@@ -59,6 +59,11 @@ import {
   previewExpedientePredioChange,
   searchExpedientePredios,
 } from '../controllers/expedientePredios.controller';
+import {
+  getExpedienteAppendixSignedUrl,
+  getExpedienteDocumentAppendix,
+  syncExpedienteDocumentAppendix,
+} from '../controllers/expedienteDocuments.controller';
 
 const router = express.Router();
 router.param('id', requireExpedienteAccess);
@@ -83,7 +88,7 @@ router.post('/:id/predios/aplicar', requirePermission('expedientes.write'), appl
 router.post('/', createExpediente);
 router.patch('/:id', updateExpedienteHeader);
 router.post('/convertir-cotizacion', convertCotizacionToExpediente);
-router.post('/:id/transicion-estatus', transitionEstatus);
+router.post('/:id/transicion-estatus', requirePermission('expedientes.write'), transitionEstatus);
 router.post('/:id/entrega', registerFinalDelivery);
 router.post('/:id/postfirma/tramites', createPostfirmaTask);
 router.patch('/:id/postfirma/tramites/:taskId', updatePostfirmaTask);
@@ -101,12 +106,15 @@ router.get('/:id/movimientos/:movimientoId/adjuntos/:tipo/descargar', requirePer
 router.post('/:id/archivar', requirePermission('expedientes.archive'), archiveExpediente);
 router.get('/:id/documentos/descargar-zip', downloadCarpetaZip);
 router.get('/:id/carpetas/:carpeta/zip', downloadCarpetaZip);
-router.post('/:id/documentos', uploadDocumentoMulter.single('file'), addExpedienteDocumento);
+router.get('/:id/documentos/apendice', requirePermission('documentos.read'), getExpedienteDocumentAppendix);
+router.post('/:id/documentos/sincronizar', requirePermission('documentos.write'), syncExpedienteDocumentAppendix);
+router.get('/:id/documentos/apendice/:itemId/url', requirePermission('documentos.read'), getExpedienteAppendixSignedUrl);
+router.post('/:id/documentos', requirePermission('documentos.write'), uploadDocumentoMulter.single('file'), addExpedienteDocumento);
 router.patch('/:id/requisitos/:requisitoId', updateExpedienteRequisito);
-router.patch('/:id/documentos/:documentoId', updateExpedienteDocumento);
-router.delete('/:id/documentos/:documentoId', deleteExpedienteDocumento);
-router.get('/:id/documentos/:documentoId/visualizar', streamExpedienteDocumento);
-router.get('/:id/documentos/:documentoId/descargar', downloadExpedienteDocumento);
+router.patch('/:id/documentos/:documentoId', requirePermission('documentos.write'), updateExpedienteDocumento);
+router.delete('/:id/documentos/:documentoId', requirePermission('documentos.unlink'), deleteExpedienteDocumento);
+router.get('/:id/documentos/:documentoId/visualizar', requirePermission('documentos.read'), streamExpedienteDocumento);
+router.get('/:id/documentos/:documentoId/descargar', requirePermission('documentos.read'), downloadExpedienteDocumento);
 
 // Proyecto de Escritura & IA Analysis Reports
 router.get('/:id/proyecto', requirePermission('expedientes.project.read'), getProyectoEscritura);

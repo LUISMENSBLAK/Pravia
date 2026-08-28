@@ -22,4 +22,5 @@ export const uploadFile = (buffer: Buffer, key: string, mimeType: string) => get
 export const downloadFile = (key: string) => getStorageProvider().download(key);
 export const deleteFile = (key: string) => getStorageProvider().delete(key);
 export const getSignedUrl = (key: string, expiresInSeconds = 600) => getStorageProvider().signedUrl(key, Math.max(60, Math.min(3600, Math.floor(expiresInSeconds))));
+export const fileExists = (key: string) => getStorageProvider().exists(key);
 export const checkStorageHealth = () => getStorageProvider().health();

@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 import { ExpedienteEstatus, TipoMovimiento, NaturalezaMovimiento, DocEstatus, DocCategoria, Prisma, TareaExternaEstatus, TipoTareaExterna } from '@prisma/client';
 import { ExpedienteWorkflowService, TransicionPayload } from '../services/expedienteWorkflow.service';
 import { calculateExpedienteProgress } from '../services/expedienteProgress.service';
@@ -24,6 +25,7 @@ import { complianceAttention, complianceLabel, macrophaseForStatus, parseExpedie
 import { ExpedienteReadService } from '../services/expedienteRead.service';
 import { buildExpedienteReadiness } from '../services/expedienteReadiness.service';
 import { calculateFinanceAggregates, legacyFinanceAllocations, type EconomicNature } from '../domain/financeCore';
+import { ExpedienteDocumentAppendixError } from '../services/expedienteDocumentAppendix.service';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
 const expedienteReadService = new ExpedienteReadService(prisma);
@@ -36,6 +38,25 @@ async function assertRequestExpedienteScope(req: Request, expedienteId: string) 
   });
   if (!scoped) throw new ExpedienteUpdateError('No tienes acceso a este expediente.', 'EXPEDIENTE_ACCESS_DENIED', 403);
   return scoped;
+}
+
+const immutableAppendixStatuses = new Set<ExpedienteEstatus>([
+  'FIRMADO',
+  'POST_FIRMA',
+  'LISTO_ENTREGA',
+  'ENTREGADO',
+]);
+
+async function assertMutableDocumentAppendix(req: Request, expedienteId: string) {
+  const expediente = await assertRequestExpedienteScope(req, expedienteId);
+  if (immutableAppendixStatuses.has(expediente.estatus)) {
+    throw new ExpedienteUpdateError(
+      'El apéndice documental quedó congelado al firmar. No puede modificarse desde este flujo.',
+      'EXP004_APPENDIX_FROZEN',
+      409,
+    );
+  }
+  return expediente;
 }
 
 async function resolveNextFrozenStage(expedienteId: string, target: ExpedienteEstatus) {
@@ -401,7 +422,7 @@ export const convertCotizacionToExpediente = async (req: Request, res: Response)
 export const transitionEstatus = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { expected_version, nuevo_estatus, nueva_etapa_clave, notas, datos_firma, fecha_efectiva } = req.body;
+    const { expected_version, nuevo_estatus, nueva_etapa_clave, notas, datos_firma, fecha_efectiva, document_revision } = req.body;
     const actor_user_id = req.user?.id;
 
     if (!actor_user_id) {
@@ -472,11 +493,12 @@ export const transitionEstatus = async (req: Request, res: Response) => {
       observaciones: notas,
       datosFirma: signatureData,
       fechaEfectiva: effectiveDate,
+      documentRevision: typeof document_revision === 'string' ? document_revision : undefined,
     });
 
     res.json(expedienteActualizado);
   } catch (error: any) {
-    const statusCode = error instanceof ExpedienteWorkflowError
+    const statusCode = error instanceof ExpedienteWorkflowError || error instanceof ExpedienteDocumentAppendixError
       ? error.status
       : error.message?.includes('[409 CONFLICT]')
         ? 409
@@ -1046,10 +1068,7 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
     }
 
-    const exp = await prisma.expediente.findUnique({ where: { id } });
-    if (!exp) {
-      return res.status(404).json({ error: 'El expediente especificado no existe' });
-    }
+    await assertMutableDocumentAppendix(req, id);
 
     if (!file) {
       return res.status(400).json({
@@ -1108,6 +1127,7 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
             categoria: categoriaTarget as DocCategoria,
             mime_type: file.mimetype,
             size_bytes: file.size,
+            checksum_sha256: createHash('sha256').update(fileBuffer).digest('hex'),
             subido_por_id: userId,
             expediente_id: id,
             estatus: DocEstatus.VIGENTE,
@@ -1122,7 +1142,14 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
             tipo_vinculo: carpetaTarget,
             creado_por_id: userId,
             estatus: 'ACTIVO',
-            observaciones: `Categoría: ${categoriaTarget}`
+            observaciones: `Categoría: ${categoriaTarget}`,
+            origen: 'EXPEDIENTE',
+            source_entity_type: 'EXPEDIENTE',
+            source_entity_id: id,
+            source_context: 'CARGA_DIRECTA',
+            source_key: `EXPEDIENTE:EXPEDIENTE:${id}:${doc.id}:CARGA_DIRECTA`,
+            document_version: createHash('sha256').update(fileBuffer).digest('hex'),
+            provenance: { origin: 'EXPEDIENTE', direct_upload: true }
           }
         });
 
@@ -1149,6 +1176,24 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
             descripcion: `Carpeta: ${carpetaTarget} | Categoría: ${categoriaTarget} | Tamaño: ${(file.size / 1024).toFixed(1)} KB`,
             usuario_id: userId
           }
+        });
+
+        await tx.auditLog.create({
+          data: {
+            user_id: userId,
+            accion: 'UPLOAD_EXPEDIENT_DOCUMENT',
+            entidad: 'Documento',
+            entidad_id: doc.id,
+            valores_nuevos: {
+              expediente_id: id,
+              expediente_documento_id: expDoc.id,
+              categoria: categoriaTarget,
+              carpeta: carpetaTarget,
+              size_bytes: file.size,
+              blob_copies: 0,
+            },
+            correlation_id: req.correlationId,
+          },
         });
 
         return { doc, expDoc };
@@ -1178,6 +1223,9 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
   } catch (error: any) {
     if (uploadedStorageKey) {
       await deleteFile(uploadedStorageKey).catch(() => {});
+    }
+    if (error instanceof ExpedienteUpdateError) {
+      return res.status(error.status).json({ error: error.message, code: error.code });
     }
     res.status(500).json({ error: 'No se pudo vincular el documento al expediente.', detail: error.message });
   }
@@ -1220,6 +1268,7 @@ export const deleteExpedienteDocumento = async (req: Request, res: Response) => 
     const { id, documentoId } = req.params;
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
+    await assertMutableDocumentAppendix(req, id);
 
     const expDoc = await prisma.expedienteDocumento.findFirst({
       where: {
@@ -1277,6 +1326,9 @@ export const deleteExpedienteDocumento = async (req: Request, res: Response) => 
 
     res.json({ success: true, message: 'Documento eliminado exitosamente' });
   } catch (error: any) {
+    if (error instanceof ExpedienteUpdateError) {
+      return res.status(error.status).json({ error: error.message, code: error.code });
+    }
     res.status(500).json({ error: 'Error al eliminar documento', detail: error.message });
   }
 };
@@ -1289,6 +1341,7 @@ export const updateExpedienteDocumento = async (req: Request, res: Response) => 
 
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
+    await assertMutableDocumentAppendix(req, id);
 
     const expDoc = await prisma.expedienteDocumento.findFirst({
       where: {
@@ -1374,6 +1427,9 @@ export const updateExpedienteDocumento = async (req: Request, res: Response) => 
 
     res.json(result);
   } catch (error: any) {
+    if (error instanceof ExpedienteUpdateError) {
+      return res.status(error.status).json({ error: error.message, code: error.code });
+    }
     res.status(500).json({ error: 'Error al actualizar documento', detail: error.message });
   }
 };

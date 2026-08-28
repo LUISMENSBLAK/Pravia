@@ -9,20 +9,20 @@ datasource db {
 }
 
 model Organization {
-  id          String                   @id @default(uuid()) @db.Uuid
-  name        String
-  status      String                   @default("ACTIVE")
-  created_at  DateTime                 @default(now())
-  updated_at  DateTime                 @updatedAt
-  memberships OrganizationMembership[]
-  sessions    AuthSession[]
-  expedienteActos ExpedienteActo[]
-  predios Predio[]
-  predioColindancias PredioColindancia[]
-  expedientePredios ExpedientePredio[]
+  id                    String                   @id @default(uuid()) @db.Uuid
+  name                  String
+  status                String                   @default("ACTIVE")
+  created_at            DateTime                 @default(now())
+  updated_at            DateTime                 @updatedAt
+  memberships           OrganizationMembership[]
+  sessions              AuthSession[]
+  expedienteActos       ExpedienteActo[]
+  predios               Predio[]
+  predioColindancias    PredioColindancia[]
+  expedientePredios     ExpedientePredio[]
   expedienteActoPredios ExpedienteActoPredio[]
-  predioDocumentos PredioDocumento[]
-  predioDatosFuente PredioDatoFuente[]
+  predioDocumentos      PredioDocumento[]
+  predioDatosFuente     PredioDatoFuente[]
 
   @@index([status])
   @@map("organizations")
@@ -101,6 +101,7 @@ model User {
   expedienteComparecientesCreados        ExpedienteCompareciente[]     @relation("ExpedienteComparecienteCreador")
   expedienteComparecientesValidados      ExpedienteCompareciente[]     @relation("ExpedienteComparecienteValidador")
   expedienteVinculosCreados              ExpedienteDocumento[]         @relation("ExpedienteDocCreador")
+  expedienteSnapshotsCongelados          ExpedienteDocumentoSnapshot[] @relation("ExpedienteSnapshotActor")
   entregasRegistradas                    ExpedienteEntrega[]           @relation("ExpedienteEntregaRegistrador")
   expedienteRepresentacionesCreadas      ExpedienteRepresentacion[]    @relation("ExpedienteRepresentacionCreador")
   expedienteRepresentacionesValidadas    ExpedienteRepresentacion[]    @relation("ExpedienteRepresentacionValidador")
@@ -450,9 +451,9 @@ model Cotizacion {
   movimientosFinancieros         MovimientoFinanciero[]
   pagos                          Pago[]
 
+  @@unique([id, organization_id], map: "uq_cotizaciones_id_org")
   @@index([notaria_id], map: "idx_cotizaciones_notaria_fk")
   @@index([user_id], map: "idx_cotizaciones_user_fk")
-  @@unique([id, organization_id], map: "uq_cotizaciones_id_org")
   @@map("cotizaciones")
 }
 
@@ -514,7 +515,7 @@ model TipoActo {
   checklist                       ChecklistItem[]
   configuracionesOperativas       ConfiguracionActo[]
   expedientes                     Expediente[]
-  expedienteActos                ExpedienteActo[]
+  expedienteActos                 ExpedienteActo[]
   flujoEtapas                     FlujoEtapa[]
   flujoVersiones                  FlujoVersion[]
   formularioSecciones             FormularioSeccion[]
@@ -642,20 +643,20 @@ model PlantillaDocumentalVersion {
 }
 
 model ConfiguracionActo {
-  id                 String               @id @default(uuid()) @db.Uuid
-  organization_id    String               @db.Uuid
-  tipo_acto_id       String               @db.Uuid
-  activa             Boolean              @default(true)
-  requiere_revision  Boolean              @default(true)
-  revision           Int                  @default(1)
-  nombre_personalizado String?
+  id                        String               @id @default(uuid()) @db.Uuid
+  organization_id           String               @db.Uuid
+  tipo_acto_id              String               @db.Uuid
+  activa                    Boolean              @default(true)
+  requiere_revision         Boolean              @default(true)
+  revision                  Int                  @default(1)
+  nombre_personalizado      String?
   descripcion_personalizada String?
-  creado_por_id      String               @db.Uuid
-  actualizado_por_id String               @db.Uuid
-  created_at         DateTime             @default(now())
-  updated_at         DateTime             @updatedAt
-  etapas             ConfiguracionEtapa[]
-  tipo_acto          TipoActo             @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
+  creado_por_id             String               @db.Uuid
+  actualizado_por_id        String               @db.Uuid
+  created_at                DateTime             @default(now())
+  updated_at                DateTime             @updatedAt
+  etapas                    ConfiguracionEtapa[]
+  tipo_acto                 TipoActo             @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
 
   @@unique([organization_id, tipo_acto_id], map: "uq_config_acto_org_tipo")
   @@index([tipo_acto_id], map: "idx_config_actos_tipo_acto_fk")
@@ -892,45 +893,45 @@ model ChecklistItem {
 }
 
 model Expediente {
-  id                         String                      @id @default(uuid()) @db.Uuid
-  organization_id            String?                     @db.Uuid
-  numero_pravia              String                      @unique
+  id                         String                       @id @default(uuid()) @db.Uuid
+  organization_id            String?                      @db.Uuid
+  numero_pravia              String                       @unique
   numero_notaria             String?
-  tipo_acto_id               String?                     @db.Uuid
-  abogado_id                 String                      @db.Uuid
-  creador_id                 String                      @db.Uuid
-  cotizacion_id              String?                     @unique @db.Uuid
+  tipo_acto_id               String?                      @db.Uuid
+  abogado_id                 String                       @db.Uuid
+  creador_id                 String                       @db.Uuid
+  cotizacion_id              String?                      @unique @db.Uuid
   cliente_alias              String?
-  fecha_apertura             DateTime                    @default(now())
-  estatus                    ExpedienteEstatus           @default(ABIERTO)
+  fecha_apertura             DateTime                     @default(now())
+  estatus                    ExpedienteEstatus            @default(ABIERTO)
   archived_at                DateTime?
-  archived_by                String?                     @db.Uuid
-  avance_documental          Int                         @default(0)
-  avance_financiero          Int                         @default(0)
-  avance_general             Int                         @default(0)
-  avance_operativo           Int                         @default(0)
-  created_at                 DateTime                    @default(now())
+  archived_by                String?                      @db.Uuid
+  avance_documental          Int                          @default(0)
+  avance_financiero          Int                          @default(0)
+  avance_general             Int                          @default(0)
+  avance_operativo           Int                          @default(0)
+  created_at                 DateTime                     @default(now())
   datos_operacion            Json?
   descripcion                String?
-  etapa_actual_nombre        String?                     @default("Apertura de Expediente")
-  expediente_etapa_actual_id String?                     @unique @db.Uuid
+  etapa_actual_nombre        String?                      @default("Apertura de Expediente")
+  expediente_etapa_actual_id String?                      @unique @db.Uuid
   fecha_entrega_cliente      DateTime?
   fecha_estimada_firma       DateTime?
   fecha_limite_accion        DateTime?
   fecha_real_firma           DateTime?
-  flujo_version_id           String?                     @db.Uuid
-  formulario_version_id      String?                     @db.Uuid
-  gestor_id                  String?                     @db.Uuid
+  flujo_version_id           String?                      @db.Uuid
+  formulario_version_id      String?                      @db.Uuid
+  gestor_id                  String?                      @db.Uuid
   motivo_archivo             String?
-  notaria_id                 String?                     @db.Uuid
-  plantilla_doc_version_id   String?                     @db.Uuid
+  notaria_id                 String?                      @db.Uuid
+  plantilla_doc_version_id   String?                      @db.Uuid
   proxima_accion             String?
   subtipo_acto               String?
-  updated_at                 DateTime                    @default(now()) @updatedAt
-  valor_operacion            Decimal?                    @db.Decimal(14, 2)
-  version                    Int                         @default(1)
+  updated_at                 DateTime                     @default(now()) @updatedAt
+  valor_operacion            Decimal?                     @db.Decimal(14, 2)
+  version                    Int                          @default(1)
   aiUsageLogs                AIUsageLog[]
-  comparecienteAltaSessions  ComparecienteAltaSession[]  @relation("ComparecienteAltaSessionOrigenExpediente")
+  comparecienteAltaSessions  ComparecienteAltaSession[]   @relation("ComparecienteAltaSessionOrigenExpediente")
   complianceReviews          ComplianceReview[]
   comunicaciones             Comunicacion[]
   documentos                 Documento[]
@@ -940,22 +941,23 @@ model Expediente {
   predios                    ExpedientePredio[]
   comparecientes             ExpedienteCompareciente[]
   expedienteDocumentos       ExpedienteDocumento[]
+  documentoSnapshot          ExpedienteDocumentoSnapshot?
   entrega                    ExpedienteEntrega?
   estatus_logs               ExpedienteEstatus_Log[]
-  etapas                     ExpedienteEtapa[]           @relation("ExpedienteEtapasLista")
+  etapas                     ExpedienteEtapa[]            @relation("ExpedienteEtapasLista")
   expedienteRepresentaciones ExpedienteRepresentacion[]
   requisitos_docs            ExpedienteRequisitoDoc[]
-  abogado                    User                        @relation("ExpedienteAbogado", fields: [abogado_id], references: [id])
-  archived_by_user           User?                       @relation("ExpedienteArchivedBy", fields: [archived_by], references: [id])
-  cotizacion                 Cotizacion?                 @relation(fields: [cotizacion_id], references: [id], onDelete: Restrict)
-  creador                    User                        @relation("ExpedienteCreador", fields: [creador_id], references: [id])
-  etapaActual                ExpedienteEtapa?            @relation("ExpedienteEtapaActual", fields: [expediente_etapa_actual_id], references: [id])
-  flujoVersion               FlujoVersion?               @relation(fields: [flujo_version_id], references: [id])
-  formularioVersion          FormularioVersion?          @relation(fields: [formulario_version_id], references: [id])
-  gestor                     User?                       @relation("ExpedienteGestor", fields: [gestor_id], references: [id])
-  notaria                    Notaria?                    @relation(fields: [notaria_id], references: [id])
-  plantillaDocVersion        PlantillaDocumentalVersion? @relation(fields: [plantilla_doc_version_id], references: [id])
-  tipo_acto                  TipoActo?                   @relation(fields: [tipo_acto_id], references: [id])
+  abogado                    User                         @relation("ExpedienteAbogado", fields: [abogado_id], references: [id])
+  archived_by_user           User?                        @relation("ExpedienteArchivedBy", fields: [archived_by], references: [id])
+  cotizacion                 Cotizacion?                  @relation(fields: [cotizacion_id], references: [id], onDelete: Restrict)
+  creador                    User                         @relation("ExpedienteCreador", fields: [creador_id], references: [id])
+  etapaActual                ExpedienteEtapa?             @relation("ExpedienteEtapaActual", fields: [expediente_etapa_actual_id], references: [id])
+  flujoVersion               FlujoVersion?                @relation(fields: [flujo_version_id], references: [id])
+  formularioVersion          FormularioVersion?           @relation(fields: [formulario_version_id], references: [id])
+  gestor                     User?                        @relation("ExpedienteGestor", fields: [gestor_id], references: [id])
+  notaria                    Notaria?                     @relation(fields: [notaria_id], references: [id])
+  plantillaDocVersion        PlantillaDocumentalVersion?  @relation(fields: [plantilla_doc_version_id], references: [id])
+  tipo_acto                  TipoActo?                    @relation(fields: [tipo_acto_id], references: [id])
   honorariosGenerados        HonorarioGenerado[]
   movimientosFinancieros     MovimientoFinanciero[]
   pagos                      Pago[]
@@ -963,6 +965,7 @@ model Expediente {
   tareas_externas            TareaExterna[]
   calculosISR                CalculoISR[]
 
+  @@unique([id, organization_id], map: "uq_expedientes_id_org")
   @@index([abogado_id], map: "idx_expedientes_abogado_fk")
   @@index([archived_by], map: "idx_expedientes_archivado_por_fk")
   @@index([creador_id], map: "idx_expedientes_creador_fk")
@@ -972,34 +975,33 @@ model Expediente {
   @@index([notaria_id], map: "idx_expedientes_notaria_fk")
   @@index([plantilla_doc_version_id], map: "idx_expedientes_plantilla_version_fk")
   @@index([tipo_acto_id], map: "idx_expedientes_tipo_acto_fk")
-  @@unique([id, organization_id], map: "uq_expedientes_id_org")
   @@map("expedientes")
 }
 
 model ExpedienteActo {
-  id                    String                 @id @default(uuid()) @db.Uuid
-  organization_id       String                 @db.Uuid
-  expediente_id         String                 @db.Uuid
-  tipo_acto_id           String                 @db.Uuid
-  origen                 ExpedienteActoOrigen
-  estatus                ExpedienteActoEstatus  @default(ACTIVO)
-  source_cotizacion_id   String?                @db.Uuid
-  idempotency_key        String?
+  id                      String                    @id @default(uuid()) @db.Uuid
+  organization_id         String                    @db.Uuid
+  expediente_id           String                    @db.Uuid
+  tipo_acto_id            String                    @db.Uuid
+  origen                  ExpedienteActoOrigen
+  estatus                 ExpedienteActoEstatus     @default(ACTIVO)
+  source_cotizacion_id    String?                   @db.Uuid
+  idempotency_key         String?
   removal_idempotency_key String?
-  created_by             String                 @db.Uuid
-  created_at             DateTime               @default(now())
-  updated_at             DateTime               @default(now()) @updatedAt
-  removed_at             DateTime?
-  removed_by             String?                @db.Uuid
-  removed_reason         String?
-  organization           Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict)
-  expediente             Expediente             @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
-  tipo_acto              TipoActo               @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
-  source_cotizacion      Cotizacion?             @relation(fields: [source_cotizacion_id], references: [id], onDelete: Restrict)
-  creador                User                    @relation("ExpedienteActoCreador", fields: [created_by], references: [id], onDelete: Restrict)
-  retirado_por           User?                   @relation("ExpedienteActoRetirador", fields: [removed_by], references: [id], onDelete: Restrict)
-  comparecientes         ExpedienteCompareciente[]
-  predios                ExpedienteActoPredio[]
+  created_by              String                    @db.Uuid
+  created_at              DateTime                  @default(now())
+  updated_at              DateTime                  @default(now()) @updatedAt
+  removed_at              DateTime?
+  removed_by              String?                   @db.Uuid
+  removed_reason          String?
+  organization            Organization              @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  expediente              Expediente                @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  tipo_acto              TipoActo                  @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
+  source_cotizacion       Cotizacion?               @relation(fields: [source_cotizacion_id], references: [id], onDelete: Restrict)
+  creador                 User                      @relation("ExpedienteActoCreador", fields: [created_by], references: [id], onDelete: Restrict)
+  retirado_por            User?                     @relation("ExpedienteActoRetirador", fields: [removed_by], references: [id], onDelete: Restrict)
+  comparecientes          ExpedienteCompareciente[]
+  predios                 ExpedienteActoPredio[]
 
   @@unique([organization_id, expediente_id, idempotency_key], map: "uq_expediente_actos_idempotency")
   @@unique([organization_id, expediente_id, removal_idempotency_key], map: "uq_expediente_actos_removal_idempotency")
@@ -1234,52 +1236,54 @@ model ExpedienteEtapa {
 }
 
 model Documento {
-  id                           String                        @id @default(uuid()) @db.Uuid
-  organization_id              String?                       @db.Uuid
+  id                           String                            @id @default(uuid()) @db.Uuid
+  organization_id              String?                           @db.Uuid
   nombre_original              String
-  nombre_interno               String                        @unique
+  nombre_interno               String                            @unique
   tipo                         String
-  categoria                    DocCategoria                  @default(PROYECTO)
-  storage_key                  String                        @unique
+  categoria                    DocCategoria                      @default(PROYECTO)
+  storage_key                  String                            @unique
   mime_type                    String
   size_bytes                   Int
-  fecha_carga                  DateTime                      @default(now())
+  checksum_sha256              String?
+  fecha_carga                  DateTime                          @default(now())
   fecha_emision                DateTime?
   fecha_vigencia               DateTime?
   observaciones                String?
   datos_extraidos              Json?
-  estatus                      DocEstatus                    @default(PENDIENTE)
-  subido_por_id                String                        @db.Uuid
-  prospecto_id                 String?                       @db.Uuid
-  cotizacion_id                String?                       @db.Uuid
-  expediente_id                String?                       @db.Uuid
-  compareciente_id             String?                       @db.Uuid
+  estatus                      DocEstatus                        @default(PENDIENTE)
+  subido_por_id                String                            @db.Uuid
+  prospecto_id                 String?                           @db.Uuid
+  cotizacion_id                String?                           @db.Uuid
+  expediente_id                String?                           @db.Uuid
+  compareciente_id             String?                           @db.Uuid
   datosFuente                  ComparecienteDatoFuente[]
   comparecienteVinculos        ComparecienteDocumento[]
-  domiciliosComprobante        ComparecienteDomicilio[]      @relation("DomicilioDocumentoComprobante")
+  domiciliosComprobante        ComparecienteDomicilio[]          @relation("DomicilioDocumentoComprobante")
   identificacionesSoporte      ComparecienteIdentificacion[]
   complianceEvidence           ComplianceEvidence[]
   comunicacionVinculos         ComunicacionDocumento[]
   cotizacionVinculos           CotizacionDocumento[]
-  compareciente                Compareciente?                @relation(fields: [compareciente_id], references: [id], onUpdate: NoAction)
-  cotizacion                   Cotizacion?                   @relation(fields: [cotizacion_id], references: [id])
-  expediente                   Expediente?                   @relation(fields: [expediente_id], references: [id])
-  prospecto                    Prospecto?                    @relation(fields: [prospecto_id], references: [id])
-  subido_por                   User                          @relation(fields: [subido_por_id], references: [id])
+  compareciente                Compareciente?                    @relation(fields: [compareciente_id], references: [id], onUpdate: NoAction)
+  cotizacion                   Cotizacion?                       @relation(fields: [cotizacion_id], references: [id])
+  expediente                   Expediente?                       @relation(fields: [expediente_id], references: [id])
+  prospecto                    Prospecto?                        @relation(fields: [prospecto_id], references: [id])
+  subido_por                   User                              @relation(fields: [subido_por_id], references: [id])
   expedienteVinculos           ExpedienteDocumento[]
-  entregasEvidencia            ExpedienteEntrega[]           @relation("ExpedienteEntregaEvidencia")
+  entregasEvidencia            ExpedienteEntrega[]               @relation("ExpedienteEntregaEvidencia")
   movimientoVinculos           MovimientoDocumento[]
   instrumentosMoralSoporte     PersonaMoralInstrumento[]
   persona_moral_representantes PersonaMoralRepresentante[]
   prospectoVinculos            ProspectoDocumento[]
   matrimoniosSoporte           RelacionConyugal[]
   requisitoVinculos            RequisitoDocumentoVinculo[]
-  tramitesEvidencia            TareaExterna[]                @relation("TareaExternaEvidencia")
+  tramitesEvidencia            TareaExterna[]                    @relation("TareaExternaEvidencia")
   calculosISRVinculos          CalculoISRDocumento[]
   calculosISRPropuestas        CalculoISRPropuesta[]
   assistantAttachments         AssistantAttachment[]
   predioVinculos               PredioDocumento[]
   predioDatosFuente            PredioDatoFuente[]
+  expedienteSnapshotItems      ExpedienteDocumentoSnapshotItem[]
 
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
   @@index([cotizacion_id], map: "idx_documentos_cotizacion_fk")
@@ -1290,26 +1294,91 @@ model Documento {
 }
 
 model ExpedienteDocumento {
-  id                  String         @id @default(uuid()) @db.Uuid
-  organization_id     String?        @db.Uuid
-  expediente_id       String         @db.Uuid
-  documento_id        String         @db.Uuid
+  id                  String                            @id @default(uuid()) @db.Uuid
+  organization_id     String?                           @db.Uuid
+  expediente_id       String                            @db.Uuid
+  documento_id        String                            @db.Uuid
   tipo_vinculo        String
-  fecha_vinculo       DateTime       @default(now())
-  creado_por_id       String         @db.Uuid
-  estatus             VinculoEstatus @default(ACTIVO)
+  fecha_vinculo       DateTime                          @default(now())
+  creado_por_id       String                            @db.Uuid
+  estatus             VinculoEstatus                    @default(ACTIVO)
   inactivado_at       DateTime?
-  inactivado_por_id   String?        @db.Uuid
+  inactivado_por_id   String?                           @db.Uuid
   motivo_inactivacion String?
   observaciones       String?
-  creado_por          User           @relation("ExpedienteDocCreador", fields: [creado_por_id], references: [id])
-  documento           Documento      @relation(fields: [documento_id], references: [id])
-  expediente          Expediente     @relation(fields: [expediente_id], references: [id])
+  origen              ExpedienteDocumentoOrigen         @default(EXPEDIENTE)
+  source_entity_type  String?                           @db.VarChar(80)
+  source_entity_id    String?                           @db.Uuid
+  source_context      String?                           @db.VarChar(160)
+  source_key          String                            @db.VarChar(320)
+  document_version    String?                           @db.VarChar(128)
+  provenance          Json?
+  creado_por          User                              @relation("ExpedienteDocCreador", fields: [creado_por_id], references: [id])
+  documento           Documento                         @relation(fields: [documento_id], references: [id])
+  expediente          Expediente                        @relation(fields: [expediente_id], references: [id])
+  snapshotItems       ExpedienteDocumentoSnapshotItem[]
 
   @@unique([expediente_id, documento_id, tipo_vinculo])
+  @@unique([organization_id, expediente_id, source_key], map: "uq_exp_documentos_source_key")
+  @@index([organization_id, expediente_id, origen, estatus], map: "idx_exp_documentos_source_status")
   @@index([creado_por_id], map: "idx_exp_documentos_creador_fk")
   @@index([documento_id], map: "idx_exp_documentos_documento_fk")
   @@map("expediente_documentos")
+}
+
+model ExpedienteDocumentoSnapshot {
+  id                 String                            @id @default(uuid()) @db.Uuid
+  organization_id    String                            @db.Uuid
+  expediente_id      String                            @unique @db.Uuid
+  expediente_version Int
+  document_revision  String                            @db.VarChar(128)
+  frozen_at          DateTime                          @default(now())
+  frozen_by_id       String                            @db.Uuid
+  correlation_id     String?                           @db.VarChar(128)
+  metadata           Json?
+  expediente         Expediente                        @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  frozenBy           User                              @relation("ExpedienteSnapshotActor", fields: [frozen_by_id], references: [id], onDelete: Restrict)
+  items              ExpedienteDocumentoSnapshotItem[]
+
+  @@unique([id, organization_id], map: "uq_exp_document_snapshot_id_org")
+  @@index([organization_id, frozen_at], map: "idx_exp_document_snapshot_org_frozen")
+  @@map("expediente_documento_snapshots")
+}
+
+model ExpedienteDocumentoSnapshotItem {
+  id                         String                      @id @default(uuid()) @db.Uuid
+  organization_id            String                      @db.Uuid
+  snapshot_id                String                      @db.Uuid
+  expediente_documento_id    String?                     @db.Uuid
+  documento_id               String?                     @db.Uuid
+  source_key                 String                      @db.VarChar(320)
+  origen                     ExpedienteDocumentoOrigen
+  source_entity_type         String?                     @db.VarChar(80)
+  source_entity_id           String?                     @db.Uuid
+  source_context             String?                     @db.VarChar(160)
+  document_version           String                      @db.VarChar(128)
+  nombre_snapshot            String                      @db.VarChar(500)
+  tipo_snapshot              String                      @db.VarChar(180)
+  categoria_snapshot         String?                     @db.VarChar(80)
+  estado_snapshot            String?                     @db.VarChar(80)
+  mime_type_snapshot         String?                     @db.VarChar(180)
+  size_bytes_snapshot        Int?
+  storage_key_snapshot       String?
+  checksum_sha256_snapshot   String?
+  file_availability_snapshot String                      @default("NO_VERIFICADO") @db.VarChar(40)
+  incorporated_at_snapshot   DateTime
+  provenance_snapshot        Json?
+  metadata_snapshot          Json?
+  created_at                 DateTime                    @default(now())
+  snapshot                   ExpedienteDocumentoSnapshot @relation(fields: [snapshot_id], references: [id], onDelete: Restrict)
+  expedienteDocumento        ExpedienteDocumento?        @relation(fields: [expediente_documento_id], references: [id], onDelete: Restrict)
+  documento                  Documento?                  @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+
+  @@unique([snapshot_id, source_key], map: "uq_exp_document_snapshot_item_source")
+  @@index([organization_id, snapshot_id], map: "idx_exp_document_snapshot_items_org")
+  @@index([documento_id], map: "idx_exp_document_snapshot_items_document")
+  @@index([expediente_documento_id], map: "idx_exp_document_snapshot_items_link")
+  @@map("expediente_documento_snapshot_items")
 }
 
 model CotizacionDocumento {
@@ -3292,6 +3361,18 @@ enum DocEstatus {
   POR_VENCER
   VENCIDO
   RECHAZADO
+}
+
+enum ExpedienteDocumentoOrigen {
+  PROSPECTO
+  COTIZACION
+  COTIZACION_NOTARIA
+  COMPARECIENTE
+  PREDIO
+  CFG002
+  ISR
+  FINANZAS
+  EXPEDIENTE
 }
 
 enum TipoPersona {

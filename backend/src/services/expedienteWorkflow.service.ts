@@ -8,6 +8,7 @@ import {
   validateDeliveryInput,
 } from '../domain/expedienteAuthorization';
 import { requireActorContext, TenantContextError } from '../auth/actorContext';
+import { ExpedienteDocumentAppendixService } from './expedienteDocumentAppendix.service';
 
 export interface TransicionPayload {
   expedienteId: string;
@@ -24,6 +25,7 @@ export interface TransicionPayload {
     autorizaSaldoPendiente?: boolean;
   };
   entrega?: DeliveryInput;
+  documentRevision?: string;
 }
 
 export interface ReabrirPayload {
@@ -61,6 +63,7 @@ export class ExpedienteWorkflowService {
     }
 
     return await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp004-sign:${payload.expedienteId}`}))`);
       // 2. Cargar Expediente
       const exp = await tx.expediente.findUnique({
         where: { id: payload.expedienteId },
@@ -162,6 +165,17 @@ export class ExpedienteWorkflowService {
           'Registra la fecha efectiva en que ocurrió la firma o entrega.',
           'EXPEDIENTE_EFFECTIVE_DATE_REQUIRED',
         );
+      }
+
+      if (payload.nuevoEstatus === 'FIRMADO') {
+        const appendix = new ExpedienteDocumentAppendixService(this.prisma);
+        await appendix.freeze(tx, {
+          id: actorContext.userId,
+          organizationId: actorContext.organizationId,
+          sessionId: actorContext.sessionId,
+          rol: actorContext.role,
+          permissions: actorContext.permissions,
+        }, exp.id, payload.documentRevision || '', correlationId, payload.versionActual);
       }
 
       // 7. Cerrar etapa actual e instanciar la nueva etapa operativa

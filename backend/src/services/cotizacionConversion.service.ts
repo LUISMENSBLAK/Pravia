@@ -119,6 +119,13 @@ export class CotizacionConversionService {
             tipo_vinculo: 'Administrativo',
             creado_por_id: actor.id,
             estatus: 'ACTIVO',
+            origen: 'COTIZACION',
+            source_entity_type: 'COTIZACION',
+            source_entity_id: cotizacion.id,
+            source_context: 'CONVERSION_COTIZACION',
+            source_key: `COTIZACION:COTIZACION:${cotizacion.id}:${documentId}:CONVERSION_COTIZACION`,
+            document_version: `DOCUMENTO:${documentId}`,
+            provenance: { origin: 'COTIZACION', conversion: true },
           },
         });
       }

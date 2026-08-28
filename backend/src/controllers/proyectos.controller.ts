@@ -254,6 +254,10 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
           creado_por_id: user.id,
           estatus: 'ACTIVO',
           observaciones: `Proyecto vigente V${newVersionNum}`,
+          origen: 'EXPEDIENTE', source_entity_type: 'EXPEDIENTE', source_entity_id: id,
+          source_context: 'PROYECTO_ESCRITURA', source_key: `EXPEDIENTE:EXPEDIENTE:${id}:${document.id}:PROYECTO_ESCRITURA`,
+          document_version: `PROYECTO_ESCRITURA:V${newVersionNum}`,
+          provenance: { origin: 'EXPEDIENTE', project_version: newVersionNum },
         }
       });
       await tx.expedienteActividad.create({
@@ -691,6 +695,10 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
       await tx.expedienteDocumento.create({ data: {
         expediente_id: id, documento_id: document.id, tipo_vinculo: 'REPORTE_IA_PROYECTO',
         creado_por_id: userId, estatus: 'ACTIVO', observaciones: `Reporte IA sobre proyecto V${vigente.version_numero}`,
+        origen: 'EXPEDIENTE', source_entity_type: 'EXPEDIENTE', source_entity_id: id,
+        source_context: 'REPORTE_IA_PROYECTO', source_key: `EXPEDIENTE:EXPEDIENTE:${id}:${document.id}:REPORTE_IA_PROYECTO`,
+        document_version: `REPORTE_IA_PROYECTO:V${vigente.version_numero}`,
+        provenance: { origin: 'EXPEDIENTE', project_version: vigente.version_numero, ai_report: true },
       } });
       return document;
     });
@@ -1226,7 +1234,13 @@ export const generarProyectoConIA = async (req: Request, res: Response) => {
           plantilla_checksum_sha256: template.checksum_sha256,
         } },
       } });
-      await tx.expedienteDocumento.create({ data: { expediente_id: id, documento_id: document.id, tipo_vinculo: 'PROYECTO_ESCRITURA', creado_por_id: userId, estatus: 'ACTIVO', observaciones: `Proyecto vigente V${nextVersionNum}` } });
+      await tx.expedienteDocumento.create({ data: {
+        expediente_id: id, documento_id: document.id, tipo_vinculo: 'PROYECTO_ESCRITURA', creado_por_id: userId, estatus: 'ACTIVO', observaciones: `Proyecto vigente V${nextVersionNum}`,
+        origen: 'EXPEDIENTE', source_entity_type: 'EXPEDIENTE', source_entity_id: id,
+        source_context: 'PROYECTO_ESCRITURA', source_key: `EXPEDIENTE:EXPEDIENTE:${id}:${document.id}:PROYECTO_ESCRITURA`,
+        document_version: `PROYECTO_ESCRITURA:V${nextVersionNum}`,
+        provenance: { origin: 'EXPEDIENTE', project_version: nextVersionNum, generated_from_cfg002: true },
+      } });
       return document;
     });
     uploadedProjectKey = null;

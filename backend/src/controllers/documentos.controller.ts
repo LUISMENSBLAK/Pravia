@@ -3,6 +3,7 @@ import prisma from '../config/prisma';
 import { uploadFile, getSignedUrl, deleteFile } from '../services/supabase.service';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
+import { createHash } from 'crypto';
 import { canAttachDocumento } from '../services/objectAccess.service';
 import { logAudit } from '../utils/auditLogger';
 import { prospectDocumentFlagsForType } from '../domain/prospectCatalog';
@@ -64,6 +65,7 @@ export const uploadDocumento = async (req: Request, res: Response) => {
       storage_key,
       mime_type: file.mimetype,
       size_bytes: file.size,
+      checksum_sha256: createHash('sha256').update(file.buffer).digest('hex'),
       observaciones: observaciones || null,
       subido_por_id: actorUserId,
       prospecto_id: prospecto_id || null,
@@ -85,7 +87,11 @@ export const uploadDocumento = async (req: Request, res: Response) => {
           if (Object.keys(availability).length) await tx.prospecto.update({ where: { id: prospecto_id }, data: availability });
         }
         if (cotizacion_id) await tx.cotizacionDocumento.create({ data: { ...common, cotizacion_id } });
-        if (expediente_id) await tx.expedienteDocumento.create({ data: { ...common, expediente_id } });
+        if (expediente_id) await tx.expedienteDocumento.create({ data: {
+          ...common, expediente_id, origen: 'EXPEDIENTE', source_entity_type: 'EXPEDIENTE', source_entity_id: expediente_id,
+          source_context: 'CARGA_DIRECTA', source_key: `EXPEDIENTE:EXPEDIENTE:${expediente_id}:${created.id}:CARGA_DIRECTA`,
+          document_version: created.checksum_sha256, provenance: { origin: 'EXPEDIENTE', direct_upload: true },
+        } });
         if (compareciente_id) await tx.comparecienteDocumento.create({
           data: { compareciente_id, documento_id: created.id, categoria: 'OTROS', creado_por_id: actorUserId, estatus: 'ACTIVO' },
         });

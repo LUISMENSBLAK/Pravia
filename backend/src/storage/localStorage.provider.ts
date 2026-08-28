@@ -57,6 +57,10 @@ export class LocalStorageProvider implements StorageProvider {
     const base = String(process.env.PUBLIC_API_URL || '').replace(/\/$/, '');
     return `${base}/api/storage/local?key=${encodeURIComponent(key)}&expires=${expires}&signature=${signatureFor(key, expires)}`;
   }
+  async exists(key: string) {
+    try { await access(resolveLocalStoragePath(key), constants.R_OK); return true; }
+    catch { return false; }
+  }
   async health() {
     try { await access(localRoot(), constants.R_OK | constants.W_OK); return 'ok' as const; }
     catch { return process.env.LOCAL_STORAGE_PATH ? 'error' as const : 'not_configured' as const; }

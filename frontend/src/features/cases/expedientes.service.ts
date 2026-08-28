@@ -1,6 +1,6 @@
 import { apiRequest, tokenStore } from '../../services/api/client';
 import { apiUrl } from '../../services/api/config';
-import type { ActTypeOption, EligibleQuoteCandidate, ExpedienteAct, ExpedienteActCommand, ExpedienteActPreview, ExpedienteDetail, ExpedienteListFilters, ExpedienteListResult, ExpedientePartyCatalogs, ExpedientePartyCommand, ExpedientePartyPreview, ExpedientePartyRelation, ExpedientePartySearchOption, ExpedientePredioCatalogs, ExpedientePredioCommand, ExpedientePredioPreview, ExpedientePredioRelation, PredioSummary, ProjectState } from './expedientes.types';
+import type { ActTypeOption, EligibleQuoteCandidate, ExpedienteAct, ExpedienteActCommand, ExpedienteActPreview, ExpedienteDetail, ExpedienteDocumentAppendix, ExpedienteListFilters, ExpedienteListResult, ExpedientePartyCatalogs, ExpedientePartyCommand, ExpedientePartyPreview, ExpedientePartyRelation, ExpedientePartySearchOption, ExpedientePredioCatalogs, ExpedientePredioCommand, ExpedientePredioPreview, ExpedientePredioRelation, PredioSummary, ProjectState } from './expedientes.types';
 
 const query = (filters: ExpedienteListFilters) => {
   const params = new URLSearchParams();
@@ -38,10 +38,13 @@ export const expedientesService = {
       method: 'POST', body: JSON.stringify({ cotizacion_id: cotizacionId }),
     });
   },
-  transition(id: string, input: { expected_version: number; nuevo_estatus: string; nueva_etapa_clave?: string; notas?: string; fecha_efectiva?: string; datos_firma?: { fecha_firma: string; lugar: string } }) {
+  transition(id: string, input: { expected_version: number; nuevo_estatus: string; nueva_etapa_clave?: string; notas?: string; fecha_efectiva?: string; datos_firma?: { fecha_firma: string; lugar: string }; document_revision?: string }) {
     return apiRequest<ExpedienteDetail>(`/expedientes/${encodeURIComponent(id)}/transicion-estatus`, { method: 'POST', body: JSON.stringify(input) });
   },
   project(id: string, signal?: AbortSignal) { return apiRequest<ProjectState>(`/expedientes/${encodeURIComponent(id)}/proyecto`, { signal }); },
+  documentAppendix(id: string, signal?: AbortSignal) { return apiRequest<ExpedienteDocumentAppendix>(`/expedientes/${encodeURIComponent(id)}/documentos/apendice`, { signal }); },
+  syncDocumentAppendix(id: string) { return apiRequest<ExpedienteDocumentAppendix>(`/expedientes/${encodeURIComponent(id)}/documentos/sincronizar`, { method: 'POST' }); },
+  appendixSignedUrl(id: string, itemId: string) { return apiRequest<{ url: string; expires_in: number; file_name: string; mime_type: string }>(`/expedientes/${encodeURIComponent(id)}/documentos/apendice/${encodeURIComponent(itemId)}/url`); },
   uploadDocument(id: string, file: File, fields: { categoria: string; carpeta: string }) {
     const body = new FormData(); body.set('file', file); body.set('categoria', fields.categoria); body.set('carpeta', fields.carpeta);
     return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos`, { method: 'POST', body });

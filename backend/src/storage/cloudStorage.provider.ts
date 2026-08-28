@@ -40,6 +40,16 @@ export class CloudStorageProvider implements StorageProvider {
     if (error) throw new Error(`Error generando URL firmada: ${error.message}`);
     return data.signedUrl;
   }
+  async exists(key: string) {
+    const normalized = String(key || '').replace(/^\/+/, '');
+    const slash = normalized.lastIndexOf('/');
+    const folder = slash >= 0 ? normalized.slice(0, slash) : '';
+    const name = slash >= 0 ? normalized.slice(slash + 1) : normalized;
+    if (!name) return false;
+    const { data, error } = await getSupabaseClient().storage.from(BUCKET_NAME).list(folder, { search: name, limit: 20 });
+    if (error) return false;
+    return Boolean(data?.some((item) => item.name === name));
+  }
   async health() {
     if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) return 'not_configured' as const;
     try {
