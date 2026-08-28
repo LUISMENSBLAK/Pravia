@@ -1013,6 +1013,89 @@ model ExpedienteActo {
   @@map("expediente_actos")
 }
 
+/// Copia operativa, tenant-safe e inmutable en su procedencia, de una actividad CFG-001.
+/// El estado BLOQUEADO se deriva de sus dependencias; `estado` conserva la decisión operativa.
+model ExpedienteSeguimientoActividad {
+  id                             String                     @id @default(uuid()) @db.Uuid
+  organization_id                String                     @db.Uuid
+  expediente_id                  String                     @db.Uuid
+  expediente_acto_id             String                     @db.Uuid
+  tipo_acto_id                   String                     @db.Uuid
+  configuracion_acto_id          String                     @db.Uuid
+  configuracion_revision         Int
+  etapa_maestra_id               String                     @db.Uuid
+  actividad_maestra_id           String                     @db.Uuid
+  etapa_nombre_snapshot          String
+  etapa_orden_snapshot           Int
+  actividad_nombre_snapshot      String
+  actividad_descripcion_snapshot String?
+  duracion_estimada              Int
+  tipo_dias                      ConfiguracionTipoDias
+  margen_seguridad               Int                        @default(0)
+  responsable_rol_snapshot       Role?
+  responsable_default_id         String?                    @db.Uuid
+  responsable_id                 String?                    @db.Uuid
+  aplica_por_defecto             Boolean                    @default(true)
+  excepcion_maestra_id           String?                    @db.Uuid
+  excepciones_coincidentes       Json?
+  resolucion_fuente              String                     @default("GENERAL")
+  excepcion_operativa            Json?
+  estado                         SeguimientoActividadEstado @default(NO_INICIADO)
+  version                        Int                        @default(1)
+  en_alcance                     Boolean                    @default(true)
+  requiere_revision              Boolean                    @default(false)
+  motivo_revision                String?
+  primera_fecha_inicio           DateTime?
+  fecha_completada_actual        DateTime?
+  created_at                     DateTime                   @default(now())
+  updated_at                     DateTime                   @default(now()) @updatedAt
+
+  @@unique([organization_id, expediente_acto_id, actividad_maestra_id], map: "uq_exp_seguimiento_acto_actividad")
+  @@index([organization_id, expediente_id, en_alcance], map: "idx_exp_seguimiento_tenant_expediente")
+  @@index([organization_id, responsable_id, estado], map: "idx_exp_seguimiento_responsable_estado")
+  @@index([expediente_acto_id], map: "idx_exp_seguimiento_expediente_acto_fk")
+  @@index([actividad_maestra_id], map: "idx_exp_seguimiento_actividad_maestra_fk")
+  @@map("expediente_seguimiento_actividades")
+}
+
+model ExpedienteSeguimientoDependencia {
+  id                               String   @id @default(uuid()) @db.Uuid
+  organization_id                  String   @db.Uuid
+  expediente_id                    String   @db.Uuid
+  actividad_id                     String   @db.Uuid
+  depende_actividad_id             String   @db.Uuid
+  dependencia_maestra_id           String?  @db.Uuid
+  excepcion_dependencia_maestra_id String?  @db.Uuid
+  bloqueante                       Boolean  @default(true)
+  created_at                       DateTime @default(now())
+
+  @@unique([organization_id, actividad_id, depende_actividad_id], map: "uq_exp_seguimiento_dependencia")
+  @@index([organization_id, expediente_id], map: "idx_exp_seguimiento_dep_tenant_expediente")
+  @@index([depende_actividad_id], map: "idx_exp_seguimiento_dep_prerequisito_fk")
+  @@map("expediente_seguimiento_dependencias")
+}
+
+model ExpedienteSeguimientoHistorial {
+  id               String                      @id @default(uuid()) @db.Uuid
+  organization_id  String                      @db.Uuid
+  expediente_id    String                      @db.Uuid
+  actividad_id     String                      @db.Uuid
+  actor_user_id    String                      @db.Uuid
+  estado_anterior  SeguimientoActividadEstado?
+  estado_nuevo     SeguimientoActividadEstado
+  version_anterior Int?
+  version_nueva    Int
+  razon            String?
+  detalles         Json?
+  correlation_id   String?
+  created_at       DateTime                    @default(now())
+
+  @@index([organization_id, expediente_id, created_at], map: "idx_exp_seguimiento_hist_tenant_exp")
+  @@index([actividad_id, created_at], map: "idx_exp_seguimiento_hist_actividad")
+  @@index([actor_user_id], map: "idx_exp_seguimiento_hist_actor_fk")
+  @@map("expediente_seguimiento_historial")
+}
+
 model Predio {
   id                                   String              @id @default(uuid()) @db.Uuid
   organization_id                      String              @db.Uuid
@@ -3741,6 +3824,15 @@ enum ConfiguracionSelectorExcepcion {
   INSTITUCION
   NOTARIA
   JURISDICCION
+}
+
+enum SeguimientoActividadEstado {
+  NO_INICIADO
+  EN_PROCESO
+  EN_ESPERA_EXTERNA
+  COMPLETADO
+  BLOQUEADO
+  NO_APLICA
 }
 
 enum CatalogoInstitucionTipo {

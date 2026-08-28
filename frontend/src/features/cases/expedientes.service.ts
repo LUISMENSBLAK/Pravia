@@ -1,6 +1,6 @@
 import { apiRequest, tokenStore } from '../../services/api/client';
 import { apiUrl } from '../../services/api/config';
-import type { ActTypeOption, EligibleQuoteCandidate, ExpedienteAct, ExpedienteActCommand, ExpedienteActPreview, ExpedienteDetail, ExpedienteDocumentAppendix, ExpedienteListFilters, ExpedienteListResult, ExpedientePartyCatalogs, ExpedientePartyCommand, ExpedientePartyPreview, ExpedientePartyRelation, ExpedientePartySearchOption, ExpedientePredioCatalogs, ExpedientePredioCommand, ExpedientePredioPreview, ExpedientePredioRelation, PredioSummary, ProjectState } from './expedientes.types';
+import type { ActTypeOption, EligibleQuoteCandidate, ExpedienteAct, ExpedienteActCommand, ExpedienteActPreview, ExpedienteDetail, ExpedienteDocumentAppendix, ExpedienteListFilters, ExpedienteListResult, ExpedientePartyCatalogs, ExpedientePartyCommand, ExpedientePartyPreview, ExpedientePartyRelation, ExpedientePartySearchOption, ExpedientePredioCatalogs, ExpedientePredioCommand, ExpedientePredioPreview, ExpedientePredioRelation, ExpedienteSeguimiento, PredioSummary, ProjectState, SeguimientoEstado } from './expedientes.types';
 
 const query = (filters: ExpedienteListFilters) => {
   const params = new URLSearchParams();
@@ -30,6 +30,10 @@ export const expedientesService = {
   propertyCatalogs(id: string, signal?: AbortSignal) { return apiRequest<{ data: ExpedientePredioCatalogs }>(`/expedientes/${encodeURIComponent(id)}/predios/catalogos`, { signal }).then((payload) => payload.data); },
   previewProperty(id: string, input: ExpedientePredioCommand) { return apiRequest<ExpedientePredioPreview>(`/expedientes/${encodeURIComponent(id)}/predios/preview`, { method: 'POST', body: JSON.stringify(input) }); },
   applyProperty(id: string, input: ExpedientePredioCommand) { return apiRequest<{ relation: ExpedientePredioRelation; idempotent: boolean; version?: number }>(`/expedientes/${encodeURIComponent(id)}/predios/aplicar`, { method: 'POST', body: JSON.stringify(input) }); },
+  seguimiento(id: string, signal?: AbortSignal) { return apiRequest<ExpedienteSeguimiento>(`/expedientes/${encodeURIComponent(id)}/seguimiento`, { signal }); },
+  materializeSeguimiento(id: string) { return apiRequest<{ created: number; existing: number; review_required: number; idempotent: boolean }>(`/expedientes/${encodeURIComponent(id)}/seguimiento/materializar`, { method: 'POST' }); },
+  updateSeguimientoActivity(id: string, activityId: string, input: { expected_version: number; estado?: SeguimientoEstado; responsable_id?: string | null; excepcion_operativa?: { duracion_estimada?: number; tipo_dias?: 'HABILES' | 'NATURALES'; margen_seguridad?: number; motivo?: string } | null; razon?: string }) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/seguimiento/actividades/${encodeURIComponent(activityId)}`, { method: 'PATCH', body: JSON.stringify(input) }); },
+  reopenSeguimientoActivity(id: string, activityId: string, input: { expected_version: number; razon: string }) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/seguimiento/actividades/${encodeURIComponent(activityId)}/reabrir`, { method: 'POST', body: JSON.stringify(input) }); },
   eligibleQuotes(signal?: AbortSignal) {
     return apiRequest<{ data: EligibleQuoteCandidate[]; total: number }>('/expedientes/cotizaciones-elegibles', { signal });
   },

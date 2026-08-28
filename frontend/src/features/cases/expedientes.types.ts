@@ -55,6 +55,26 @@ export type ExpedienteDocumentAppendix = {
   sync?: { created: number; reactivated: number; inactivated: number; blob_copies: 0 };
 };
 
+export type SeguimientoEstado = 'NO_INICIADO' | 'EN_PROCESO' | 'EN_ESPERA_EXTERNA' | 'COMPLETADO' | 'BLOQUEADO' | 'NO_APLICA';
+export type SeguimientoActivity = {
+  id: string; expediente_acto_id: string; etapa_nombre_snapshot: string; actividad_nombre_snapshot: string;
+  actividad_descripcion_snapshot?: string | null; estado: SeguimientoEstado; estado_operativo: SeguimientoEstado;
+  estado_efectivo: SeguimientoEstado; estado_label: string; version: number; en_alcance: boolean; requiere_revision: boolean;
+  motivo_revision?: string | null; responsable_id?: string | null; responsable?: PersonOption | null; aplica_por_defecto: boolean;
+  resolucion_fuente: string; excepcion_operativa?: { duracion_estimada?: number; tipo_dias?: 'HABILES' | 'NATURALES'; margen_seguridad?: number; motivo?: string } | null; primera_fecha_inicio?: string | null; fecha_completada_actual?: string | null;
+  dependencias: Array<{ id: string; actividad_id: string; nombre: string; estado: SeguimientoEstado; bloqueante: boolean }>;
+  bloqueada_por: Array<{ id: string; nombre: string; estado: SeguimientoEstado }>;
+  tiempo: { estimado: number; tipo_dias: 'HABILES' | 'NATURALES'; margen: number; transcurrido: number; fecha_objetivo?: string | null; limite_margen?: string | null; atrasada: boolean; margen_consumido: boolean };
+};
+export type ExpedienteSeguimiento = {
+  expediente_id: string; configuracion_actual_no_reaplicada: true; fecha_firma_manual?: string | null;
+  firma: { programada?: string | null; efectiva?: string | null; snapshot_canonico: boolean };
+  entrega: { completada: boolean; fecha?: string | null; alertas_operativas_activas: boolean };
+  actos: Array<{ expediente_acto_id: string; tipo_acto_id?: string; nombre: string; estatus: string; etapas: Array<{ nombre: string; orden: number; actividades: SeguimientoActivity[] }> }>;
+  responsables: PersonOption[];
+  signals: { prefirm: SeguimientoActivity[]; postfirm: SeguimientoActivity[] };
+};
+
 export type ExpedienteMetric = { key: string; label: string; value: number; percentage: number | null };
 export type ExpedienteListItem = {
   id: string; numero_pravia: string; numero_notaria?: string | null; cliente_alias?: string | null; cliente_principal: string;

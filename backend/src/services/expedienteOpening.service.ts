@@ -3,6 +3,7 @@ import { reserveExpedienteFolio } from './expedienteFolio.service';
 import { activeOrganizationMembershipWhere, organizationMembershipRoleSelect, userWithEffectiveMembershipRole } from '../auth/organizationMembership';
 import { requireActorContext } from '../auth/actorContext';
 import { ExpedienteActosService } from './expedienteActos.service';
+import { ExpedienteSeguimientoService } from './expedienteSeguimiento.service';
 
 export class ExpedienteOpeningError extends Error {
   constructor(message: string, readonly code: string, readonly status = 400) { super(message); }
@@ -30,7 +31,8 @@ export class ExpedienteOpeningService {
   constructor(private readonly prisma: PrismaClient) {}
 
   async openInTransaction(tx: Prisma.TransactionClient, input: OpenExpedienteInput) {
-    const { organizationId } = requireActorContext();
+    const actorContext = requireActorContext();
+    const { organizationId } = actorContext;
     const alias = input.clienteAlias?.trim();
     if (!input.cotizacionId) {
       throw new ExpedienteOpeningError(
@@ -98,6 +100,14 @@ export class ExpedienteOpeningService {
       cotizacionId: input.cotizacionId,
       actorUserId: actor.id,
     });
+
+    // EXP-005 is materialized in the same transaction as the canonical opening.
+    // A failure rolls the expediente back instead of leaving a partial checklist.
+    await new ExpedienteSeguimientoService(this.prisma).materializeInTransaction(tx, {
+      id: actor.id,
+      organizationId,
+      sessionId: actorContext.sessionId,
+    }, expediente.id, initialAct.id);
 
     const frozenStages = Array.isArray(workflowVersion?.etapas_json) ? workflowVersion.etapas_json as Array<Record<string, unknown>> : [];
     const firstStage = [...frozenStages].sort((a, b) => Number(a.orden || 0) - Number(b.orden || 0))[0];

@@ -124,6 +124,51 @@ export const resolveActivityTiming = (activity: any, selector: { type?: string; 
   return match ? { source: 'EXCEPTION', duration: match.duracion, day_type: match.tipo_dias, safety_margin: match.margen_seguridad, exception: match } : { source: 'GENERAL', duration: activity.duracion_estimada, day_type: activity.tipo_dias, safety_margin: activity.margen_seguridad, exception: null };
 };
 
+export type OperationalConfigurationSelectors = {
+  institutionIds?: string[];
+  notaryId?: string | null;
+  jurisdictions?: string[];
+};
+
+const normalized = (value: unknown) => String(value || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es-MX');
+const exceptionDependencySignature = (exception: any) => (exception.dependencias_adicionales || [])
+  .map((item: any) => `${item.depende_actividad_id}:${item.bloqueante !== false}`)
+  .sort();
+
+/**
+ * Resolución canónica para EXP-005. No introduce precedencia entre Banco,
+ * Notaría y jurisdicción: una colisión incompatible queda para revisión humana.
+ */
+export const resolveOperationalActivityConfiguration = (activity: any, selectors: OperationalConfigurationSelectors) => {
+  const institutionIds = new Set((selectors.institutionIds || []).filter(Boolean));
+  const jurisdictions = new Set((selectors.jurisdictions || []).map(normalized).filter(Boolean));
+  const matches = (activity.excepciones || []).filter((item: any) => item.activa && (
+    (item.selector_tipo === 'INSTITUCION' && item.institucion_id && institutionIds.has(item.institucion_id))
+    || (item.selector_tipo === 'NOTARIA' && item.notaria_id && item.notaria_id === selectors.notaryId)
+    || (item.selector_tipo === 'JURISDICCION' && item.jurisdiccion && jurisdictions.has(normalized(item.jurisdiccion)))
+  ));
+  if (!matches.length) return {
+    status: 'RESOLVED' as const, source: 'GENERAL' as const,
+    duration: activity.duracion_estimada, day_type: activity.tipo_dias, safety_margin: activity.margen_seguridad,
+    exception: null, matching_exception_ids: [] as string[], additional_dependencies: [] as any[],
+  };
+  const signature = (item: any) => JSON.stringify([
+    item.duracion, item.tipo_dias, item.margen_seguridad, exceptionDependencySignature(item),
+  ]);
+  if (new Set(matches.map(signature)).size > 1) return {
+    status: 'REVIEW_REQUIRED' as const, source: 'COLLISION' as const,
+    duration: activity.duracion_estimada, day_type: activity.tipo_dias, safety_margin: activity.margen_seguridad,
+    exception: null, matching_exception_ids: matches.map((item: any) => item.id).sort(), additional_dependencies: [] as any[],
+  };
+  const resolved = [...matches].sort((a: any, b: any) => String(a.id).localeCompare(String(b.id)))[0];
+  return {
+    status: 'RESOLVED' as const, source: matches.length > 1 ? 'EQUIVALENT_EXCEPTIONS' as const : 'EXCEPTION' as const,
+    duration: resolved.duracion, day_type: resolved.tipo_dias, safety_margin: resolved.margen_seguridad,
+    exception: resolved, matching_exception_ids: matches.map((item: any) => item.id).sort(),
+    additional_dependencies: resolved.dependencias_adicionales || [],
+  };
+};
+
 const effectiveAct = ({ configuracionesOperativas, ...act }: any) => {
   const configuration = configuracionesOperativas[0] || null;
   return {

@@ -16,6 +16,7 @@ describe('motor único de apertura de expedientes', () => {
       compareciente: { findFirst: vi.fn().mockResolvedValue({ id: 'party-1' }) },
       expediente: {
         findMany: vi.fn().mockResolvedValue([{ numero_pravia: 'EXP-2026-0040' }]),
+        findFirst: vi.fn().mockResolvedValue({ id: 'exp-1', organization_id: TEST_ORGANIZATION_ID, abogado_id: 'lawyer-1', notaria_id: null, notaria: null, datos_operacion: null, predios: [], actos: [{ id: 'exp-act-1', tipo_acto_id: 'act-1' }] }),
         create: vi.fn().mockImplementation(async ({ data }) => ({ id: 'exp-1', version: 1, ...data })),
         update: vi.fn().mockImplementation(async ({ data }) => ({ id: 'exp-1', numero_pravia: 'EXP-0041-2026', version: 1, ...data })),
       },
@@ -24,6 +25,11 @@ describe('motor único de apertura de expedientes', () => {
       expedienteCompareciente: { create: vi.fn().mockResolvedValue({ id: 'link-1' }) },
       expedienteActividad: { create: vi.fn().mockResolvedValue({ id: 'activity-1' }) },
       expedienteActo: { create: vi.fn().mockResolvedValue({ id: 'exp-act-1' }) },
+      configuracionActo: { findMany: vi.fn().mockResolvedValue([]) },
+      expedienteSeguimientoActividad: { findMany: vi.fn().mockResolvedValue([]), upsert: vi.fn(), update: vi.fn() },
+      expedienteSeguimientoDependencia: { findMany: vi.fn().mockResolvedValue([]), upsert: vi.fn() },
+      expedienteSeguimientoHistorial: { create: vi.fn(), count: vi.fn().mockResolvedValue(0) },
+      organizationMembership: { findFirst: vi.fn().mockResolvedValue(null) },
       auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-1' }) },
     };
     const service = new ExpedienteOpeningService({} as any);

@@ -60,6 +60,12 @@ import {
   searchExpedientePredios,
 } from '../controllers/expedientePredios.controller';
 import {
+  getExpedienteSeguimiento,
+  materializeExpedienteSeguimiento,
+  reopenExpedienteSeguimientoActividad,
+  updateExpedienteSeguimientoActividad,
+} from '../controllers/expedienteSeguimiento.controller';
+import {
   getExpedienteAppendixSignedUrl,
   getExpedienteDocumentAppendix,
   syncExpedienteDocumentAppendix,
@@ -85,6 +91,10 @@ router.get('/:id/predios/buscar', searchExpedientePredios);
 router.get('/:id/predios/catalogos', getExpedientePredioCatalogs);
 router.post('/:id/predios/preview', requirePermission('expedientes.write'), previewExpedientePredioChange);
 router.post('/:id/predios/aplicar', requirePermission('expedientes.write'), applyExpedientePredioChange);
+router.get('/:id/seguimiento', requirePermission('expedientes.read'), getExpedienteSeguimiento);
+router.post('/:id/seguimiento/materializar', requirePermission('expedientes.write'), materializeExpedienteSeguimiento);
+router.patch('/:id/seguimiento/actividades/:activityId', requirePermission('expedientes.write'), updateExpedienteSeguimientoActividad);
+router.post('/:id/seguimiento/actividades/:activityId/reabrir', requirePermission('expedientes.write'), reopenExpedienteSeguimientoActividad);
 router.post('/', createExpediente);
 router.patch('/:id', updateExpedienteHeader);
 router.post('/convertir-cotizacion', convertCotizacionToExpediente);

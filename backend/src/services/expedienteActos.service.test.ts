@@ -6,7 +6,7 @@ const now = new Date('2026-08-26T12:00:00.000Z');
 
 function database(input: { acts?: any[]; count?: Record<string, number>; status?: string; expedienteFound?: boolean; prior?: any } = {}) {
   const acts = input.acts || [];
-  const expediente = input.expedienteFound === false ? null : { id: 'exp-1', estatus: input.status || 'EN_PROCESO', version: 3, updated_at: now, actos: acts, _count: input.count || { etapas: 0, tareas: 0, expedienteDocumentos: 0, requisitos_docs: 0 } };
+  const expediente = input.expedienteFound === false ? null : { id: 'exp-1', organization_id: 'org-1', abogado_id: 'user-1', notaria_id: null, notaria: null, datos_operacion: null, predios: [], estatus: input.status || 'EN_PROCESO', version: 3, updated_at: now, actos: acts, _count: input.count || { etapas: 0, tareas: 0, expedienteDocumentos: 0, requisitos_docs: 0 } };
   const tx: any = {
     $executeRaw: vi.fn().mockResolvedValue(1),
     expediente: { findFirst: vi.fn().mockResolvedValueOnce(expediente ? { id: 'exp-1' } : null).mockResolvedValue(expediente), update: vi.fn().mockResolvedValue({ version: 4 }) },
@@ -19,6 +19,10 @@ function database(input: { acts?: any[]; count?: Record<string, number>; status?
     tipoActo: { findFirst: vi.fn().mockResolvedValue({ id: 'type-1', nombre: 'Compraventa' }) },
     configuracionActo: { findMany: vi.fn().mockResolvedValue([]) },
     catalogoArtefacto: { findMany: vi.fn().mockResolvedValue([]) },
+    expedienteSeguimientoActividad: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn(), upsert: vi.fn() },
+    expedienteSeguimientoDependencia: { findMany: vi.fn().mockResolvedValue([]), upsert: vi.fn() },
+    expedienteSeguimientoHistorial: { count: vi.fn().mockResolvedValue(0), create: vi.fn() },
+    organizationMembership: { findFirst: vi.fn().mockResolvedValue(null) },
     expedienteActividad: { create: vi.fn().mockResolvedValue({ id: 'activity-1' }) },
     auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-1' }) },
     domainEventOutbox: { create: vi.fn().mockResolvedValue({ id: 'event-1' }) },

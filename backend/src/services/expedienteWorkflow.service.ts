@@ -9,6 +9,7 @@ import {
 } from '../domain/expedienteAuthorization';
 import { requireActorContext, TenantContextError } from '../auth/actorContext';
 import { ExpedienteDocumentAppendixService } from './expedienteDocumentAppendix.service';
+import { ExpedienteSeguimientoService } from './expedienteSeguimiento.service';
 
 export interface TransicionPayload {
   expedienteId: string;
@@ -176,6 +177,11 @@ export class ExpedienteWorkflowService {
           rol: actorContext.role,
           permissions: actorContext.permissions,
         }, exp.id, payload.documentRevision || '', correlationId, payload.versionActual);
+        await new ExpedienteSeguimientoService(this.prisma).recordCanonicalSignatureInTransaction(tx, {
+          id: actorContext.userId,
+          organizationId: actorContext.organizationId,
+          sessionId: actorContext.sessionId,
+        }, exp.id, payload.fechaEfectiva!, correlationId);
       }
 
       // 7. Cerrar etapa actual e instanciar la nueva etapa operativa
