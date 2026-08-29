@@ -70,6 +70,16 @@ import {
   getExpedienteDocumentAppendix,
   syncExpedienteDocumentAppendix,
 } from '../controllers/expedienteDocuments.controller';
+import {
+  generateExpedienteArtifact,
+  getExpedienteArtifactUrl,
+  getExpedienteArtifacts,
+  materializeExpedienteArtifacts,
+  previewExpedienteArtifactGeneration,
+  uploadExp006Multer,
+  uploadExpedienteArtifact,
+  validateExpedienteArtifact,
+} from '../controllers/expedienteArtifacts.controller';
 
 const router = express.Router();
 router.param('id', requireExpedienteAccess);
@@ -95,6 +105,13 @@ router.get('/:id/seguimiento', requirePermission('expedientes.read'), getExpedie
 router.post('/:id/seguimiento/materializar', requirePermission('expedientes.write'), materializeExpedienteSeguimiento);
 router.patch('/:id/seguimiento/actividades/:activityId', requirePermission('expedientes.write'), updateExpedienteSeguimientoActividad);
 router.post('/:id/seguimiento/actividades/:activityId/reabrir', requirePermission('expedientes.write'), reopenExpedienteSeguimientoActividad);
+router.get('/:id/plantillas-formatos', requirePermission('documentos.read'), getExpedienteArtifacts);
+router.post('/:id/plantillas-formatos/materializar', requirePermission('documentos.write'), materializeExpedienteArtifacts);
+router.post('/:id/plantillas-formatos/:pendingId/generar/preview', requirePermission('ia.execute'), previewExpedienteArtifactGeneration);
+router.post('/:id/plantillas-formatos/:pendingId/generar', requirePermission('ia.execute'), generateExpedienteArtifact);
+router.post('/:id/plantillas-formatos/:pendingId/upload', requirePermission('documentos.write'), uploadExp006Multer.single('file'), uploadExpedienteArtifact);
+router.post('/:id/plantillas-formatos/:pendingId/validar', requirePermission('documentos.write'), validateExpedienteArtifact);
+router.get('/:id/plantillas-formatos/:pendingId/url', requirePermission('documentos.read'), getExpedienteArtifactUrl);
 router.post('/', createExpediente);
 router.patch('/:id', updateExpedienteHeader);
 router.post('/convertir-cotizacion', convertCotizacionToExpediente);

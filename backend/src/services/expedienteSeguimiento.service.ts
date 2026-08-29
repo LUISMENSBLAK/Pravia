@@ -7,6 +7,7 @@ import {
 } from '@prisma/client';
 import type { Request } from 'express';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { ExpedienteArtifactsService } from './expedienteArtifacts.service';
 import { dependencyGraphHasCycle, resolveOperationalActivityConfiguration } from './configurationCatalog.service';
 
 type Actor = NonNullable<Request['user']>;
@@ -299,6 +300,7 @@ export class ExpedienteSeguimientoService {
       const next = await tx.expedienteSeguimientoActividad.findUniqueOrThrow({ where: { id: activityId } });
       await this.recordChange(tx, actor, current, next, clean(input.razon), correlationId, input);
       await this.reevaluateDependencies(tx, actor, expedienteId, correlationId);
+      await new ExpedienteArtifactsService(this.prisma).reconcileContextChangeInTransaction(tx, actor, expedienteId, 'EXPEDIENTE_STAGE_CHANGE');
       return tx.expedienteSeguimientoActividad.findUniqueOrThrow({ where: { id: activityId } });
     }, { timeout: 20_000 });
   }
@@ -319,6 +321,7 @@ export class ExpedienteSeguimientoService {
       const next = await tx.expedienteSeguimientoActividad.findUniqueOrThrow({ where: { id: activityId } });
       await this.recordChange(tx, actor, current, next, reason, correlationId, { action: 'REOPEN' });
       await this.reevaluateDependencies(tx, actor, expedienteId, correlationId);
+      await new ExpedienteArtifactsService(this.prisma).reconcileContextChangeInTransaction(tx, actor, expedienteId, 'EXPEDIENTE_STAGE_REOPEN');
       return next;
     }, { timeout: 20_000 });
   }

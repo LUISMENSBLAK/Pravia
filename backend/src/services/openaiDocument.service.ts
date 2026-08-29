@@ -115,6 +115,73 @@ export interface AIUsageMetrics {
   escalamiento_utilizado: boolean;
 }
 
+export interface OperationalArtifactGenerationResult {
+  content: string;
+  missing_fields: string[];
+  conflicts: Array<{ field: string; values: string[]; sources: string[] }>;
+  usage: AIUsageMetrics;
+  model: string;
+}
+
+/**
+ * Genera contenido operativo con un conjunto cerrado de fuentes preparado por el backend.
+ * No acepta IDs ni fuentes elegidas por el cliente y prohíbe completar datos ausentes.
+ */
+export async function generateOperationalArtifactWithOpenAI(input: {
+  artifactName: string;
+  masterText: string;
+  structuredData: Record<string, unknown>;
+  currentPartyDocuments: Array<{ id: string; name: string; text: string }>;
+}): Promise<OperationalArtifactGenerationResult> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  const model = getOpenAIModelName();
+  const startedAt = Date.now();
+  if (!apiKey) throw new Error('La clave de API de OpenAI no está configurada.');
+  const closedSources = {
+    structured_party_data: input.structuredData,
+    current_party_documents: input.currentPartyDocuments.map((item) => ({ source_id: item.id, source_name: item.name, text: item.text })),
+  };
+  const response = await fetch('https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000)),
+    body: JSON.stringify({
+      model, store: false, max_output_tokens: 8192,
+      reasoning: { effort: getReasoningEffort() },
+      input: [{ role: 'user', content: [{ type: 'input_text', text: [
+        `Genera el contenido del formato notarial "${input.artifactName}" siguiendo el archivo maestro y usando EXCLUSIVAMENTE las fuentes cerradas entregadas.`,
+        'No inventes, infieras ni completes datos ausentes. Marca los faltantes y contradicciones para revisión humana. No afirmes que el documento está validado.',
+        `ARCHIVO MAESTRO:\n${input.masterText.slice(0, 80_000)}`,
+        `FUENTES CERRADAS DEL MISMO COMPARECIENTE:\n${JSON.stringify(closedSources)}`,
+      ].join('\n\n') }] }],
+      text: { format: { type: 'json_schema', name: 'exp006_operational_artifact', strict: true, schema: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          content: { type: 'string' },
+          missing_fields: { type: 'array', items: { type: 'string' } },
+          conflicts: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
+            field: { type: 'string' }, values: { type: 'array', items: { type: 'string' } }, sources: { type: 'array', items: { type: 'string' } },
+          }, required: ['field', 'values', 'sources'] } },
+        }, required: ['content', 'missing_fields', 'conflicts'],
+      } } },
+    }),
+  });
+  if (!response.ok) throw new Error(`OpenAI respondió HTTP ${response.status}.`);
+  const data: any = await response.json();
+  const output = (data.output || []).flatMap((item: any) => item.content || []);
+  const refusal = output.find((item: any) => item.type === 'refusal')?.refusal;
+  if (refusal) throw new Error('OpenAI rechazó la generación del formato.');
+  const text = output.filter((item: any) => item.type === 'output_text').map((item: any) => item.text || '').join('').trim();
+  if (!text) throw new Error('OpenAI no devolvió contenido para el formato.');
+  const parsed = JSON.parse(text);
+  return {
+    content: String(parsed.content || ''),
+    missing_fields: Array.isArray(parsed.missing_fields) ? parsed.missing_fields.map(String) : [],
+    conflicts: Array.isArray(parsed.conflicts) ? parsed.conflicts : [],
+    usage: buildUsageMetrics(data, model, startedAt, input.currentPartyDocuments.length + 1), model,
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS DETERMINÍSTICOS
 // ─────────────────────────────────────────────────────────────────────────────

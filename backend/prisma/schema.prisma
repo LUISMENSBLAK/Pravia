@@ -9,11 +9,11 @@ datasource db {
 }
 
 model Organization {
-  id                    String                   @id @default(uuid()) @db.Uuid
+  id                    String                         @id @default(uuid()) @db.Uuid
   name                  String
-  status                String                   @default("ACTIVE")
-  created_at            DateTime                 @default(now())
-  updated_at            DateTime                 @updatedAt
+  status                String                         @default("ACTIVE")
+  created_at            DateTime                       @default(now())
+  updated_at            DateTime                       @updatedAt
   memberships           OrganizationMembership[]
   sessions              AuthSession[]
   expedienteActos       ExpedienteActo[]
@@ -23,6 +23,8 @@ model Organization {
   expedienteActoPredios ExpedienteActoPredio[]
   predioDocumentos      PredioDocumento[]
   predioDatosFuente     PredioDatoFuente[]
+  exp006Pendientes      ExpedienteArtefactoPendiente[] @relation("Exp006PendingOrganization")
+  exp006Documentos      ExpedienteArtefactoDocumento[] @relation("Exp006DocumentOrganization")
 
   @@index([status])
   @@map("organizations")
@@ -47,114 +49,117 @@ model OrganizationMembership {
 }
 
 model User {
-  id                                     String                        @id @default(uuid()) @db.Uuid
-  email                                  String                        @unique
+  id                                     String                         @id @default(uuid()) @db.Uuid
+  email                                  String                         @unique
   password_hash                          String
   nombre                                 String
   apellido                               String
-  rol                                    Role                          @default(ABOGADO)
+  rol                                    Role                           @default(ABOGADO)
   avatar_url                             String?
-  activo                                 Boolean                       @default(true)
-  created_at                             DateTime                      @default(now())
-  updated_at                             DateTime                      @updatedAt
+  activo                                 Boolean                        @default(true)
+  created_at                             DateTime                       @default(now())
+  updated_at                             DateTime                       @updatedAt
   password_changed_at                    DateTime?
-  failed_login_attempts                  Int                           @default(0)
+  failed_login_attempts                  Int                            @default(0)
   locked_until                           DateTime?
   last_login_at                          DateTime?
-  requires_password_change               Boolean                       @default(true)
+  requires_password_change               Boolean                        @default(true)
   telefono                               String?
   aiUsageLogs                            AIUsageLog[]
-  assistantConversations                 AssistantConversation[]       @relation("AssistantConversationOwner")
-  assistantAttachments                   AssistantAttachment[]         @relation("AssistantAttachmentUploader")
+  assistantConversations                 AssistantConversation[]        @relation("AssistantConversationOwner")
+  assistantAttachments                   AssistantAttachment[]          @relation("AssistantAttachmentUploader")
   auditLogs                              AuditLog[]
   authSessions                           AuthSession[]
-  cargasTemporales                       CargaTemporalDocumento[]      @relation("CargaTemporalUsuario")
-  comparecienteAltaSessions              ComparecienteAltaSession[]    @relation("ComparecienteAltaSessionUsuario")
-  contactosComparecienteCreados          ComparecienteContacto[]       @relation("ContactoCreador")
-  datosFuenteConfirmados                 ComparecienteDatoFuente[]     @relation("DatoFuenteConfirmador")
-  comparecienteVinculosCreados           ComparecienteDocumento[]      @relation("ComparecienteDocCreador")
-  comparecienteDocsValidados             ComparecienteDocumento[]      @relation("ComparecienteDocValidador")
-  domiciliosComparecienteCreados         ComparecienteDomicilio[]      @relation("DomicilioCreador")
-  identificacionesComparecienteCreadas   ComparecienteIdentificacion[] @relation("IdentificacionCreador")
-  identificacionesComparecienteValidadas ComparecienteIdentificacion[] @relation("IdentificacionValidador")
-  comparecientesCreados                  Compareciente[]               @relation("ComparecienteCreador")
-  complianceDecisions                    ComplianceDecision[]          @relation("ComplianceDecisionActor")
-  complianceEvidenceAdded                ComplianceEvidence[]          @relation("ComplianceEvidenceAdder")
-  complianceReviewsCreated               ComplianceReview[]            @relation("ComplianceReviewCreator")
-  complianceReviewsReviewed              ComplianceReview[]            @relation("ComplianceReviewReviewer")
-  complianceRulesApproved                ComplianceRuleSet[]           @relation("ComplianceRuleApprover")
-  complianceRulesCreated                 ComplianceRuleSet[]           @relation("ComplianceRuleCreator")
-  comprobantesAnulados                   ComprobanteFinanciero[]       @relation("ComprobanteAnulador")
-  comprobantesRegistrados                ComprobanteFinanciero[]       @relation("ComprobanteRegistrador")
-  comunicacionVinculosCreados            ComunicacionDocumento[]       @relation("ComunicacionDocCreador")
+  cargasTemporales                       CargaTemporalDocumento[]       @relation("CargaTemporalUsuario")
+  comparecienteAltaSessions              ComparecienteAltaSession[]     @relation("ComparecienteAltaSessionUsuario")
+  contactosComparecienteCreados          ComparecienteContacto[]        @relation("ContactoCreador")
+  datosFuenteConfirmados                 ComparecienteDatoFuente[]      @relation("DatoFuenteConfirmador")
+  comparecienteVinculosCreados           ComparecienteDocumento[]       @relation("ComparecienteDocCreador")
+  comparecienteDocsValidados             ComparecienteDocumento[]       @relation("ComparecienteDocValidador")
+  domiciliosComparecienteCreados         ComparecienteDomicilio[]       @relation("DomicilioCreador")
+  identificacionesComparecienteCreadas   ComparecienteIdentificacion[]  @relation("IdentificacionCreador")
+  identificacionesComparecienteValidadas ComparecienteIdentificacion[]  @relation("IdentificacionValidador")
+  comparecientesCreados                  Compareciente[]                @relation("ComparecienteCreador")
+  complianceDecisions                    ComplianceDecision[]           @relation("ComplianceDecisionActor")
+  complianceEvidenceAdded                ComplianceEvidence[]           @relation("ComplianceEvidenceAdder")
+  complianceReviewsCreated               ComplianceReview[]             @relation("ComplianceReviewCreator")
+  complianceReviewsReviewed              ComplianceReview[]             @relation("ComplianceReviewReviewer")
+  complianceRulesApproved                ComplianceRuleSet[]            @relation("ComplianceRuleApprover")
+  complianceRulesCreated                 ComplianceRuleSet[]            @relation("ComplianceRuleCreator")
+  comprobantesAnulados                   ComprobanteFinanciero[]        @relation("ComprobanteAnulador")
+  comprobantesRegistrados                ComprobanteFinanciero[]        @relation("ComprobanteRegistrador")
+  comunicacionVinculosCreados            ComunicacionDocumento[]        @relation("ComunicacionDocCreador")
   comunicaciones                         Comunicacion[]
-  conciliacionesRegistradas              ConciliacionFinanciera[]      @relation("ConciliacionActor")
-  cotizacionVinculosCreados              CotizacionDocumento[]         @relation("CotizacionDocCreador")
+  conciliacionesRegistradas              ConciliacionFinanciera[]       @relation("ConciliacionActor")
+  cotizacionVinculosCreados              CotizacionDocumento[]          @relation("CotizacionDocCreador")
   seguimientosCotizaciones               CotizacionSeguimiento[]
   cotizaciones                           Cotizacion[]
-  cuentasFinancierasCreadas              CuentaFinanciera[]            @relation("CuentaFinancieraCreador")
+  cuentasFinancierasCreadas              CuentaFinanciera[]             @relation("CuentaFinancieraCreador")
   documentosSubidos                      Documento[]
-  outboxEventosDisparados                DomainEventOutbox[]           @relation("OutboxActor")
-  eventosCancelados                      EventoAgenda[]                @relation("EventoCanceladoPor")
-  eventos                                EventoAgenda[]                @relation("EventoResponsable")
+  outboxEventosDisparados                DomainEventOutbox[]            @relation("OutboxActor")
+  eventosCancelados                      EventoAgenda[]                 @relation("EventoCanceladoPor")
+  eventos                                EventoAgenda[]                 @relation("EventoResponsable")
   expedienteActividades                  ExpedienteActividad[]
-  expedienteComparecientesCreados        ExpedienteCompareciente[]     @relation("ExpedienteComparecienteCreador")
-  expedienteComparecientesValidados      ExpedienteCompareciente[]     @relation("ExpedienteComparecienteValidador")
-  expedienteVinculosCreados              ExpedienteDocumento[]         @relation("ExpedienteDocCreador")
-  expedienteSnapshotsCongelados          ExpedienteDocumentoSnapshot[] @relation("ExpedienteSnapshotActor")
-  entregasRegistradas                    ExpedienteEntrega[]           @relation("ExpedienteEntregaRegistrador")
-  expedienteRepresentacionesCreadas      ExpedienteRepresentacion[]    @relation("ExpedienteRepresentacionCreador")
-  expedienteRepresentacionesValidadas    ExpedienteRepresentacion[]    @relation("ExpedienteRepresentacionValidador")
-  expedientes                            Expediente[]                  @relation("ExpedienteAbogado")
-  expedientesArchivados                  Expediente[]                  @relation("ExpedienteArchivedBy")
-  expedientesCreados                     Expediente[]                  @relation("ExpedienteCreador")
-  expedienteActosCreados                 ExpedienteActo[]              @relation("ExpedienteActoCreador")
-  expedienteActosRetirados               ExpedienteActo[]              @relation("ExpedienteActoRetirador")
-  prediosCreados                         Predio[]                      @relation("PredioCreador")
-  prediosActualizados                    Predio[]                      @relation("PredioActualizador")
-  expedientePrediosCreados               ExpedientePredio[]            @relation("ExpedientePredioCreador")
-  expedientePrediosRetirados             ExpedientePredio[]            @relation("ExpedientePredioRetirador")
-  predioDocumentosCreados                PredioDocumento[]             @relation("PredioDocumentoCreador")
-  predioDocumentosRetirados              PredioDocumento[]             @relation("PredioDocumentoRetirador")
-  predioDatosFuenteDecididos             PredioDatoFuente[]            @relation("PredioDatoFuenteDecisor")
-  expedientesGestor                      Expediente[]                  @relation("ExpedienteGestor")
-  flujoVersionesCreadas                  FlujoVersion[]                @relation("FlujoVersionCreador")
-  formularioVersionesCreadas             FormularioVersion[]           @relation("FormularioVersionCreador")
-  honorariosReconocidos                  HonorarioGenerado[]           @relation("HonorarioGeneradoActor")
-  honorariosResponsable                  HonorarioGenerado[]           @relation("HonorarioGeneradoResponsable")
-  metasHonorarioCreadas                  MetaHonorario[]               @relation("MetaHonorarioCreador")
-  metasHonorario                         MetaHonorario[]               @relation("MetaHonorarioUsuario")
-  movimientoVinculosCreados              MovimientoDocumento[]         @relation("MovimientoDocCreador")
-  movimientosAplicados                   MovimientoFinanciero[]        @relation("MovimientoAplicado")
-  movimientosCancelados                  MovimientoFinanciero[]        @relation("MovimientoCancelado")
-  movimientosCapturados                  MovimientoFinanciero[]        @relation("MovimientoCapturado")
-  movimientosResponsable                 MovimientoFinanciero[]        @relation("MovimientoResponsable")
-  movimientosRevertidos                  MovimientoFinanciero[]        @relation("MovimientoRevertido")
-  movimientosValidados                   MovimientoFinanciero[]        @relation("MovimientoValidado")
+  expedienteComparecientesCreados        ExpedienteCompareciente[]      @relation("ExpedienteComparecienteCreador")
+  expedienteComparecientesValidados      ExpedienteCompareciente[]      @relation("ExpedienteComparecienteValidador")
+  expedienteVinculosCreados              ExpedienteDocumento[]          @relation("ExpedienteDocCreador")
+  expedienteSnapshotsCongelados          ExpedienteDocumentoSnapshot[]  @relation("ExpedienteSnapshotActor")
+  entregasRegistradas                    ExpedienteEntrega[]            @relation("ExpedienteEntregaRegistrador")
+  expedienteRepresentacionesCreadas      ExpedienteRepresentacion[]     @relation("ExpedienteRepresentacionCreador")
+  expedienteRepresentacionesValidadas    ExpedienteRepresentacion[]     @relation("ExpedienteRepresentacionValidador")
+  expedientes                            Expediente[]                   @relation("ExpedienteAbogado")
+  expedientesArchivados                  Expediente[]                   @relation("ExpedienteArchivedBy")
+  expedientesCreados                     Expediente[]                   @relation("ExpedienteCreador")
+  expedienteActosCreados                 ExpedienteActo[]               @relation("ExpedienteActoCreador")
+  expedienteActosRetirados               ExpedienteActo[]               @relation("ExpedienteActoRetirador")
+  prediosCreados                         Predio[]                       @relation("PredioCreador")
+  prediosActualizados                    Predio[]                       @relation("PredioActualizador")
+  expedientePrediosCreados               ExpedientePredio[]             @relation("ExpedientePredioCreador")
+  exp006PendientesCreados                ExpedienteArtefactoPendiente[] @relation("Exp006PendingCreator")
+  exp006PendientesValidados              ExpedienteArtefactoPendiente[] @relation("Exp006PendingValidator")
+  exp006DocumentosCreados                ExpedienteArtefactoDocumento[] @relation("Exp006DocumentCreator")
+  expedientePrediosRetirados             ExpedientePredio[]             @relation("ExpedientePredioRetirador")
+  predioDocumentosCreados                PredioDocumento[]              @relation("PredioDocumentoCreador")
+  predioDocumentosRetirados              PredioDocumento[]              @relation("PredioDocumentoRetirador")
+  predioDatosFuenteDecididos             PredioDatoFuente[]             @relation("PredioDatoFuenteDecisor")
+  expedientesGestor                      Expediente[]                   @relation("ExpedienteGestor")
+  flujoVersionesCreadas                  FlujoVersion[]                 @relation("FlujoVersionCreador")
+  formularioVersionesCreadas             FormularioVersion[]            @relation("FormularioVersionCreador")
+  honorariosReconocidos                  HonorarioGenerado[]            @relation("HonorarioGeneradoActor")
+  honorariosResponsable                  HonorarioGenerado[]            @relation("HonorarioGeneradoResponsable")
+  metasHonorarioCreadas                  MetaHonorario[]                @relation("MetaHonorarioCreador")
+  metasHonorario                         MetaHonorario[]                @relation("MetaHonorarioUsuario")
+  movimientoVinculosCreados              MovimientoDocumento[]          @relation("MovimientoDocCreador")
+  movimientosAplicados                   MovimientoFinanciero[]         @relation("MovimientoAplicado")
+  movimientosCancelados                  MovimientoFinanciero[]         @relation("MovimientoCancelado")
+  movimientosCapturados                  MovimientoFinanciero[]         @relation("MovimientoCapturado")
+  movimientosResponsable                 MovimientoFinanciero[]         @relation("MovimientoResponsable")
+  movimientosRevertidos                  MovimientoFinanciero[]         @relation("MovimientoRevertido")
+  movimientosValidados                   MovimientoFinanciero[]         @relation("MovimientoValidado")
   notas                                  Nota[]
-  notificationsCreated                   Notification[]                @relation("NotificationCreator")
-  notifications                          Notification[]                @relation("NotificationRecipient")
+  notificationsCreated                   Notification[]                 @relation("NotificationCreator")
+  notifications                          Notification[]                 @relation("NotificationRecipient")
   passwordResetTokens                    PasswordResetToken[]
-  instrumentosMoralCreados               PersonaMoralInstrumento[]     @relation("InstrumentoCreador")
-  instrumentosMoralValidados             PersonaMoralInstrumento[]     @relation("InstrumentoValidador")
-  representantesCorporativosCreados      PersonaMoralRepresentante[]   @relation("RepresentanteCorporativoCreador")
-  plantillaDocVersionesCreadas           PlantillaDocumentalVersion[]  @relation("PlantillaDocumentalVersionCreador")
-  prospectoVinculosCreados               ProspectoDocumento[]          @relation("ProspectoDocCreador")
+  instrumentosMoralCreados               PersonaMoralInstrumento[]      @relation("InstrumentoCreador")
+  instrumentosMoralValidados             PersonaMoralInstrumento[]      @relation("InstrumentoValidador")
+  representantesCorporativosCreados      PersonaMoralRepresentante[]    @relation("RepresentanteCorporativoCreador")
+  plantillaDocVersionesCreadas           PlantillaDocumentalVersion[]   @relation("PlantillaDocumentalVersionCreador")
+  prospectoVinculosCreados               ProspectoDocumento[]           @relation("ProspectoDocCreador")
   seguimientosProspectos                 ProspectoSeguimiento[]
-  archivedProspectos                     Prospecto[]                   @relation("ProspectoArchivedBy")
+  archivedProspectos                     Prospecto[]                    @relation("ProspectoArchivedBy")
   prospectos                             Prospecto[]
-  requisitoVinculosCreados               RequisitoDocumentoVinculo[]   @relation("RequisitoDocCreador")
-  tareasAsignadas                        Tarea[]                       @relation("TareaAsignado")
-  tareasCreadas                          Tarea[]                       @relation("TareaCreador")
-  tramitesPostfirmaGestionados           TareaExterna[]                @relation("TareaExternaGestor")
-  transaccionesBancoImportadas           TransaccionEstadoCuenta[]     @relation("TransaccionBancoImportador")
-  invitationsAccepted                    UserInvitation[]              @relation("InvitationAcceptedUser")
-  invitationsCreated                     UserInvitation[]              @relation("InvitationCreator")
-  calculosISRCreados                     CalculoISR[]                  @relation("CalculoISRCreador")
-  calculosISRActualizados                CalculoISR[]                  @relation("CalculoISRActualizador")
-  calculosISRVersiones                   CalculoISRVersion[]           @relation("CalculoISRVersionActor")
-  calculosISRDocumentos                  CalculoISRDocumento[]         @relation("CalculoISRDocumentoActor")
-  calculosISRPropuestasRevisadas         CalculoISRPropuesta[]         @relation("CalculoISRPropuestaRevisor")
+  requisitoVinculosCreados               RequisitoDocumentoVinculo[]    @relation("RequisitoDocCreador")
+  tareasAsignadas                        Tarea[]                        @relation("TareaAsignado")
+  tareasCreadas                          Tarea[]                        @relation("TareaCreador")
+  tramitesPostfirmaGestionados           TareaExterna[]                 @relation("TareaExternaGestor")
+  transaccionesBancoImportadas           TransaccionEstadoCuenta[]      @relation("TransaccionBancoImportador")
+  invitationsAccepted                    UserInvitation[]               @relation("InvitationAcceptedUser")
+  invitationsCreated                     UserInvitation[]               @relation("InvitationCreator")
+  calculosISRCreados                     CalculoISR[]                   @relation("CalculoISRCreador")
+  calculosISRActualizados                CalculoISR[]                   @relation("CalculoISRActualizador")
+  calculosISRVersiones                   CalculoISRVersion[]            @relation("CalculoISRVersionActor")
+  calculosISRDocumentos                  CalculoISRDocumento[]          @relation("CalculoISRDocumentoActor")
+  calculosISRPropuestasRevisadas         CalculoISRPropuesta[]          @relation("CalculoISRPropuestaRevisor")
   preference                             UserPreference?
   organizationMemberships                OrganizationMembership[]
 
@@ -795,44 +800,46 @@ model CatalogoCarpeta {
 }
 
 model CatalogoArtefacto {
-  id                 String                     @id @default(uuid()) @db.Uuid
-  organization_id    String                     @db.Uuid
+  id                 String                         @id @default(uuid()) @db.Uuid
+  organization_id    String                         @db.Uuid
   tipo               CatalogoArtefactoTipo
   propietario_tipo   CatalogoPropietarioTipo
-  notaria_id         String?                    @db.Uuid
-  institucion_id     String?                    @db.Uuid
-  carpeta_id         String?                    @db.Uuid
+  notaria_id         String?                        @db.Uuid
+  institucion_id     String?                        @db.Uuid
+  carpeta_id         String?                        @db.Uuid
   nombre             String
   descripcion        String?
-  activo             Boolean                    @default(true)
-  creado_por_id      String                     @db.Uuid
-  actualizado_por_id String                     @db.Uuid
-  created_at         DateTime                   @default(now())
-  updated_at         DateTime                   @updatedAt
-  carpeta            CatalogoCarpeta?           @relation(fields: [carpeta_id], references: [id], onDelete: Restrict)
+  activo             Boolean                        @default(true)
+  creado_por_id      String                         @db.Uuid
+  actualizado_por_id String                         @db.Uuid
+  created_at         DateTime                       @default(now())
+  updated_at         DateTime                       @updatedAt
+  carpeta            CatalogoCarpeta?               @relation(fields: [carpeta_id], references: [id], onDelete: Restrict)
   versiones          CatalogoArtefactoVersion[]
   actos              CatalogoArtefactoActo[]
   reglas             CatalogoArtefactoRegla[]
+  pendientesExp006   ExpedienteArtefactoPendiente[] @relation("Exp006PendingArtifact")
 
   @@index([organization_id, propietario_tipo, notaria_id, institucion_id, carpeta_id], map: "idx_catalogo_artefactos_explorer")
   @@map("catalogo_artefactos")
 }
 
 model CatalogoArtefactoVersion {
-  id              String            @id @default(uuid()) @db.Uuid
-  organization_id String            @db.Uuid
-  artefacto_id    String            @db.Uuid
-  version         Int
-  nombre_original String
-  storage_key     String
-  mime_type       String
-  size_bytes      Int
-  checksum_sha256 String
-  origen          String
-  activa          Boolean           @default(true)
-  creado_por_id   String            @db.Uuid
-  created_at      DateTime          @default(now())
-  artefacto       CatalogoArtefacto @relation(fields: [artefacto_id], references: [id], onDelete: Cascade)
+  id               String                         @id @default(uuid()) @db.Uuid
+  organization_id  String                         @db.Uuid
+  artefacto_id     String                         @db.Uuid
+  version          Int
+  nombre_original  String
+  storage_key      String
+  mime_type        String
+  size_bytes       Int
+  checksum_sha256  String
+  origen           String
+  activa           Boolean                        @default(true)
+  creado_por_id    String                         @db.Uuid
+  created_at       DateTime                       @default(now())
+  artefacto        CatalogoArtefacto              @relation(fields: [artefacto_id], references: [id], onDelete: Cascade)
+  pendientesExp006 ExpedienteArtefactoPendiente[] @relation("Exp006PendingMasterVersion")
 
   @@unique([artefacto_id, version], map: "uq_catalogo_artefacto_version")
   @@unique([organization_id, storage_key], map: "uq_catalogo_storage_key_org")
@@ -855,21 +862,22 @@ model CatalogoArtefactoActo {
 }
 
 model CatalogoArtefactoRegla {
-  id                        String                @id @default(uuid()) @db.Uuid
-  organization_id           String                @db.Uuid
-  artefacto_id              String                @db.Uuid
+  id                        String                         @id @default(uuid()) @db.Uuid
+  organization_id           String                         @db.Uuid
+  artefacto_id              String                         @db.Uuid
   tipo_persona              TipoPersona?
-  caracter_compareciente_id String?               @db.Uuid
-  etapa_requerida_id        String?               @db.Uuid
-  momento_limite_etapa_id   String?               @db.Uuid
-  obligatoria               Boolean               @default(false)
-  multiplicidad             CatalogoMultiplicidad @default(EXPEDIENTE)
+  caracter_compareciente_id String?                        @db.Uuid
+  etapa_requerida_id        String?                        @db.Uuid
+  momento_limite_etapa_id   String?                        @db.Uuid
+  obligatoria               Boolean                        @default(false)
+  multiplicidad             CatalogoMultiplicidad          @default(EXPEDIENTE)
   cantidad_fija             Int?
   condiciones_json          Json?
-  activa                    Boolean               @default(true)
-  created_at                DateTime              @default(now())
-  updated_at                DateTime              @updatedAt
-  artefacto                 CatalogoArtefacto     @relation(fields: [artefacto_id], references: [id], onDelete: Cascade)
+  activa                    Boolean                        @default(true)
+  created_at                DateTime                       @default(now())
+  updated_at                DateTime                       @updatedAt
+  artefacto                 CatalogoArtefacto              @relation(fields: [artefacto_id], references: [id], onDelete: Cascade)
+  pendientesExp006          ExpedienteArtefactoPendiente[] @relation("Exp006PendingRule")
 
   @@index([organization_id, artefacto_id], map: "idx_catalogo_reglas_tenant_artefacto")
   @@index([caracter_compareciente_id], map: "idx_catalogo_reglas_caracter_fk")
@@ -893,45 +901,45 @@ model ChecklistItem {
 }
 
 model Expediente {
-  id                         String                       @id @default(uuid()) @db.Uuid
-  organization_id            String?                      @db.Uuid
-  numero_pravia              String                       @unique
+  id                         String                         @id @default(uuid()) @db.Uuid
+  organization_id            String?                        @db.Uuid
+  numero_pravia              String                         @unique
   numero_notaria             String?
-  tipo_acto_id               String?                      @db.Uuid
-  abogado_id                 String                       @db.Uuid
-  creador_id                 String                       @db.Uuid
-  cotizacion_id              String?                      @unique @db.Uuid
+  tipo_acto_id               String?                        @db.Uuid
+  abogado_id                 String                         @db.Uuid
+  creador_id                 String                         @db.Uuid
+  cotizacion_id              String?                        @unique @db.Uuid
   cliente_alias              String?
-  fecha_apertura             DateTime                     @default(now())
-  estatus                    ExpedienteEstatus            @default(ABIERTO)
+  fecha_apertura             DateTime                       @default(now())
+  estatus                    ExpedienteEstatus              @default(ABIERTO)
   archived_at                DateTime?
-  archived_by                String?                      @db.Uuid
-  avance_documental          Int                          @default(0)
-  avance_financiero          Int                          @default(0)
-  avance_general             Int                          @default(0)
-  avance_operativo           Int                          @default(0)
-  created_at                 DateTime                     @default(now())
+  archived_by                String?                        @db.Uuid
+  avance_documental          Int                            @default(0)
+  avance_financiero          Int                            @default(0)
+  avance_general             Int                            @default(0)
+  avance_operativo           Int                            @default(0)
+  created_at                 DateTime                       @default(now())
   datos_operacion            Json?
   descripcion                String?
-  etapa_actual_nombre        String?                      @default("Apertura de Expediente")
-  expediente_etapa_actual_id String?                      @unique @db.Uuid
+  etapa_actual_nombre        String?                        @default("Apertura de Expediente")
+  expediente_etapa_actual_id String?                        @unique @db.Uuid
   fecha_entrega_cliente      DateTime?
   fecha_estimada_firma       DateTime?
   fecha_limite_accion        DateTime?
   fecha_real_firma           DateTime?
-  flujo_version_id           String?                      @db.Uuid
-  formulario_version_id      String?                      @db.Uuid
-  gestor_id                  String?                      @db.Uuid
+  flujo_version_id           String?                        @db.Uuid
+  formulario_version_id      String?                        @db.Uuid
+  gestor_id                  String?                        @db.Uuid
   motivo_archivo             String?
-  notaria_id                 String?                      @db.Uuid
-  plantilla_doc_version_id   String?                      @db.Uuid
+  notaria_id                 String?                        @db.Uuid
+  plantilla_doc_version_id   String?                        @db.Uuid
   proxima_accion             String?
   subtipo_acto               String?
-  updated_at                 DateTime                     @default(now()) @updatedAt
-  valor_operacion            Decimal?                     @db.Decimal(14, 2)
-  version                    Int                          @default(1)
+  updated_at                 DateTime                       @default(now()) @updatedAt
+  valor_operacion            Decimal?                       @db.Decimal(14, 2)
+  version                    Int                            @default(1)
   aiUsageLogs                AIUsageLog[]
-  comparecienteAltaSessions  ComparecienteAltaSession[]   @relation("ComparecienteAltaSessionOrigenExpediente")
+  comparecienteAltaSessions  ComparecienteAltaSession[]     @relation("ComparecienteAltaSessionOrigenExpediente")
   complianceReviews          ComplianceReview[]
   comunicaciones             Comunicacion[]
   documentos                 Documento[]
@@ -944,26 +952,28 @@ model Expediente {
   documentoSnapshot          ExpedienteDocumentoSnapshot?
   entrega                    ExpedienteEntrega?
   estatus_logs               ExpedienteEstatus_Log[]
-  etapas                     ExpedienteEtapa[]            @relation("ExpedienteEtapasLista")
+  etapas                     ExpedienteEtapa[]              @relation("ExpedienteEtapasLista")
   expedienteRepresentaciones ExpedienteRepresentacion[]
   requisitos_docs            ExpedienteRequisitoDoc[]
-  abogado                    User                         @relation("ExpedienteAbogado", fields: [abogado_id], references: [id])
-  archived_by_user           User?                        @relation("ExpedienteArchivedBy", fields: [archived_by], references: [id])
-  cotizacion                 Cotizacion?                  @relation(fields: [cotizacion_id], references: [id], onDelete: Restrict)
-  creador                    User                         @relation("ExpedienteCreador", fields: [creador_id], references: [id])
-  etapaActual                ExpedienteEtapa?             @relation("ExpedienteEtapaActual", fields: [expediente_etapa_actual_id], references: [id])
-  flujoVersion               FlujoVersion?                @relation(fields: [flujo_version_id], references: [id])
-  formularioVersion          FormularioVersion?           @relation(fields: [formulario_version_id], references: [id])
-  gestor                     User?                        @relation("ExpedienteGestor", fields: [gestor_id], references: [id])
-  notaria                    Notaria?                     @relation(fields: [notaria_id], references: [id])
-  plantillaDocVersion        PlantillaDocumentalVersion?  @relation(fields: [plantilla_doc_version_id], references: [id])
-  tipo_acto                  TipoActo?                    @relation(fields: [tipo_acto_id], references: [id])
+  abogado                    User                           @relation("ExpedienteAbogado", fields: [abogado_id], references: [id])
+  archived_by_user           User?                          @relation("ExpedienteArchivedBy", fields: [archived_by], references: [id])
+  cotizacion                 Cotizacion?                    @relation(fields: [cotizacion_id], references: [id], onDelete: Restrict)
+  creador                    User                           @relation("ExpedienteCreador", fields: [creador_id], references: [id])
+  etapaActual                ExpedienteEtapa?               @relation("ExpedienteEtapaActual", fields: [expediente_etapa_actual_id], references: [id])
+  flujoVersion               FlujoVersion?                  @relation(fields: [flujo_version_id], references: [id])
+  formularioVersion          FormularioVersion?             @relation(fields: [formulario_version_id], references: [id])
+  gestor                     User?                          @relation("ExpedienteGestor", fields: [gestor_id], references: [id])
+  notaria                    Notaria?                       @relation(fields: [notaria_id], references: [id])
+  plantillaDocVersion        PlantillaDocumentalVersion?    @relation(fields: [plantilla_doc_version_id], references: [id])
+  tipo_acto                  TipoActo?                      @relation(fields: [tipo_acto_id], references: [id])
   honorariosGenerados        HonorarioGenerado[]
   movimientosFinancieros     MovimientoFinanciero[]
   pagos                      Pago[]
   tareas                     Tarea[]
   tareas_externas            TareaExterna[]
   calculosISR                CalculoISR[]
+  artefactosPendientes       ExpedienteArtefactoPendiente[] @relation("Exp006PendingExpediente")
+  artefactosDocumentos       ExpedienteArtefactoDocumento[] @relation("Exp006DocumentExpediente")
 
   @@unique([id, organization_id], map: "uq_expedientes_id_org")
   @@index([abogado_id], map: "idx_expedientes_abogado_fk")
@@ -979,29 +989,30 @@ model Expediente {
 }
 
 model ExpedienteActo {
-  id                      String                    @id @default(uuid()) @db.Uuid
-  organization_id         String                    @db.Uuid
-  expediente_id           String                    @db.Uuid
-  tipo_acto_id            String                    @db.Uuid
+  id                      String                         @id @default(uuid()) @db.Uuid
+  organization_id         String                         @db.Uuid
+  expediente_id           String                         @db.Uuid
+  tipo_acto_id            String                         @db.Uuid
   origen                  ExpedienteActoOrigen
-  estatus                 ExpedienteActoEstatus     @default(ACTIVO)
-  source_cotizacion_id    String?                   @db.Uuid
+  estatus                 ExpedienteActoEstatus          @default(ACTIVO)
+  source_cotizacion_id    String?                        @db.Uuid
   idempotency_key         String?
   removal_idempotency_key String?
-  created_by              String                    @db.Uuid
-  created_at              DateTime                  @default(now())
-  updated_at              DateTime                  @default(now()) @updatedAt
+  created_by              String                         @db.Uuid
+  created_at              DateTime                       @default(now())
+  updated_at              DateTime                       @default(now()) @updatedAt
   removed_at              DateTime?
-  removed_by              String?                   @db.Uuid
+  removed_by              String?                        @db.Uuid
   removed_reason          String?
-  organization            Organization              @relation(fields: [organization_id], references: [id], onDelete: Restrict)
-  expediente              Expediente                @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
-  tipo_acto              TipoActo                  @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
-  source_cotizacion       Cotizacion?               @relation(fields: [source_cotizacion_id], references: [id], onDelete: Restrict)
-  creador                 User                      @relation("ExpedienteActoCreador", fields: [created_by], references: [id], onDelete: Restrict)
-  retirado_por            User?                     @relation("ExpedienteActoRetirador", fields: [removed_by], references: [id], onDelete: Restrict)
+  organization            Organization                   @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  expediente              Expediente                     @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  tipo_acto              TipoActo                       @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
+  source_cotizacion       Cotizacion?                    @relation(fields: [source_cotizacion_id], references: [id], onDelete: Restrict)
+  creador                 User                           @relation("ExpedienteActoCreador", fields: [created_by], references: [id], onDelete: Restrict)
+  retirado_por            User?                          @relation("ExpedienteActoRetirador", fields: [removed_by], references: [id], onDelete: Restrict)
   comparecientes          ExpedienteCompareciente[]
   predios                 ExpedienteActoPredio[]
+  artefactosPendientes    ExpedienteArtefactoPendiente[] @relation("Exp006PendingAct")
 
   @@unique([organization_id, expediente_id, idempotency_key], map: "uq_expediente_actos_idempotency")
   @@unique([organization_id, expediente_id, removal_idempotency_key], map: "uq_expediente_actos_removal_idempotency")
@@ -1094,6 +1105,82 @@ model ExpedienteSeguimientoHistorial {
   @@index([actividad_id, created_at], map: "idx_exp_seguimiento_hist_actividad")
   @@index([actor_user_id], map: "idx_exp_seguimiento_hist_actor_fk")
   @@map("expediente_seguimiento_historial")
+}
+
+/// Instancia operativa, no editable como regla, resuelta desde una regla CFG-002.
+/// Conserva referencias maestras y un snapshot explicativo sin duplicar el catálogo.
+model ExpedienteArtefactoPendiente {
+  id                   String                             @id @default(uuid()) @db.Uuid
+  organization_id      String                             @db.Uuid
+  expediente_id        String                             @db.Uuid
+  expediente_acto_id   String?                            @db.Uuid
+  artefacto_id         String                             @db.Uuid
+  regla_id             String                             @db.Uuid
+  artefacto_version_id String                             @db.Uuid
+  sujeto_tipo          ExpedienteArtefactoSujeto
+  sujeto_id            String?                            @db.Uuid
+  ordinal              Int                                @default(1)
+  identity_key         String                             @db.VarChar(320)
+  estado               ExpedienteArtefactoPendienteEstado @default(PENDIENTE)
+  obligatoria          Boolean                            @default(false)
+  explicacion_snapshot Json
+  source_revision      String                             @db.VarChar(128)
+  version              Int                                @default(1)
+  en_alcance           Boolean                            @default(true)
+  requiere_revision    Boolean                            @default(false)
+  motivo_revision      String?
+  current_document_id  String?                            @db.Uuid
+  validado_por_id      String?                            @db.Uuid
+  validado_at          DateTime?
+  created_by           String                             @db.Uuid
+  created_at           DateTime                           @default(now())
+  updated_at           DateTime                           @default(now()) @updatedAt
+  organization         Organization                       @relation("Exp006PendingOrganization", fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  expediente           Expediente                         @relation("Exp006PendingExpediente", fields: [expediente_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  expedienteActo       ExpedienteActo?                    @relation("Exp006PendingAct", fields: [expediente_acto_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  artefacto            CatalogoArtefacto                  @relation("Exp006PendingArtifact", fields: [artefacto_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  regla                CatalogoArtefactoRegla             @relation("Exp006PendingRule", fields: [regla_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  artefactoVersion     CatalogoArtefactoVersion           @relation("Exp006PendingMasterVersion", fields: [artefacto_version_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  currentDocument      Documento?                         @relation("Exp006PendingCurrentDocument", fields: [current_document_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  validatedBy          User?                              @relation("Exp006PendingValidator", fields: [validado_por_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  createdBy            User                               @relation("Exp006PendingCreator", fields: [created_by], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  documentos           ExpedienteArtefactoDocumento[]     @relation("Exp006PendingDocuments")
+
+  @@unique([organization_id, expediente_id, identity_key], map: "uq_exp006_pending_identity")
+  @@index([organization_id, expediente_id, en_alcance, estado], map: "idx_exp006_pending_case_status")
+  @@index([organization_id, sujeto_tipo, sujeto_id], map: "idx_exp006_pending_subject")
+  @@index([regla_id], map: "idx_exp006_pending_rule")
+  @@index([artefacto_version_id], map: "idx_exp006_pending_master_version")
+  @@index([current_document_id], map: "idx_exp006_pending_current_document")
+  @@map("expediente_artefactos_pendientes")
+}
+
+/// Historial inmutable de resultados obtenidos para un pendiente EXP-006.
+/// El archivo vive en Documento/Storage canónicos; aquí sólo se conserva el vínculo y procedencia.
+model ExpedienteArtefactoDocumento {
+  id              String                       @id @default(uuid()) @db.Uuid
+  organization_id String                       @db.Uuid
+  expediente_id   String                       @db.Uuid
+  pendiente_id    String                       @db.Uuid
+  documento_id    String                       @db.Uuid
+  via             ExpedienteArtefactoVia
+  source_manifest Json?
+  provenance      Json
+  source_revision String                       @db.VarChar(128)
+  idempotency_key String                       @db.VarChar(160)
+  vigente         Boolean                      @default(true)
+  created_by      String                       @db.Uuid
+  created_at      DateTime                     @default(now())
+  organization    Organization                 @relation("Exp006DocumentOrganization", fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  expediente      Expediente                   @relation("Exp006DocumentExpediente", fields: [expediente_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  pendiente       ExpedienteArtefactoPendiente @relation("Exp006PendingDocuments", fields: [pendiente_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  documento       Documento                    @relation("Exp006ArtifactDocument", fields: [documento_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  createdBy       User                         @relation("Exp006DocumentCreator", fields: [created_by], references: [id], onDelete: Restrict, onUpdate: NoAction)
+
+  @@unique([organization_id, pendiente_id, idempotency_key], map: "uq_exp006_document_idempotency")
+  @@index([organization_id, expediente_id, pendiente_id, vigente], map: "idx_exp006_documents_case_pending")
+  @@index([documento_id], map: "idx_exp006_documents_document")
+  @@map("expediente_artefacto_documentos")
 }
 
 model Predio {
@@ -1367,6 +1454,8 @@ model Documento {
   predioVinculos               PredioDocumento[]
   predioDatosFuente            PredioDatoFuente[]
   expedienteSnapshotItems      ExpedienteDocumentoSnapshotItem[]
+  exp006PendienteActual        ExpedienteArtefactoPendiente[]    @relation("Exp006PendingCurrentDocument")
+  exp006Historial              ExpedienteArtefactoDocumento[]    @relation("Exp006ArtifactDocument")
 
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
   @@index([cotizacion_id], map: "idx_documentos_cotizacion_fk")
@@ -3856,6 +3945,25 @@ enum CatalogoMultiplicidad {
   COMPARECIENTE
   INMUEBLE
   CANTIDAD_FIJA
+}
+
+enum ExpedienteArtefactoSujeto {
+  EXPEDIENTE
+  COMPARECIENTE
+  INMUEBLE
+  FIJO
+}
+
+enum ExpedienteArtefactoPendienteEstado {
+  PENDIENTE
+  PENDIENTE_REVISION
+  VALIDADO
+  NO_APLICA
+}
+
+enum ExpedienteArtefactoVia {
+  IA
+  CARGA_EXTERNA
 }
 
 enum ExpedienteActoOrigen {

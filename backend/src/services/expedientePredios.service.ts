@@ -4,6 +4,7 @@ import type { Request } from 'express';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { predioObjectWhere } from './objectAccess.service';
 import { PredioError } from './predios.service';
+import { ExpedienteArtifactsService } from './expedienteArtifacts.service';
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -109,6 +110,7 @@ export class ExpedientePrediosService {
       } else if (command.operation === 'UPDATE') {
         relation = await tx.expedientePredio.update({ where: { id: relation.id }, data: { idempotency_key: idempotencyKey } });
       }
+      await new ExpedienteArtifactsService(this.prisma).reconcileContextChangeInTransaction(tx, actor, expedienteId, 'EXPEDIENTE_PROPERTY_CHANGE');
       const version = await tx.expediente.update({ where: { id: expedienteId }, data: { version: { increment: 1 } }, select: { version: true } });
       const action = command.operation === 'LINK' ? 'LINK_PROPERTY_TO_EXPEDIENT' : command.operation === 'UPDATE' ? 'UPDATE_PROPERTY_ACT_LINKS' : 'UNLINK_PROPERTY_FROM_EXPEDIENT';
       const summary = { operation: command.operation, predio_id: relation.predio_id, expediente_predio_id: relation.id, act_ids: targetActIds, impact: preview.impact, version: version.version, master_deleted: false };

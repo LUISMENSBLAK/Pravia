@@ -75,6 +75,20 @@ export type ExpedienteSeguimiento = {
   signals: { prefirm: SeguimientoActivity[]; postfirm: SeguimientoActivity[] };
 };
 
+export type ExpedienteArtifactPending = {
+  id: string; artifact_id: string; rule_id: string; master_version_id: string; act_id?: string | null;
+  subject_type: 'EXPEDIENTE' | 'COMPARECIENTE' | 'INMUEBLE' | 'FIJO'; subject_id?: string | null; ordinal: number;
+  estado: 'PENDIENTE' | 'PENDIENTE_REVISION' | 'VALIDADO' | 'NO_APLICA'; obligatoria: boolean;
+  explanation: { artifact_name?: string; artifact_type?: 'PLANTILLA' | 'FORMATO'; owner_type?: string; act_names?: string[]; subject_name?: string; master_version?: number; [key: string]: unknown };
+  source_revision: string; version: number; in_scope: boolean; review_required: boolean; review_reason?: string | null;
+  document_id?: string | null; validated_at?: string | null;
+};
+export type ExpedienteArtifacts = {
+  data: ExpedienteArtifactPending[];
+  preview: { revision: string; applicable: number; creates: number };
+  source: 'CFG-002'; master_rules_editable: false; auto_generated_documents: 0;
+};
+
 export type ExpedienteMetric = { key: string; label: string; value: number; percentage: number | null };
 export type ExpedienteListItem = {
   id: string; numero_pravia: string; numero_notaria?: string | null; cliente_alias?: string | null; cliente_principal: string;

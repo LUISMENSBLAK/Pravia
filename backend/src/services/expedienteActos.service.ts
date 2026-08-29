@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'crypto';
 import { Prisma, PrismaClient, type ExpedienteActoOrigen } from '@prisma/client';
 import type { Request } from 'express';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { ExpedienteArtifactsService } from './expedienteArtifacts.service';
 import { ExpedienteSeguimientoService } from './expedienteSeguimiento.service';
 
 type Actor = NonNullable<Request['user']>;
@@ -117,6 +118,7 @@ export class ExpedienteActosService {
         before?.id || null,
         command.operation === 'REMOVE' ? null : result.id,
       );
+      await new ExpedienteArtifactsService(this.prisma).reconcileContextChangeInTransaction(tx, actor, expedienteId, 'EXPEDIENTE_ACT_CHANGE');
 
       const updated = await tx.expediente.update({ where: { id: expedienteId }, data: { version: { increment: 1 } }, select: { version: true } });
       const action = command.operation === 'ADD' ? 'ADD_EXPEDIENTE_ACT' : command.operation === 'CHANGE' ? 'CHANGE_EXPEDIENTE_ACT' : 'UNLINK_EXPEDIENTE_ACT';

@@ -3,6 +3,7 @@ import { FormaComparecencia, Prisma, PrismaClient, TipoPersona } from '@prisma/c
 import type { Request } from 'express';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { comparecienteObjectWhere } from './objectAccess.service';
+import { ExpedienteArtifactsService } from './expedienteArtifacts.service';
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -195,6 +196,7 @@ export class ExpedientePartiesService {
         else await tx.expedienteRepresentacion.create({ data });
       }
 
+      await new ExpedienteArtifactsService(this.prisma).reconcileContextChangeInTransaction(tx, actor, expedienteId, 'EXPEDIENTE_PARTY_CHANGE');
       const updated = await tx.expediente.update({ where: { id: expedienteId }, data: { version: { increment: 1 } }, select: { version: true } });
       const correlationId = randomUUID();
       const action = command.operation === 'LINK' ? 'LINK_EXPEDIENTE_PARTY' : command.operation === 'UPDATE' ? 'UPDATE_EXPEDIENTE_PARTY_RELATION' : 'UNLINK_EXPEDIENTE_PARTY';

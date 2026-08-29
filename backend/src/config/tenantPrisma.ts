@@ -26,6 +26,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'ExpedienteActo', 'ExpedienteDocumentoSnapshot', 'ExpedienteDocumentoSnapshotItem',
   'ExpedienteSeguimientoActividad', 'ExpedienteSeguimientoDependencia', 'ExpedienteSeguimientoHistorial',
   'Predio', 'PredioColindancia', 'ExpedientePredio', 'ExpedienteActoPredio', 'PredioDocumento', 'PredioDatoFuente',
+  'ExpedienteArtefactoPendiente', 'ExpedienteArtefactoDocumento',
 ]);
 
 const READ_OR_WRITE_WITH_WHERE = new Set([

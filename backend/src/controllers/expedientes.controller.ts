@@ -26,6 +26,7 @@ import { ExpedienteReadService } from '../services/expedienteRead.service';
 import { buildExpedienteReadiness } from '../services/expedienteReadiness.service';
 import { calculateFinanceAggregates, legacyFinanceAllocations, type EconomicNature } from '../domain/financeCore';
 import { ExpedienteDocumentAppendixError } from '../services/expedienteDocumentAppendix.service';
+import { ExpedienteArtifactsService } from '../services/expedienteArtifacts.service';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
 const expedienteReadService = new ExpedienteReadService(prisma);
@@ -1018,6 +1019,10 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
           version: { increment: 1 },
         },
       });
+
+      if (cleanNotariaId !== undefined && cleanNotariaId !== currentExp.notaria_id && req.user) {
+        await new ExpedienteArtifactsService(prisma).reconcileContextChangeInTransaction(tx, req.user, id, 'EXPEDIENTE_NOTARY_CHANGE');
+      }
 
       if (changes.length > 0) {
         const correlationId = (req as any).correlationId || crypto.randomUUID();
