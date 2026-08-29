@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const dependencies = vi.hoisted(() => ({
   open: vi.fn(),
   attachFee: vi.fn(),
+  createBudget: vi.fn(),
 }));
 
 vi.mock('./expedienteOpening.service', () => ({
@@ -12,6 +13,11 @@ vi.mock('./expedienteOpening.service', () => ({
 }));
 vi.mock('./honorarioRecognition.service', () => ({
   attachGeneratedFeeToExpediente: dependencies.attachFee,
+}));
+vi.mock('./expedienteBudget.service', () => ({
+  ExpedienteBudgetService: class {
+    createFromQuoteInTransaction(tx: unknown, input: unknown) { return dependencies.createBudget(tx, input); }
+  },
 }));
 
 import { CotizacionConversionService } from './cotizacionConversion.service';
@@ -28,7 +34,7 @@ function database(options: { failAudit?: boolean } = {}) {
   const tx: any = {
     $executeRaw: vi.fn().mockResolvedValue(1),
     cotizacion: {
-      findUnique: vi.fn(async () => candidate()),
+      findFirst: vi.fn(async () => candidate()),
       update: vi.fn(async () => { state.quoteState = 'CONVERTIDA_EXPEDIENTE'; return candidate(); }),
     },
     user: { findFirst: vi.fn(async ({ where }: any) => ({ id: where.id })) },
@@ -63,13 +69,22 @@ function database(options: { failAudit?: boolean } = {}) {
 }
 
 describe('EXP-001 conversión canónica y atómica', () => {
-  beforeEach(() => { vi.clearAllMocks(); dependencies.attachFee.mockResolvedValue({ count: 1 }); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dependencies.attachFee.mockResolvedValue({ count: 1 });
+    dependencies.createBudget.mockResolvedValue({ id: 'budget-1' });
+  });
 
   it('hereda cliente, acto, responsable, notaría, presupuesto, documentos y anticipo en una transacción', async () => {
     const { prisma, tx } = database();
-    const result = await new CotizacionConversionService(prisma).convert({ cotizacionId: 'quote-1', actorUserId: 'user-1' });
+    const result = await new CotizacionConversionService(prisma).convert({ cotizacionId: 'quote-1', actorUserId: 'user-1', actorOrganizationId: 'org-1' });
     expect(result).toMatchObject({ alreadyConverted: false, validatedAdvanceTotal: 30_000, expediente: { numero_pravia: 'EXP-0001-2026', cotizacion_id: 'quote-1' } });
-    expect(dependencies.open).toHaveBeenCalledWith(tx, expect.objectContaining({ clienteAlias: 'Cliente heredado', tipoActoId: 'act-1', abogadoId: 'user-1', notariaId: 'notary-1', datosOperacion: { presupuesto: expect.objectContaining({ total_cliente: 125_000, honorarios_pravia: 25_000 }) } }));
+    expect(dependencies.open).toHaveBeenCalledWith(tx, expect.objectContaining({ clienteAlias: 'Cliente heredado', tipoActoId: 'act-1', abogadoId: 'user-1', notariaId: 'notary-1' }));
+    expect(dependencies.createBudget).toHaveBeenCalledWith(tx, expect.objectContaining({
+      expedienteId: 'exp-1',
+      actor: expect.objectContaining({ organizationId: 'org-1' }),
+      quoteVersion: expect.objectContaining({ id: 'version-1' }),
+    }));
     expect(tx.expedienteDocumento.upsert).toHaveBeenCalledTimes(2);
     expect(tx.pago.updateMany).toHaveBeenCalledWith({ where: { cotizacion_id: 'quote-1' }, data: { expediente_id: 'exp-1' } });
     expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ accion: 'CONVERT_TO_EXPEDIENTE', entidad_id: 'quote-1' }) }));
@@ -78,7 +93,10 @@ describe('EXP-001 conversión canónica y atómica', () => {
 
   it('dos solicitudes concurrentes producen como máximo un expediente', async () => {
     const { prisma } = database(); const service = new CotizacionConversionService(prisma);
-    const [first, second] = await Promise.all([service.convert({ cotizacionId: 'quote-1' }), service.convert({ cotizacionId: 'quote-1' })]);
+    const [first, second] = await Promise.all([
+      service.convert({ cotizacionId: 'quote-1', actorOrganizationId: 'org-1' }),
+      service.convert({ cotizacionId: 'quote-1', actorOrganizationId: 'org-1' }),
+    ]);
     expect(dependencies.open).toHaveBeenCalledTimes(1);
     expect(first.expediente.id).toBe(second.expediente.id);
     expect([first.alreadyConverted, second.alreadyConverted].sort()).toEqual([false, true]);
@@ -86,7 +104,7 @@ describe('EXP-001 conversión canónica y atómica', () => {
 
   it('revierte toda la conversión si falla una escritura posterior', async () => {
     const { prisma, state, tx } = database({ failAudit: true });
-    await expect(new CotizacionConversionService(prisma).convert({ cotizacionId: 'quote-1' })).rejects.toThrow('audit failed');
+    await expect(new CotizacionConversionService(prisma).convert({ cotizacionId: 'quote-1', actorOrganizationId: 'org-1' })).rejects.toThrow('audit failed');
     expect(state).toEqual({ linked: null, quoteState: 'ACEPTADA' });
     expect(tx.domainEventOutbox.create).not.toHaveBeenCalled();
   });

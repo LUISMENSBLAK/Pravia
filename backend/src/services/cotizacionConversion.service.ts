@@ -2,10 +2,13 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import { CotizacionBusinessError, evaluateConversionEligibility } from '../domain/cotizacionWorkflow';
 import { ExpedienteOpeningService } from './expedienteOpening.service';
 import { attachGeneratedFeeToExpediente } from './honorarioRecognition.service';
+import { ExpedienteBudgetService } from './expedienteBudget.service';
 
 export interface ConvertCotizacionInput {
   cotizacionId: string;
   actorUserId?: string;
+  actorOrganizationId: string;
+  actorSessionId?: string;
   abogadoId?: string;
   tipoActoId?: string;
   correlationId?: string;
@@ -31,8 +34,8 @@ export class CotizacionConversionService {
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:cotizacion:${input.cotizacionId}`}))`);
 
-      const cotizacion = await tx.cotizacion.findUnique({
-        where: { id: input.cotizacionId },
+      const cotizacion = await tx.cotizacion.findFirst({
+        where: { id: input.cotizacionId, organization_id: input.actorOrganizationId },
         include: {
           prospecto: true,
           expediente: true,
@@ -81,13 +84,7 @@ export class CotizacionConversionService {
       const tipoActo = await this.resolveTipoActo(tx, input.tipoActoId, cotizacion.prospecto?.tipo_acto);
       const approvedVersion = cotizacion.versiones.find((version) => version.aprobada)
         || cotizacion.versiones[0];
-      const frozenBudget = approvedVersion ? {
-        rubros: (approvedVersion.desglose_notaria as any)?.rubros || [],
-        total_notaria: Number(approvedVersion.total_notaria),
-        honorarios_pravia: Number(approvedVersion.honorarios_pravia),
-        total_cliente: Number(approvedVersion.total_cliente),
-        cotizacion_version_id: approvedVersion.id,
-      } : null;
+      if (!approvedVersion) throw new CotizacionBusinessError('La cotización no tiene una versión estructurada aprobada.', 'APPROVED_VERSION_REQUIRED');
 
       const expediente = await new ExpedienteOpeningService(this.prisma).openInTransaction(tx, {
         tipoActoId: tipoActo.id,
@@ -96,9 +93,19 @@ export class CotizacionConversionService {
         clienteAlias: cotizacion.prospecto?.nombre || 'Cliente',
         notariaId: cotizacion.notaria_id,
         cotizacionId: cotizacion.id,
-        datosOperacion: frozenBudget ? { presupuesto: frozenBudget } : undefined,
         proximaAccion: 'Integrar documentación y comparecientes',
         correlationId,
+      });
+      await new ExpedienteBudgetService(this.prisma).createFromQuoteInTransaction(tx, {
+        actor: {
+          id: actor.id,
+          organizationId: input.actorOrganizationId,
+          sessionId: input.actorSessionId || correlationId,
+          rol: actor.rol,
+          permissions: [],
+        },
+        expedienteId: expediente.id,
+        quoteVersion: approvedVersion,
       });
       const numeroPravia = expediente.numero_pravia;
 

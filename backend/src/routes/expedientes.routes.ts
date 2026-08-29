@@ -80,6 +80,13 @@ import {
   uploadExpedienteArtifact,
   validateExpedienteArtifact,
 } from '../controllers/expedienteArtifacts.controller';
+import {
+  deleteExpedienteBudgetPdf,
+  generateExpedienteBudgetPdf,
+  getExpedienteBudget,
+  getExpedienteBudgetPdfUrl,
+  updateExpedienteBudget,
+} from '../controllers/expedienteBudget.controller';
 
 const router = express.Router();
 router.param('id', requireExpedienteAccess);
@@ -112,6 +119,11 @@ router.post('/:id/plantillas-formatos/:pendingId/generar', requirePermission('ia
 router.post('/:id/plantillas-formatos/:pendingId/upload', requirePermission('documentos.write'), uploadExp006Multer.single('file'), uploadExpedienteArtifact);
 router.post('/:id/plantillas-formatos/:pendingId/validar', requirePermission('documentos.write'), validateExpedienteArtifact);
 router.get('/:id/plantillas-formatos/:pendingId/url', requirePermission('documentos.read'), getExpedienteArtifactUrl);
+router.get('/:id/presupuesto', requirePermission('expedientes.read'), getExpedienteBudget);
+router.put('/:id/presupuesto', requirePermission('expedientes.write'), updateExpedienteBudget);
+router.post('/:id/presupuesto/generar', requirePermission('expedientes.write'), requirePermission('documentos.write'), generateExpedienteBudgetPdf);
+router.get('/:id/presupuesto/documentos/:historyId/url', requirePermission('documentos.read'), getExpedienteBudgetPdfUrl);
+router.delete('/:id/presupuesto/documentos/:historyId', requirePermission('documentos.unlink'), deleteExpedienteBudgetPdf);
 router.post('/', createExpediente);
 router.patch('/:id', updateExpedienteHeader);
 router.post('/convertir-cotizacion', convertCotizacionToExpediente);

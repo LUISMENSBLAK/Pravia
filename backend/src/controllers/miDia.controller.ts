@@ -8,6 +8,10 @@ const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(),
 const endOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate(), 23, 59, 59, 999);
 
 function budget(exp: any) {
+  if (exp?.presupuesto) return {
+    total: asNumber(exp.presupuesto.total),
+    pravia: asNumber(exp.presupuesto.distribucion?.pravia_honorarios) + asNumber(exp.presupuesto.distribucion?.pravia_iva),
+  };
   const data = exp?.datos_operacion?.presupuesto;
   return {
     total: asNumber(data?.total_cliente ?? exp?.cotizacion?.total_cliente),
@@ -47,6 +51,7 @@ export class MiDiaController {
         prisma.expediente.findMany({
           where: { archived_at: null, ...expedienteUserFilter },
           include: {
+            presupuesto: { include: { distribucion: true } },
             cotizacion: true,
             movimientosFinancieros: canReadFinance,
             requisitos_docs: {

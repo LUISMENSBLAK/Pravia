@@ -89,6 +89,21 @@ export type ExpedienteArtifacts = {
   source: 'CFG-002'; master_rules_editable: false; auto_generated_documents: 0;
 };
 
+export type BudgetConceptCategory = 'HONORARIOS' | 'IVA_HONORARIOS' | 'IMPUESTOS_DERECHOS';
+export type ExpedienteBudgetConcept = { id?: string; concepto: string; categoria: BudgetConceptCategory; importe: string; orden: number };
+export type BudgetDistributionParty = { honorarios: string; honorarios_porcentaje: string; iva: string; iva_porcentaje: string };
+export type ExpedienteBudgetPdf = { id: string; document_id: string; generated_at: string; total: string; budget_version: number; note?: string | null; file_name: string; mime_type: string; immutable: true };
+export type ExpedienteBudget = {
+  id: string; version: number; origin: 'COTIZACION_ESTRUCTURADA' | 'LEGACY_JSON' | 'LEGACY_SIN_ESTRUCTURA';
+  quote_origin?: { quote_id: string; quote_version_id: string; quote_version: number; immutable: true } | null;
+  concepts: ExpedienteBudgetConcept[];
+  totals: { honorarios: string; iva_honorarios: string; subtotal_honorarios: string; subtotal_impuestos_derechos: string; total: string };
+  internal_distribution?: { pravia: BudgetDistributionParty; notaria: BudgetDistributionParty; canonical_values: 'AMOUNTS'; closed: boolean } | null;
+  requires_classification: boolean; distribution_requires_review: boolean; pdf_history: ExpedienteBudgetPdf[];
+  capabilities: { can_edit: boolean; can_view_internal_distribution: boolean; can_edit_internal_distribution: boolean; can_generate_pdf: boolean; can_view_pdf: boolean; can_delete_pdf: boolean };
+  editable_history_versions: 0; canonical_source: 'ExpedientePresupuesto'; legacy_json_writer_enabled: false;
+};
+
 export type ExpedienteMetric = { key: string; label: string; value: number; percentage: number | null };
 export type ExpedienteListItem = {
   id: string; numero_pravia: string; numero_notaria?: string | null; cliente_alias?: string | null; cliente_principal: string;

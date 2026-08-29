@@ -614,6 +614,8 @@ export const convertToExpediente = async (req: Request, res: Response) => {
     const result = await cotizacionConversionService.convert({
       cotizacionId: id,
       actorUserId: req.user?.id,
+      actorOrganizationId: req.user.organizationId,
+      actorSessionId: req.user.sessionId,
       tipoActoId: tipo_acto_id,
       abogadoId: abogado_id,
       correlationId: (req as any).correlationId,

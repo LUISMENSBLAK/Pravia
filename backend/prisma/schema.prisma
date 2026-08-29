@@ -25,6 +25,10 @@ model Organization {
   predioDatosFuente     PredioDatoFuente[]
   exp006Pendientes      ExpedienteArtefactoPendiente[] @relation("Exp006PendingOrganization")
   exp006Documentos      ExpedienteArtefactoDocumento[] @relation("Exp006DocumentOrganization")
+  presupuestos              ExpedientePresupuesto[]
+  presupuestoConceptos      ExpedientePresupuestoConcepto[]
+  presupuestoDistribuciones ExpedientePresupuestoDistribucion[]
+  presupuestoDocumentos     ExpedientePresupuestoDocumento[]
 
   @@index([status])
   @@map("organizations")
@@ -118,6 +122,10 @@ model User {
   exp006PendientesCreados                ExpedienteArtefactoPendiente[] @relation("Exp006PendingCreator")
   exp006PendientesValidados              ExpedienteArtefactoPendiente[] @relation("Exp006PendingValidator")
   exp006DocumentosCreados                ExpedienteArtefactoDocumento[] @relation("Exp006DocumentCreator")
+  presupuestosCreados                    ExpedientePresupuesto[]          @relation("PresupuestoCreador")
+  presupuestosActualizados               ExpedientePresupuesto[]          @relation("PresupuestoActualizador")
+  presupuestoDocumentosGenerados         ExpedientePresupuestoDocumento[] @relation("PresupuestoDocumentoGenerador")
+  presupuestoDocumentosEliminados        ExpedientePresupuestoDocumento[] @relation("PresupuestoDocumentoEliminador")
   expedientePrediosRetirados             ExpedientePredio[]             @relation("ExpedientePredioRetirador")
   predioDocumentosCreados                PredioDocumento[]              @relation("PredioDocumentoCreador")
   predioDocumentosRetirados              PredioDocumento[]              @relation("PredioDocumentoRetirador")
@@ -480,6 +488,7 @@ model CotizacionVersion {
   aprobada            Boolean             @default(false)
   cotizacion          Cotizacion          @relation(fields: [cotizacion_id], references: [id], onDelete: Cascade)
   honorariosGenerados HonorarioGenerado[]
+  presupuestosOrigen  ExpedientePresupuesto[]
 
   @@unique([cotizacion_id, version])
   @@map("cotizacion_versiones")
@@ -840,6 +849,7 @@ model CatalogoArtefactoVersion {
   created_at       DateTime                       @default(now())
   artefacto        CatalogoArtefacto              @relation(fields: [artefacto_id], references: [id], onDelete: Cascade)
   pendientesExp006 ExpedienteArtefactoPendiente[] @relation("Exp006PendingMasterVersion")
+  presupuestoDocumentos ExpedientePresupuestoDocumento[]
 
   @@unique([artefacto_id, version], map: "uq_catalogo_artefacto_version")
   @@unique([organization_id, storage_key], map: "uq_catalogo_storage_key_org")
@@ -974,6 +984,7 @@ model Expediente {
   calculosISR                CalculoISR[]
   artefactosPendientes       ExpedienteArtefactoPendiente[] @relation("Exp006PendingExpediente")
   artefactosDocumentos       ExpedienteArtefactoDocumento[] @relation("Exp006DocumentExpediente")
+  presupuesto                ExpedientePresupuesto?
 
   @@unique([id, organization_id], map: "uq_expedientes_id_org")
   @@index([abogado_id], map: "idx_expedientes_abogado_fk")
@@ -986,6 +997,113 @@ model Expediente {
   @@index([plantilla_doc_version_id], map: "idx_expedientes_plantilla_version_fk")
   @@index([tipo_acto_id], map: "idx_expedientes_tipo_acto_fk")
   @@map("expedientes")
+}
+
+/// Único estado económico editable del expediente. Los PDFs son documentos
+/// históricos inmutables y no representan versiones editables del presupuesto.
+model ExpedientePresupuesto {
+  id                             String                             @id @default(uuid()) @db.Uuid
+  organization_id                String                             @db.Uuid
+  expediente_id                  String                             @unique @db.Uuid
+  cotizacion_version_origen_id   String?                            @db.Uuid
+  origen                         PresupuestoOrigen                  @default(COTIZACION_ESTRUCTURADA)
+  version                        Int                                @default(1)
+  subtotal_honorarios            Decimal                            @default(0) @db.Decimal(16, 2)
+  subtotal_impuestos_derechos    Decimal                            @default(0) @db.Decimal(16, 2)
+  total                          Decimal                            @default(0) @db.Decimal(16, 2)
+  legacy_payload                 Json?
+  requiere_clasificacion         Boolean                            @default(false)
+  distribucion_requiere_revision Boolean                            @default(false)
+  creado_por_id                  String                             @db.Uuid
+  actualizado_por_id             String                             @db.Uuid
+  created_at                     DateTime                           @default(now())
+  updated_at                     DateTime                           @default(now()) @updatedAt
+  organization                   Organization                       @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  expediente                     Expediente                         @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  cotizacionVersionOrigen        CotizacionVersion?                 @relation(fields: [cotizacion_version_origen_id], references: [id], onDelete: Restrict)
+  creadoPor                      User                               @relation("PresupuestoCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+  actualizadoPor                 User                               @relation("PresupuestoActualizador", fields: [actualizado_por_id], references: [id], onDelete: Restrict)
+  conceptos                      ExpedientePresupuestoConcepto[]
+  distribucion                   ExpedientePresupuestoDistribucion?
+  documentos                     ExpedientePresupuestoDocumento[]
+
+  @@unique([id, organization_id], map: "uq_exp_presupuesto_id_org")
+  @@index([organization_id, expediente_id], map: "idx_exp_presupuesto_org_exp")
+  @@index([cotizacion_version_origen_id], map: "idx_exp_presupuesto_quote_version")
+  @@index([creado_por_id], map: "idx_exp_presupuesto_creador")
+  @@index([actualizado_por_id], map: "idx_exp_presupuesto_actualizador")
+  @@map("expediente_presupuestos")
+}
+
+model ExpedientePresupuestoConcepto {
+  id              String                       @id @default(uuid()) @db.Uuid
+  organization_id String                       @db.Uuid
+  presupuesto_id  String                       @db.Uuid
+  concepto        String                       @db.VarChar(240)
+  categoria       PresupuestoConceptoCategoria
+  importe         Decimal                      @db.Decimal(16, 2)
+  orden           Int                          @default(0)
+  created_at      DateTime                     @default(now())
+  updated_at      DateTime                     @default(now()) @updatedAt
+  organization    Organization                 @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  presupuesto     ExpedientePresupuesto        @relation(fields: [presupuesto_id], references: [id], onDelete: Cascade)
+
+  @@unique([id, organization_id], map: "uq_exp_presupuesto_concepto_id_org")
+  @@index([organization_id, presupuesto_id, orden], map: "idx_exp_presupuesto_conceptos_org_budget")
+  @@map("expediente_presupuesto_conceptos")
+}
+
+/// La fuente canónica de la distribución son importes monetarios. Los
+/// porcentajes son siempre derivados, evitando drift por alternancia.
+model ExpedientePresupuestoDistribucion {
+  id                 String                @id @default(uuid()) @db.Uuid
+  organization_id    String                @db.Uuid
+  presupuesto_id     String                @unique @db.Uuid
+  pravia_honorarios  Decimal               @default(0) @db.Decimal(16, 2)
+  pravia_iva         Decimal               @default(0) @db.Decimal(16, 2)
+  notaria_honorarios Decimal               @default(0) @db.Decimal(16, 2)
+  notaria_iva        Decimal               @default(0) @db.Decimal(16, 2)
+  created_at         DateTime              @default(now())
+  updated_at         DateTime              @default(now()) @updatedAt
+  organization       Organization          @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  presupuesto        ExpedientePresupuesto @relation(fields: [presupuesto_id], references: [id], onDelete: Cascade)
+
+  @@unique([id, organization_id], map: "uq_exp_presupuesto_distribucion_id_org")
+  @@index([organization_id, presupuesto_id], map: "idx_exp_presupuesto_distribucion_org_budget")
+  @@map("expediente_presupuesto_distribuciones")
+}
+
+/// Registro histórico que referencia un Documento canónico y privado. La
+/// eliminación es lógica; el blob se conserva para auditoría/trazabilidad.
+model ExpedientePresupuestoDocumento {
+  id                  String                    @id @default(uuid()) @db.Uuid
+  organization_id     String                    @db.Uuid
+  presupuesto_id      String                    @db.Uuid
+  documento_id        String                    @unique @db.Uuid
+  formato_version_id  String?                   @db.Uuid
+  formato_fuente      String                    @db.VarChar(160)
+  presupuesto_version Int
+  total_snapshot      Decimal                   @db.Decimal(16, 2)
+  nota                String?                   @db.VarChar(500)
+  idempotency_key     String                    @db.VarChar(160)
+  generado_por_id     String                    @db.Uuid
+  generado_at         DateTime                  @default(now())
+  eliminado_at        DateTime?
+  eliminado_por_id    String?                   @db.Uuid
+  motivo_eliminacion  String?                   @db.VarChar(500)
+  organization        Organization              @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  presupuesto         ExpedientePresupuesto     @relation(fields: [presupuesto_id], references: [id], onDelete: Restrict)
+  documento           Documento                 @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  formatoVersion      CatalogoArtefactoVersion? @relation(fields: [formato_version_id], references: [id], onDelete: Restrict)
+  generadoPor         User                      @relation("PresupuestoDocumentoGenerador", fields: [generado_por_id], references: [id], onDelete: Restrict)
+  eliminadoPor        User?                     @relation("PresupuestoDocumentoEliminador", fields: [eliminado_por_id], references: [id], onDelete: Restrict)
+
+  @@unique([organization_id, presupuesto_id, idempotency_key], map: "uq_exp_presupuesto_pdf_idempotency")
+  @@index([organization_id, presupuesto_id, generado_at], map: "idx_exp_presupuesto_pdf_org_budget")
+  @@index([formato_version_id], map: "idx_exp_presupuesto_pdf_formato")
+  @@index([generado_por_id], map: "idx_exp_presupuesto_pdf_generador")
+  @@index([eliminado_por_id], map: "idx_exp_presupuesto_pdf_eliminador")
+  @@map("expediente_presupuesto_documentos")
 }
 
 model ExpedienteActo {
@@ -1456,6 +1574,7 @@ model Documento {
   expedienteSnapshotItems      ExpedienteDocumentoSnapshotItem[]
   exp006PendienteActual        ExpedienteArtefactoPendiente[]    @relation("Exp006PendingCurrentDocument")
   exp006Historial              ExpedienteArtefactoDocumento[]    @relation("Exp006ArtifactDocument")
+  presupuestoHistorico         ExpedientePresupuestoDocumento?
 
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
   @@index([cotizacion_id], map: "idx_documentos_cotizacion_fk")
@@ -3938,6 +4057,18 @@ enum CatalogoPropietarioTipo {
 enum CatalogoArtefactoTipo {
   PLANTILLA
   FORMATO
+}
+
+enum PresupuestoOrigen {
+  COTIZACION_ESTRUCTURADA
+  LEGACY_JSON
+  LEGACY_SIN_ESTRUCTURA
+}
+
+enum PresupuestoConceptoCategoria {
+  HONORARIOS
+  IVA_HONORARIOS
+  IMPUESTOS_DERECHOS
 }
 
 enum CatalogoMultiplicidad {

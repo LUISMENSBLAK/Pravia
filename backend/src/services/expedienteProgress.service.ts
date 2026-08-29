@@ -29,6 +29,7 @@ export class ExpedienteProgressService {
     const expediente = await tx.expediente.findUnique({
       where: { id: expedienteId },
       include: {
+        presupuesto: true,
         cotizacion: true,
         flujoVersion: true,
         etapas: true,
@@ -75,7 +76,7 @@ export class ExpedienteProgressService {
     const presupuesto = datosOperacion.presupuesto && typeof datosOperacion.presupuesto === 'object'
       ? datosOperacion.presupuesto
       : {};
-    const totalExigible = Number(presupuesto.total_cliente || presupuesto.total_notaria || expediente.cotizacion?.total_cliente || 0);
+    const totalExigible = Number(expediente.presupuesto?.total || presupuesto.total_cliente || presupuesto.total_notaria || expediente.cotizacion?.total_cliente || 0);
 
     if (totalExigible > 0) {
       const ingresosCobrados = expediente.movimientosFinancieros

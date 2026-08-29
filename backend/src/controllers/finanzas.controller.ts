@@ -11,6 +11,11 @@ const toFiniteNumber = (value: unknown, fallback = 0): number => {
 
 /** El presupuesto operativo guardado en el expediente es la fuente vigente. */
 const getOperationalBudget = (exp: any) => {
+  if (exp?.presupuesto) return {
+    totalPresupuestado: toFiniteNumber(exp.presupuesto.total),
+    totalNotaria: toFiniteNumber(exp.presupuesto.total),
+    participacionPravia: toFiniteNumber(exp.presupuesto.distribucion?.pravia_honorarios) + toFiniteNumber(exp.presupuesto.distribucion?.pravia_iva),
+  };
   const presupuesto = exp?.datos_operacion?.presupuesto;
 
   if (presupuesto && typeof presupuesto === 'object') {
@@ -67,6 +72,7 @@ export class FinanzasController {
             : {})
         },
         include: {
+          presupuesto: { include: { distribucion: true } },
           actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: true }, orderBy: { created_at: 'asc' } },
           notaria: true,
           abogado: { select: { id: true, nombre: true, apellido: true } },

@@ -402,6 +402,8 @@ export const convertCotizacionToExpediente = async (req: Request, res: Response)
       abogadoId: abogado_id,
       tipoActoId: tipo_acto_id,
       actorUserId: req.user?.id,
+      actorOrganizationId: req.user.organizationId,
+      actorSessionId: req.user.sessionId,
       correlationId: (req as any).correlationId,
     });
     res.status(result.alreadyConverted ? 200 : 201).json({
@@ -918,30 +920,19 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
         409,
       );
     }
+    if (budget_items !== undefined || honorarios_pravia !== undefined) {
+      throw new ExpedienteUpdateError(
+        'El presupuesto se guarda únicamente desde su apartado interno.',
+        'EXP007_LEGACY_BUDGET_ROUTE_RETIRED',
+        409,
+      );
+    }
 
     if (cleanAlias !== undefined && cleanAlias.length === 0) {
       throw new ExpedienteUpdateError('El alias o identificación del expediente no puede quedar vacío.', 'EXPEDIENTE_ALIAS_REQUIRED');
     }
     if (cleanAbogadoId !== undefined && cleanAbogadoId.length === 0) {
       throw new ExpedienteUpdateError('Selecciona un abogado activo para el expediente.', 'EXPEDIENTE_LAWYER_REQUIRED');
-    }
-
-    const validatedBudget = Array.isArray(budget_items)
-      ? budget_items.map((item: any, index: number) => {
-          const concepto = String(item?.concepto || '').trim();
-          const monto = Number(item?.monto);
-          if (!concepto) {
-            throw new ExpedienteUpdateError(`El rubro ${index + 1} requiere un nombre.`, 'INVALID_BUDGET_ITEM');
-          }
-          if (!Number.isFinite(monto) || monto < 0) {
-            throw new ExpedienteUpdateError(`El monto de "${concepto}" debe ser un número mayor o igual a cero.`, 'INVALID_BUDGET_AMOUNT');
-          }
-          return { id: item?.id || `rubro_${index + 1}`, concepto, monto };
-        })
-      : undefined;
-    const praviaAmount = honorarios_pravia === undefined ? undefined : Number(honorarios_pravia);
-    if (praviaAmount !== undefined && (!Number.isFinite(praviaAmount) || praviaAmount < 0)) {
-      throw new ExpedienteUpdateError('La participación PRAVIA debe ser un importe válido mayor o igual a cero.', 'INVALID_PRAVIA_AMOUNT');
     }
 
     const updated = await prisma.$transaction(async (tx) => {
@@ -974,39 +965,11 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
       const newDatos: Record<string, any> = { ...currentDatos };
       if (cleanNumeroEscritura !== undefined) newDatos.numero_escritura = cleanNumeroEscritura || null;
 
-      if (validatedBudget !== undefined) {
-        const totalNotaria = validatedBudget.reduce((sum, item) => sum + item.monto, 0);
-        const totalPravia = praviaAmount ?? Number((currentDatos.presupuesto as any)?.honorarios_pravia || 0);
-        if (totalNotaria > 0 && totalPravia > totalNotaria) {
-          throw new ExpedienteUpdateError(
-            'La participación PRAVIA no puede exceder el presupuesto notarial.',
-            'PRAVIA_AMOUNT_EXCEEDS_BUDGET',
-          );
-        }
-        newDatos.presupuesto = {
-          rubros: validatedBudget,
-          honorarios_pravia: totalPravia,
-          total_notaria: totalNotaria,
-          total_cliente: totalNotaria,
-        };
-      } else if (praviaAmount !== undefined) {
-        const currentBudget = (currentDatos.presupuesto as any) || {};
-        const totalNotaria = Number(currentBudget.total_notaria || 0);
-        if (totalNotaria > 0 && praviaAmount > totalNotaria) {
-          throw new ExpedienteUpdateError(
-            'La participación PRAVIA no puede exceder el presupuesto notarial.',
-            'PRAVIA_AMOUNT_EXCEEDS_BUDGET',
-          );
-        }
-        newDatos.presupuesto = { ...currentBudget, honorarios_pravia: praviaAmount, total_cliente: totalNotaria };
-      }
-
       const changes: string[] = [];
       if (cleanAlias !== undefined && cleanAlias !== currentExp.cliente_alias) changes.push('Alias o identificación');
       if (cleanAbogadoId !== undefined && cleanAbogadoId !== currentExp.abogado_id) changes.push('Abogado encargado');
       if (cleanNotariaId !== undefined && cleanNotariaId !== currentExp.notaria_id) changes.push('Notaría');
       if (cleanNumeroEscritura !== undefined && cleanNumeroEscritura !== (currentExp.numero_notaria || '')) changes.push('Número de escritura');
-      if (validatedBudget !== undefined || praviaAmount !== undefined) changes.push('Presupuesto operativo');
 
       const expediente = await tx.expediente.update({
         where: { id },
@@ -1030,7 +993,7 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
           data: {
             expediente_id: id,
             tipo: 'AUDITORIA',
-            titulo: 'Ficha general y presupuesto actualizados',
+            titulo: 'Ficha general actualizada',
             descripcion: changes.join(', '),
             usuario_id: actor.id,
           },
@@ -1038,7 +1001,7 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
         await tx.auditLog.create({
           data: {
             user_id: actor.id,
-            accion: 'UPDATE_HEADER_AND_BUDGET',
+          accion: 'UPDATE_EXPEDIENTE_HEADER',
             entidad: 'Expediente',
             entidad_id: id,
             valores_anteriores: { version: currentExp.version },

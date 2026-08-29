@@ -268,11 +268,18 @@ async function main() {
     version: beforeSave.version,
     cliente_alias: `E2E Guardado ${suffix}`,
     numero_escritura: `E2E-${suffix}`,
-    budget_items: [{ id: 'e2e-rubro', concepto: 'Rubro E2E', monto: 10000 }],
-    honorarios_pravia: 2500,
+  });
+  const beforeBudgetSave = await request(`/expedientes/${expediente.id}/presupuesto`);
+  await put(`/expedientes/${expediente.id}/presupuesto`, {
+    expected_version: beforeBudgetSave.version,
+    concepts: [
+      { concepto: 'Honorarios E2E', categoria: 'HONORARIOS', importe: '2500.00', orden: 0 },
+      { concepto: 'Rubro E2E', categoria: 'IMPUESTOS_DERECHOS', importe: '10000.00', orden: 1 },
+    ],
   });
   const afterSave = await request(`/expedientes/${expediente.id}`);
-  if (afterSave.cliente_alias !== `E2E Guardado ${suffix}` || Number(afterSave.datos_operacion?.presupuesto?.honorarios_pravia) !== 2500) {
+  const afterBudgetSave = await request(`/expedientes/${expediente.id}/presupuesto`);
+  if (afterSave.cliente_alias !== `E2E Guardado ${suffix}` || afterBudgetSave.totals?.honorarios !== '2500.00' || afterBudgetSave.totals?.total !== '12500.00') {
     throw new Error('El guardado integral del expediente no persistió tras recarga.');
   }
   steps.push('expediente:guardado-recargado');
