@@ -3,14 +3,21 @@ import type { ISRInput, ISRListResponse, ISRRecord } from './isr.types';
 export const emptyISRInput = (taxYear = 2026): ISRInput => ({
   operationType: 'ENAJENACION_INMUEBLE', taxYear,
   taxpayer: { fullName: '', rfc: '', curp: '', personType: 'FISICA', fiscalResidence: 'NO_CONFIRMADA', confirmed: false },
-  property: { description: '', landAndConstructionSameAcquisitionDate: true }, acquisitionDate: '', saleDate: '', yearsElapsed: 1, salePrice: '', deductions: [],
+  property: { description: '', landAndConstructionSameAcquisitionDate: true }, sourceContext: { capturedAt: new Date().toISOString(), acts: [], properties: [], parties: [] }, iva: { applies: false, suggestedFromProperty: false, reviewNote: '' }, acquisitionDate: '', saleDate: '', yearsElapsed: 1, salePrice: '', deductions: [],
   exemptionTreatment: 'PENDIENTE_REVISION', ordinaryCaseConfirmed: false, specialCases: [],
 });
 
 const readyInput: ISRInput = {
   operationType: 'ENAJENACION_INMUEBLE', taxYear: 2026,
   taxpayer: { fullName: 'María Fernanda López Ramírez', rfc: 'LORM8504127G2', curp: 'LORM850412MNTPMR08', personType: 'FISICA', fiscalResidence: 'MEXICO', confirmed: true },
-  property: { description: 'Casa habitación · Paseo de los Cocoteros 125, Bahía de Banderas, Nayarit', landAndConstructionSameAcquisitionDate: true },
+  property: { sourcePredioId: 'predio-1', description: 'Casa habitación · Paseo de los Cocoteros 125, Bahía de Banderas, Nayarit', landAndConstructionSameAcquisitionDate: true, landSurfaceM2: '420.00', constructionSurfaceM2: '238.00', commercialConstructionSurfaceM2: '0.00', cadastralValue: '1450000.00', appraisalValue: '2100000.00', operationValue: '2000000.00' },
+  sourceContext: {
+    capturedAt: '2026-08-17T15:00:00.000Z', expediente: { id: 'exp-1', number: 'EXP-0001-2026', version: 7 },
+    acts: [{ id: 'act-1', typeId: 'type-1', name: 'Compraventa de inmueble' }],
+    properties: [{ relationId: 'ep-1', predioId: 'predio-1', actIds: ['act-1'], version: 3, label: 'Casa Nuevo Vallarta', description: 'Casa habitación · Paseo de los Cocoteros 125, Bahía de Banderas, Nayarit', landSurfaceM2: '420.00', constructionSurfaceM2: '238.00', commercialConstructionSurfaceM2: '0.00', cadastralValue: '1450000.00', appraisalValue: '2100000.00', operationValue: '2000000.00', ivaSuggested: false }],
+    parties: [{ relationId: 'ec-1', comparecienteId: 'party-1', actId: 'act-1', role: 'Enajenante', name: 'María Fernanda López Ramírez', personType: 'FISICA', rfc: 'LORM8504127G2', curp: 'LORM850412MNTPMR08', nationality: 'Mexicana', fiscalResidence: 'NO_CONFIRMADA', participationPercentage: '100.00', validated: true }],
+  },
+  iva: { applies: false, suggestedFromProperty: false, reviewNote: 'Sin superficie comercial informada en el predio.' },
   acquisitionDate: '2016-03-01', saleDate: '2026-08-17', yearsElapsed: 10, salePrice: '2000000.00',
   deductions: [
     { id: 'd1', concept: 'Costo de adquisición actualizado', historicalAmount: '900000.00', updatedAmount: '1100000.00', expenseDate: '2016-03-01', updateOrigin: 'MANUAL_CONFIRMED', updateMethod: 'Importe actualizado proporcionado por el usuario', treatment: 'COSTO_ADQUISICION_ACTUALIZADO', included: true, confirmed: true, supportDocumentId: 'doc-1', reason: 'LISR 121, fracción I y artículo 124', confirmedBy: 'Andrea Ruiz', confirmedAt: '2026-08-17T15:30:00.000Z' },
@@ -23,7 +30,14 @@ const result = {
   taxableIncome: '2000000.00', exemptIncome: '0.00', consideredDeductions: '1200000.00', gain: '800000.00', yearsConsidered: 10, tariffBase: '80000.00', provisionalFederalISR: '46659.42',
   bracket: { order: 2, lower: '10135.12', upper: '86022.11', fixedFee: '194.59', percentage: '6.40' },
   calculationPrecision: { tariffTaxRaw: '4665.94232', provisionalFederalISRRaw: '46659.42320' },
-  ruleSet: { id: 'rules-2026', key: 'ISR_ENAJENACION_INMUEBLE_PAGO_PROVISIONAL_MX_FED', version: '2026.1-DOF-2025-12-28', sourceUrl: 'https://www.dof.gob.mx/nota_detalle.php?codigo=5777219&fecha=28/12/2025' },
+  ruleSet: { id: 'rules-2026', key: 'ISR_ENAJENACION_INMUEBLE_PAGO_PROVISIONAL_MX_FED', version: '2026.1-DOF-2025-12-28', sourceUrl: 'https://www.dof.gob.mx/nota_detalle.php?codigo=5777219&fecha=28/12/2025', normativeSource: 'LISR artículos 119, 120, 121 y 126; RMF 2026 regla 3.15.4; Anexo 8 apartado A.I', jurisdiction: 'MX-FED', validFrom: '2026-01-01', validTo: '2026-12-31' },
+  capabilityMatrix: [
+    { key: 'ISR_ENAJENACION_ART126', label: 'ISR por enajenación · pago provisional federal', status: 'SUPPORTED' as const, reason: 'LISR 119, 121 y 126; Anexo 8 RMF 2026 A.I.' },
+    { key: 'ISR_ADQUISICION', label: 'ISR por adquisición', status: 'HUMAN_REVIEW_REQUIRED' as const, reason: 'No existe un ruleset aprobado.' },
+    { key: 'IVA_INMUEBLE', label: 'IVA de la operación inmobiliaria', status: 'HUMAN_REVIEW_REQUIRED' as const, reason: 'No existe un ruleset aprobado.' },
+    { key: 'LISR_ART127_STATE_PAYMENT', label: 'Pago a la entidad federativa', status: 'HUMAN_REVIEW_REQUIRED' as const, reason: 'Fuera del alcance del motor canónico.' },
+    { key: 'MULTIPLE_TAXPAYERS', label: 'Distribución entre múltiples contribuyentes', status: 'HUMAN_REVIEW_REQUIRED' as const, reason: 'No existe un ruleset aprobado.' },
+  ],
   breakdown: [
     { key: 'income', label: 'Ingreso considerado', operation: 'Precio de enajenación confirmado', amount: '2000000.00', source: 'LISR 119' },
     { key: 'deductions', label: 'Deducciones consideradas', operation: 'Costo actualizado + gastos confirmados', amount: '1200000.00', source: 'LISR 121' },

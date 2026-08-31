@@ -2797,6 +2797,7 @@ model CalculoISR {
   inmueble_descripcion   String?
   contribuyente_snapshot Json?
   input_data             Json
+  idempotency_key        String?
   ultima_version         Int                   @default(0)
   datos_modificados      Boolean               @default(false)
   creado_por_id          String                @db.Uuid
@@ -2813,6 +2814,8 @@ model CalculoISR {
   propuestas             CalculoISRPropuesta[]
 
   @@index([expediente_id], map: "idx_calculos_isr_expediente")
+  @@index([organization_id, expediente_id, archived_at], map: "idx_isr001_active_case_link")
+  @@index([organization_id, idempotency_key], map: "idx_isr001_create_idempotency")
   @@index([compareciente_id], map: "idx_calculos_isr_compareciente")
   @@index([estado, ejercicio], map: "idx_calculos_isr_estado_ejercicio")
   @@index([contribuyente_rfc], map: "idx_calculos_isr_rfc")
@@ -2831,6 +2834,7 @@ model CalculoISRVersion {
   ruleset_snapshot Json
   breakdown        Json
   result           Json
+  request_key      String?
   calculado_por_id String        @db.Uuid
   calculated_at    DateTime      @default(now())
   calculo          CalculoISR    @relation(fields: [calculo_id], references: [id], onDelete: Restrict)
@@ -2838,6 +2842,7 @@ model CalculoISRVersion {
   calculado_por    User          @relation("CalculoISRVersionActor", fields: [calculado_por_id], references: [id])
 
   @@unique([calculo_id, version])
+  @@index([organization_id, calculo_id, calculated_at], map: "idx_isr001_calculation_tenant")
   @@index([rule_set_id], map: "idx_calculos_isr_version_ruleset")
   @@index([calculado_por_id], map: "idx_isr_versions_calculated_by_fk")
   @@map("calculos_isr_versiones")
@@ -2854,11 +2859,15 @@ model CalculoISRDocumento {
   inactivado_at       DateTime?
   inactivado_por_id   String?        @db.Uuid
   motivo_inactivacion String?
+  idempotency_key     String?
+  generated_from_version Int?
+  format_source       String?
   calculo             CalculoISR     @relation(fields: [calculo_id], references: [id], onDelete: Restrict)
   documento           Documento      @relation(fields: [documento_id], references: [id], onDelete: Restrict)
   creado_por          User           @relation("CalculoISRDocumentoActor", fields: [creado_por_id], references: [id])
 
   @@unique([calculo_id, documento_id])
+  @@unique([organization_id, calculo_id, idempotency_key], map: "uq_isr001_pdf_idempotency")
   @@index([documento_id], map: "idx_calculos_isr_documento")
   @@index([creado_por_id], map: "idx_isr_documents_created_by_fk")
   @@map("calculos_isr_documentos")

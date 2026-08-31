@@ -43,8 +43,8 @@
 }
 
 @media (max-width: 767px) {
-  .sidebar { width: 272px; transform: translateX(-100%); box-shadow: var(--shadow-lg); }
-  .mobileOpen { transform: translateX(0); }
+  .sidebar { width: 272px; visibility: hidden; transform: translateX(-100%); box-shadow: var(--shadow-lg); }
+  .mobileOpen { visibility: visible; transform: translateX(0); }
   .sidebar.collapsed { width: 272px; }
   .fullBrandLogo, .sidebar.collapsed .fullBrandLogo { display: block; }
   .compactBrandLogo, .sidebar.collapsed .compactBrandLogo { display: none; }

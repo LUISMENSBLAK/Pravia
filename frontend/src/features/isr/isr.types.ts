@@ -13,7 +13,19 @@ export type ISRDeduction = {
 export type ISRInput = {
   operationType: ISROperationType; taxYear: number;
   taxpayer: { fullName: string; rfc: string; curp?: string; personType: 'FISICA' | 'MORAL'; fiscalResidence: 'MEXICO' | 'EXTRANJERO' | 'NO_CONFIRMADA'; confirmed: boolean };
-  property: { description: string; landAndConstructionSameAcquisitionDate: boolean };
+  property: {
+    sourcePredioId?: string; description: string; landAndConstructionSameAcquisitionDate: boolean;
+    landSurfaceM2?: string; constructionSurfaceM2?: string; commercialConstructionSurfaceM2?: string;
+    cadastralValue?: string; appraisalValue?: string; operationValue?: string;
+  };
+  sourceContext?: {
+    capturedAt: string;
+    expediente?: { id: string; number: string; version: number };
+    acts: Array<{ id: string; typeId: string; name: string }>;
+    properties: Array<{ relationId: string; predioId: string; actIds: string[]; version: number; label: string; description: string; landSurfaceM2?: string; constructionSurfaceM2?: string; commercialConstructionSurfaceM2?: string; cadastralValue?: string; appraisalValue?: string; operationValue?: string; ivaSuggested: boolean }>;
+    parties: Array<{ relationId: string; comparecienteId: string; actId?: string | null; role: string; name: string; personType: 'FISICA' | 'MORAL'; rfc?: string; curp?: string; nationality?: string; fiscalResidence: 'MEXICO' | 'EXTRANJERO' | 'NO_CONFIRMADA'; participationPercentage?: string; validated: boolean }>;
+  };
+  iva?: { applies: boolean; suggestedFromProperty: boolean; reviewNote?: string };
   acquisitionDate: string; saleDate: string; yearsElapsed: number; salePrice: string;
   deductions: ISRDeduction[];
   exemptionTreatment: 'NO_APLICA_CONFIRMADO' | 'PENDIENTE_REVISION' | 'SOLICITADA';
@@ -28,12 +40,13 @@ export type ISRResult = {
   yearsConsidered: number; tariffBase: string; provisionalFederalISR: string;
   bracket: { order: number; lower: string; upper: string | null; fixedFee: string; percentage: string };
   calculationPrecision: { tariffTaxRaw: string; provisionalFederalISRRaw: string };
-  ruleSet: { id: string; key: string; version: string; sourceUrl: string };
+  ruleSet: { id: string; key: string; version: string; sourceUrl: string; normativeSource: string; jurisdiction: string; validFrom: string; validTo: string };
+  capabilityMatrix: Array<{ key: string; label: string; status: 'SUPPORTED' | 'HUMAN_REVIEW_REQUIRED'; reason: string }>;
   breakdown: Array<{ key: string; label: string; operation: string; amount: string; source: string }>;
 };
 
 export type ISRVersion = { id: string; version: number; result: ISRResult; breakdown: ISRResult['breakdown']; calculated_at: string; ruleset_snapshot: Record<string, unknown>; input_snapshot: ISRInput };
-export type ISRDocumentLink = { id: string; documento_id: string; documento: { id: string; nombre_original: string; mime_type: string; size_bytes: number; fecha_carga: string } };
+export type ISRDocumentLink = { id: string; documento_id: string; estatus?: 'ACTIVO' | 'INACTIVO'; idempotency_key?: string | null; generated_from_version?: number | null; format_source?: string | null; documento: { id: string; nombre_original: string; mime_type: string; size_bytes: number; fecha_carga: string; tipo?: string } };
 export type ISRProposal = { id: string; field_path: string; proposed_value: unknown; status: 'PENDIENTE' | 'ACEPTADA' | 'RECHAZADA' | 'CONFLICTO'; source_document_id: string; source_document_name: string; source_page?: number; confidence?: string; model_version: string; source_fragment?: string; conflict_group?: string };
 
 export type ISRRecord = {

@@ -26,7 +26,35 @@ export type ISRCalculationInput = {
     fiscalResidence: 'MEXICO' | 'EXTRANJERO' | 'NO_CONFIRMADA';
     confirmed: boolean;
   };
-  property: { description: string; landAndConstructionSameAcquisitionDate: boolean };
+  property: {
+    description: string;
+    landAndConstructionSameAcquisitionDate: boolean;
+    sourcePredioId?: string;
+    landSurfaceM2?: ISRMoney;
+    constructionSurfaceM2?: ISRMoney;
+    commercialConstructionSurfaceM2?: ISRMoney;
+    cadastralValue?: ISRMoney;
+    appraisalValue?: ISRMoney;
+    operationValue?: ISRMoney;
+  };
+  sourceContext?: {
+    capturedAt: string;
+    expediente?: { id: string; number: string; version: number };
+    acts: Array<{ id: string; typeId: string; name: string }>;
+    properties: Array<{
+      relationId: string; predioId: string; actIds: string[]; version: number; label: string;
+      description: string; landSurfaceM2: ISRMoney; constructionSurfaceM2: ISRMoney;
+      commercialConstructionSurfaceM2: ISRMoney; cadastralValue: ISRMoney; appraisalValue: ISRMoney;
+      operationValue: ISRMoney; ivaSuggested: boolean;
+    }>;
+    parties: Array<{
+      relationId: string; comparecienteId: string; actId: string | null; role: string; name: string;
+      personType: 'FISICA' | 'MORAL'; rfc: string; curp: string; nationality: string;
+      fiscalResidence: 'MEXICO' | 'EXTRANJERO' | 'NO_CONFIRMADA'; participationPercentage: string;
+      validated: boolean;
+    }>;
+  };
+  iva?: { applies: boolean; suggestedFromProperty: boolean; reviewNote: string };
   acquisitionDate: string;
   saleDate: string;
   yearsElapsed: number;
@@ -49,7 +77,7 @@ export type ISRCalculationInput = {
   }>;
   exemptionTreatment: 'NO_APLICA_CONFIRMADO' | 'PENDIENTE_REVISION' | 'SOLICITADA';
   ordinaryCaseConfirmed: boolean;
-  specialCases: Array<'COPROPIEDAD' | 'HERENCIA_DONACION' | 'PRESCRIPCION' | 'ADJUDICACION' | 'FIDEICOMISO' | 'PAGO_PARCIALIDADES' | 'FECHAS_SEPARADAS_TERRENO_CONSTRUCCION' | 'OTRO'>;
+  specialCases: Array<'COPROPIEDAD' | 'HERENCIA_DONACION' | 'PRESCRIPCION' | 'ADJUDICACION' | 'FIDEICOMISO' | 'PAGO_PARCIALIDADES' | 'FECHAS_SEPARADAS_TERRENO_CONSTRUCCION' | 'MULTIPLES_CONTRIBUYENTES' | 'MULTIPLES_INMUEBLES' | 'OTRO'>;
 };
 
 export type ISRRateBracket = {
@@ -101,12 +129,16 @@ export type ISRCalculationResult = {
     tariffTaxRaw: ISRMoney;
     provisionalFederalISRRaw: ISRMoney;
   };
-  ruleSet: { id: string; key: string; version: string; sourceUrl: string };
+  ruleSet: {
+    id: string; key: string; version: string; sourceUrl: string; normativeSource: string;
+    jurisdiction: string; validFrom: string; validTo: string;
+  };
+  capabilityMatrix: Array<{ key: string; label: string; status: 'SUPPORTED' | 'HUMAN_REVIEW_REQUIRED'; reason: string }>;
   breakdown: ISRBreakdownStep[];
 };
 
 export class ISRValidationError extends Error {
-  constructor(public readonly code: string, message: string, public readonly field?: string) {
+  constructor(public readonly code: string, message: string, public readonly field?: string, public readonly status = 422) {
     super(message);
     this.name = 'ISRValidationError';
   }
@@ -131,6 +163,7 @@ const validateSupportedCase = (input: ISRCalculationInput, rules: ISRRuleSetSnap
   if (!input.taxpayer.confirmed || !input.taxpayer.fullName.trim() || !input.taxpayer.rfc.trim()) throw new ISRValidationError('MISSING_DATA', 'Confirma el nombre y RFC del contribuyente antes de calcular.', 'taxpayer');
   if (!input.ordinaryCaseConfirmed) throw new ISRValidationError('HUMAN_REVIEW_REQUIRED', 'Confirma que se trata de una operación ordinaria antes de calcular.', 'ordinaryCaseConfirmed');
   if (input.exemptionTreatment !== 'NO_APLICA_CONFIRMADO') throw new ISRValidationError('UNSUPPORTED_EXEMPTION', 'La exención requiere revisión fiscal humana y este supuesto todavía no se calcula.', 'exemptionTreatment');
+  if (input.iva?.applies) throw new ISRValidationError('UNSUPPORTED_IVA_RULESET', 'La operación marcada con IVA requiere una regla normativa versionada que todavía no está disponible.', 'iva');
   if (input.specialCases.length) throw new ISRValidationError('UNSUPPORTED_CASE', 'Cálculo no disponible para este supuesto especial.', 'specialCases');
   if (!input.property.landAndConstructionSameAcquisitionDate) throw new ISRValidationError('UNSUPPORTED_CASE', 'Las fechas separadas de terreno y construcción requieren un motor específico.', 'property');
   const acquired = new Date(`${input.acquisitionDate}T00:00:00Z`);
@@ -200,9 +233,25 @@ export function calculateISR(input: ISRCalculationInput, rules: ISRRuleSetSnapsh
     taxableIncome: serialized(salePrice), exemptIncome: '0.00', consideredDeductions: serialized(deductions), gain: serialized(gain),
     yearsConsidered: years, tariffBase: serialized(tariffBase), bracket, provisionalFederalISR: serialized(provisional),
     calculationPrecision: { tariffTaxRaw: tariffTax.toFixed(5), provisionalFederalISRRaw: provisionalRaw.toFixed(5) },
-    ruleSet: { id: rules.id, key: rules.key, version: rules.version, sourceUrl: rules.sourceUrl }, breakdown,
+    ruleSet: {
+      id: rules.id, key: rules.key, version: rules.version, sourceUrl: rules.sourceUrl,
+      normativeSource: rules.normativeSource, jurisdiction: rules.jurisdiction,
+      validFrom: rules.validFrom, validTo: rules.validTo,
+    },
+    capabilityMatrix: ISR_NORMATIVE_MATRIX,
+    breakdown,
   };
 }
+
+/** Matriz explícita del alcance validado. No contiene ni ejecuta fórmulas. */
+export const ISR_NORMATIVE_MATRIX: ISRCalculationResult['capabilityMatrix'] = [
+  { key: 'ISR_ENAJENACION_ART126', label: 'ISR por enajenación · pago provisional federal', status: 'SUPPORTED', reason: 'LISR 119, 121 y 126; Anexo 8 RMF 2026 A.I, versión 2026.1.' },
+  { key: 'ISR_ADQUISICION', label: 'ISR por adquisición', status: 'HUMAN_REVIEW_REQUIRED', reason: 'No existe un ruleset aprobado en el repositorio para determinarlo.' },
+  { key: 'IVA_INMUEBLE', label: 'IVA de la operación inmobiliaria', status: 'HUMAN_REVIEW_REQUIRED', reason: 'No existe un ruleset aprobado en el repositorio para determinarlo.' },
+  { key: 'LISR_ART127_STATE_PAYMENT', label: 'Pago a la entidad federativa', status: 'HUMAN_REVIEW_REQUIRED', reason: 'El motor canónico declara expresamente este componente fuera de alcance.' },
+  { key: 'MULTIPLE_TAXPAYERS', label: 'Distribución entre múltiples contribuyentes', status: 'HUMAN_REVIEW_REQUIRED', reason: 'No existe un ruleset aprobado en el repositorio para distribuir el impuesto.' },
+  { key: 'FOREIGN_TAX_TREATMENT', label: 'Tratamiento de residencia fiscal extranjera', status: 'HUMAN_REVIEW_REQUIRED', reason: 'No existe un ruleset aprobado en el repositorio para este supuesto.' },
+];
 
 export const ISR2026_RULESET: ISRRuleSetSnapshot = {
   id: '2d790ca1-30f8-4897-b552-f6c20a89f8e1',
