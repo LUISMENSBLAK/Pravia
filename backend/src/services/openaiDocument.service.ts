@@ -101,6 +101,15 @@ export interface PropertyExtractionResult {
   uso: AIUsageMetrics;
 }
 
+export interface FinancialDocumentExtractionResult {
+  proveedor: 'OpenAI';
+  modelo: string;
+  campos: Array<{ campo: string; valor: string; confianza: 'LECTURA_CLARA' | 'LECTURA_DUDOSA' | 'LECTURA_DEFICIENTE'; pagina?: number | null; fragmento?: string | null }>;
+  faltantes: string[];
+  conflictos: Array<{ campo: string; detalle: string }>;
+  uso: AIUsageMetrics;
+}
+
 export interface AIUsageMetrics {
   modelo: string;
   input_tokens: number;
@@ -921,6 +930,48 @@ export async function extraerPredioDesdeDocumento(
     alertas: Array.isArray(parsed.alertas) ? parsed.alertas : [],
     uso: buildUsageMetrics(data, model, startedAt, 1, false),
   };
+}
+
+/**
+ * Extrae una propuesta financiera exclusivamente del documento autorizado que
+ * entrega el backend. La salida nunca modifica ni valida registros por sí sola.
+ */
+export async function extraerFinanzasDesdeDocumento(documento: DocumentoParaExtraccion): Promise<FinancialDocumentExtractionResult> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  const model = getOpenAIModelName();
+  const startedAt = Date.now();
+  if (!apiKey) throw new Error('La clave de API de OpenAI no está configurada.');
+  const content: any[] = [{ type: 'input_text', text: `Extrae únicamente datos financieros expresamente visibles en ESTE documento. No infieras ni completes datos ausentes. Campos permitidos: monto, fecha, referencia, forma_pago, concepto, beneficiario, dependencia. Devuelve fragmento y página cuando existan. Si hay dos valores incompatibles, repórtalos como conflicto y no elijas silenciosamente. Este resultado es una propuesta sujeta a revisión humana y nunca acredita ni aplica un pago.` }];
+  const lowerName = documento.nombreOriginal.toLowerCase();
+  const mime = documento.mimeType.toLowerCase();
+  if (mime.includes('officedocument.wordprocessingml') || lowerName.endsWith('.docx')) {
+    const extracted = await mammoth.extractRawText({ buffer: documento.buffer });
+    content.push({ type: 'input_text', text: `[DOCUMENTO FINANCIERO: ${documento.nombreOriginal}; ID: ${documento.documentoId}]\n${(extracted.value || '').trim()}` });
+  } else if (mime.includes('pdf') || lowerName.endsWith('.pdf')) {
+    content.push({ type: 'input_file', filename: documento.nombreOriginal, file_data: `data:application/pdf;base64,${documento.buffer.toString('base64')}` });
+  } else if (mime.includes('png') || lowerName.endsWith('.png')) {
+    content.push({ type: 'input_image', detail: 'high', image_url: `data:image/png;base64,${documento.buffer.toString('base64')}` });
+  } else if (mime.includes('jpeg') || mime.includes('jpg') || /\.jpe?g$/.test(lowerName)) {
+    content.push({ type: 'input_image', detail: 'high', image_url: `data:image/jpeg;base64,${documento.buffer.toString('base64')}` });
+  } else throw new Error('El tipo de documento seleccionado no es compatible con extracción IA.');
+  const fieldProperties = { campo: { type: 'string' }, valor: { type: 'string' }, confianza: { type: 'string', enum: ['LECTURA_CLARA', 'LECTURA_DUDOSA', 'LECTURA_DEFICIENTE'] }, pagina: { type: ['integer', 'null'] }, fragmento: { type: ['string', 'null'] } };
+  const conflictProperties = { campo: { type: 'string' }, detalle: { type: 'string' } };
+  const schema = { type: 'object', additionalProperties: false, properties: {
+    campos: { type: 'array', items: { type: 'object', additionalProperties: false, properties: fieldProperties, required: Object.keys(fieldProperties) } },
+    faltantes: { type: 'array', items: { type: 'string' } },
+    conflictos: { type: 'array', items: { type: 'object', additionalProperties: false, properties: conflictProperties, required: Object.keys(conflictProperties) } },
+  }, required: ['campos', 'faltantes', 'conflictos'] };
+  const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000)), body: JSON.stringify({ model, store: false, input: [{ role: 'user', content }], reasoning: { effort: getReasoningEffort() }, max_output_tokens: 4096, text: { format: { type: 'json_schema', name: 'exp008_financial_document_proposal', strict: true, schema } } }) });
+  if (!response.ok) { const detail = await response.text().catch(() => 'sin detalle'); throw new Error(`OpenAI respondió HTTP ${response.status}: ${detail.slice(0, 300)}`); }
+  const data: any = await response.json();
+  if (data.status === 'incomplete') throw new Error(`OpenAI no completó la extracción: ${data.incomplete_details?.reason || 'causa no especificada'}`);
+  const output = (data.output || []).flatMap((item: any) => item.content || []);
+  const refusal = output.find((item: any) => item.type === 'refusal')?.refusal;
+  if (refusal) throw new Error(`OpenAI rechazó la extracción: ${refusal}`);
+  const raw = output.filter((item: any) => item.type === 'output_text').map((item: any) => item.text || '').join('').trim();
+  if (!raw) throw new Error('OpenAI no devolvió una propuesta analizable.');
+  const parsed = JSON.parse(raw);
+  return { proveedor: 'OpenAI', modelo: model, campos: Array.isArray(parsed.campos) ? parsed.campos : [], faltantes: Array.isArray(parsed.faltantes) ? parsed.faltantes : [], conflictos: Array.isArray(parsed.conflictos) ? parsed.conflictos : [], uso: buildUsageMetrics(data, model, startedAt, 1, false) };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

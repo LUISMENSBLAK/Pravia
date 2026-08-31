@@ -14,12 +14,15 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+const exp008VisualFixture = import.meta.env.DEV && new URLSearchParams(window.location.search).get('fixture') === 'exp008';
+const exp008VisualUser: SessionUser = { id: 'visual-admin', name: 'Andrea Ruiz', email: 'andrea@local.invalid', role: 'ADMINISTRACION', notary: 'Notaría 12', organization: { id: 'org-visual', name: 'PRAVIA' }, organizations: [{ id: 'org-visual', name: 'PRAVIA' }], scope: 'GLOBAL', permissions: ['expedientes.read','expedientes.write','finanzas.read','finanzas.write','finanzas.validate','documentos.read','documentos.write','documentos.unlink','ia.execute'] };
 
 export function AuthProvider({ children }: PropsWithChildren) {
-  const [status, setStatus] = useState<AuthStatus>('checking');
-  const [user, setUser] = useState<SessionUser | null>(null);
+  const [status, setStatus] = useState<AuthStatus>(exp008VisualFixture ? 'authenticated' : 'checking');
+  const [user, setUser] = useState<SessionUser | null>(exp008VisualFixture ? exp008VisualUser : null);
 
   useEffect(() => {
+    if (exp008VisualFixture) return;
     let active = true;
     authService.currentUser()
       .then((sessionUser) => {

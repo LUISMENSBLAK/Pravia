@@ -29,6 +29,8 @@ export const TENANT_SCOPED_MODELS = new Set([
   'ExpedienteArtefactoPendiente', 'ExpedienteArtefactoDocumento',
   'ExpedientePresupuesto', 'ExpedientePresupuestoConcepto', 'ExpedientePresupuestoDistribucion',
   'ExpedientePresupuestoDocumento',
+  'ExpedienteIngresoReportado', 'ExpedienteSolicitudPago', 'ExpedienteFinanzaDocumento',
+  'ExpedienteFinanzaPropuestaIA',
 ]);
 
 const READ_OR_WRITE_WITH_WHERE = new Set([

@@ -35,7 +35,7 @@ export class MiDiaController {
         : expedienteAccessWhere(req.user);
       const canReadFinance = req.user.permissions.includes('finanzas.read');
 
-      const [tasks, events, expedientes, quotes] = await Promise.all([
+      const [tasks, events, expedientes, quotes, pendingExp008Income, pendingExp008Requests] = await Promise.all([
         prisma.tarea.findMany({
           where: { estatus: { in: ['PENDIENTE', 'EN_PROCESO'] }, ...(userId ? { asignado_a_id: userId } : {}) },
           include: { expediente: { select: { id: true, numero_pravia: true, cliente_alias: true } } },
@@ -73,6 +73,14 @@ export class MiDiaController {
           orderBy: { updated_at: 'asc' },
           take: 100,
         }),
+        canReadFinance ? prisma.expedienteIngresoReportado.findMany({
+          where: { estado: 'PENDIENTE_APLICACION', expediente: { archived_at: null, ...expedienteUserFilter } },
+          select: { id: true, created_at: true, expediente: { select: { id: true, numero_pravia: true } } }, orderBy: { created_at: 'asc' }, take: 50,
+        }) : Promise.resolve([]),
+        canReadFinance ? prisma.expedienteSolicitudPago.findMany({
+          where: { estado: 'PENDIENTE', expediente: { archived_at: null, ...expedienteUserFilter } },
+          select: { id: true, created_at: true, fecha_limite: true, expediente: { select: { id: true, numero_pravia: true } } }, orderBy: { created_at: 'asc' }, take: 50,
+        }) : Promise.resolve([]),
       ]);
 
       const todayTasks = tasks.filter((task) => task.fecha_limite && task.fecha_limite >= todayStart && task.fecha_limite <= todayEnd);
@@ -113,6 +121,8 @@ export class MiDiaController {
         ...blocked.map((exp) => ({ id: `blocked-${exp.id}`, severidad: 'ALTA', tipo: 'EXPEDIENTE_BLOQUEADO', titulo: `Expediente bloqueado: ${exp.numero_pravia}`, detalle: exp.tareas_externas[0]?.descripcion || 'Expediente suspendido', fecha: exp.updated_at, ruta: `/expedientes/${exp.id}` })),
         ...missingDocs.slice(0, 15).map((exp) => ({ id: `docs-${exp.id}`, severidad: 'MEDIA', tipo: 'DOCUMENTOS_FALTANTES', titulo: `${exp.requisitos_docs.length} documento(s) pendiente(s)`, detalle: `${exp.numero_pravia} · ${exp.requisitos_docs[0]?.nombre}`, fecha: exp.requisitos_docs[0]?.fecha_vencimiento || exp.updated_at, ruta: `/expedientes/${exp.id}` })),
         ...collection.slice(0, 15).map((item) => ({ id: `collection-${item.expediente_id}`, severidad: 'MEDIA', tipo: 'COBRO_PENDIENTE', titulo: `Cobro pendiente: ${item.folio}`, detalle: `$${item.saldo.toLocaleString('es-MX', { minimumFractionDigits: 2 })} MXN`, fecha: null, ruta: `/expedientes/${item.expediente_id}` })),
+        ...pendingExp008Income.map((item) => ({ id: `exp008-income-${item.id}`, severidad: 'MEDIA', tipo: 'INGRESO_PENDIENTE_APLICACION', titulo: `Ingreso pendiente: ${item.expediente.numero_pravia}`, detalle: 'Revisar comprobante y aplicar si corresponde.', fecha: item.created_at, ruta: `/expedientes/${item.expediente.id}#finanzas` })),
+        ...pendingExp008Requests.map((item) => ({ id: `exp008-request-${item.id}`, severidad: 'MEDIA', tipo: 'SOLICITUD_PAGO_PENDIENTE', titulo: `Solicitud pendiente: ${item.expediente.numero_pravia}`, detalle: 'Revisar y procesar solicitud de pago.', fecha: item.fecha_limite || item.created_at, ruta: `/expedientes/${item.expediente.id}#finanzas` })),
       ].sort((a, b) => (a.severidad === b.severidad ? 0 : a.severidad === 'ALTA' ? -1 : 1)).slice(0, 40);
 
       return res.json({
@@ -133,6 +143,8 @@ export class MiDiaController {
           documentos_faltantes: missingDocs.reduce((sum, exp) => sum + exp.requisitos_docs.length, 0),
           cobros_pendientes: collection.length,
           saldo_pendiente_total: collection.reduce((sum, item) => sum + item.saldo, 0),
+          ingresos_pendientes_aplicacion: pendingExp008Income.length,
+          solicitudes_pago_pendientes: pendingExp008Requests.length,
         },
         tareas: { hoy: todayTasks, vencidas: overdueTasks, siguientes: tasks.filter((task) => !todayTasks.includes(task) && !overdueTasks.includes(task)).slice(0, 20) },
         eventos: { hoy: todayEvents, proximos: events.filter((event) => !todayEvents.includes(event)).slice(0, 30) },

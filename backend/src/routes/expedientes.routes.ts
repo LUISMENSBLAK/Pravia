@@ -87,12 +87,20 @@ import {
   getExpedienteBudgetPdfUrl,
   updateExpedienteBudget,
 } from '../controllers/expedienteBudget.controller';
+import {
+  applyExpedienteIncome, createExternalPaymentRequest, createInternalPaymentRequest,
+  generateExpedientePraviaReceipt, getExpedienteFinance, getExpedienteFinanceDocumentUrl,
+  payExpedienteRequest, proposeExpedienteFinanceAI, reportExpedienteIncome,
+  retireExpedienteFinanceDocument, uploadExp008, validateExpedienteFinanceAI,
+  verifyExpedientePraviaReceipt, voidExpedienteIncome, voidExpedientePaymentRequest,
+} from '../controllers/expedienteFinance.controller';
 
 const router = express.Router();
 router.param('id', requireExpedienteAccess);
 
 router.get('/tipos-acto', getTiposActo);
 router.get('/cotizaciones-elegibles', requirePermission('expedientes.write'), getEligibleCotizacionesForExpediente);
+router.get('/comprobantes-pravia/verificar/:token', requirePermission('expedientes.read'), verifyExpedientePraviaReceipt);
 router.get('/', getExpedientes);
 router.get('/:id', getExpedienteById);
 router.get('/:id/actos', listExpedienteActos);
@@ -124,6 +132,19 @@ router.put('/:id/presupuesto', requirePermission('expedientes.write'), updateExp
 router.post('/:id/presupuesto/generar', requirePermission('expedientes.write'), requirePermission('documentos.write'), generateExpedienteBudgetPdf);
 router.get('/:id/presupuesto/documentos/:historyId/url', requirePermission('documentos.read'), getExpedienteBudgetPdfUrl);
 router.delete('/:id/presupuesto/documentos/:historyId', requirePermission('documentos.unlink'), deleteExpedienteBudgetPdf);
+router.get('/:id/finanzas-operativas', requirePermission('expedientes.read'), getExpedienteFinance);
+router.post('/:id/finanzas-operativas/ingresos', requirePermission('expedientes.write'), requirePermission('documentos.write'), uploadExp008.single('file'), reportExpedienteIncome);
+router.post('/:id/finanzas-operativas/solicitudes/interna', requirePermission('expedientes.write'), requirePermission('documentos.write'), createInternalPaymentRequest);
+router.post('/:id/finanzas-operativas/solicitudes/externa', requirePermission('expedientes.write'), requirePermission('documentos.write'), uploadExp008.single('file'), createExternalPaymentRequest);
+router.post('/:id/finanzas-operativas/ia/proponer', requirePermission('ia.execute'), proposeExpedienteFinanceAI);
+router.post('/:id/finanzas-operativas/ia/propuestas/:proposalId/validar', requirePermission('finanzas.validate'), validateExpedienteFinanceAI);
+router.post('/:id/finanzas-operativas/ingresos/:incomeId/aplicar', requirePermission('finanzas.validate'), applyExpedienteIncome);
+router.post('/:id/finanzas-operativas/solicitudes/:requestId/pagar', requirePermission('finanzas.validate'), uploadExp008.fields([{ name: 'payment_proof', maxCount: 1 }, { name: 'fiscal_document', maxCount: 1 }]), payExpedienteRequest);
+router.post('/:id/finanzas-operativas/movimientos/:movementId/comprobante-pravia', requirePermission('finanzas.validate'), requirePermission('documentos.write'), generateExpedientePraviaReceipt);
+router.get('/:id/finanzas-operativas/documentos/:linkId/url', requirePermission('documentos.read'), getExpedienteFinanceDocumentUrl);
+router.delete('/:id/finanzas-operativas/documentos/:linkId', requirePermission('documentos.unlink'), retireExpedienteFinanceDocument);
+router.post('/:id/finanzas-operativas/ingresos/:incomeId/anular', requirePermission('finanzas.validate'), voidExpedienteIncome);
+router.post('/:id/finanzas-operativas/solicitudes/:requestId/anular', requirePermission('finanzas.validate'), voidExpedientePaymentRequest);
 router.post('/', createExpediente);
 router.patch('/:id', updateExpedienteHeader);
 router.post('/convertir-cotizacion', convertCotizacionToExpediente);

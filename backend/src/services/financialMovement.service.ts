@@ -16,6 +16,54 @@ async function nextFolio(tx: any, sequence: 'finance_movement_folio_seq' | 'fina
 export class FinancialMovementService {
   constructor(private readonly db: Database) {}
 
+  /**
+   * Punto canónico para que flujos operativos creen y apliquen un movimiento
+   * dentro de SU MISMA transacción. Evita libros paralelos y ventanas de doble gasto.
+   */
+  async applyOperationalMovementInTransaction(tx: Prisma.TransactionClient, input: {
+    organizationId: string; expedienteId: string; actorId: string; correlationId: string;
+    nature: 'INGRESO' | 'EGRESO'; amount: Prisma.Decimal; concept: string; accountId: string;
+    paymentMethod?: string | null; reference?: string | null; idempotencyKey: string;
+    allocations: Array<{ categoryId: string; amount: Prisma.Decimal; note?: string | null }>;
+  }) {
+    const existing = await tx.movimientoFinanciero.findFirst({ where: { organization_id: input.organizationId, idempotency_key: input.idempotencyKey }, include: { distribuciones: true, comprobanteInterno: true } });
+    if (existing) return { movement: existing, idempotent: true };
+    if (!input.amount.isPositive() || input.amount.decimalPlaces() > 2) throw new FinanceDomainError('El importe financiero no es válido.', 'FINANCE_AMOUNT_INVALID', 409);
+    if (!input.allocations.length || input.allocations.some((item) => !item.amount.isPositive() || item.amount.decimalPlaces() > 2)) throw new FinanceDomainError('La distribución financiera no es válida.', 'FINANCE_DISTRIBUTION_INVALID', 409);
+    const allocated = input.allocations.reduce((total, item) => total.plus(item.amount), new Prisma.Decimal(0));
+    if (!allocated.equals(input.amount)) throw new FinanceDomainError('La distribución financiera no coincide con el importe.', 'FINANCE_DISTRIBUTION_UNBALANCED', 409);
+    const [account, categories] = await Promise.all([
+      tx.cuentaFinanciera.findFirst({ where: { id: input.accountId, organization_id: input.organizationId, activa: true } }),
+      tx.categoriaFinanciera.findMany({ where: { id: { in: input.allocations.map((item) => item.categoryId) }, organization_id: input.organizationId, activa: true } }),
+    ]);
+    if (!account) throw new FinanceDomainError('Selecciona una cuenta activa de la organización.', 'FINANCE_ACCOUNT_INVALID');
+    if (categories.length !== new Set(input.allocations.map((item) => item.categoryId)).size) throw new FinanceDomainError('Una clasificación financiera no está disponible.', 'FINANCE_CATEGORY_INVALID');
+    categories.forEach((category) => {
+      if (category.direccion !== 'AMBAS' && category.direccion !== input.nature) throw new FinanceDomainError(`La categoría ${category.nombre} no corresponde a este tipo de movimiento.`, 'FINANCE_CATEGORY_DIRECTION_MISMATCH');
+    });
+    const [movementFolio, receiptFolio] = await Promise.all([
+      nextFolio(tx, 'finance_movement_folio_seq', 'MOV'), nextFolio(tx, 'finance_receipt_folio_seq', 'COM'),
+    ]);
+    const movement = await tx.movimientoFinanciero.create({ data: {
+      organization_id: input.organizationId, expediente_id: input.expedienteId, cuenta_id: input.accountId,
+      folio: movementFolio, tipo_movimiento: input.nature === 'INGRESO' ? 'ABONO' : 'EGRESO_TERCEROS',
+      naturaleza: input.nature, categoria: 'DISTRIBUIDO', concepto: clean(input.concept), monto: input.amount,
+      forma_pago: clean(input.paymentMethod) || null, referencia: clean(input.reference) || null,
+      estatus: 'APLICADO', capturado_por_id: input.actorId, validado_por_id: input.actorId,
+      fecha_validacion: new Date(), aplicado_por_id: input.actorId, fecha_aplicacion: new Date(), idempotency_key: input.idempotencyKey,
+      distribuciones: { create: input.allocations.map((item) => ({ organization_id: input.organizationId, categoria_id: item.categoryId, monto: item.amount, observaciones: clean(item.note) || null })) },
+    }, include: { distribuciones: { include: { categoria: true } }, cuenta: true } });
+    const receipt = await tx.comprobanteFinanciero.create({ data: {
+      organization_id: input.organizationId, folio: receiptFolio, movimiento_id: movement.id, tipo: input.nature,
+      importe: input.amount, concepto: movement.concepto, forma_pago: movement.forma_pago,
+      cuenta_snapshot: { institucion: account.institucion, alias: account.alias, ultimos_cuatro: account.ultimos_cuatro, moneda: account.moneda },
+      snapshot: { source: 'EXP-008', movimiento_folio: movementFolio, expediente_id: input.expedienteId, distribuciones: input.allocations.map((item) => ({ categoria_id: item.categoryId, monto: item.amount.toFixed(2) })) },
+      registrado_por_id: input.actorId,
+    } });
+    await tx.auditLog.create({ data: { organization_id: input.organizationId, user_id: input.actorId, accion: 'APPLY_OPERATIONAL_FINANCIAL_MOVEMENT', entidad: 'MovimientoFinanciero', entidad_id: movement.id, valores_nuevos: { source: 'EXP-008', folio: movementFolio, naturaleza: input.nature, monto: input.amount.toFixed(2), comprobante_id: receipt.id }, correlation_id: input.correlationId } });
+    return { movement: { ...movement, comprobanteInterno: receipt }, idempotent: false };
+  }
+
   async list(input: any) {
     const page = Math.max(1, Number(input.page || 1));
     const pageSize = Math.min(100, Math.max(1, Number(input.pageSize || 20)));

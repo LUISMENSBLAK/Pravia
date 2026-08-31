@@ -9,22 +9,22 @@ datasource db {
 }
 
 model Organization {
-  id                    String                         @id @default(uuid()) @db.Uuid
-  name                  String
-  status                String                         @default("ACTIVE")
-  created_at            DateTime                       @default(now())
-  updated_at            DateTime                       @updatedAt
-  memberships           OrganizationMembership[]
-  sessions              AuthSession[]
-  expedienteActos       ExpedienteActo[]
-  predios               Predio[]
-  predioColindancias    PredioColindancia[]
-  expedientePredios     ExpedientePredio[]
-  expedienteActoPredios ExpedienteActoPredio[]
-  predioDocumentos      PredioDocumento[]
-  predioDatosFuente     PredioDatoFuente[]
-  exp006Pendientes      ExpedienteArtefactoPendiente[] @relation("Exp006PendingOrganization")
-  exp006Documentos      ExpedienteArtefactoDocumento[] @relation("Exp006DocumentOrganization")
+  id                        String                              @id @default(uuid()) @db.Uuid
+  name                      String
+  status                    String                              @default("ACTIVE")
+  created_at                DateTime                            @default(now())
+  updated_at                DateTime                            @updatedAt
+  memberships               OrganizationMembership[]
+  sessions                  AuthSession[]
+  expedienteActos           ExpedienteActo[]
+  predios                   Predio[]
+  predioColindancias        PredioColindancia[]
+  expedientePredios         ExpedientePredio[]
+  expedienteActoPredios     ExpedienteActoPredio[]
+  predioDocumentos          PredioDocumento[]
+  predioDatosFuente         PredioDatoFuente[]
+  exp006Pendientes          ExpedienteArtefactoPendiente[]      @relation("Exp006PendingOrganization")
+  exp006Documentos          ExpedienteArtefactoDocumento[]      @relation("Exp006DocumentOrganization")
   presupuestos              ExpedientePresupuesto[]
   presupuestoConceptos      ExpedientePresupuestoConcepto[]
   presupuestoDistribuciones ExpedientePresupuestoDistribucion[]
@@ -53,121 +53,130 @@ model OrganizationMembership {
 }
 
 model User {
-  id                                     String                         @id @default(uuid()) @db.Uuid
-  email                                  String                         @unique
+  id                                     String                           @id @default(uuid()) @db.Uuid
+  email                                  String                           @unique
   password_hash                          String
   nombre                                 String
   apellido                               String
-  rol                                    Role                           @default(ABOGADO)
+  rol                                    Role                             @default(ABOGADO)
   avatar_url                             String?
-  activo                                 Boolean                        @default(true)
-  created_at                             DateTime                       @default(now())
-  updated_at                             DateTime                       @updatedAt
+  activo                                 Boolean                          @default(true)
+  created_at                             DateTime                         @default(now())
+  updated_at                             DateTime                         @updatedAt
   password_changed_at                    DateTime?
-  failed_login_attempts                  Int                            @default(0)
+  failed_login_attempts                  Int                              @default(0)
   locked_until                           DateTime?
   last_login_at                          DateTime?
-  requires_password_change               Boolean                        @default(true)
+  requires_password_change               Boolean                          @default(true)
   telefono                               String?
   aiUsageLogs                            AIUsageLog[]
-  assistantConversations                 AssistantConversation[]        @relation("AssistantConversationOwner")
-  assistantAttachments                   AssistantAttachment[]          @relation("AssistantAttachmentUploader")
+  assistantConversations                 AssistantConversation[]          @relation("AssistantConversationOwner")
+  assistantAttachments                   AssistantAttachment[]            @relation("AssistantAttachmentUploader")
   auditLogs                              AuditLog[]
   authSessions                           AuthSession[]
-  cargasTemporales                       CargaTemporalDocumento[]       @relation("CargaTemporalUsuario")
-  comparecienteAltaSessions              ComparecienteAltaSession[]     @relation("ComparecienteAltaSessionUsuario")
-  contactosComparecienteCreados          ComparecienteContacto[]        @relation("ContactoCreador")
-  datosFuenteConfirmados                 ComparecienteDatoFuente[]      @relation("DatoFuenteConfirmador")
-  comparecienteVinculosCreados           ComparecienteDocumento[]       @relation("ComparecienteDocCreador")
-  comparecienteDocsValidados             ComparecienteDocumento[]       @relation("ComparecienteDocValidador")
-  domiciliosComparecienteCreados         ComparecienteDomicilio[]       @relation("DomicilioCreador")
-  identificacionesComparecienteCreadas   ComparecienteIdentificacion[]  @relation("IdentificacionCreador")
-  identificacionesComparecienteValidadas ComparecienteIdentificacion[]  @relation("IdentificacionValidador")
-  comparecientesCreados                  Compareciente[]                @relation("ComparecienteCreador")
-  complianceDecisions                    ComplianceDecision[]           @relation("ComplianceDecisionActor")
-  complianceEvidenceAdded                ComplianceEvidence[]           @relation("ComplianceEvidenceAdder")
-  complianceReviewsCreated               ComplianceReview[]             @relation("ComplianceReviewCreator")
-  complianceReviewsReviewed              ComplianceReview[]             @relation("ComplianceReviewReviewer")
-  complianceRulesApproved                ComplianceRuleSet[]            @relation("ComplianceRuleApprover")
-  complianceRulesCreated                 ComplianceRuleSet[]            @relation("ComplianceRuleCreator")
-  comprobantesAnulados                   ComprobanteFinanciero[]        @relation("ComprobanteAnulador")
-  comprobantesRegistrados                ComprobanteFinanciero[]        @relation("ComprobanteRegistrador")
-  comunicacionVinculosCreados            ComunicacionDocumento[]        @relation("ComunicacionDocCreador")
+  cargasTemporales                       CargaTemporalDocumento[]         @relation("CargaTemporalUsuario")
+  comparecienteAltaSessions              ComparecienteAltaSession[]       @relation("ComparecienteAltaSessionUsuario")
+  contactosComparecienteCreados          ComparecienteContacto[]          @relation("ContactoCreador")
+  datosFuenteConfirmados                 ComparecienteDatoFuente[]        @relation("DatoFuenteConfirmador")
+  comparecienteVinculosCreados           ComparecienteDocumento[]         @relation("ComparecienteDocCreador")
+  comparecienteDocsValidados             ComparecienteDocumento[]         @relation("ComparecienteDocValidador")
+  domiciliosComparecienteCreados         ComparecienteDomicilio[]         @relation("DomicilioCreador")
+  identificacionesComparecienteCreadas   ComparecienteIdentificacion[]    @relation("IdentificacionCreador")
+  identificacionesComparecienteValidadas ComparecienteIdentificacion[]    @relation("IdentificacionValidador")
+  comparecientesCreados                  Compareciente[]                  @relation("ComparecienteCreador")
+  complianceDecisions                    ComplianceDecision[]             @relation("ComplianceDecisionActor")
+  complianceEvidenceAdded                ComplianceEvidence[]             @relation("ComplianceEvidenceAdder")
+  complianceReviewsCreated               ComplianceReview[]               @relation("ComplianceReviewCreator")
+  complianceReviewsReviewed              ComplianceReview[]               @relation("ComplianceReviewReviewer")
+  complianceRulesApproved                ComplianceRuleSet[]              @relation("ComplianceRuleApprover")
+  complianceRulesCreated                 ComplianceRuleSet[]              @relation("ComplianceRuleCreator")
+  comprobantesAnulados                   ComprobanteFinanciero[]          @relation("ComprobanteAnulador")
+  comprobantesRegistrados                ComprobanteFinanciero[]          @relation("ComprobanteRegistrador")
+  comunicacionVinculosCreados            ComunicacionDocumento[]          @relation("ComunicacionDocCreador")
   comunicaciones                         Comunicacion[]
-  conciliacionesRegistradas              ConciliacionFinanciera[]       @relation("ConciliacionActor")
-  cotizacionVinculosCreados              CotizacionDocumento[]          @relation("CotizacionDocCreador")
+  conciliacionesRegistradas              ConciliacionFinanciera[]         @relation("ConciliacionActor")
+  cotizacionVinculosCreados              CotizacionDocumento[]            @relation("CotizacionDocCreador")
   seguimientosCotizaciones               CotizacionSeguimiento[]
   cotizaciones                           Cotizacion[]
-  cuentasFinancierasCreadas              CuentaFinanciera[]             @relation("CuentaFinancieraCreador")
+  cuentasFinancierasCreadas              CuentaFinanciera[]               @relation("CuentaFinancieraCreador")
   documentosSubidos                      Documento[]
-  outboxEventosDisparados                DomainEventOutbox[]            @relation("OutboxActor")
-  eventosCancelados                      EventoAgenda[]                 @relation("EventoCanceladoPor")
-  eventos                                EventoAgenda[]                 @relation("EventoResponsable")
+  outboxEventosDisparados                DomainEventOutbox[]              @relation("OutboxActor")
+  eventosCancelados                      EventoAgenda[]                   @relation("EventoCanceladoPor")
+  eventos                                EventoAgenda[]                   @relation("EventoResponsable")
   expedienteActividades                  ExpedienteActividad[]
-  expedienteComparecientesCreados        ExpedienteCompareciente[]      @relation("ExpedienteComparecienteCreador")
-  expedienteComparecientesValidados      ExpedienteCompareciente[]      @relation("ExpedienteComparecienteValidador")
-  expedienteVinculosCreados              ExpedienteDocumento[]          @relation("ExpedienteDocCreador")
-  expedienteSnapshotsCongelados          ExpedienteDocumentoSnapshot[]  @relation("ExpedienteSnapshotActor")
-  entregasRegistradas                    ExpedienteEntrega[]            @relation("ExpedienteEntregaRegistrador")
-  expedienteRepresentacionesCreadas      ExpedienteRepresentacion[]     @relation("ExpedienteRepresentacionCreador")
-  expedienteRepresentacionesValidadas    ExpedienteRepresentacion[]     @relation("ExpedienteRepresentacionValidador")
-  expedientes                            Expediente[]                   @relation("ExpedienteAbogado")
-  expedientesArchivados                  Expediente[]                   @relation("ExpedienteArchivedBy")
-  expedientesCreados                     Expediente[]                   @relation("ExpedienteCreador")
-  expedienteActosCreados                 ExpedienteActo[]               @relation("ExpedienteActoCreador")
-  expedienteActosRetirados               ExpedienteActo[]               @relation("ExpedienteActoRetirador")
-  prediosCreados                         Predio[]                       @relation("PredioCreador")
-  prediosActualizados                    Predio[]                       @relation("PredioActualizador")
-  expedientePrediosCreados               ExpedientePredio[]             @relation("ExpedientePredioCreador")
-  exp006PendientesCreados                ExpedienteArtefactoPendiente[] @relation("Exp006PendingCreator")
-  exp006PendientesValidados              ExpedienteArtefactoPendiente[] @relation("Exp006PendingValidator")
-  exp006DocumentosCreados                ExpedienteArtefactoDocumento[] @relation("Exp006DocumentCreator")
+  expedienteComparecientesCreados        ExpedienteCompareciente[]        @relation("ExpedienteComparecienteCreador")
+  expedienteComparecientesValidados      ExpedienteCompareciente[]        @relation("ExpedienteComparecienteValidador")
+  expedienteVinculosCreados              ExpedienteDocumento[]            @relation("ExpedienteDocCreador")
+  expedienteSnapshotsCongelados          ExpedienteDocumentoSnapshot[]    @relation("ExpedienteSnapshotActor")
+  entregasRegistradas                    ExpedienteEntrega[]              @relation("ExpedienteEntregaRegistrador")
+  expedienteRepresentacionesCreadas      ExpedienteRepresentacion[]       @relation("ExpedienteRepresentacionCreador")
+  expedienteRepresentacionesValidadas    ExpedienteRepresentacion[]       @relation("ExpedienteRepresentacionValidador")
+  expedientes                            Expediente[]                     @relation("ExpedienteAbogado")
+  expedientesArchivados                  Expediente[]                     @relation("ExpedienteArchivedBy")
+  expedientesCreados                     Expediente[]                     @relation("ExpedienteCreador")
+  expedienteActosCreados                 ExpedienteActo[]                 @relation("ExpedienteActoCreador")
+  expedienteActosRetirados               ExpedienteActo[]                 @relation("ExpedienteActoRetirador")
+  prediosCreados                         Predio[]                         @relation("PredioCreador")
+  prediosActualizados                    Predio[]                         @relation("PredioActualizador")
+  expedientePrediosCreados               ExpedientePredio[]               @relation("ExpedientePredioCreador")
+  exp006PendientesCreados                ExpedienteArtefactoPendiente[]   @relation("Exp006PendingCreator")
+  exp006PendientesValidados              ExpedienteArtefactoPendiente[]   @relation("Exp006PendingValidator")
+  exp006DocumentosCreados                ExpedienteArtefactoDocumento[]   @relation("Exp006DocumentCreator")
   presupuestosCreados                    ExpedientePresupuesto[]          @relation("PresupuestoCreador")
   presupuestosActualizados               ExpedientePresupuesto[]          @relation("PresupuestoActualizador")
   presupuestoDocumentosGenerados         ExpedientePresupuestoDocumento[] @relation("PresupuestoDocumentoGenerador")
   presupuestoDocumentosEliminados        ExpedientePresupuestoDocumento[] @relation("PresupuestoDocumentoEliminador")
-  expedientePrediosRetirados             ExpedientePredio[]             @relation("ExpedientePredioRetirador")
-  predioDocumentosCreados                PredioDocumento[]              @relation("PredioDocumentoCreador")
-  predioDocumentosRetirados              PredioDocumento[]              @relation("PredioDocumentoRetirador")
-  predioDatosFuenteDecididos             PredioDatoFuente[]             @relation("PredioDatoFuenteDecisor")
-  expedientesGestor                      Expediente[]                   @relation("ExpedienteGestor")
-  flujoVersionesCreadas                  FlujoVersion[]                 @relation("FlujoVersionCreador")
-  formularioVersionesCreadas             FormularioVersion[]            @relation("FormularioVersionCreador")
-  honorariosReconocidos                  HonorarioGenerado[]            @relation("HonorarioGeneradoActor")
-  honorariosResponsable                  HonorarioGenerado[]            @relation("HonorarioGeneradoResponsable")
-  metasHonorarioCreadas                  MetaHonorario[]                @relation("MetaHonorarioCreador")
-  metasHonorario                         MetaHonorario[]                @relation("MetaHonorarioUsuario")
-  movimientoVinculosCreados              MovimientoDocumento[]          @relation("MovimientoDocCreador")
-  movimientosAplicados                   MovimientoFinanciero[]         @relation("MovimientoAplicado")
-  movimientosCancelados                  MovimientoFinanciero[]         @relation("MovimientoCancelado")
-  movimientosCapturados                  MovimientoFinanciero[]         @relation("MovimientoCapturado")
-  movimientosResponsable                 MovimientoFinanciero[]         @relation("MovimientoResponsable")
-  movimientosRevertidos                  MovimientoFinanciero[]         @relation("MovimientoRevertido")
-  movimientosValidados                   MovimientoFinanciero[]         @relation("MovimientoValidado")
+  ingresosExp008Reportados               ExpedienteIngresoReportado[]     @relation("Exp008IngresoReportador")
+  ingresosExp008Aplicados                ExpedienteIngresoReportado[]     @relation("Exp008IngresoAplicador")
+  ingresosExp008Anulados                 ExpedienteIngresoReportado[]     @relation("Exp008IngresoAnulador")
+  solicitudesExp008Creadas               ExpedienteSolicitudPago[]        @relation("Exp008SolicitudCreador")
+  solicitudesExp008Pagadas               ExpedienteSolicitudPago[]        @relation("Exp008SolicitudPagador")
+  solicitudesExp008Anuladas              ExpedienteSolicitudPago[]        @relation("Exp008SolicitudAnulador")
+  documentosExp008Vinculados             ExpedienteFinanzaDocumento[]     @relation("Exp008DocumentoVinculador")
+  documentosExp008Retirados              ExpedienteFinanzaDocumento[]     @relation("Exp008DocumentoRetirador")
+  propuestasExp008Revisadas              ExpedienteFinanzaPropuestaIA[]   @relation("Exp008PropuestaRevisor")
+  expedientePrediosRetirados             ExpedientePredio[]               @relation("ExpedientePredioRetirador")
+  predioDocumentosCreados                PredioDocumento[]                @relation("PredioDocumentoCreador")
+  predioDocumentosRetirados              PredioDocumento[]                @relation("PredioDocumentoRetirador")
+  predioDatosFuenteDecididos             PredioDatoFuente[]               @relation("PredioDatoFuenteDecisor")
+  expedientesGestor                      Expediente[]                     @relation("ExpedienteGestor")
+  flujoVersionesCreadas                  FlujoVersion[]                   @relation("FlujoVersionCreador")
+  formularioVersionesCreadas             FormularioVersion[]              @relation("FormularioVersionCreador")
+  honorariosReconocidos                  HonorarioGenerado[]              @relation("HonorarioGeneradoActor")
+  honorariosResponsable                  HonorarioGenerado[]              @relation("HonorarioGeneradoResponsable")
+  metasHonorarioCreadas                  MetaHonorario[]                  @relation("MetaHonorarioCreador")
+  metasHonorario                         MetaHonorario[]                  @relation("MetaHonorarioUsuario")
+  movimientoVinculosCreados              MovimientoDocumento[]            @relation("MovimientoDocCreador")
+  movimientosAplicados                   MovimientoFinanciero[]           @relation("MovimientoAplicado")
+  movimientosCancelados                  MovimientoFinanciero[]           @relation("MovimientoCancelado")
+  movimientosCapturados                  MovimientoFinanciero[]           @relation("MovimientoCapturado")
+  movimientosResponsable                 MovimientoFinanciero[]           @relation("MovimientoResponsable")
+  movimientosRevertidos                  MovimientoFinanciero[]           @relation("MovimientoRevertido")
+  movimientosValidados                   MovimientoFinanciero[]           @relation("MovimientoValidado")
   notas                                  Nota[]
-  notificationsCreated                   Notification[]                 @relation("NotificationCreator")
-  notifications                          Notification[]                 @relation("NotificationRecipient")
+  notificationsCreated                   Notification[]                   @relation("NotificationCreator")
+  notifications                          Notification[]                   @relation("NotificationRecipient")
   passwordResetTokens                    PasswordResetToken[]
-  instrumentosMoralCreados               PersonaMoralInstrumento[]      @relation("InstrumentoCreador")
-  instrumentosMoralValidados             PersonaMoralInstrumento[]      @relation("InstrumentoValidador")
-  representantesCorporativosCreados      PersonaMoralRepresentante[]    @relation("RepresentanteCorporativoCreador")
-  plantillaDocVersionesCreadas           PlantillaDocumentalVersion[]   @relation("PlantillaDocumentalVersionCreador")
-  prospectoVinculosCreados               ProspectoDocumento[]           @relation("ProspectoDocCreador")
+  instrumentosMoralCreados               PersonaMoralInstrumento[]        @relation("InstrumentoCreador")
+  instrumentosMoralValidados             PersonaMoralInstrumento[]        @relation("InstrumentoValidador")
+  representantesCorporativosCreados      PersonaMoralRepresentante[]      @relation("RepresentanteCorporativoCreador")
+  plantillaDocVersionesCreadas           PlantillaDocumentalVersion[]     @relation("PlantillaDocumentalVersionCreador")
+  prospectoVinculosCreados               ProspectoDocumento[]             @relation("ProspectoDocCreador")
   seguimientosProspectos                 ProspectoSeguimiento[]
-  archivedProspectos                     Prospecto[]                    @relation("ProspectoArchivedBy")
+  archivedProspectos                     Prospecto[]                      @relation("ProspectoArchivedBy")
   prospectos                             Prospecto[]
-  requisitoVinculosCreados               RequisitoDocumentoVinculo[]    @relation("RequisitoDocCreador")
-  tareasAsignadas                        Tarea[]                        @relation("TareaAsignado")
-  tareasCreadas                          Tarea[]                        @relation("TareaCreador")
-  tramitesPostfirmaGestionados           TareaExterna[]                 @relation("TareaExternaGestor")
-  transaccionesBancoImportadas           TransaccionEstadoCuenta[]      @relation("TransaccionBancoImportador")
-  invitationsAccepted                    UserInvitation[]               @relation("InvitationAcceptedUser")
-  invitationsCreated                     UserInvitation[]               @relation("InvitationCreator")
-  calculosISRCreados                     CalculoISR[]                   @relation("CalculoISRCreador")
-  calculosISRActualizados                CalculoISR[]                   @relation("CalculoISRActualizador")
-  calculosISRVersiones                   CalculoISRVersion[]            @relation("CalculoISRVersionActor")
-  calculosISRDocumentos                  CalculoISRDocumento[]          @relation("CalculoISRDocumentoActor")
-  calculosISRPropuestasRevisadas         CalculoISRPropuesta[]          @relation("CalculoISRPropuestaRevisor")
+  requisitoVinculosCreados               RequisitoDocumentoVinculo[]      @relation("RequisitoDocCreador")
+  tareasAsignadas                        Tarea[]                          @relation("TareaAsignado")
+  tareasCreadas                          Tarea[]                          @relation("TareaCreador")
+  tramitesPostfirmaGestionados           TareaExterna[]                   @relation("TareaExternaGestor")
+  transaccionesBancoImportadas           TransaccionEstadoCuenta[]        @relation("TransaccionBancoImportador")
+  invitationsAccepted                    UserInvitation[]                 @relation("InvitationAcceptedUser")
+  invitationsCreated                     UserInvitation[]                 @relation("InvitationCreator")
+  calculosISRCreados                     CalculoISR[]                     @relation("CalculoISRCreador")
+  calculosISRActualizados                CalculoISR[]                     @relation("CalculoISRActualizador")
+  calculosISRVersiones                   CalculoISRVersion[]              @relation("CalculoISRVersionActor")
+  calculosISRDocumentos                  CalculoISRDocumento[]            @relation("CalculoISRDocumentoActor")
+  calculosISRPropuestasRevisadas         CalculoISRPropuesta[]            @relation("CalculoISRPropuestaRevisor")
   preference                             UserPreference?
   organizationMemberships                OrganizationMembership[]
 
@@ -471,22 +480,22 @@ model Cotizacion {
 }
 
 model CotizacionVersion {
-  id                  String              @id @default(uuid()) @db.Uuid
-  organization_id     String?             @db.Uuid
-  cotizacion_id       String              @db.Uuid
+  id                  String                  @id @default(uuid()) @db.Uuid
+  organization_id     String?                 @db.Uuid
+  cotizacion_id       String                  @db.Uuid
   version             Int
-  total_cliente       Decimal             @db.Decimal(14, 2)
+  total_cliente       Decimal                 @db.Decimal(14, 2)
   notas               String?
   pdf_url             String?
-  created_at          DateTime            @default(now())
-  creada_por_id       String?             @db.Uuid
+  created_at          DateTime                @default(now())
+  creada_por_id       String?                 @db.Uuid
   desglose_notaria    Json?
   desglose_pravia     Json?
-  honorarios_pravia   Decimal             @db.Decimal(14, 2)
+  honorarios_pravia   Decimal                 @db.Decimal(14, 2)
   montos_extraidos_ia Json?
-  total_notaria       Decimal             @db.Decimal(14, 2)
-  aprobada            Boolean             @default(false)
-  cotizacion          Cotizacion          @relation(fields: [cotizacion_id], references: [id], onDelete: Cascade)
+  total_notaria       Decimal                 @db.Decimal(14, 2)
+  aprobada            Boolean                 @default(false)
+  cotizacion          Cotizacion              @relation(fields: [cotizacion_id], references: [id], onDelete: Cascade)
   honorariosGenerados HonorarioGenerado[]
   presupuestosOrigen  ExpedientePresupuesto[]
 
@@ -834,22 +843,23 @@ model CatalogoArtefacto {
 }
 
 model CatalogoArtefactoVersion {
-  id               String                         @id @default(uuid()) @db.Uuid
-  organization_id  String                         @db.Uuid
-  artefacto_id     String                         @db.Uuid
-  version          Int
-  nombre_original  String
-  storage_key      String
-  mime_type        String
-  size_bytes       Int
-  checksum_sha256  String
-  origen           String
-  activa           Boolean                        @default(true)
-  creado_por_id    String                         @db.Uuid
-  created_at       DateTime                       @default(now())
-  artefacto        CatalogoArtefacto              @relation(fields: [artefacto_id], references: [id], onDelete: Cascade)
-  pendientesExp006 ExpedienteArtefactoPendiente[] @relation("Exp006PendingMasterVersion")
+  id                    String                           @id @default(uuid()) @db.Uuid
+  organization_id       String                           @db.Uuid
+  artefacto_id          String                           @db.Uuid
+  version               Int
+  nombre_original       String
+  storage_key           String
+  mime_type             String
+  size_bytes            Int
+  checksum_sha256       String
+  origen                String
+  activa                Boolean                          @default(true)
+  creado_por_id         String                           @db.Uuid
+  created_at            DateTime                         @default(now())
+  artefacto             CatalogoArtefacto                @relation(fields: [artefacto_id], references: [id], onDelete: Cascade)
+  pendientesExp006      ExpedienteArtefactoPendiente[]   @relation("Exp006PendingMasterVersion")
   presupuestoDocumentos ExpedientePresupuestoDocumento[]
+  solicitudesPagoExp008 ExpedienteSolicitudPago[]
 
   @@unique([artefacto_id, version], map: "uq_catalogo_artefacto_version")
   @@unique([organization_id, storage_key], map: "uq_catalogo_storage_key_org")
@@ -985,6 +995,10 @@ model Expediente {
   artefactosPendientes       ExpedienteArtefactoPendiente[] @relation("Exp006PendingExpediente")
   artefactosDocumentos       ExpedienteArtefactoDocumento[] @relation("Exp006DocumentExpediente")
   presupuesto                ExpedientePresupuesto?
+  ingresosReportados         ExpedienteIngresoReportado[]
+  solicitudesPago            ExpedienteSolicitudPago[]
+  finanzaDocumentos          ExpedienteFinanzaDocumento[]
+  finanzaPropuestasIA        ExpedienteFinanzaPropuestaIA[]
 
   @@unique([id, organization_id], map: "uq_expedientes_id_org")
   @@index([abogado_id], map: "idx_expedientes_abogado_fk")
@@ -1575,6 +1589,8 @@ model Documento {
   exp006PendienteActual        ExpedienteArtefactoPendiente[]    @relation("Exp006PendingCurrentDocument")
   exp006Historial              ExpedienteArtefactoDocumento[]    @relation("Exp006ArtifactDocument")
   presupuestoHistorico         ExpedientePresupuestoDocumento?
+  finanzaVinculosExp008        ExpedienteFinanzaDocumento[]
+  finanzaPropuestasExp008      ExpedienteFinanzaPropuestaIA[]
 
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
   @@index([cotizacion_id], map: "idx_documentos_cotizacion_fk")
@@ -2246,60 +2262,63 @@ model ExpedienteRequisitoDoc {
 }
 
 model MovimientoFinanciero {
-  id                   String                   @id @default(uuid()) @db.Uuid
-  organization_id      String?                  @db.Uuid
-  expediente_id        String?                  @db.Uuid
-  cotizacion_id        String?                  @db.Uuid
-  tipo_movimiento      TipoMovimiento
-  naturaleza           NaturalezaMovimiento
-  categoria            String
-  concepto             String
-  monto                Decimal                  @db.Decimal(14, 2)
-  fecha_movimiento     DateTime                 @default(now())
-  forma_pago           String?
-  cuenta_receptora     String?
-  referencia           String?
-  comprobante_url      String?
-  factura_url          String?
-  estatus              EstatusMovimiento        @default(PENDIENTE)
-  capturado_por_id     String                   @db.Uuid
-  validado_por_id      String?                  @db.Uuid
-  fecha_validacion     DateTime?
-  movimiento_origen_id String?                  @db.Uuid
-  motivo_reversion     String?
-  revertido_por_id     String?                  @db.Uuid
-  fecha_reversion      DateTime?
-  folio                String?                  @unique
-  compareciente_id     String?                  @db.Uuid
-  notaria_id           String?                  @db.Uuid
-  responsable_id       String?                  @db.Uuid
-  cuenta_id            String?                  @db.Uuid
-  descripcion          String?
-  fecha_registro       DateTime                 @default(now())
-  updated_at           DateTime                 @default(now()) @updatedAt
-  idempotency_key      String?                  @unique
-  aplicado_por_id      String?                  @db.Uuid
-  fecha_aplicacion     DateTime?
-  cancelado_por_id     String?                  @db.Uuid
-  fecha_cancelacion    DateTime?
-  motivo_cancelacion   String?
-  comprobanteInterno   ComprobanteFinanciero?
-  conciliaciones       ConciliacionFinanciera[]
-  distribuciones       MovimientoDistribucion[]
-  movimientoDocumentos MovimientoDocumento[]
-  aplicado_por         User?                    @relation("MovimientoAplicado", fields: [aplicado_por_id], references: [id])
-  cancelado_por        User?                    @relation("MovimientoCancelado", fields: [cancelado_por_id], references: [id])
-  capturado_por        User                     @relation("MovimientoCapturado", fields: [capturado_por_id], references: [id])
-  compareciente        Compareciente?           @relation(fields: [compareciente_id], references: [id])
-  cotizacion           Cotizacion?              @relation(fields: [cotizacion_id], references: [id])
-  cuenta               CuentaFinanciera?        @relation(fields: [cuenta_id], references: [id], onDelete: Restrict)
-  expediente           Expediente?              @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
-  movimientoOrigen     MovimientoFinanciero?    @relation("MovimientoReversoRel", fields: [movimiento_origen_id], references: [id], onDelete: Restrict)
-  reversosGenerados    MovimientoFinanciero[]   @relation("MovimientoReversoRel")
-  notaria              Notaria?                 @relation(fields: [notaria_id], references: [id])
-  responsable          User?                    @relation("MovimientoResponsable", fields: [responsable_id], references: [id])
-  revertido_por        User?                    @relation("MovimientoRevertido", fields: [revertido_por_id], references: [id])
-  validado_por         User?                    @relation("MovimientoValidado", fields: [validado_por_id], references: [id])
+  id                      String                       @id @default(uuid()) @db.Uuid
+  organization_id         String?                      @db.Uuid
+  expediente_id           String?                      @db.Uuid
+  cotizacion_id           String?                      @db.Uuid
+  tipo_movimiento         TipoMovimiento
+  naturaleza              NaturalezaMovimiento
+  categoria               String
+  concepto                String
+  monto                   Decimal                      @db.Decimal(14, 2)
+  fecha_movimiento        DateTime                     @default(now())
+  forma_pago              String?
+  cuenta_receptora        String?
+  referencia              String?
+  comprobante_url         String?
+  factura_url             String?
+  estatus                 EstatusMovimiento            @default(PENDIENTE)
+  capturado_por_id        String                       @db.Uuid
+  validado_por_id         String?                      @db.Uuid
+  fecha_validacion        DateTime?
+  movimiento_origen_id    String?                      @db.Uuid
+  motivo_reversion        String?
+  revertido_por_id        String?                      @db.Uuid
+  fecha_reversion         DateTime?
+  folio                   String?                      @unique
+  compareciente_id        String?                      @db.Uuid
+  notaria_id              String?                      @db.Uuid
+  responsable_id          String?                      @db.Uuid
+  cuenta_id               String?                      @db.Uuid
+  descripcion             String?
+  fecha_registro          DateTime                     @default(now())
+  updated_at              DateTime                     @default(now()) @updatedAt
+  idempotency_key         String?                      @unique
+  aplicado_por_id         String?                      @db.Uuid
+  fecha_aplicacion        DateTime?
+  cancelado_por_id        String?                      @db.Uuid
+  fecha_cancelacion       DateTime?
+  motivo_cancelacion      String?
+  comprobanteInterno      ComprobanteFinanciero?
+  conciliaciones          ConciliacionFinanciera[]
+  distribuciones          MovimientoDistribucion[]
+  movimientoDocumentos    MovimientoDocumento[]
+  ingresoReportadoExp008  ExpedienteIngresoReportado?
+  solicitudPagoExp008     ExpedienteSolicitudPago?
+  finanzaDocumentosExp008 ExpedienteFinanzaDocumento[]
+  aplicado_por            User?                        @relation("MovimientoAplicado", fields: [aplicado_por_id], references: [id])
+  cancelado_por           User?                        @relation("MovimientoCancelado", fields: [cancelado_por_id], references: [id])
+  capturado_por           User                         @relation("MovimientoCapturado", fields: [capturado_por_id], references: [id])
+  compareciente           Compareciente?               @relation(fields: [compareciente_id], references: [id])
+  cotizacion              Cotizacion?                  @relation(fields: [cotizacion_id], references: [id])
+  cuenta                  CuentaFinanciera?            @relation(fields: [cuenta_id], references: [id], onDelete: Restrict)
+  expediente              Expediente?                  @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  movimientoOrigen        MovimientoFinanciero?        @relation("MovimientoReversoRel", fields: [movimiento_origen_id], references: [id], onDelete: Restrict)
+  reversosGenerados       MovimientoFinanciero[]       @relation("MovimientoReversoRel")
+  notaria                 Notaria?                     @relation(fields: [notaria_id], references: [id])
+  responsable             User?                        @relation("MovimientoResponsable", fields: [responsable_id], references: [id])
+  revertido_por           User?                        @relation("MovimientoRevertido", fields: [revertido_por_id], references: [id])
+  validado_por            User?                        @relation("MovimientoValidado", fields: [validado_por_id], references: [id])
 
   @@index([fecha_movimiento, estatus])
   @@index([naturaleza, estatus])
@@ -2320,39 +2339,42 @@ model MovimientoFinanciero {
 }
 
 model CategoriaFinanciera {
-  id              String                        @id @default(uuid()) @db.Uuid
-  organization_id String?                       @db.Uuid
-  clave           String                        @unique
-  nombre          String
-  naturaleza      NaturalezaCategoriaFinanciera
-  direccion       DireccionCategoriaFinanciera  @default(AMBAS)
-  activa          Boolean                       @default(true)
-  orden           Int                           @default(0)
-  created_at      DateTime                      @default(now())
-  updated_at      DateTime                      @updatedAt
-  distribuciones  MovimientoDistribucion[]
+  id                    String                        @id @default(uuid()) @db.Uuid
+  organization_id       String?                       @db.Uuid
+  clave                 String                        @unique
+  nombre                String
+  naturaleza            NaturalezaCategoriaFinanciera
+  direccion             DireccionCategoriaFinanciera  @default(AMBAS)
+  activa                Boolean                       @default(true)
+  orden                 Int                           @default(0)
+  created_at            DateTime                      @default(now())
+  updated_at            DateTime                      @updatedAt
+  distribuciones        MovimientoDistribucion[]
+  solicitudesPagoExp008 ExpedienteSolicitudPago[]
 
   @@index([activa, orden])
   @@map("categorias_financieras")
 }
 
 model CuentaFinanciera {
-  id                 String                    @id @default(uuid()) @db.Uuid
-  organization_id    String?                   @db.Uuid
-  institucion        String
-  alias              String
-  tipo               String
-  ultimos_cuatro     String?
-  moneda             String                    @default("MXN")
-  activa             Boolean                   @default(true)
-  predeterminada     Boolean                   @default(false)
-  saldo_inicial      Decimal                   @default(0) @db.Decimal(14, 2)
-  creada_por_id      String                    @db.Uuid
-  created_at         DateTime                  @default(now())
-  updated_at         DateTime                  @updatedAt
-  creada_por         User                      @relation("CuentaFinancieraCreador", fields: [creada_por_id], references: [id])
-  movimientos        MovimientoFinanciero[]
-  transaccionesBanco TransaccionEstadoCuenta[]
+  id                       String                       @id @default(uuid()) @db.Uuid
+  organization_id          String?                      @db.Uuid
+  institucion              String
+  alias                    String
+  tipo                     String
+  ultimos_cuatro           String?
+  moneda                   String                       @default("MXN")
+  activa                   Boolean                      @default(true)
+  predeterminada           Boolean                      @default(false)
+  saldo_inicial            Decimal                      @default(0) @db.Decimal(14, 2)
+  creada_por_id            String                       @db.Uuid
+  created_at               DateTime                     @default(now())
+  updated_at               DateTime                     @updatedAt
+  creada_por               User                         @relation("CuentaFinancieraCreador", fields: [creada_por_id], references: [id])
+  movimientos              MovimientoFinanciero[]
+  transaccionesBanco       TransaccionEstadoCuenta[]
+  ingresosReportadosExp008 ExpedienteIngresoReportado[]
+  solicitudesPagoExp008    ExpedienteSolicitudPago[]
 
   @@unique([institucion, alias])
   @@index([activa, predeterminada])
@@ -2436,33 +2458,207 @@ model MovimientoDistribucion {
 }
 
 model ComprobanteFinanciero {
-  id                String                      @id @default(uuid()) @db.Uuid
-  organization_id   String?                     @db.Uuid
-  folio             String                      @unique
-  movimiento_id     String                      @unique @db.Uuid
-  tipo              NaturalezaMovimiento
-  fecha             DateTime                    @default(now())
-  importe           Decimal                     @db.Decimal(14, 2)
-  concepto          String
-  persona           String?
-  forma_pago        String?
-  cuenta_snapshot   Json?
-  observaciones     String?
-  snapshot          Json
-  estado            EstadoComprobanteFinanciero @default(VIGENTE)
-  registrado_por_id String                      @db.Uuid
-  anulado_por_id    String?                     @db.Uuid
-  fecha_anulacion   DateTime?
-  motivo_anulacion  String?
-  created_at        DateTime                    @default(now())
-  anulado_por       User?                       @relation("ComprobanteAnulador", fields: [anulado_por_id], references: [id])
-  movimiento        MovimientoFinanciero        @relation(fields: [movimiento_id], references: [id])
-  registrado_por    User                        @relation("ComprobanteRegistrador", fields: [registrado_por_id], references: [id])
+  id                      String                       @id @default(uuid()) @db.Uuid
+  organization_id         String?                      @db.Uuid
+  folio                   String                       @unique
+  movimiento_id           String                       @unique @db.Uuid
+  tipo                    NaturalezaMovimiento
+  fecha                   DateTime                     @default(now())
+  importe                 Decimal                      @db.Decimal(14, 2)
+  concepto                String
+  persona                 String?
+  forma_pago              String?
+  cuenta_snapshot         Json?
+  observaciones           String?
+  snapshot                Json
+  estado                  EstadoComprobanteFinanciero  @default(VIGENTE)
+  registrado_por_id       String                       @db.Uuid
+  anulado_por_id          String?                      @db.Uuid
+  fecha_anulacion         DateTime?
+  motivo_anulacion        String?
+  created_at              DateTime                     @default(now())
+  anulado_por             User?                        @relation("ComprobanteAnulador", fields: [anulado_por_id], references: [id])
+  movimiento              MovimientoFinanciero         @relation(fields: [movimiento_id], references: [id])
+  registrado_por          User                         @relation("ComprobanteRegistrador", fields: [registrado_por_id], references: [id])
+  verification_token_hash String?                      @unique
+  verification_code_hint  String?
+  verification_created_at DateTime?
+  finanzaDocumentosExp008 ExpedienteFinanzaDocumento[]
 
   @@index([fecha, tipo])
   @@index([anulado_por_id], map: "idx_comprobantes_financieros_anulado_por_fk")
   @@index([registrado_por_id], map: "idx_comprobantes_financieros_registrado_por_fk")
   @@map("comprobantes_financieros")
+}
+
+/// Estado operativo previo a la aplicación contable de un ingreso. La evidencia
+/// reportada nunca constituye por sí misma un movimiento financiero aplicado.
+model ExpedienteIngresoReportado {
+  id                           String                           @id @default(uuid()) @db.Uuid
+  organization_id              String                           @db.Uuid
+  expediente_id                String                           @db.Uuid
+  estado                       ExpedienteIngresoReportadoEstado @default(PENDIENTE_APLICACION)
+  concepto_contexto            String?
+  referencia_solicitud         String?
+  monto_reportado              Decimal?                         @db.Decimal(14, 2)
+  monto_validado               Decimal?                         @db.Decimal(14, 2)
+  honorarios_aplicados         Decimal?                         @db.Decimal(14, 2)
+  impuestos_derechos_aplicados Decimal?                         @db.Decimal(14, 2)
+  fecha_ingreso                DateTime?
+  forma_pago                   String?
+  referencia                   String?
+  cuenta_id                    String?                          @db.Uuid
+  movimiento_id                String?                          @unique @db.Uuid
+  reportado_por_id             String                           @db.Uuid
+  aplicado_por_id              String?                          @db.Uuid
+  aplicado_at                  DateTime?
+  anulado_por_id               String?                          @db.Uuid
+  anulado_at                   DateTime?
+  motivo_anulacion             String?
+  idempotency_key              String
+  version                      Int                              @default(1)
+  created_at                   DateTime                         @default(now())
+  updated_at                   DateTime                         @updatedAt
+  expediente                   Expediente                       @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  cuenta                       CuentaFinanciera?                @relation(fields: [cuenta_id], references: [id], onDelete: Restrict)
+  movimiento                   MovimientoFinanciero?            @relation(fields: [movimiento_id], references: [id], onDelete: Restrict)
+  reportadoPor                 User                             @relation("Exp008IngresoReportador", fields: [reportado_por_id], references: [id], onDelete: Restrict)
+  aplicadoPor                  User?                            @relation("Exp008IngresoAplicador", fields: [aplicado_por_id], references: [id], onDelete: Restrict)
+  anuladoPor                   User?                            @relation("Exp008IngresoAnulador", fields: [anulado_por_id], references: [id], onDelete: Restrict)
+  documentos                   ExpedienteFinanzaDocumento[]
+  propuestasIA                 ExpedienteFinanzaPropuestaIA[]
+
+  @@unique([organization_id, expediente_id, idempotency_key], map: "uq_exp008_ingreso_idempotency")
+  @@index([organization_id, expediente_id, estado, created_at], map: "idx_exp008_ingreso_pending")
+  @@index([cuenta_id], map: "idx_exp008_ingreso_cuenta_fk")
+  @@index([reportado_por_id], map: "idx_exp008_ingreso_reportador_fk")
+  @@index([aplicado_por_id], map: "idx_exp008_ingreso_aplicador_fk")
+  @@index([anulado_por_id], map: "idx_exp008_ingreso_anulador_fk")
+  @@map("expediente_ingresos_reportados")
+}
+
+/// Solicitud operativa. El egreso definitivo existe sólo en MovimientoFinanciero.
+model ExpedienteSolicitudPago {
+  id                 String                         @id @default(uuid()) @db.Uuid
+  organization_id    String                         @db.Uuid
+  expediente_id      String                         @db.Uuid
+  via                ExpedienteSolicitudPagoVia
+  estado             ExpedienteSolicitudPagoEstado  @default(PENDIENTE)
+  concepto           String
+  importe            Decimal                        @db.Decimal(14, 2)
+  dependencia        String?
+  beneficiario       String?
+  referencia         String?
+  fecha_limite       DateTime?
+  notas              String?
+  categoria_id       String?                        @db.Uuid
+  cuenta_id          String?                        @db.Uuid
+  movimiento_id      String?                        @unique @db.Uuid
+  formato_version_id String?                        @db.Uuid
+  formato_fuente     String?
+  creado_por_id      String                         @db.Uuid
+  pagado_por_id      String?                        @db.Uuid
+  pagado_at          DateTime?
+  anulado_por_id     String?                        @db.Uuid
+  anulado_at         DateTime?
+  motivo_anulacion   String?
+  idempotency_key    String
+  version            Int                            @default(1)
+  created_at         DateTime                       @default(now())
+  updated_at         DateTime                       @updatedAt
+  expediente         Expediente                     @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  categoria          CategoriaFinanciera?           @relation(fields: [categoria_id], references: [id], onDelete: Restrict)
+  cuenta             CuentaFinanciera?              @relation(fields: [cuenta_id], references: [id], onDelete: Restrict)
+  movimiento         MovimientoFinanciero?          @relation(fields: [movimiento_id], references: [id], onDelete: Restrict)
+  formatoVersion     CatalogoArtefactoVersion?      @relation(fields: [formato_version_id], references: [id], onDelete: Restrict)
+  creadoPor          User                           @relation("Exp008SolicitudCreador", fields: [creado_por_id], references: [id], onDelete: Restrict)
+  pagadoPor          User?                          @relation("Exp008SolicitudPagador", fields: [pagado_por_id], references: [id], onDelete: Restrict)
+  anuladoPor         User?                          @relation("Exp008SolicitudAnulador", fields: [anulado_por_id], references: [id], onDelete: Restrict)
+  documentos         ExpedienteFinanzaDocumento[]
+  propuestasIA       ExpedienteFinanzaPropuestaIA[]
+
+  @@unique([organization_id, expediente_id, idempotency_key], map: "uq_exp008_solicitud_idempotency")
+  @@index([organization_id, expediente_id, estado, created_at], map: "idx_exp008_solicitud_pending")
+  @@index([categoria_id], map: "idx_exp008_solicitud_categoria_fk")
+  @@index([cuenta_id], map: "idx_exp008_solicitud_cuenta_fk")
+  @@index([formato_version_id], map: "idx_exp008_solicitud_formato_fk")
+  @@index([creado_por_id], map: "idx_exp008_solicitud_creador_fk")
+  @@index([pagado_por_id], map: "idx_exp008_solicitud_pagador_fk")
+  @@index([anulado_por_id], map: "idx_exp008_solicitud_anulador_fk")
+  @@map("expediente_solicitudes_pago")
+}
+
+/// Clasifica documentos financieros sin duplicar Documento ni Storage.
+model ExpedienteFinanzaDocumento {
+  id                   String                         @id @default(uuid()) @db.Uuid
+  organization_id      String                         @db.Uuid
+  expediente_id        String                         @db.Uuid
+  documento_id         String                         @db.Uuid
+  tipo                 ExpedienteFinanzaDocumentoTipo
+  ingreso_reportado_id String?                        @db.Uuid
+  solicitud_pago_id    String?                        @db.Uuid
+  movimiento_id        String?                        @db.Uuid
+  comprobante_id       String?                        @db.Uuid
+  vinculado_por_id     String                         @db.Uuid
+  estatus              VinculoEstatus                 @default(ACTIVO)
+  retirado_at          DateTime?
+  retirado_por_id      String?                        @db.Uuid
+  motivo_retiro        String?
+  idempotency_key      String
+  created_at           DateTime                       @default(now())
+  expediente           Expediente                     @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  documento            Documento                      @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  ingresoReportado     ExpedienteIngresoReportado?    @relation(fields: [ingreso_reportado_id], references: [id], onDelete: Restrict)
+  solicitudPago        ExpedienteSolicitudPago?       @relation(fields: [solicitud_pago_id], references: [id], onDelete: Restrict)
+  movimiento           MovimientoFinanciero?          @relation(fields: [movimiento_id], references: [id], onDelete: Restrict)
+  comprobante          ComprobanteFinanciero?         @relation(fields: [comprobante_id], references: [id], onDelete: Restrict)
+  vinculadoPor         User                           @relation("Exp008DocumentoVinculador", fields: [vinculado_por_id], references: [id], onDelete: Restrict)
+  retiradoPor          User?                          @relation("Exp008DocumentoRetirador", fields: [retirado_por_id], references: [id], onDelete: Restrict)
+
+  @@unique([organization_id, expediente_id, idempotency_key], map: "uq_exp008_documento_idempotency")
+  @@index([organization_id, expediente_id, tipo, estatus], map: "idx_exp008_documento_tenant_type")
+  @@index([documento_id], map: "idx_exp008_documento_documento_fk")
+  @@index([ingreso_reportado_id], map: "idx_exp008_documento_ingreso_fk")
+  @@index([solicitud_pago_id], map: "idx_exp008_documento_solicitud_fk")
+  @@index([movimiento_id], map: "idx_exp008_documento_movimiento_fk")
+  @@index([comprobante_id], map: "idx_exp008_documento_comprobante_fk")
+  @@index([vinculado_por_id], map: "idx_exp008_documento_vinculador_fk")
+  @@index([retirado_por_id], map: "idx_exp008_documento_retirador_fk")
+  @@map("expediente_finanza_documentos")
+}
+
+/// Propuesta documental auditable. Nunca aplica ni paga de forma automática.
+model ExpedienteFinanzaPropuestaIA {
+  id                   String                           @id @default(uuid()) @db.Uuid
+  organization_id      String                           @db.Uuid
+  expediente_id        String                           @db.Uuid
+  documento_id         String                           @db.Uuid
+  ingreso_reportado_id String?                          @db.Uuid
+  solicitud_pago_id    String?                          @db.Uuid
+  estado               ExpedienteFinanzaPropuestaEstado @default(PENDIENTE)
+  propuesta            Json
+  provenance           Json
+  conflictos           Json?
+  faltantes            Json?
+  modelo               String
+  operation_id         String
+  revisado_por_id      String?                          @db.Uuid
+  revisado_at          DateTime?
+  created_at           DateTime                         @default(now())
+  updated_at           DateTime                         @updatedAt
+  expediente           Expediente                       @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  documento            Documento                        @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  ingresoReportado     ExpedienteIngresoReportado?      @relation(fields: [ingreso_reportado_id], references: [id], onDelete: Restrict)
+  solicitudPago        ExpedienteSolicitudPago?         @relation(fields: [solicitud_pago_id], references: [id], onDelete: Restrict)
+  revisadoPor          User?                            @relation("Exp008PropuestaRevisor", fields: [revisado_por_id], references: [id], onDelete: Restrict)
+
+  @@index([organization_id, expediente_id, estado], map: "idx_exp008_propuesta_tenant_state")
+  @@unique([organization_id, operation_id], map: "uq_exp008_ai_operation_tenant")
+  @@index([documento_id], map: "idx_exp008_propuesta_documento_fk")
+  @@index([ingreso_reportado_id], map: "idx_exp008_propuesta_ingreso_fk")
+  @@index([solicitud_pago_id], map: "idx_exp008_propuesta_solicitud_fk")
+  @@index([revisado_por_id], map: "idx_exp008_propuesta_revisor_fk")
+  @@map("expediente_finanza_propuestas_ia")
 }
 
 model TransaccionEstadoCuenta {
@@ -3814,6 +4010,39 @@ enum EstatusMovimiento {
   PENDIENTE_COMPROBANTE
   LISTO_APLICAR
   APLICADO
+}
+
+enum ExpedienteIngresoReportadoEstado {
+  PENDIENTE_APLICACION
+  APLICADO
+  ANULADO
+}
+
+enum ExpedienteSolicitudPagoVia {
+  INTERNA
+  DOCUMENTO_EXTERNO
+}
+
+enum ExpedienteSolicitudPagoEstado {
+  PENDIENTE
+  PAGADA
+  ANULADA
+}
+
+enum ExpedienteFinanzaDocumentoTipo {
+  COMPROBANTE_INGRESO
+  SOLICITUD_ORIGEN
+  SOLICITUD_GENERADA
+  COMPROBANTE_PAGO
+  COMPROBANTE_FISCAL
+  COMPROBANTE_PRAVIA
+}
+
+enum ExpedienteFinanzaPropuestaEstado {
+  PENDIENTE
+  VALIDADA
+  RECHAZADA
+  CONFLICTO
 }
 
 enum NaturalezaCategoriaFinanciera {
