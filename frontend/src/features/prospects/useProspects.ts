@@ -56,7 +56,7 @@ export function useProspects(
         if (view === 'cards') {
           const results = await Promise.all(PIPELINE_STAGES.map((stage) => prospectsService.list({
             ...baseFilters,
-            substatuses: stage.substatuses,
+            pipelineStage: stage.id,
             page: 1,
             pageSize: 10,
             includeSummary: false,
@@ -95,7 +95,7 @@ export function useProspects(
       const nextPage = Math.floor(lanes[stageId].length / 10) + 1;
       const result = await prospectsService.list({
         ...baseFilters,
-        substatuses: stage.substatuses,
+        pipelineStage: stage.id,
         page: nextPage,
         pageSize: 10,
         includeSummary: false,

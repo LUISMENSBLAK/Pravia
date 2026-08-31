@@ -11,13 +11,16 @@ export function ProspectCard({ prospect }: { prospect: Prospect }) {
   const navigate = useNavigate();
   const latest = prospect.seguimientos?.[0];
   const inactivity = daysSince(latest?.created_at ?? prospect.updated_at);
-  const trigger = !latest?.proxima_accion ? 'SIN_SIGUIENTE_ACCION' : inactivity >= 7 ? 'PROSPECTO_ESTANCADO' : prospect.estado === 'COTIZACION_ENVIADA' ? 'COTIZACION_PENDIENTE' : undefined;
+  const waitingForQuote = prospect.etapa_contractual
+    ? prospect.etapa_contractual === 'EN_ESPERA_COTIZACION'
+    : prospect.estado === 'COTIZACION_ENVIADA';
+  const trigger = !latest?.proxima_accion ? 'SIN_SIGUIENTE_ACCION' : inactivity >= 7 ? 'PROSPECTO_ESTANCADO' : waitingForQuote ? 'COTIZACION_PENDIENTE' : undefined;
   return (
     <button className={styles.prospectCard} type="button" onClick={() => navigate(`/prospectos/${prospect.id}`)} data-ai-trigger={trigger} aria-label={`Abrir prospecto ${displayProspectName(prospect.nombre)}`}>
       <span className={styles.cardTop}><strong>{displayProspectName(prospect.nombre)}</strong><span className={`${styles.priority} ${styles[`priority${prospect.prioridad}`]}`}>{priorityLabel[prospect.prioridad]}</span></span>
       <span className={styles.cardMeta}><FileText size={14} aria-hidden="true" />{prospect.servicio_catalogo?.label || prospect.tipo_acto || 'Servicio por definir'}</span>
       <span className={styles.cardAction}><CalendarClock size={14} aria-hidden="true" /><span><small>Siguiente acción</small>{latest?.proxima_accion || 'Sin siguiente acción'}</span></span>
-      <span className={styles.cardFooter}><span className={styles.cardState}>{SUBSTATUS_LABELS[prospect.estado]}</span><span>{inactivity === 0 ? 'Actividad hoy' : `${inactivity} d sin actividad`}</span></span>
+      <span className={styles.cardFooter}><span className={styles.cardState}>Subestado: {SUBSTATUS_LABELS[prospect.estado]}</span><span>{inactivity === 0 ? 'Actividad hoy' : `${inactivity} d sin actividad`}</span></span>
     </button>
   );
 }

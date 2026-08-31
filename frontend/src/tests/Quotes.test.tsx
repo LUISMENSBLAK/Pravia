@@ -71,16 +71,18 @@ describe('Cotizaciones', () => {
     mockApi({ permissions: ['cotizaciones.read'] }); render(<MemoryRouter initialEntries={['/cotizaciones']}><App /></MemoryRouter>); await screen.findByText('Lista de cotizaciones'); expect(screen.queryByRole('button', { name: 'Nueva cotización' })).not.toBeInTheDocument();
   });
 
-  it('valida el primer paso del alta', async () => {
-    mockApi(); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones']}><App /></MemoryRouter>); await screen.findByText('Lista de cotizaciones'); await user.click(screen.getByRole('button', { name: 'Nueva cotización' })); await user.click(screen.getByRole('button', { name: /Continuar/ })); expect(screen.getByRole('alert')).toHaveTextContent('Selecciona un prospecto');
+  it('alta compartida conduce a Prospectos, sin segunda solicitud a Notaría', async () => {
+    mockApi(); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones']}><App /></MemoryRouter>);
+    await screen.findByText('Lista de cotizaciones'); await user.click(screen.getByRole('button', { name: 'Nueva cotización' }));
+    expect(screen.getByRole('link', {name:'Ir al prospecto de origen'})).toHaveAttribute('href','/prospectos');
+    expect(screen.queryByRole('button',{name:'Crear cotización'})).not.toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalledWith(expect.stringMatching(/\/cotizaciones$/),expect.objectContaining({method:'POST'}));
   });
 
-  it('crea borrador y versión 1 con total canónico', async () => {
-    mockApi(); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones']}><App /></MemoryRouter>); await screen.findByText('Lista de cotizaciones'); await user.click(screen.getByRole('button', { name: 'Nueva cotización' }));
-    await user.click(screen.getByRole('radio', { name: /Nueva Empresa/ })); await user.click(screen.getByRole('button', { name: /Continuar/ })); await user.click(screen.getByRole('radio', { name: /Notaría 12/ })); await user.click(screen.getByRole('button', { name: /Continuar/ }));
-    await user.type(screen.getByLabelText('Descripción concepto 1'), 'Honorarios'); await user.type(screen.getByLabelText('Importe concepto 1'), '45000'); await user.click(screen.getByRole('button', { name: /Continuar/ })); await user.click(screen.getByRole('button', { name: /Continuar/ })); await user.click(screen.getByRole('button', { name: 'Crear cotización' }));
-    expect(await screen.findByText(/Cotización COT-2026-002 creada/)).toBeInTheDocument();
-    const versionCall = vi.mocked(fetch).mock.calls.find(([url]) => String(url).endsWith('/cotizaciones/created-quote/versiones')); expect(JSON.parse(String(versionCall?.[1]?.body))).toMatchObject({ total_notaria: 45000, honorarios_pravia: 0, aprobada: true });
+  it('alta con prospecto conserva el enlace de origen y no genera presupuesto prematuro', async () => {
+    mockApi(); render(<MemoryRouter initialEntries={['/cotizaciones?new=1&prospecto=prospect-1']}><App /></MemoryRouter>);
+    expect(await screen.findByRole('link',{name:'Ir al prospecto de origen'})).toHaveAttribute('href','/prospectos/prospect-1');
+    expect(screen.queryByText('La cotización se crea en borrador; el envío a notaría se registrará después con evidencia.')).not.toBeInTheDocument();
   });
 
   it('muestra detalle, conceptos, versiones y actividad reales', async () => {

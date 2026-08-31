@@ -4,7 +4,7 @@ import { currentActorContext, TenantContextError } from '../auth/actorContext';
 // Modelos que poseen organization_id explícito. Los hijos derivados también lo
 // conservan para defensa en profundidad, consultas directas e índices eficientes.
 export const TENANT_SCOPED_MODELS = new Set([
-  'UserInvitation', 'Notification', 'Prospecto', 'ProspectoSeguimiento', 'Notaria', 'NotariaContacto',
+  'UserInvitation', 'Notification', 'Prospecto', 'ProspectoSeguimiento', 'ProspectoTransicion', 'ProspectoFuenteNotarial', 'Notaria', 'NotariaContacto',
   'Cotizacion', 'CotizacionVersion', 'CotizacionSeguimiento', 'Expediente', 'ExpedienteEstatus_Log',
   'ExpedienteEtapa', 'Documento', 'ExpedienteDocumento', 'CotizacionDocumento', 'ProspectoDocumento',
   'RequisitoDocumentoVinculo', 'MovimientoDocumento', 'ComunicacionDocumento', 'Compareciente',

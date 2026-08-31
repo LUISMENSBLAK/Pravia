@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { FileCheck2, LoaderCircle } from 'lucide-react';
 import { prospectsService } from '../prospects.service';
 import type { NewProspectInput, Prospect, ProspectCatalogs } from '../prospects.types';
@@ -29,24 +29,27 @@ export function NewProspectDrawer({
   const [antecedenteFiles, setAntecedenteFiles] = useState<File[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const attempt = useRef(crypto.randomUUID());
+  const busy = useRef(false);
   const update = <K extends keyof NewProspectInput>(field: K, value: NewProspectInput[K]) => setForm((current) => ({ ...current, [field]: value }));
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (busy.current) return;
     const nextErrors: Record<string, string> = {};
     if (!form.nombre.trim()) nextErrors.nombre = 'Escribe el nombre o razón social.';
-    if (!form.servicio_catalogo_codigo) nextErrors.servicio = 'Selecciona un servicio del catálogo.';
     if (form.email && !/^\S+@\S+\.\S+$/.test(form.email)) nextErrors.email = 'Escribe un correo válido.';
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length) return;
     setSubmitting(true);
+    busy.current = true;
     try {
       const created = await prospectsService.create({
         ...form,
         nombre: displayProspectName(form.nombre),
         tiene_predial: form.tiene_predial || predialFiles.length > 0,
         tiene_antecedente: form.tiene_antecedente || antecedenteFiles.length > 0,
-      });
+      }, attempt.current);
       const uploads = [
         ...predialFiles.map((file) => prospectsService.uploadDocument(created.id, file, 'PREDIAL')),
         ...antecedenteFiles.map((file) => prospectsService.uploadDocument(created.id, file, 'ANTECEDENTE')),
@@ -59,6 +62,7 @@ export function NewProspectDrawer({
     } catch {
       setErrors({ form: 'No pudimos crear el prospecto. Revisa los datos e inténtalo de nuevo.' });
       setSubmitting(false);
+      busy.current = false;
     }
   };
 
@@ -69,7 +73,7 @@ export function NewProspectDrawer({
         <label className={styles.fullField}><span>Nombre o razón social <b aria-hidden="true">*</b></span><input autoFocus value={form.nombre} onChange={(event) => update('nombre', uppercaseProspectNameInput(event.target.value))} aria-invalid={Boolean(errors.nombre)} aria-describedby={errors.nombre ? 'nombre-error' : undefined} />{errors.nombre && <small id="nombre-error">{errors.nombre}</small>}</label>
         <label><span>Teléfono</span><input type="tel" inputMode="tel" value={form.telefono} onChange={(event) => update('telefono', event.target.value)} /></label>
         <label><span>Correo</span><input type="email" inputMode="email" value={form.email} onChange={(event) => update('email', event.target.value)} aria-invalid={Boolean(errors.email)} aria-describedby={errors.email ? 'email-error' : undefined} />{errors.email && <small id="email-error">{errors.email}</small>}</label>
-        <div className={styles.fullField}><CatalogCombobox label="Servicio / acto de interés" required value={form.servicio_catalogo_codigo ?? ''} options={catalogs.services} placeholder="Selecciona un acto o servicio" error={errors.servicio} onChange={(value) => update('servicio_catalogo_codigo', value)} /></div>
+        <div className={styles.fullField}><CatalogCombobox label="Servicio / acto de interés" value={form.servicio_catalogo_codigo ?? ''} options={catalogs.services} placeholder="Por definir (opcional)" error={errors.servicio} onChange={(value) => update('servicio_catalogo_codigo', value)} /></div>
         <label><span>Prioridad</span><select value={form.prioridad} onChange={(event) => update('prioridad', event.target.value as NewProspectInput['prioridad'])}><option value="BAJA">Baja</option><option value="MEDIA">Media</option><option value="ALTA">Alta</option></select></label>
         <label className={styles.fullField}><span>Observaciones</span><textarea rows={4} value={form.necesidad} onChange={(event) => update('necesidad', event.target.value)} /></label>
         <fieldset className={`${styles.documentationSection} ${styles.fullField}`}><legend><FileCheck2 size={17} />Documentación</legend>

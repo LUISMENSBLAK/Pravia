@@ -3,6 +3,7 @@ import { ProspectoEstado, ProspectoPrioridad } from '@prisma/client';
 const MAX_PAGE_SIZE = 100;
 const sortableFields = new Set(['created_at', 'updated_at', 'nombre', 'prioridad', 'estado']);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const pipelineStages = ['new', 'progress', 'quote', 'converted'] as const;
 
 const positiveInt = (value: unknown, fallback: number) => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -25,6 +26,7 @@ export type ProspectListQuery = {
   search: string;
   exactId?: string;
   substatuses: ProspectoEstado[];
+  pipelineStage?: typeof pipelineStages[number];
   priorities: ProspectoPrioridad[];
   serviceCode?: string;
   operationalStageCode?: string;
@@ -41,6 +43,7 @@ export function parseProspectListQuery(query: Record<string, unknown>): Prospect
   const sortBy = sortableFields.has(requestedSort) ? requestedSort : 'created_at';
   const requestedOrder = String(query.sortOrder ?? rawSort[1] ?? 'desc').toLowerCase();
   const search = typeof query.busqueda === 'string' ? query.busqueda.trim() : typeof query.search === 'string' ? query.search.trim() : '';
+  const pipelineStage = enumList(query.pipeline, pipelineStages)[0];
   return {
     paginated: query.page !== undefined || query.pageSize !== undefined || query.limit !== undefined,
     page,
@@ -52,6 +55,7 @@ export function parseProspectListQuery(query: Record<string, unknown>): Prospect
     ...(uuidPattern.test(search) ? { exactId: search } : {}),
     // `estado` is the legacy API/DB name for the detailed prospect substatus.
     substatuses: enumList(query.estado, Object.values(ProspectoEstado)),
+    ...(pipelineStage ? { pipelineStage } : {}),
     priorities: enumList(query.prioridad, Object.values(ProspectoPrioridad)),
     ...(typeof query.servicio === 'string' && query.servicio.trim() ? { serviceCode: query.servicio.trim() } : {}),
     ...(typeof query.etapa === 'string' && query.etapa.trim() ? { operationalStageCode: query.etapa.trim() } : {}),

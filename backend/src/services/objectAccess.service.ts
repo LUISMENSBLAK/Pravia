@@ -78,6 +78,7 @@ export async function canAccessDocumento(user: AuthUser, id: string) {
       expediente_id: true,
       compareciente_id: true,
       prospectoVinculos: { where: { estatus: 'ACTIVO' }, select: { prospecto_id: true } },
+      fuentesNotarialesProspecto: { select: { prospecto_id: true } },
       cotizacionVinculos: { where: { estatus: 'ACTIVO' }, select: { cotizacion_id: true } },
       expedienteVinculos: { where: { estatus: 'ACTIVO' }, select: { expediente_id: true } },
       comparecienteVinculos: { where: { estatus: 'ACTIVO' }, select: { compareciente_id: true } },
@@ -88,7 +89,7 @@ export async function canAccessDocumento(user: AuthUser, id: string) {
   if (!document) return false;
   if (document.subido_por_id === user.id) return true;
 
-  const prospectIds = [document.prospecto_id, ...document.prospectoVinculos.map((link) => link.prospecto_id)].filter(Boolean) as string[];
+  const prospectIds = [document.prospecto_id, ...document.prospectoVinculos.map((link) => link.prospecto_id), ...(document.fuentesNotarialesProspecto ?? []).map((source) => source.prospecto_id)].filter(Boolean) as string[];
   const quoteIds = [document.cotizacion_id, ...document.cotizacionVinculos.map((link) => link.cotizacion_id)].filter(Boolean) as string[];
   const expedienteIds = [document.expediente_id, ...document.expedienteVinculos.map((link) => link.expediente_id)].filter(Boolean) as string[];
   const comparecienteIds = [document.compareciente_id, ...document.comparecienteVinculos.map((link) => link.compareciente_id)].filter(Boolean) as string[];

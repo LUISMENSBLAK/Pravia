@@ -60,7 +60,7 @@ const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || 'http://localhost:51
 app.use(cors({
   origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-ID'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-ID', 'Idempotency-Key'],
   credentials: true,
 }));
 app.use(express.json());

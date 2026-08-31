@@ -131,5 +131,19 @@ th.stickyActions { z-index: 7; background: #f8fafc; }
   .activitySummary { grid-template-columns: 1fr; }.activitySummary article { grid-template-columns: auto auto 1fr; }.activitySummary article svg { grid-row: auto; }.activitySummary article strong { font-size: .9rem; }
 }
 .fileInput { pointer-events: auto; }
+.detailPage button, .detailPage select, .detailPage input:not([type="checkbox"]), .detailPage .backLink { min-height: 44px; }
+.detailPage .documentOpen { min-width: 44px; width: 44px; height: 44px; }
+.detailPage .documentList li { flex-wrap: wrap; }
+.detailPage .documentList li > span { flex: 1; min-width: 100px; overflow-wrap: anywhere; }
+.detailPage .documentList strong { white-space: normal; }
+.detailPage :is(button, a, input, select, textarea):focus-visible { outline: 3px solid var(--color-gold-600); outline-offset: 3px; }
+.detailHeader > div { min-width: 0; }
+.detailHeader h1 { overflow-wrap: anywhere; }
+@media (max-width: 767px) {
+  .detailHeader { flex-direction: column; align-items: stretch; }
+  .detailEyebrow { flex-wrap: wrap; }
+}
+.unlinkConfirmation { padding: 16px; overflow-wrap: anywhere; }
+.unlinkConfirmation button { margin: 4px; }
 .catalogOptions button[data-active="true"] { background: var(--color-gold-100); }
 @media (prefers-reduced-motion: reduce) { .drawerBackdrop, .drawer, .spin { animation: none; } }

@@ -1,5 +1,7 @@
 import { apiRequest } from '../../services/api/client';
+import type { ProspectWorkflow, PreparedProspectRequest } from './prospects.types';
 import type { FollowUpInput, NewProspectInput, Prospect, ProspectCatalogs, ProspectDocument, ProspectFollowUp, ProspectListFilters, ProspectListResult, UpdateProspectInput } from './prospects.types';
+import { isActiveProspect, isConvertedProspect } from './prospects.types';
 
 const asObject = (value: unknown): Record<string, unknown> | null => value && typeof value === 'object' ? value as Record<string, unknown> : null;
 
@@ -17,6 +19,7 @@ const queryString = (filters: ProspectListFilters) => {
   if (filters.search?.trim()) params.set('busqueda', filters.search.trim());
   if (filters.priority) params.set('prioridad', filters.priority);
   if (filters.substatuses?.length) params.set('estado', filters.substatuses.join(','));
+  if (filters.pipelineStage) params.set('pipeline', filters.pipelineStage);
   if (filters.serviceCode) params.set('servicio', filters.serviceCode);
   if (filters.operationalStageCode) params.set('etapa', filters.operationalStageCode);
   params.set('page', String(filters.page ?? 1));
@@ -55,8 +58,8 @@ export const prospectsService = {
         countsByState: asObject(rawMeta?.countsByState) as ProspectListResult['meta']['countsByState'] ?? {},
         metrics: {
           withQuote: typeof rawMetrics?.withQuote === 'number' ? rawMetrics.withQuote : data.filter((item) => Boolean(item.cotizacion)).length,
-          accepted: typeof rawMetrics?.accepted === 'number' ? rawMetrics.accepted : data.filter((item) => item.estado === 'ACEPTADO').length,
-          active: typeof rawMetrics?.active === 'number' ? rawMetrics.active : data.filter((item) => !['ACEPTADO', 'PERDIDO', 'CANCELADO', 'ARCHIVADO'].includes(item.estado)).length,
+          accepted: typeof rawMetrics?.accepted === 'number' ? rawMetrics.accepted : data.filter(isConvertedProspect).length,
+          active: typeof rawMetrics?.active === 'number' ? rawMetrics.active : data.filter(isActiveProspect).length,
         },
       },
       facets: {
@@ -72,13 +75,13 @@ export const prospectsService = {
     const payload = await apiRequest<unknown>(`/prospectos/${encodeURIComponent(id)}/documentos`, { signal });
     return Array.isArray(payload) ? payload.filter((item): item is ProspectDocument => Boolean(item && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string')) : [];
   },
-  async create(input: NewProspectInput): Promise<Prospect> {
-    return apiRequest<Prospect>('/prospectos', { method: 'POST', body: JSON.stringify(input) });
+  async create(input: NewProspectInput, idempotencyKey = crypto.randomUUID()): Promise<Prospect> {
+    return apiRequest<Prospect>('/prospectos', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(input) });
   },
   async update(id: string, input: UpdateProspectInput): Promise<Prospect> {
     return apiRequest<Prospect>(`/prospectos/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) });
   },
-  async uploadDocument(id: string, file: File, type: 'PREDIAL' | 'ANTECEDENTE'): Promise<ProspectDocument> {
+  async uploadDocument(id: string, file: File, type: 'PREDIAL' | 'ANTECEDENTE' | 'COTIZACION_NOTARIA'): Promise<ProspectDocument> {
     const body = new FormData();
     body.append('archivo', file);
     body.append('tipo', type);
@@ -89,6 +92,18 @@ export const prospectsService = {
   async getDocumentUrl(id: string): Promise<string> {
     const result = await apiRequest<{ url: string }>(`/documentos/${encodeURIComponent(id)}/url`);
     return result.url;
+  },
+  workflow(id: string, signal?: AbortSignal) {
+    return apiRequest<ProspectWorkflow>(`/prospectos/${encodeURIComponent(id)}/operacion`, { signal });
+  },
+  prepare(id: string, expectedVersion: number, attachmentIds: string[]) {
+    return apiRequest<PreparedProspectRequest>(`/prospectos/${encodeURIComponent(id)}/solicitud/preparar`, { method: 'POST', body: JSON.stringify({ expectedVersion, attachmentIds }) });
+  },
+  act(id: string, input: Record<string, unknown>) {
+    return apiRequest<{ idempotent: boolean; quoteId: string | null }>(`/prospectos/${encodeURIComponent(id)}/transiciones`, { method: 'POST', body: JSON.stringify(input) });
+  },
+  unlinkDocument(id: string, documentId: string) {
+    return apiRequest(`/prospectos/${encodeURIComponent(id)}/documentos/${encodeURIComponent(documentId)}`, { method: 'DELETE' });
   },
   async addFollowUp(id: string, input: FollowUpInput): Promise<ProspectFollowUp> {
     return apiRequest<ProspectFollowUp>(`/prospectos/${encodeURIComponent(id)}/seguimientos`, {

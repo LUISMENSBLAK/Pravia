@@ -21,7 +21,7 @@ export function ProspectList({ prospects }: { prospects: Prospect[] }) {
           <tbody>{prospects.map((prospect) => {
             const latest = prospect.seguimientos?.[0];
             return <tr key={prospect.id}>
-              <td className={styles.stickyProspect}><button type="button" className={styles.prospectLink} onClick={() => open(prospect.id)}><strong>{displayProspectName(prospect.nombre)}</strong><small>{SUBSTATUS_LABELS[prospect.estado]}</small></button></td>
+              <td className={styles.stickyProspect}><button type="button" className={styles.prospectLink} onClick={() => open(prospect.id)}><strong>{displayProspectName(prospect.nombre)}</strong><small>Subestado: {SUBSTATUS_LABELS[prospect.estado]}</small></button></td>
               <td>{prospect.servicio_catalogo?.label || prospect.tipo_acto || 'Por definir'}</td>
               <td>{prospect.etapa_operativa?.label ? <span className={styles.operationalStagePill}>{prospect.etapa_operativa.label}</span> : <span className={styles.legacyStage}>Sin etapa</span>}</td>
               <td><span className={`${styles.priority} ${styles[`priority${prospect.prioridad}`]}`}>{priorityLabel[prospect.prioridad]}</span></td>

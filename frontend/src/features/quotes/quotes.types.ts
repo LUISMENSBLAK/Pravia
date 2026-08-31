@@ -52,6 +52,8 @@ export type ConversionEligibility = {
 };
 
 export type Quote = {
+  fuente_notarial_id?: string | null;
+  fuente_notarial?: { received_at: string; version: number; documento: { id: string; nombre_original: string; mime_type?: string } } | null;
   id: string;
   numero_solicitud?: string | null;
   numero_cotizacion?: string | null;

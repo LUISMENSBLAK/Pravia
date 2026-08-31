@@ -12,6 +12,10 @@ import {
 } from '../domain/prospectCatalog';
 import { prospectoObjectWhere } from '../services/objectAccess.service';
 import { logAudit } from '../utils/auditLogger';
+import { ProspectWorkflowService } from '../services/prospectWorkflow.service';
+import { prospectWorkflowError } from './prospectWorkflowError';
+import { PROSPECT_PIPELINE_STAGES } from '../domain/prospectWorkflow';
+const prospectWorkflow = new ProspectWorkflowService(prisma);
 
 const prospectInclude = {
   atendido_por: { select: { nombre: true } },
@@ -57,6 +61,18 @@ export const getProspectos = async (req: Request, res: Response) => {
     const scope = { archived_at: null, ...(req.user ? prospectoObjectWhere(req.user) : {}) };
     const where: any = { ...scope };
     const and: any[] = [];
+    if (parsed.pipelineStage) {
+      const legacySubstatuses = {
+        new: [ProspectoEstado.NUEVO, ProspectoEstado.INFO_PENDIENTE],
+        progress: [ProspectoEstado.DOCS_RECIBIDOS, ProspectoEstado.EN_REVISION, ProspectoEstado.SEGUIMIENTO],
+        quote: [ProspectoEstado.COTIZACION_SOLICITADA, ProspectoEstado.COTIZACION_ENVIADA],
+        converted: [ProspectoEstado.ACEPTADO, ProspectoEstado.PERDIDO, ProspectoEstado.CANCELADO],
+      }[parsed.pipelineStage];
+      and.push({ OR: [
+        { etapa_contractual: { in: [...PROSPECT_PIPELINE_STAGES[parsed.pipelineStage]] } },
+        { etapa_contractual: null, estado: { in: legacySubstatuses } },
+      ] });
+    }
     if (parsed.substatuses.length === 1) where.estado = parsed.substatuses[0];
     else if (parsed.substatuses.length > 1) where.estado = { in: parsed.substatuses };
     if (parsed.priorities.length === 1) where.prioridad = parsed.priorities[0];
@@ -109,8 +125,16 @@ export const getProspectos = async (req: Request, res: Response) => {
       });
     }
 
-    const [withQuote, stateCounts, legacyServices, sources] = await Promise.all([
+    const [withQuote, converted, active, stateCounts, legacyServices, sources] = await Promise.all([
       prisma.prospecto.count({ where: { ...where, cotizacion: { isNot: null } } }),
+      prisma.prospecto.count({ where: { AND: [where, { OR: [
+        { etapa_contractual: 'CONVERTIDO_COTIZACION' },
+        { etapa_contractual: null, estado: ProspectoEstado.ACEPTADO },
+      ] }] } }),
+      prisma.prospecto.count({ where: { AND: [where, { OR: [
+        { etapa_contractual: { not: null }, NOT: { etapa_contractual: 'CONVERTIDO_COTIZACION' } },
+        { etapa_contractual: null, estado: { notIn: [...closedStates] } },
+      ] }] } }),
       prisma.prospecto.groupBy({ by: ['estado'], where, _count: { _all: true } }),
       prisma.prospecto.findMany({ where: scope, distinct: ['tipo_acto'], select: { tipo_acto: true }, orderBy: { tipo_acto: 'asc' } }),
       prisma.prospecto.findMany({ where: scope, distinct: ['fuente'], select: { fuente: true }, orderBy: { fuente: 'asc' } }),
@@ -127,8 +151,8 @@ export const getProspectos = async (req: Request, res: Response) => {
         countsByState: Object.fromEntries(stateCounts.map((item) => [item.estado, item._count._all])),
         metrics: {
           withQuote,
-          accepted: stateCounts.find((item) => item.estado === ProspectoEstado.ACEPTADO)?._count._all ?? 0,
-          active: stateCounts.filter((item) => !closedStates.has(item.estado)).reduce((sum, item) => sum + item._count._all, 0),
+          accepted: converted,
+          active,
         },
       },
       facets: {
@@ -144,54 +168,9 @@ export const getProspectos = async (req: Request, res: Response) => {
 
 export const createProspecto = async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id;
-    if (!userId) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
-    const raw = req.body ?? {};
-    const nombre = normalizeProspectName(raw.nombre);
-    if (!nombre) return res.status(400).json({ error: 'El campo "nombre" es obligatorio.', code: 'PROSPECT_NAME_REQUIRED' });
-    const service = prospectServiceByCode(raw.servicio_catalogo_codigo);
-    if (!service) return res.status(400).json({ error: 'Selecciona un servicio válido.', code: 'INVALID_PROSPECT_SERVICE' });
-    const stage = raw.etapa_operativa_codigo === undefined
-      ? DEFAULT_PROSPECT_OPERATIONAL_STAGE
-      : prospectStageByCode(raw.etapa_operativa_codigo);
-    if (!stage) return res.status(400).json({ error: 'Selecciona una etapa válida.', code: 'INVALID_PROSPECT_STAGE' });
-    if (invalidBoolean(raw.tiene_predial) || invalidBoolean(raw.tiene_antecedente)) {
-      return res.status(400).json({ error: 'Los indicadores de documentación deben ser verdaderos o falsos.', code: 'INVALID_PROSPECT_DOCUMENT_FLAGS' });
-    }
-    if (raw.prioridad && !Object.values(ProspectoPrioridad).includes(raw.prioridad)) {
-      return res.status(400).json({ error: 'La prioridad seleccionada no es válida.', code: 'INVALID_PROSPECT_PRIORITY' });
-    }
-
-    const prospecto = await prisma.prospecto.create({
-      data: {
-        nombre,
-        telefono: optionalString(raw.telefono),
-        email: optionalString(raw.email),
-        necesidad: optionalString(raw.necesidad),
-        prioridad: raw.prioridad || ProspectoPrioridad.MEDIA,
-        estado: ProspectoEstado.NUEVO,
-        tiene_predial: booleanValue(raw.tiene_predial, false),
-        tiene_antecedente: booleanValue(raw.tiene_antecedente, false),
-        etapa_operativa_codigo: stage.code,
-        servicio_catalogo_codigo: service.code,
-        tipo_acto: service.label,
-        user_id: userId,
-      },
-      include: prospectInclude,
-    });
-
-    await logAudit(userId, 'CREATE', 'Prospecto', prospecto.id, {
-      nombre: prospecto.nombre,
-      servicio_catalogo_codigo: service.code,
-      etapa_operativa_codigo: stage.code,
-      tiene_predial: prospecto.tiene_predial,
-      tiene_antecedente: prospecto.tiene_antecedente,
-    });
-    return res.status(201).json(prospecto);
-  } catch (error: any) {
-    console.error('Error creating prospecto:', error);
-    return res.status(500).json({ error: 'Error al crear el prospecto', detail: error?.message || String(error) });
-  }
+    const result = await prospectWorkflow.create(req.user!, req.body ?? {}, req.get('Idempotency-Key'));
+    return res.status(result.idempotent ? 200 : 201).json(result.prospecto);
+  } catch (error) { return prospectWorkflowError(res, error); }
 };
 
 export const getProspectoById = async (req: Request, res: Response) => {
@@ -214,51 +193,29 @@ export const getProspectoById = async (req: Request, res: Response) => {
 };
 
 export const updateProspecto = async (req: Request, res: Response) => {
+  try { return res.json(await prospectWorkflow.update(req.user!, req.params.id, req.body ?? {})); }
+  catch (error) { return prospectWorkflowError(res, error); }
+};
+
+export const getProspectWorkflow = async (req: Request, res: Response) => {
+  try { return res.json(await prospectWorkflow.read(req.user!, req.params.id)); }
+  catch (error) { return prospectWorkflowError(res, error); }
+};
+export const getProspectTransition = async (req: Request, res: Response) => {
   try {
-    const userId = req.user?.id;
-    if (!userId) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
-    const raw = req.body ?? {};
-    const cleanData: any = {};
-
-    if (raw.nombre !== undefined) {
-      cleanData.nombre = normalizeProspectName(raw.nombre);
-      if (!cleanData.nombre) return res.status(400).json({ error: 'El campo "nombre" es obligatorio.', code: 'PROSPECT_NAME_REQUIRED' });
-    }
-    for (const field of ['telefono', 'email', 'necesidad'] as const) {
-      if (raw[field] !== undefined) cleanData[field] = optionalString(raw[field]);
-    }
-    if (raw.prioridad !== undefined) {
-      if (!Object.values(ProspectoPrioridad).includes(raw.prioridad)) return res.status(400).json({ error: 'La prioridad seleccionada no es válida.', code: 'INVALID_PROSPECT_PRIORITY' });
-      cleanData.prioridad = raw.prioridad;
-    }
-    if (raw.estado !== undefined) {
-      if (!Object.values(ProspectoEstado).includes(raw.estado)) return res.status(400).json({ error: 'El estado comercial no es válido.', code: 'INVALID_PROSPECT_PIPELINE_STATUS' });
-      cleanData.estado = raw.estado;
-    }
-    if (raw.servicio_catalogo_codigo !== undefined) {
-      const service = prospectServiceByCode(raw.servicio_catalogo_codigo);
-      if (!service) return res.status(400).json({ error: 'Selecciona un servicio válido.', code: 'INVALID_PROSPECT_SERVICE' });
-      cleanData.servicio_catalogo_codigo = service.code;
-      cleanData.tipo_acto = service.label;
-    }
-    if (raw.etapa_operativa_codigo !== undefined) {
-      const stage = prospectStageByCode(raw.etapa_operativa_codigo);
-      if (!stage) return res.status(400).json({ error: 'Selecciona una etapa válida.', code: 'INVALID_PROSPECT_STAGE' });
-      cleanData.etapa_operativa_codigo = stage.code;
-    }
-    for (const field of ['tiene_predial', 'tiene_antecedente'] as const) {
-      if (raw[field] !== undefined) {
-        if (invalidBoolean(raw[field])) return res.status(400).json({ error: 'Los indicadores de documentación deben ser verdaderos o falsos.', code: 'INVALID_PROSPECT_DOCUMENT_FLAGS' });
-        cleanData[field] = raw[field];
-      }
-    }
-
-    const prospecto = await prisma.prospecto.update({ where: { id: req.params.id }, data: cleanData, include: prospectInclude });
-    await logAudit(userId, 'UPDATE', 'Prospecto', prospecto.id, { changes: cleanData });
-    return res.json(prospecto);
-  } catch (error: any) {
-    return res.status(500).json({ error: 'Error al actualizar el prospecto', detail: error?.message });
-  }
+    const workflow = await prospectWorkflow.read(req.user!, req.params.id);
+    const event = workflow.events.find((item) => item.id === req.params.transitionId);
+    if (!event) return res.status(404).json({ error: 'No se encontró la transición.' });
+    return res.json(event);
+  } catch (error) { return prospectWorkflowError(res, error); }
+};
+export const prepareProspectRequest = async (req: Request, res: Response) => {
+  try { return res.json(await prospectWorkflow.prepare(req.user!, req.params.id, req.body ?? {})); }
+  catch (error) { return prospectWorkflowError(res, error); }
+};
+export const actProspectWorkflow = async (req: Request, res: Response) => {
+  try { return res.json(await prospectWorkflow.act(req.user!, req.params.id, req.body ?? {})); }
+  catch (error) { return prospectWorkflowError(res, error); }
 };
 
 export const deleteProspecto = async (req: Request, res: Response) => {

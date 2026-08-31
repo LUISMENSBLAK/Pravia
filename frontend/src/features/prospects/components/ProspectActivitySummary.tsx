@@ -1,5 +1,6 @@
 import { CalendarCheck2, Clock3, MessageSquareMore, UserCheck } from 'lucide-react';
 import type { Prospect } from '../prospects.types';
+import { isConvertedProspect } from '../prospects.types';
 import styles from '../ProspectsPage.module.css';
 
 export function ProspectActivitySummary({ prospects }: { prospects: Prospect[] }) {
@@ -10,7 +11,7 @@ export function ProspectActivitySummary({ prospects }: { prospects: Prospect[] }
     const date = item.seguimientos?.[0]?.fecha_proximo_seguimiento;
     return date ? new Date(date).getTime() < now : false;
   }).length;
-  const accepted = prospects.filter((item) => item.estado === 'ACEPTADO').length;
+  const accepted = prospects.filter(isConvertedProspect).length;
   const items = [
     { icon: Clock3, value: stale, label: 'Sin actividad por 7+ días' },
     { icon: MessageSquareMore, value: withoutNext, label: 'Sin siguiente acción' },

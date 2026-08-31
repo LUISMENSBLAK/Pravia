@@ -30,6 +30,8 @@ model Organization {
   presupuestoDistribuciones ExpedientePresupuestoDistribucion[]
   presupuestoDocumentos     ExpedientePresupuestoDocumento[]
   expedienteActividades     ExpedienteActividad[]
+  prospectoTransiciones     ProspectoTransicion[]
+  prospectoFuentes          ProspectoFuenteNotarial[]
 
   @@index([status])
   @@map("organizations")
@@ -46,6 +48,8 @@ model OrganizationMembership {
   organization    Organization  @relation(fields: [organization_id], references: [id], onDelete: Restrict)
   user            User          @relation(fields: [user_id], references: [id], onDelete: Restrict)
   sessions        AuthSession[]
+  prospectoTransiciones ProspectoTransicion[]
+  prospectoFuentes ProspectoFuenteNotarial[]
 
   @@unique([organization_id, user_id])
   @@index([user_id, status])
@@ -307,6 +311,17 @@ model Prospecto {
   prioridad                ProspectoPrioridad         @default(MEDIA)
   etapa_operativa_codigo   String?
   servicio_catalogo_codigo String?
+  folio                    String?                    @unique
+  notaria_id               String?                    @db.Uuid
+  etapa_contractual        ProspectoEtapaContractual?
+  version_operativa        Int                        @default(0)
+  transicion_actual_id     String?                    @db.Uuid
+  creation_key             String?                    @db.VarChar(120)
+  creation_hash            String?                    @db.VarChar(64)
+  notaria                  Notaria?                   @relation(fields: [notaria_id], references: [id], onDelete: Restrict)
+  transicion_actual        ProspectoTransicion?       @relation("ProspectoCurrentTransition", fields: [transicion_actual_id], references: [id], onDelete: Restrict)
+  transiciones             ProspectoTransicion[]      @relation("ProspectoTransitions")
+  fuentes_notariales       ProspectoFuenteNotarial[]
   cotizacion               Cotizacion?
   documentos               Documento[]
   prospectoDocumentos      ProspectoDocumento[]
@@ -320,7 +335,84 @@ model Prospecto {
   @@index([user_id], map: "idx_prospectos_user_fk")
   @@index([etapa_operativa_codigo], map: "idx_prospectos_etapa_operativa_fk")
   @@index([servicio_catalogo_codigo], map: "idx_prospectos_servicio_catalogo_fk")
+  @@unique([organization_id, creation_key], map: "uq_prospecto_creation_key")
+  @@index([notaria_id, organization_id], map: "idx_prospecto_notaria_org")
+  @@index([transicion_actual_id], map: "idx_prospecto_current_transition")
+  @@index([organization_id, etapa_contractual], map: "idx_prospecto_contract_stage")
   @@map("prospectos")
+}
+
+enum ProspectoEtapaContractual {
+  NUEVO
+  RECABANDO_INFORMACION
+  LISTO_PARA_SOLICITAR
+  SOLICITUD_ENVIADA_NOTARIA
+  EN_ESPERA_COTIZACION
+  COTIZACION_RECIBIDA
+  CONVERTIDO_COTIZACION
+}
+
+// Hechos de negocio append-only, no notas libres ni AuditLog técnico.
+model ProspectoTransicion {
+  id              String                    @id @default(uuid()) @db.Uuid
+  organization_id String                    @db.Uuid
+  prospecto_id    String                    @db.Uuid
+  actor_id        String                    @db.Uuid
+  etapa_anterior  ProspectoEtapaContractual?
+  etapa_nueva     ProspectoEtapaContractual
+  hito_intermedio ProspectoEtapaContractual?
+  effective_at    DateTime
+  recorded_at     DateTime                  @default(now())
+  accion          String                    @db.VarChar(60)
+  procedencia     String                    @db.VarChar(60)
+  evidencia       Json
+  version         Int
+  idempotency_key String                    @db.VarChar(120)
+  payload_hash    String                    @db.VarChar(64)
+  organization    Organization              @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  prospecto       Prospecto                 @relation("ProspectoTransitions", fields: [prospecto_id], references: [id], onDelete: Restrict)
+  actor           OrganizationMembership    @relation(fields: [organization_id, actor_id], references: [organization_id, user_id], onDelete: Restrict)
+  actual_para     Prospecto[]               @relation("ProspectoCurrentTransition")
+
+  @@unique([organization_id, prospecto_id, idempotency_key], map: "uq_prospecto_transition_key")
+  @@unique([prospecto_id, version], map: "uq_prospecto_transition_version")
+  @@index([organization_id, actor_id], map: "idx_prospecto_transition_actor")
+  @@index([prospecto_id, organization_id, effective_at], map: "idx_prospecto_transition_history")
+  @@map("prospecto_transiciones")
+}
+
+// Versiones de una fuente: referencia al mismo sistema documental, no otro almacén.
+model ProspectoFuenteNotarial {
+  id              String                 @id @default(uuid()) @db.Uuid
+  organization_id String                 @db.Uuid
+  prospecto_id    String                 @db.Uuid
+  documento_id    String                 @db.Uuid
+  notaria_id      String                 @db.Uuid
+  actor_id        String                 @db.Uuid
+  version         Int
+  received_at     DateTime
+  recorded_at     DateTime               @default(now())
+  origen          String                 @db.VarChar(60)
+  motivo          String
+  sustituye_id    String?                @unique @db.Uuid
+  idempotency_key String                 @db.VarChar(120)
+  payload_hash    String                 @db.VarChar(64)
+  organization    Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  prospecto       Prospecto              @relation(fields: [prospecto_id], references: [id], onDelete: Restrict)
+  documento       Documento              @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  notaria         Notaria                @relation(fields: [notaria_id], references: [id], onDelete: Restrict)
+  actor           OrganizationMembership @relation(fields: [organization_id, actor_id], references: [organization_id, user_id], onDelete: Restrict)
+  sustituye       ProspectoFuenteNotarial? @relation("NotarySourceVersions", fields: [sustituye_id], references: [id], onDelete: Restrict)
+  sustituida_por  ProspectoFuenteNotarial? @relation("NotarySourceVersions")
+  cotizaciones    Cotizacion[]
+
+  @@unique([organization_id, prospecto_id, idempotency_key], map: "uq_prospecto_source_key")
+  @@unique([prospecto_id, version], map: "uq_prospecto_source_version")
+  @@unique([prospecto_id, documento_id], map: "uq_prospecto_source_document")
+  @@index([organization_id, actor_id], map: "idx_prospecto_source_actor")
+  @@index([documento_id, organization_id], map: "idx_prospecto_source_document")
+  @@index([notaria_id, organization_id], map: "idx_prospecto_source_notary")
+  @@map("prospecto_fuentes_notariales")
 }
 
 model ProspectoEtapaCatalogo {
@@ -413,6 +505,8 @@ model Notaria {
   contacto_principal_ref     NotariaContacto?             @relation("NotariaContactoPrincipal", fields: [contacto_principal_id], references: [id], onDelete: SetNull)
   contactos                  NotariaContacto[]            @relation("NotariaContactos")
   plantillaDocumentales      PlantillaDocumentalVersion[]
+  prospectos                 Prospecto[]
+  fuentesProspecto           ProspectoFuenteNotarial[]
 
   @@index([contacto_principal_id], map: "idx_notarias_contacto_principal_fk")
   @@map("notarias")
@@ -456,6 +550,8 @@ model Cotizacion {
   notaria_id                     String?                 @db.Uuid
   numero_cotizacion              String?                 @unique
   numero_solicitud               String?                 @unique
+  fuente_notarial_id             String?                 @db.Uuid
+  fuente_notarial                ProspectoFuenteNotarial? @relation(fields: [fuente_notarial_id], references: [id], onDelete: Restrict)
   total_cliente                  Decimal?                @db.Decimal(14, 2)
   total_notaria                  Decimal?                @db.Decimal(14, 2)
   version_actual                 Int                     @default(1)
@@ -477,6 +573,7 @@ model Cotizacion {
   @@unique([id, organization_id], map: "uq_cotizaciones_id_org")
   @@index([notaria_id], map: "idx_cotizaciones_notaria_fk")
   @@index([user_id], map: "idx_cotizaciones_user_fk")
+  @@index([fuente_notarial_id, organization_id], map: "idx_cotizaciones_source_org")
   @@map("cotizaciones")
 }
 
@@ -1592,6 +1689,7 @@ model Documento {
   presupuestoHistorico         ExpedientePresupuestoDocumento?
   finanzaVinculosExp008        ExpedienteFinanzaDocumento[]
   finanzaPropuestasExp008      ExpedienteFinanzaPropuestaIA[]
+  fuentesNotarialesProspecto    ProspectoFuenteNotarial[]
 
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
   @@index([cotizacion_id], map: "idx_documentos_cotizacion_fk")

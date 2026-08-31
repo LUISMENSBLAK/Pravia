@@ -49,7 +49,10 @@ export const COTIZACION_TRANSITIONS: Record<CotizacionEstado, CotizacionEstado[]
   CONVERTIDA_EXPEDIENTE: [],
 };
 
-export function getAllowedCotizacionTransitions(current: CotizacionEstado): CotizacionEstado[] {
+export function getAllowedCotizacionTransitions(current: CotizacionEstado, hasCanonicalNotarySource = false): CotizacionEstado[] {
+  // New quotes already inherit an explicitly received source from PRO-001.
+  // Existing quotes retain their workflow until G0-B; no new states or timing policy.
+  if (hasCanonicalNotarySource && current === CotizacionEstado.BORRADOR) return [CotizacionEstado.EN_REVISION_ABOGADO];
   return COTIZACION_TRANSITIONS[current] || [];
 }
 
@@ -58,6 +61,7 @@ export function validateCotizacionTransition(input: {
   next: CotizacionEstado;
   hasNotaria: boolean;
   hasApprovedVersion: boolean;
+  hasCanonicalNotarySource?: boolean;
 }): void {
   if (input.current === input.next) return;
   if (input.next === CotizacionEstado.CONVERTIDA_EXPEDIENTE) {
@@ -66,7 +70,10 @@ export function validateCotizacionTransition(input: {
       'CONVERSION_ACTION_REQUIRED',
     );
   }
-  if (!getAllowedCotizacionTransitions(input.current).includes(input.next)) {
+  if (input.hasCanonicalNotarySource && [CotizacionEstado.ENVIADA_NOTARIA, CotizacionEstado.PRESUPUESTO_RECIBIDO].includes(input.next as any)) {
+    throw new CotizacionBusinessError('La solicitud y recepción notarial ya están registradas en el prospecto.', 'PRO001_NOTARY_SOURCE_EXISTS', 409);
+  }
+  if (!getAllowedCotizacionTransitions(input.current, input.hasCanonicalNotarySource).includes(input.next)) {
     throw new CotizacionBusinessError(
       `La transición ${input.current} → ${input.next} no está permitida en el flujo comercial.`,
       'INVALID_STATE_TRANSITION',

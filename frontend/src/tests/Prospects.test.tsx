@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../app/App';
 import { getAssistantActions, resolveAssistantContext } from '../features/assistant/assistantContext';
-import { PIPELINE_STAGES, pipelineStageForSubstatus, PROSPECT_SUBSTATUSES } from '../features/prospects/prospects.types';
+import { isActiveProspect, isConvertedProspect, PIPELINE_STAGES, pipelineStageForProspect, pipelineStageForSubstatus, PROSPECT_SUBSTATUSES } from '../features/prospects/prospects.types';
 import type { Prospect, ProspectCatalogs } from '../features/prospects/prospects.types';
 
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -37,7 +37,7 @@ const prospect = (overrides: Partial<Prospect> = {}): Prospect => ({
 const meta = (items: Prospect[], total = items.length, page = 1, pageSize = 25) => ({
   page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)), hasNextPage: page * pageSize < total, hasPreviousPage: page > 1,
   countsByState: Object.fromEntries(items.map((item) => item.estado).map((state) => [state, items.filter((item) => item.estado === state).length])),
-  metrics: { withQuote: items.filter((item) => item.cotizacion).length, accepted: items.filter((item) => item.estado === 'ACEPTADO').length, active: items.filter((item) => !['ACEPTADO', 'PERDIDO', 'CANCELADO', 'ARCHIVADO'].includes(item.estado)).length },
+  metrics: { withQuote: items.filter((item) => item.cotizacion).length, accepted: items.filter(isConvertedProspect).length, active: items.filter(isActiveProspect).length },
 });
 
 const mockApi = (seed: Prospect[] = [prospect()], permissions?: string[], defaultView: 'CARDS' | 'LIST' = 'CARDS', failUploads = false) => {
@@ -52,6 +52,11 @@ const mockApi = (seed: Prospect[] = [prospect()], permissions?: string[], defaul
       return response({ preferences: { default_view: selected, density: 'COMFORTABLE', timezone: 'America/Mexico_City', date_format: 'DD/MM/YYYY', theme: 'LIGHT', notifications_enabled: true, assistant_suggestions_enabled: true } });
     }
     if (url.pathname.endsWith('/prospectos/catalogos')) return response(catalogs);
+    if (url.pathname.endsWith('/prospectos/prospect-1/operacion')) return response({
+      stage:null,stageLabel:'Etapa por confirmar',stageEnteredAt:null,knowledge:'UNKNOWN_LEGACY',version:0,folio:null,
+      wait:{type:null,knowledge:'UNKNOWN_LEGACY',label:'Espera por confirmar'},stages:[],actions:[],notaria:null,notaries:[],
+      responsibles:[],source:null,sourceHistory:[],events:[],quote:null,canReadSource:true,
+    });
     if (url.pathname.endsWith('/documentos') && init?.method === 'POST') return failUploads ? response({ error: 'Upload failed' }, 500) : response({ id: `doc-${Date.now()}`, nombre_original: 'archivo.pdf', tipo: 'PREDIAL' }, 201);
     if (/\/documentos\/[^/]+\/url$/.test(url.pathname)) return response({ url: 'https://signed.example/document' });
     if (url.pathname.endsWith('/prospectos/prospect-1/seguimientos')) return response({ id: 'follow-2', tipo: 'Nota', contenido: 'Se recibió información', proxima_accion: 'Revisar alcance', created_at: '2026-08-12T10:00:00.000Z', usuario: { nombre: 'Andrea Ruiz' } }, 201);
@@ -72,6 +77,19 @@ const mockApi = (seed: Prospect[] = [prospect()], permissions?: string[], defaul
     }
     if (url.pathname.endsWith('/prospectos')) {
       let filtered = [...prospects];
+      const pipeline = url.searchParams.get('pipeline');
+      if (pipeline) {
+        const contractStages = {
+          new: ['NUEVO'],
+          progress: ['RECABANDO_INFORMACION', 'LISTO_PARA_SOLICITAR', 'SOLICITUD_ENVIADA_NOTARIA', 'EN_ESPERA_COTIZACION'],
+          quote: ['COTIZACION_RECIBIDA'],
+          converted: ['CONVERTIDO_COTIZACION'],
+        }[pipeline] ?? [];
+        const legacyStates = PIPELINE_STAGES.find((item) => item.id === pipeline)?.substatuses ?? [];
+        filtered = filtered.filter((item) => item.etapa_contractual
+          ? contractStages.includes(item.etapa_contractual)
+          : legacyStates.includes(item.estado));
+      }
       const states = url.searchParams.get('estado')?.split(',').filter(Boolean);
       if (states?.length) filtered = filtered.filter((item) => states.includes(item.estado));
       const stage = url.searchParams.get('etapa');
@@ -113,6 +131,18 @@ describe('Prospectos', () => {
     expect(screen.queryByRole('heading', { name: /Seguimiento/i, hidden: true })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: /Cierre/i, hidden: true })).not.toBeInTheDocument();
     expect(screen.getByText('Total prospectos')).toBeInTheDocument();
+  });
+
+  it('ubica por etapa contractual aunque el subestado legacy sea divergente', async () => {
+    const { fetchMock } = mockApi([prospect({ estado: 'NUEVO', etapa_contractual: 'CONVERTIDO_COTIZACION', cotizacion: { id: 'quote-1', estado: 'BORRADOR' } })]);
+    render(<MemoryRouter initialEntries={['/prospectos']}><App /></MemoryRouter>);
+    await screen.findAllByText('CONSTRUCTORA HORIZONTE');
+    const requests = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(requests.some((url) => url.includes('pipeline=converted'))).toBe(true);
+    expect(requests.some((url) => url.includes('pipeline=new'))).toBe(true);
+    expect(requests.some((url) => url.includes('estado=NUEVO'))).toBe(false);
+    expect(screen.getByText('Convertidos').closest('article')).toHaveTextContent('1');
+    expect(screen.getAllByText('Subestado: Nuevo').length).toBeGreaterThan(0);
   });
 
   it('alterna Tarjetas y Lista, elimina Origen y mantiene acciones accesibles', async () => {
@@ -212,7 +242,7 @@ describe('Prospectos', () => {
     expect(screen.queryByText('Ciudad')).not.toBeInTheDocument();
     expect(screen.queryByText('Origen')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Registrar seguimiento' }));
-    await user.type(screen.getByLabelText(/Nota/), 'Se recibió información');
+    await user.type(screen.getByRole('textbox', { name: /Nota/ }), 'Se recibió información');
     await user.click(screen.getByRole('button', { name: 'Guardar seguimiento' }));
     expect(await screen.findByText('Seguimiento registrado.')).toBeInTheDocument();
   });
@@ -272,6 +302,17 @@ describe('Prospectos', () => {
     expect(list.module).toBe('prospectos');
     expect(getAssistantActions(list).map((action) => action.label)).toContain('Sin seguimiento');
     expect(detail).toMatchObject({ entityType: 'prospecto', entityId: 'prospect-1' });
+  });
+
+  it('alta mínima conserva cierre Escape y no escribe al cancelar', async () => {
+    const { fetchMock } = mockApi(); const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/prospectos']}><App /></MemoryRouter>);
+    await screen.findAllByText('CONSTRUCTORA HORIZONTE');
+    await user.click(screen.getByRole('button', { name: 'Nuevo prospecto' }));
+    expect(screen.getByRole('dialog', { name: 'Nuevo prospecto' })).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'Nuevo prospecto' })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
   });
 
   it('combobox searchable filtra los actos solicitados ignorando acentos y mayúsculas', async () => {

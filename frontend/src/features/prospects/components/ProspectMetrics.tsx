@@ -1,11 +1,12 @@
 import { BadgeCheck, ChartNoAxesCombined, FileText, Target, UsersRound } from 'lucide-react';
 import type { Prospect, ProspectListMeta } from '../prospects.types';
+import { isActiveProspect, isConvertedProspect } from '../prospects.types';
 import styles from '../ProspectsPage.module.css';
 
 export function ProspectMetrics({ prospects, meta }: { prospects: Prospect[]; meta: ProspectListMeta | null }) {
   const total = meta?.total ?? prospects.length;
-  const converted = meta?.metrics.accepted ?? prospects.filter((item) => item.estado === 'ACEPTADO').length;
-  const active = meta?.metrics.active ?? prospects.filter((item) => !['ACEPTADO', 'PERDIDO', 'CANCELADO', 'ARCHIVADO'].includes(item.estado)).length;
+  const converted = meta?.metrics.accepted ?? prospects.filter(isConvertedProspect).length;
+  const active = meta?.metrics.active ?? prospects.filter(isActiveProspect).length;
   const withQuote = meta?.metrics.withQuote ?? prospects.filter((item) => Boolean(item.cotizacion)).length;
   const conversion = total ? `${((converted / total) * 100).toFixed(1)}%` : '—';
   const metrics = [

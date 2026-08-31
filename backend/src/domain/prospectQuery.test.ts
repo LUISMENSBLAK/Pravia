@@ -24,8 +24,9 @@ describe('parseProspectListQuery', () => {
   });
 
   it('separa etapa documental y permite omitir el resumen en paginación por lane', () => {
-    expect(parseProspectListQuery({ etapa: 'PROSPECTO_RECIBIDO', summary: 'false' })).toMatchObject({
-      operationalStageCode: 'PROSPECTO_RECIBIDO', includeSummary: false,
+    expect(parseProspectListQuery({ etapa: 'PROSPECTO_RECIBIDO', pipeline: 'quote', summary: 'false' })).toMatchObject({
+      operationalStageCode: 'PROSPECTO_RECIBIDO', pipelineStage: 'quote', includeSummary: false,
     });
+    expect(parseProspectListQuery({ pipeline: 'invented' })).not.toHaveProperty('pipelineStage');
   });
 });

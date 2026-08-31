@@ -181,7 +181,12 @@ describe('frontera tenant canónica', () => {
             const compositeFk = normalizedMigrations.includes(
               `FOREIGN KEY (${field}, organization_id) REFERENCES pravia_os.${parent.table}(id, organization_id)`,
             );
-            expect(migrations.includes(tuple) || explicitTrigger.test(migrations) || compositeFk, `${model.table}.${field} debe coincidir con ${parent.table}`).toBe(true);
+            // A membership relation references (organization_id,user_id), not membership.id.
+            // Check the actual composite FK emitted by Prisma, preserving the existing checks.
+            const membershipFk = parentName === 'OrganizationMembership'
+              && rawFields.replace(/\s/g, '') === `organization_id,${field}`
+              && normalizedMigrations.includes(`FOREIGN KEY (organization_id, ${field}) REFERENCES organization_memberships(organization_id, user_id)`);
+            expect(migrations.includes(tuple) || explicitTrigger.test(migrations) || compositeFk || membershipFk, `${model.table}.${field} debe coincidir con ${parent.table}`).toBe(true);
           }
         }
       }

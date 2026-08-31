@@ -12,6 +12,8 @@ import { CotizacionConversionService } from '../services/cotizacionConversion.se
 import { canAccessCotizacion, canAccessDocumento, canAccessProspecto, cotizacionObjectWhere } from '../services/objectAccess.service';
 import { buildQuoteAnalytics, parseQuoteListQuery, quoteAnalyticsRange } from '../domain/quoteQuery';
 import { recognizeAcceptedQuote } from '../services/honorarioRecognition.service';
+import { ProspectWorkflowService } from '../services/prospectWorkflow.service';
+import { prospectWorkflowError } from './prospectWorkflowError';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
 
@@ -107,6 +109,7 @@ export const getCotizacionById = async (req: Request, res: Response) => {
           }
         },
         notaria: true,
+        fuente_notarial: { include: { documento: { select: { id: true, nombre_original: true, mime_type: true } } } },
         versiones: { orderBy: { version: 'desc' } },
         documentos: true,
         pagos: true,
@@ -121,7 +124,8 @@ export const getCotizacionById = async (req: Request, res: Response) => {
       versiones: cotizacion.versiones || [],
       documentos: cotizacion.documentos || [],
       pagos: cotizacion.pagos || [],
-      transiciones_permitidas: getAllowedCotizacionTransitions(cotizacion.estado),
+      fuente_notarial: req.user?.permissions.includes('documentos.read') ? cotizacion.fuente_notarial : null,
+      transiciones_permitidas: getAllowedCotizacionTransitions(cotizacion.estado, Boolean(cotizacion.fuente_notarial_id)),
       conversion: evaluateConversionEligibility(cotizacion),
     };
     res.json(safeCotizacion);
@@ -130,111 +134,17 @@ export const getCotizacionById = async (req: Request, res: Response) => {
   }
 };
 
+/** Compatibility route: the same PRO-001 conversion authority, never a second creation path. */
 export const createCotizacion = async (req: Request, res: Response) => {
   try {
-    const { prospecto_id, notaria_id } = req.body;
-
-    if (!prospecto_id) {
-      return res.status(400).json({ error: 'prospecto_id es requerido' });
-    }
-
-    const userId = req.user?.id;
-    if (!userId) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
-    if (!(await canAccessProspecto(req.user!, String(prospecto_id)))) {
-      return res.status(403).json({ error: 'No tienes acceso al prospecto seleccionado.', code: 'PROSPECTO_ACCESS_DENIED' });
-    }
-
-    // Get prospecto info for email generation
-    const prospecto = await prisma.prospecto.findUnique({
-      where: { id: prospecto_id },
-      include: { documentos: true }
+    const { prospecto_id, expectedVersion, idempotencyKey, confirm, ...extra } = req.body ?? {};
+    if (Object.keys(extra).length) return res.status(400).json({ error: 'La creación se confirma desde el prospecto, con su fuente notarial.', code: 'PRO001_CREATION_REQUIRED' });
+    if (typeof prospecto_id !== 'string') return res.status(400).json({ error: 'Selecciona el prospecto de origen.' });
+    const result = await new ProspectWorkflowService(prisma).act(req.user!, prospecto_id, {
+      action: 'CONVERTIR', expectedVersion, idempotencyKey, confirm,
     });
-
-    if (!prospecto) return res.status(404).json({ error: 'Prospecto no encontrado' });
-    const existing = await prisma.cotizacion.findUnique({ where: { prospecto_id } });
-    if (existing) {
-      return res.status(409).json({
-        error: 'Este prospecto ya tiene una cotización vinculada.',
-        code: 'PROSPECT_ALREADY_HAS_QUOTE',
-        existing_id: existing.id,
-      });
-    }
-    if (notaria_id) {
-      const validNotary = await prisma.notaria.findFirst({ where: { id: notaria_id, activa: true }, select: { id: true } });
-      if (!validNotary) return res.status(400).json({ error: 'La notaría seleccionada no existe.' });
-    }
-
-    // Generate suggested email body
-    const docsList = prospecto.documentos.map(d => `- ${d.tipo || 'Documento'} (${d.nombre_original})`).join('\n') || '- No hay documentos cargados';
-    const cuerpo_correo_notaria = `Buen día.
-
-Solicitamos atentamente la cotización correspondiente al siguiente acto:
-
-Acto:
-${prospecto.tipo_acto || 'No especificado'}
-
-Compareciente o solicitante:
-${prospecto.nombre}
-
-Se adjunta la documentación disponible para su revisión:
-${docsList}
-
-Quedamos atentos.
-
-PRAVIA`;
-
-    const year = new Date().getFullYear();
-    const cotizacion = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:cotizacion-folio:${year}`}))`);
-      const yearlyFolios = await tx.cotizacion.findMany({
-        where: {
-          created_at: {
-            gte: new Date(`${year}-01-01T00:00:00.000Z`),
-            lt: new Date(`${year + 1}-01-01T00:00:00.000Z`),
-          },
-        },
-        select: { numero_solicitud: true },
-      });
-      const nextSequence = yearlyFolios.reduce((highest, quote) => {
-        const match = quote.numero_solicitud?.match(new RegExp(`^SOL-${year}-(\\d+)$`));
-        return Math.max(highest, match ? Number(match[1]) : 0);
-      }, 0) + 1;
-      const sequence = String(nextSequence).padStart(3, '0');
-      const created = await tx.cotizacion.create({
-        data: {
-          numero_solicitud: `SOL-${year}-${sequence}`,
-          numero_cotizacion: `COT-${year}-${sequence}`,
-          prospecto_id,
-          user_id: userId,
-          notaria_id,
-          estado: CotizacionEstado.BORRADOR,
-          cuerpo_correo_notaria,
-        },
-      });
-      await tx.prospecto.update({
-        where: { id: prospecto_id },
-        data: { estado: 'COTIZACION_SOLICITADA' },
-      });
-      return created;
-    });
-
-    await logAudit(userId, 'CREATE', 'Cotizacion', cotizacion.id, { numero_solicitud: cotizacion.numero_solicitud });
-
-    res.status(201).json({
-      ...cotizacion,
-      versiones: [],
-      documentos: [],
-      pagos: []
-    });
-  } catch (error: any) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      return res.status(409).json({
-        error: 'La cotización ya existe o el folio fue reservado por otra operación. Recarga la lista para continuar.',
-        code: 'DUPLICATE_QUOTE',
-      });
-    }
-    res.status(500).json({ error: 'Error al crear cotización', detail: error.message });
-  }
+    return res.status(result.idempotent ? 200 : 201).json({ id: result.quoteId, ...result });
+  } catch (error) { return prospectWorkflowError(res, error); }
 };
 
 export const updateCotizacionEstado = async (req: Request, res: Response) => {
@@ -260,6 +170,7 @@ export const updateCotizacionEstado = async (req: Request, res: Response) => {
 
       validateCotizacionTransition({
         current: current.estado,
+        hasCanonicalNotarySource: Boolean(current.fuente_notarial_id),
         next: estado as CotizacionEstado,
         hasNotaria: Boolean(current.notaria_id),
         hasApprovedVersion: current.versiones.some((version) => version.aprobada),
@@ -274,7 +185,7 @@ export const updateCotizacionEstado = async (req: Request, res: Response) => {
         limit.setDate(limit.getDate() + 5);
         dataToUpdate.fecha_limite_respuesta_notaria = limit;
       } else if (estado === CotizacionEstado.PRESUPUESTO_RECIBIDO || estado === CotizacionEstado.EN_REVISION_ABOGADO) {
-        dataToUpdate.fecha_presupuesto_recibido = new Date();
+        if (!current.fuente_notarial_id) dataToUpdate.fecha_presupuesto_recibido = new Date();
       } else if (estado === CotizacionEstado.ENVIADA_CLIENTE || estado === CotizacionEstado.EN_NEGOCIACION) {
         dataToUpdate.fecha_enviada_cliente = new Date();
       } else if (estado === CotizacionEstado.ACEPTADA) {
@@ -294,7 +205,7 @@ export const updateCotizacionEstado = async (req: Request, res: Response) => {
 
     res.json({
       ...result.cotizacion,
-      transiciones_permitidas: getAllowedCotizacionTransitions(result.cotizacion.estado),
+      transiciones_permitidas: getAllowedCotizacionTransitions(result.cotizacion.estado, Boolean(result.cotizacion.fuente_notarial_id)),
     });
   } catch (error: any) {
     if (error instanceof CotizacionBusinessError) {
@@ -706,6 +617,7 @@ export const registerCotizacionDelivery = async (req: Request, res: Response) =>
       validateCotizacionTransition({
         current: current.estado,
         next: nextState,
+        hasCanonicalNotarySource: Boolean(current.fuente_notarial_id),
         hasNotaria: Boolean(current.notaria_id),
         hasApprovedVersion: current.versiones.some((version) => version.aprobada),
       });
@@ -736,7 +648,7 @@ export const registerCotizacionDelivery = async (req: Request, res: Response) =>
     await logAudit(actorUserId, 'REGISTER_DELIVERY', 'Cotizacion', id, { destino, canal, destinatario, nuevo_estado: nextState });
     return res.status(201).json({
       ...result,
-      transiciones_permitidas: getAllowedCotizacionTransitions(result.cotizacion.estado),
+      transiciones_permitidas: getAllowedCotizacionTransitions(result.cotizacion.estado, Boolean(result.cotizacion.fuente_notarial_id)),
       deliveryConfirmedByProvider: false,
     });
   } catch (error: any) {
@@ -793,7 +705,7 @@ export const getCotizacionDocumentos = async (req: Request, res: Response) => {
     const { id } = req.params;
     const cotizacion = await prisma.cotizacion.findUnique({
       where: { id },
-      select: { id: true, prospecto_id: true }
+      select: { id: true, prospecto_id: true, fuente_notarial_id: true }
     });
 
     if (!cotizacion) {
@@ -847,7 +759,11 @@ export const getCotizacionDocumentos = async (req: Request, res: Response) => {
       }
     });
 
-    const docs = Array.from(resultDocsMap.values());
+    // The notarial source is exposed in its own provenance panel, not as general documentation.
+    const sourceIds = cotizacion.fuente_notarial_id && cotizacion.prospecto_id
+      ? new Set((await prisma.prospectoFuenteNotarial.findMany({ where: { prospecto_id: cotizacion.prospecto_id, organization_id: req.user!.organizationId }, select: { documento_id: true } })).map((source) => source.documento_id))
+      : new Set<string>();
+    const docs = Array.from(resultDocsMap.values()).filter((document) => !sourceIds.has(document.id));
     res.json(docs);
   } catch (error: any) {
     res.status(500).json({ error: 'Error al consultar documentos de cotización', detail: error.message });
