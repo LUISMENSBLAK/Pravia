@@ -1,6 +1,6 @@
 import { apiRequest, tokenStore } from '../../services/api/client';
 import { apiUrl } from '../../services/api/config';
-import type { ActTypeOption, EligibleQuoteCandidate, ExpedienteAct, ExpedienteActCommand, ExpedienteActPreview, ExpedienteArtifacts, ExpedienteBudget, ExpedienteBudgetConcept, ExpedienteDetail, ExpedienteDocumentAppendix, ExpedienteListFilters, ExpedienteListResult, ExpedientePartyCatalogs, ExpedientePartyCommand, ExpedientePartyPreview, ExpedientePartyRelation, ExpedientePartySearchOption, ExpedientePredioCatalogs, ExpedientePredioCommand, ExpedientePredioPreview, ExpedientePredioRelation, ExpedienteSeguimiento, PredioSummary, ProjectState, SeguimientoEstado } from './expedientes.types';
+import type { ActTypeOption, EligibleQuoteCandidate, ExpedienteAct, ExpedienteActCommand, ExpedienteActPreview, ExpedienteActivityCategory, ExpedienteActivityResponse, ExpedienteArtifacts, ExpedienteBudget, ExpedienteBudgetConcept, ExpedienteDetail, ExpedienteDocumentAppendix, ExpedienteListFilters, ExpedienteListResult, ExpedientePartyCatalogs, ExpedientePartyCommand, ExpedientePartyPreview, ExpedientePartyRelation, ExpedientePartySearchOption, ExpedientePredioCatalogs, ExpedientePredioCommand, ExpedientePredioPreview, ExpedientePredioRelation, ExpedienteSeguimiento, PredioSummary, ProjectState, SeguimientoEstado } from './expedientes.types';
 
 const query = (filters: ExpedienteListFilters) => {
   const params = new URLSearchParams();
@@ -16,6 +16,8 @@ const query = (filters: ExpedienteListFilters) => {
 export const expedientesService = {
   list(filters: ExpedienteListFilters, signal?: AbortSignal) { return apiRequest<ExpedienteListResult>(`/expedientes?${query(filters)}`, { signal }); },
   detail(id: string, signal?: AbortSignal) { return apiRequest<ExpedienteDetail>(`/expedientes/${encodeURIComponent(id)}`, { signal }); },
+  activity(id: string, filters: { category?: ExpedienteActivityCategory; search?: string; from?: string; to?: string; cursor?: string | null; limit?: number } = {}, signal?: AbortSignal) { const params = new URLSearchParams(); Object.entries(filters).forEach(([key, value]) => { if (value !== undefined && value !== null && value !== '') params.set(key, String(value)); }); return apiRequest<ExpedienteActivityResponse>(`/expedientes/${encodeURIComponent(id)}/actividad?${params}`, { signal }); },
+  addActivityNote(id: string, note: string, idempotencyKey: string) { return apiRequest<{ item: ExpedienteActivityResponse['data'][number]; idempotent: boolean }>(`/expedientes/${encodeURIComponent(id)}/actividad/notas`, { method: 'POST', body: JSON.stringify({ note, idempotency_key: idempotencyKey }) }); },
   actTypes(signal?: AbortSignal) { return apiRequest<ActTypeOption[]>('/expedientes/tipos-acto', { signal }); },
   listActs(id: string, signal?: AbortSignal) { return apiRequest<{ data: ExpedienteAct[]; canonical_source: 'ExpedienteActo'; legacy_tipo_acto_id_editable: false }>(`/expedientes/${encodeURIComponent(id)}/actos`, { signal }); },
   previewAct(id: string, input: ExpedienteActCommand) { return apiRequest<ExpedienteActPreview>(`/expedientes/${encodeURIComponent(id)}/actos/preview`, { method: 'POST', body: JSON.stringify(input) }); },

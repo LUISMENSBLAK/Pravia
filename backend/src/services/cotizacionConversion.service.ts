@@ -156,6 +156,7 @@ export class CotizacionConversionService {
 
       await tx.expedienteActividad.create({
         data: {
+          organization_id: input.actorOrganizationId,
           expediente_id: expediente.id,
           usuario_id: actor.id,
           tipo: 'AUDITORIA',

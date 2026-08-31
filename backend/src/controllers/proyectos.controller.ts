@@ -262,6 +262,7 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
       });
       await tx.expedienteActividad.create({
         data: {
+          organization_id: req.user!.organizationId,
           expediente_id: id,
           tipo: 'DOCUMENTO',
           titulo: `Nueva versión de proyecto cargada (V${newVersionNum})`,
@@ -339,6 +340,7 @@ export const updateProyectoVersion = async (req: Request, res: Response) => {
         });
         await tx.expedienteActividad.create({
           data: {
+            organization_id: req.user!.organizationId,
             expediente_id: id,
             usuario_id: actor.id,
             tipo: 'DOCUMENTO',
@@ -711,6 +713,7 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
     if (userId) {
       await prisma.expedienteActividad.create({
         data: {
+          organization_id: req.user!.organizationId,
           expediente_id: id,
           tipo: 'DOCUMENTO',
           titulo: `Análisis de Inteligencia Artificial Ejecutado`,
@@ -889,6 +892,7 @@ export const downloadCarpetaZip = async (req: Request, res: Response) => {
       if (userId) {
         await prisma.expedienteActividad.create({
           data: {
+            organization_id: req.user!.organizationId,
             expediente_id: id,
             tipo: 'DOCUMENTO',
             titulo: `Descarga de Expediente Completo en ZIP`,
@@ -930,6 +934,7 @@ export const downloadCarpetaZip = async (req: Request, res: Response) => {
       if (userId) {
         await prisma.expedienteActividad.create({
           data: {
+            organization_id: req.user!.organizationId,
             expediente_id: id,
             tipo: 'DOCUMENTO',
             titulo: `Descarga de Carpeta "${carpetaQuery}" en ZIP`,
@@ -1251,6 +1256,7 @@ export const generarProyectoConIA = async (req: Request, res: Response) => {
     if (userId) {
       await prisma.expedienteActividad.create({
         data: {
+          organization_id: req.user!.organizationId,
           expediente_id: id,
           tipo: 'AUDITORIA',
           titulo: `Generado Proyecto de Escritura con IA (V${nextVersionNum})`,

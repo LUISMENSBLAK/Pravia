@@ -167,7 +167,7 @@ describe('frontera tenant canónica', () => {
         const [, parentName, rawFields] = relation;
         const parent = models.get(parentName);
         if (!parent) continue;
-        for (const field of rawFields.split(',').map((item) => item.trim())) {
+        for (const field of rawFields.split(',').map((item) => item.trim()).filter((item) => item !== 'organization_id')) {
           if (parentName === 'Organization') continue;
           if (parentName === 'User') {
             const tuple = `('${model.table}','${field}')`;

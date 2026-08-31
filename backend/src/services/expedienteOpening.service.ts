@@ -149,6 +149,7 @@ export class ExpedienteOpeningService {
     }
 
     await tx.expedienteActividad.create({ data: {
+      organization_id: organizationId,
       expediente_id: expediente.id,
       usuario_id: actor.id,
       tipo: 'CAMBIO_ESTATUS',

@@ -150,5 +150,29 @@ export type ExpedienteDetail = ExpedienteListItem & {
   readiness: { indicators: ReadinessIndicator[]; blockers: Array<{ type: string; label: string }>; complete: number };
   capabilities: { canWrite: boolean; canDeliver: boolean; canManagePostfirma: boolean; canReadProject: boolean; canReadFinance: boolean; canWriteFinance: boolean; canReadCaseFinance?: boolean; canReportCaseFinance?: boolean; canApplyCaseFinance?: boolean; canUploadDocuments: boolean; canReadDocuments: boolean; canDeleteDocuments: boolean };
 };
+
+export type ExpedienteActivityCategory = 'TODO' | 'OPERACION' | 'DOCUMENTOS' | 'FINANZAS' | 'SISTEMA';
+export type ExpedienteActivityItem = {
+  id: string;
+  type: string;
+  category: Exclude<ExpedienteActivityCategory, 'TODO'>;
+  title: string;
+  description: string;
+  occurred_at: string;
+  actor: { id: string; nombre: string; apellido: string };
+  manual_note: boolean;
+  previous_values: Record<string, unknown> | null;
+  new_values: Record<string, unknown> | null;
+  related_section: 'resumen' | 'actos' | 'comparecientes' | 'predios' | 'documentos' | 'seguimiento' | 'plantillas' | 'presupuesto' | 'finanzas' | 'isr' | 'actividad';
+  related_entity: string | null;
+  related_entity_id: string | null;
+};
+export type ExpedienteActivityResponse = {
+  data: ExpedienteActivityItem[];
+  next_cursor: string | null;
+  filters: { category: ExpedienteActivityCategory; search: string | null; from: string | null; to: string | null };
+  canonical_source: 'ExpedienteActividad';
+  technical_audit_source: false;
+};
 export type ProjectVersion = { id: string; version_numero: number; nombre_original?: string; nota_version?: string; es_vigente: boolean; es_version_final?: boolean; subido_por_nombre?: string; created_at: string };
 export type ProjectState = { vigente: ProjectVersion | null; historial: ProjectVersion[]; ultimoReporte?: unknown };

@@ -94,6 +94,7 @@ import {
   retireExpedienteFinanceDocument, uploadExp008, validateExpedienteFinanceAI,
   verifyExpedientePraviaReceipt, voidExpedienteIncome, voidExpedientePaymentRequest,
 } from '../controllers/expedienteFinance.controller';
+import { addExpedienteActivityNote, listExpedienteActivity } from '../controllers/expedienteActivity.controller';
 
 const router = express.Router();
 router.param('id', requireExpedienteAccess);
@@ -103,6 +104,8 @@ router.get('/cotizaciones-elegibles', requirePermission('expedientes.write'), ge
 router.get('/comprobantes-pravia/verificar/:token', requirePermission('expedientes.read'), verifyExpedientePraviaReceipt);
 router.get('/', getExpedientes);
 router.get('/:id', getExpedienteById);
+router.get('/:id/actividad', requirePermission('expedientes.read'), listExpedienteActivity);
+router.post('/:id/actividad/notas', requirePermission('expedientes.write'), addExpedienteActivityNote);
 router.get('/:id/actos', listExpedienteActos);
 router.post('/:id/actos/preview', requirePermission('expedientes.write'), previewExpedienteActoChange);
 router.post('/:id/actos/aplicar', requirePermission('expedientes.write'), applyExpedienteActoChange);

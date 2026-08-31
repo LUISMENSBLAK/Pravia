@@ -573,22 +573,20 @@ export const createPostfirmaTask = async (req: Request, res: Response) => {
       const evidence = await prisma.expedienteDocumento.findFirst({ where: { expediente_id: id, documento_id: String(evidencia_documento_id), estatus: 'ACTIVO' }, select: { id: true } });
       if (!evidence) return res.status(400).json({ error: 'La evidencia seleccionada no pertenece al expediente.', code: 'EXPEDIENTE_POSTFIRMA_EVIDENCE_INVALID' });
     }
-    const task = await prisma.tareaExterna.create({ data: {
-      expediente_id: id,
-      tipo,
-      descripcion: String(descripcion).trim(),
-      institucion: String(institucion).trim(),
-      folio: String(folio || '').trim() || null,
-      fecha_ingreso: parseOperationalDate(fecha_ingreso, 'La fecha de ingreso'),
-      fecha_inicio: new Date(),
-      fecha_limite: parseOperationalDate(fecha_limite, 'La fecha límite'),
-      seguimiento: String(seguimiento || '').trim() || null,
-      prevencion: String(prevencion || '').trim() || null,
-      subsanacion: String(subsanacion || '').trim() || null,
-      notas: String(notas || '').trim() || null,
-      evidencia_documento_id: evidencia_documento_id ? String(evidencia_documento_id) : null,
-      gestionado_por_id: req.user!.id,
-    } });
+    const task = await prisma.$transaction(async (tx) => {
+      const created = await tx.tareaExterna.create({ data: {
+        expediente_id: id, tipo, descripcion: String(descripcion).trim(), institucion: String(institucion).trim(),
+        folio: String(folio || '').trim() || null, fecha_ingreso: parseOperationalDate(fecha_ingreso, 'La fecha de ingreso'),
+        fecha_inicio: new Date(), fecha_limite: parseOperationalDate(fecha_limite, 'La fecha límite'),
+        seguimiento: String(seguimiento || '').trim() || null, prevencion: String(prevencion || '').trim() || null,
+        subsanacion: String(subsanacion || '').trim() || null, notas: String(notas || '').trim() || null,
+        evidencia_documento_id: evidencia_documento_id ? String(evidencia_documento_id) : null, gestionado_por_id: req.user!.id,
+      } });
+      const correlationId = req.correlationId || crypto.randomUUID();
+      await tx.expedienteActividad.create({ data: { organization_id: req.user!.organizationId, expediente_id: id, usuario_id: req.user!.id, tipo: 'SEGUIMIENTO', categoria: 'OPERACION', titulo: 'Trámite de postfirma iniciado', descripcion: `${created.descripcion} · ${created.institucion}`, metadatos: { source: 'EXP-009', action: 'POSTFIRMA_TASK_CREATED' }, seccion_relacionada: 'seguimiento', entidad_relacionada: 'TareaExterna', entidad_relacionada_id: created.id, correlation_id: correlationId } });
+      await tx.auditLog.create({ data: { organization_id: req.user!.organizationId, user_id: req.user!.id, accion: 'EXP009_POSTFIRMA_TASK_CREATED', entidad: 'TareaExterna', entidad_id: created.id, valores_nuevos: { tipo: created.tipo, estatus: created.estatus, institucion: created.institucion }, correlation_id: correlationId, session_id: req.user!.sessionId } });
+      return created;
+    });
     return res.status(201).json(task);
   } catch (error: any) {
     const status = error instanceof ExpedienteUpdateError ? error.status : 400;
@@ -616,20 +614,24 @@ export const updatePostfirmaTask = async (req: Request, res: Response) => {
     if (status === 'COMPLETADA' && (!resultText || !evidenceId)) {
       return res.status(400).json({ error: 'Para concluir el trámite registra el resultado y una evidencia.', code: 'EXPEDIENTE_POSTFIRMA_CLOSE_DATA_REQUIRED' });
     }
-    const task = await prisma.tareaExterna.update({ where: { id: taskId }, data: {
-      estatus: status,
-      folio: req.body.folio !== undefined ? String(req.body.folio).trim() || null : undefined,
-      fecha_ingreso: req.body.fecha_ingreso !== undefined ? parseOperationalDate(req.body.fecha_ingreso, 'La fecha de ingreso') : undefined,
-      fecha_limite: req.body.fecha_limite !== undefined ? parseOperationalDate(req.body.fecha_limite, 'La fecha límite') : undefined,
-      seguimiento: req.body.seguimiento !== undefined ? String(req.body.seguimiento).trim() || null : undefined,
-      prevencion: req.body.prevencion !== undefined ? String(req.body.prevencion).trim() || null : undefined,
-      subsanacion: req.body.subsanacion !== undefined ? String(req.body.subsanacion).trim() || null : undefined,
-      resultado: req.body.resultado !== undefined ? resultText || null : undefined,
-      notas: req.body.notas !== undefined ? String(req.body.notas).trim() || null : undefined,
-      evidencia_documento_id: req.body.evidencia_documento_id !== undefined ? String(req.body.evidencia_documento_id) : undefined,
-      fecha_completada: status === 'COMPLETADA' ? existing.fecha_completada || new Date() : null,
-      gestionado_por_id: req.user!.id,
-    } });
+    const task = await prisma.$transaction(async (tx) => {
+      const updated = await tx.tareaExterna.update({ where: { id: taskId }, data: {
+        estatus: status, folio: req.body.folio !== undefined ? String(req.body.folio).trim() || null : undefined,
+        fecha_ingreso: req.body.fecha_ingreso !== undefined ? parseOperationalDate(req.body.fecha_ingreso, 'La fecha de ingreso') : undefined,
+        fecha_limite: req.body.fecha_limite !== undefined ? parseOperationalDate(req.body.fecha_limite, 'La fecha límite') : undefined,
+        seguimiento: req.body.seguimiento !== undefined ? String(req.body.seguimiento).trim() || null : undefined,
+        prevencion: req.body.prevencion !== undefined ? String(req.body.prevencion).trim() || null : undefined,
+        subsanacion: req.body.subsanacion !== undefined ? String(req.body.subsanacion).trim() || null : undefined,
+        resultado: req.body.resultado !== undefined ? resultText || null : undefined,
+        notas: req.body.notas !== undefined ? String(req.body.notas).trim() || null : undefined,
+        evidencia_documento_id: req.body.evidencia_documento_id !== undefined ? String(req.body.evidencia_documento_id) : undefined,
+        fecha_completada: status === 'COMPLETADA' ? existing.fecha_completada || new Date() : null, gestionado_por_id: req.user!.id,
+      } });
+      const correlationId = req.correlationId || crypto.randomUUID();
+      await tx.expedienteActividad.create({ data: { organization_id: req.user!.organizationId, expediente_id: id, usuario_id: req.user!.id, tipo: 'SEGUIMIENTO', categoria: 'OPERACION', titulo: status === 'COMPLETADA' ? 'Trámite de postfirma completado' : 'Trámite de postfirma actualizado', descripcion: `${updated.descripcion} · ${updated.institucion}`, metadatos: { source: 'EXP-009', action: 'POSTFIRMA_TASK_UPDATED', estado_anterior: existing.estatus, estado_nuevo: updated.estatus }, valores_anteriores: { estado: existing.estatus }, valores_nuevos: { estado: updated.estatus }, seccion_relacionada: 'seguimiento', entidad_relacionada: 'TareaExterna', entidad_relacionada_id: updated.id, correlation_id: correlationId } });
+      await tx.auditLog.create({ data: { organization_id: req.user!.organizationId, user_id: req.user!.id, accion: 'EXP009_POSTFIRMA_TASK_UPDATED', entidad: 'TareaExterna', entidad_id: updated.id, valores_anteriores: { estatus: existing.estatus }, valores_nuevos: { estatus: updated.estatus }, correlation_id: correlationId, session_id: req.user!.sessionId } });
+      return updated;
+    });
     return res.json(task);
   } catch (error: any) {
     const status = error instanceof ExpedienteUpdateError ? error.status : 400;
@@ -756,6 +758,7 @@ export const addMovimientoFinanciero = async (req: Request, res: Response) => {
       });
       await tx.expedienteActividad.create({
         data: {
+          organization_id: req.user!.organizationId,
           expediente_id: id,
           tipo: 'PAGO',
           titulo: `${normNat === 'INGRESO' ? 'Ingreso registrado' : 'Egreso registrado'} (${normalizedCategory})`,
@@ -843,6 +846,7 @@ export const reverseMovimientoFinanciero = async (req: Request, res: Response) =
       // Bitácora de actividad
       await tx.expedienteActividad.create({
         data: {
+          organization_id: req.user!.organizationId,
           expediente_id: id,
           tipo: 'AUDITORIA',
           titulo: `Movimiento Financiero Revertido ($${original.monto})`,
@@ -994,6 +998,7 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
         const correlationId = (req as any).correlationId || crypto.randomUUID();
         await tx.expedienteActividad.create({
           data: {
+            organization_id: req.user!.organizationId,
             expediente_id: id,
             tipo: 'AUDITORIA',
             titulo: 'Ficha general actualizada',
@@ -1141,6 +1146,7 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
         // Registrar Actividad Documental Auditoría
         await tx.expedienteActividad.create({
           data: {
+            organization_id: req.user!.organizationId,
             expediente_id: id,
             tipo: 'DOCUMENTO',
             titulo: `Documento "${originalName}" Cargado al Archivo`,
@@ -1263,6 +1269,7 @@ export const deleteExpedienteDocumento = async (req: Request, res: Response) => 
 
         await tx.expedienteActividad.create({
           data: {
+            organization_id: req.user!.organizationId,
             expediente_id: id,
             tipo: 'DOCUMENTO',
             titulo: `Documento "${expDoc.documento.nombre_original}" Eliminado del Archivo`,
@@ -1286,6 +1293,7 @@ export const deleteExpedienteDocumento = async (req: Request, res: Response) => 
 
       await tx.expedienteActividad.create({
         data: {
+          organization_id: req.user!.organizationId,
           expediente_id: id,
           tipo: 'DOCUMENTO',
           titulo: `Documento "${legacyDoc.nombre}" Eliminado del Archivo`,
@@ -1342,6 +1350,7 @@ export const updateExpedienteDocumento = async (req: Request, res: Response) => 
         if (userId) {
           await tx.expedienteActividad.create({
             data: {
+              organization_id: req.user!.organizationId,
               expediente_id: id,
               tipo: 'DOCUMENTO',
               titulo: `Documento "${expDoc.documento.nombre_original}" Modificado`,
@@ -1384,6 +1393,7 @@ export const updateExpedienteDocumento = async (req: Request, res: Response) => 
       if (userId) {
         await tx.expedienteActividad.create({
           data: {
+            organization_id: req.user!.organizationId,
             expediente_id: id,
             tipo: 'DOCUMENTO',
             titulo: `Documento "${doc.nombre}" Modificado`,
@@ -1608,6 +1618,7 @@ export const updateMovimientoAdjunto = async (req: Request, res: Response) => {
 
       await tx.expedienteActividad.create({
         data: {
+          organization_id: req.user!.organizationId,
           expediente_id: id,
           tipo: 'DOCUMENTO',
           titulo: `Adjunto financiero archivado (${tipo_adjunto})`,
@@ -1785,6 +1796,7 @@ export const uploadMovimientoAdjuntoFile = async (req: Request, res: Response) =
 
       await tx.expedienteActividad.create({
         data: {
+          organization_id: req.user!.organizationId,
           expediente_id: id,
           tipo: 'DOCUMENTO',
           titulo: `Adjunto financiero vigente (${tipo_adjunto})`,

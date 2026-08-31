@@ -316,6 +316,7 @@ export class ExpedienteWorkflowService {
       // 10. Registrar Actividad Operativa (para el usuario)
       await tx.expedienteActividad.create({
         data: {
+          organization_id: actorContext.organizationId,
           expediente_id: exp.id,
           usuario_id: actorUser.id,
           tipo: 'CAMBIO_ESTATUS',

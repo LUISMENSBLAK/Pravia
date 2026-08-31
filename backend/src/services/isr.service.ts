@@ -118,8 +118,9 @@ export class ISRService {
     }
     const folio = `ISR-${exercise}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     const record = await this.db.$transaction(async (tx) => {
-      const created = await tx.calculoISR.create({ data: { folio, tipo_operacion: operationType, estado: 'BORRADOR', ejercicio: exercise, expediente_id: expedienteId, compareciente_id: comparecienteId, contribuyente_snapshot: contribuyenteSnapshot, input_data: json(proposedInput), ...inputSummary(proposedInput), creado_por_id: user.id, actualizado_por_id: user.id } });
-      await tx.auditLog.create({ data: { user_id: user.id, accion: 'CREAR_CALCULO_ISR', entidad: 'CalculoISR', entidad_id: created.id, detalles: json({ folio, expediente_id: expedienteId }) } });
+      const created = await tx.calculoISR.create({ data: { organization_id: user.organizationId, folio, tipo_operacion: operationType, estado: 'BORRADOR', ejercicio: exercise, expediente_id: expedienteId, compareciente_id: comparecienteId, contribuyente_snapshot: contribuyenteSnapshot, input_data: json(proposedInput), ...inputSummary(proposedInput), creado_por_id: user.id, actualizado_por_id: user.id } });
+      await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'CREAR_CALCULO_ISR', entidad: 'CalculoISR', entidad_id: created.id, detalles: json({ folio, expediente_id: expedienteId }) } });
+      if (expedienteId) await tx.expedienteActividad.create({ data: { organization_id: user.organizationId, expediente_id: expedienteId, usuario_id: user.id, tipo: 'AUDITORIA', categoria: 'OPERACION', titulo: 'Cálculo ISR vinculado', descripcion: `Se vinculó el cálculo ${folio} al expediente.`, metadatos: json({ source: 'EXP-009', action: 'LINK_ISR', calculo_isr_id: created.id }), seccion_relacionada: 'isr', entidad_relacionada: 'CalculoISR', entidad_relacionada_id: created.id } });
       return created;
     });
     return record;
@@ -141,8 +142,13 @@ export class ISRService {
     const changed = JSON.stringify(current.input_data) !== JSON.stringify(input);
     return this.db.$transaction(async (tx) => {
       const updated = await tx.calculoISR.update({ where: { id }, data: { input_data: json(input), contribuyente_snapshot: body.contribuyente_snapshot ? json(body.contribuyente_snapshot) : undefined, compareciente_id: body.compareciente_id === null ? null : body.compareciente_id ? String(body.compareciente_id) : undefined, expediente_id: body.expediente_id === null ? null : body.expediente_id ? String(body.expediente_id) : undefined, ...inputSummary(input), estado: nextStatus, datos_modificados: current.ultima_version > 0 && changed, actualizado_por_id: user.id } });
-      await tx.auditLog.create({ data: { user_id: user.id, accion: 'EDITAR_CALCULO_ISR', entidad: 'CalculoISR', entidad_id: id, valores_anteriores: json({ input_data: current.input_data }), valores_nuevos: json({ input_data: input }), detalles: json({ datos_modificados: changed }) } });
-      if (Object.prototype.hasOwnProperty.call(body, 'expediente_id') && (body.expediente_id || null) !== current.expediente_id) await tx.auditLog.create({ data: { user_id: user.id, accion: 'VINCULAR_EXPEDIENTE_ISR', entidad: 'CalculoISR', entidad_id: id, detalles: json({ expediente_anterior_id: current.expediente_id, expediente_nuevo_id: body.expediente_id || null }) } });
+      await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'EDITAR_CALCULO_ISR', entidad: 'CalculoISR', entidad_id: id, valores_anteriores: json({ input_data: current.input_data }), valores_nuevos: json({ input_data: input }), detalles: json({ datos_modificados: changed }) } });
+      if (Object.prototype.hasOwnProperty.call(body, 'expediente_id') && (body.expediente_id || null) !== current.expediente_id) {
+        const nextExpedienteId = body.expediente_id ? String(body.expediente_id) : null;
+        await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'VINCULAR_EXPEDIENTE_ISR', entidad: 'CalculoISR', entidad_id: id, detalles: json({ expediente_anterior_id: current.expediente_id, expediente_nuevo_id: nextExpedienteId }) } });
+        if (current.expediente_id) await tx.expedienteActividad.create({ data: { organization_id: user.organizationId, expediente_id: current.expediente_id, usuario_id: user.id, tipo: 'AUDITORIA', categoria: 'OPERACION', titulo: 'Cálculo ISR desvinculado', descripcion: `El cálculo ${current.folio} dejó de estar vinculado a este expediente.`, metadatos: json({ source: 'EXP-009', action: 'UNLINK_ISR', calculo_isr_id: id }), seccion_relacionada: 'isr', entidad_relacionada: 'CalculoISR', entidad_relacionada_id: id } });
+        if (nextExpedienteId) await tx.expedienteActividad.create({ data: { organization_id: user.organizationId, expediente_id: nextExpedienteId, usuario_id: user.id, tipo: 'AUDITORIA', categoria: 'OPERACION', titulo: 'Cálculo ISR vinculado', descripcion: `Se vinculó el cálculo ${current.folio} al expediente.`, metadatos: json({ source: 'EXP-009', action: 'LINK_ISR', calculo_isr_id: id }), seccion_relacionada: 'isr', entidad_relacionada: 'CalculoISR', entidad_relacionada_id: id } });
+      }
       return updated;
     });
   }

@@ -173,7 +173,7 @@ export class AgendaController {
           data: { user_id: actorId, accion: 'CREATE_TASK', entidad: 'Tarea', entidad_id: created.id, valores_nuevos: { titulo: title, prioridad: priority, responsable_id: responsableId, expediente_id: links.expedienteId }, correlation_id: (req as any).correlationId },
         });
         if (links.expedienteId) {
-          await tx.expedienteActividad.create({ data: { expediente_id: links.expedienteId, usuario_id: actorId, tipo: 'TAREA', titulo: `Tarea creada: ${title}`, descripcion: `Prioridad ${priority}` } });
+          await tx.expedienteActividad.create({ data: { organization_id: req.user!.organizationId, expediente_id: links.expedienteId, usuario_id: actorId, tipo: 'TAREA', titulo: `Tarea creada: ${title}`, descripcion: `Prioridad ${priority}` } });
         }
         return created;
       });
@@ -219,7 +219,7 @@ export class AgendaController {
           data: { user_id: actorId, accion: 'UPDATE_TASK', entidad: 'Tarea', entidad_id: task.id, valores_anteriores: { estatus: current.estatus, prioridad: current.prioridad }, valores_nuevos: { estatus: task.estatus, prioridad: task.prioridad }, correlation_id: (req as any).correlationId },
         });
         if (current.expediente_id && current.estatus !== status) {
-          await tx.expedienteActividad.create({ data: { expediente_id: current.expediente_id, usuario_id: actorId, tipo: 'TAREA', titulo: `Tarea ${status.toLowerCase()}: ${current.titulo}`, descripcion: `Estado anterior: ${current.estatus}` } });
+          await tx.expedienteActividad.create({ data: { organization_id: req.user!.organizationId, expediente_id: current.expediente_id, usuario_id: actorId, tipo: 'TAREA', titulo: `Tarea ${status.toLowerCase()}: ${current.titulo}`, descripcion: `Estado anterior: ${current.estatus}` } });
         }
         return task;
       });
@@ -398,6 +398,7 @@ export class AgendaController {
         if (links.expedienteId) {
           await tx.expedienteActividad.create({
             data: {
+              organization_id: req.user!.organizationId,
               expediente_id: links.expedienteId,
               usuario_id: actorId,
               tipo: 'TAREA',
@@ -524,7 +525,7 @@ export class AgendaController {
         });
         if (current.expediente_id) {
           await tx.expedienteActividad.create({
-            data: { expediente_id: current.expediente_id, usuario_id: actorId, tipo: 'TAREA', titulo: `Evento cancelado: ${current.titulo}`, descripcion: reason },
+            data: { organization_id: req.user!.organizationId, expediente_id: current.expediente_id, usuario_id: actorId, tipo: 'TAREA', titulo: `Evento cancelado: ${current.titulo}`, descripcion: reason },
           });
         }
         return cancelled;

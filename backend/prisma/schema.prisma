@@ -29,6 +29,7 @@ model Organization {
   presupuestoConceptos      ExpedientePresupuestoConcepto[]
   presupuestoDistribuciones ExpedientePresupuestoDistribucion[]
   presupuestoDocumentos     ExpedientePresupuestoDocumento[]
+  expedienteActividades     ExpedienteActividad[]
 
   @@index([status])
   @@map("organizations")
@@ -2730,18 +2731,31 @@ model Pago {
 }
 
 model ExpedienteActividad {
-  id              String        @id @default(uuid()) @db.Uuid
-  organization_id String?       @db.Uuid
-  expediente_id   String        @db.Uuid
-  usuario_id      String        @db.Uuid
-  tipo            TipoActividad
-  titulo          String
-  descripcion     String
-  metadatos       Json?
-  created_at      DateTime      @default(now())
-  expediente      Expediente    @relation(fields: [expediente_id], references: [id])
-  usuario         User          @relation(fields: [usuario_id], references: [id])
+  id                      String                       @id @default(uuid()) @db.Uuid
+  organization_id         String                       @db.Uuid
+  expediente_id           String                       @db.Uuid
+  usuario_id              String                       @db.Uuid
+  tipo                    TipoActividad
+  categoria               ExpedienteActividadCategoria @default(SISTEMA)
+  titulo                  String
+  descripcion             String
+  metadatos               Json?
+  valores_anteriores      Json?
+  valores_nuevos          Json?
+  seccion_relacionada     String?
+  entidad_relacionada     String?
+  entidad_relacionada_id  String?                      @db.Uuid
+  correlation_id          String?                      @db.Uuid
+  idempotency_key         String?
+  es_nota_manual          Boolean                      @default(false)
+  created_at              DateTime                     @default(now())
+  organization            Organization                 @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  expediente              Expediente                   @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "expediente_actividades_expediente_tenant_fkey")
+  usuario                 User                         @relation(fields: [usuario_id], references: [id], onDelete: Restrict)
 
+  @@unique([organization_id, expediente_id, idempotency_key], map: "uq_exp_actividad_idempotency")
+  @@index([organization_id, expediente_id, created_at], map: "idx_exp_actividad_tenant_timeline")
+  @@index([organization_id, expediente_id, categoria, created_at], map: "idx_exp_actividad_tenant_category")
   @@index([expediente_id], map: "idx_exp_actividades_expediente_fk")
   @@index([usuario_id], map: "idx_exp_actividades_usuario_fk")
   @@map("expediente_actividades")
@@ -4125,6 +4139,14 @@ enum TipoActividad {
   COMUNICACION
   COMPARECIENTE
   AUDITORIA
+  NOTA
+}
+
+enum ExpedienteActividadCategoria {
+  OPERACION
+  DOCUMENTOS
+  FINANZAS
+  SISTEMA
 }
 
 enum OutboxEstatus {
