@@ -7,6 +7,12 @@ import { deleteFile, downloadFile, getSignedUrl, uploadFile } from '../storage/s
 import { extraerFinanzasDesdeDocumento, getOpenAIModelName } from './openaiDocument.service';
 import { recordAIFailure, recordAIUsage } from './aiUsage.service';
 import { FinancialMovementService } from './financialMovement.service';
+import {
+  closePaymentRequestTiming,
+  closeReceiptApplicationTiming,
+  openPaymentRequestTiming,
+  openReceiptApplicationTiming,
+} from './timingPolicy.service';
 
 export type ExpedienteFinanceActor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -54,6 +60,7 @@ export class ExpedienteFinanceService {
         if (concurrent) return { item: concurrent, idempotent: true };
         await this.assertExpediente(tx, actor, expedienteId);
         const report = await tx.expedienteIngresoReportado.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, concepto_contexto: clean(input.concepto_contexto, 500) || null, referencia_solicitud: clean(input.referencia_solicitud, 180) || null, monto_reportado: input.monto_reportado ? moneyDecimal(input.monto_reportado, 'Monto reportado') : null, reportado_por_id: actor.id, idempotency_key: key } });
+        await openReceiptApplicationTiming(tx, actor.organizationId, { sourceId: report.id, openedAt: report.created_at });
         const document = await this.createDocument(tx, actor, expedienteId, stored, 'EXP008_COMPROBANTE_INGRESO', { source: 'EXP-008', role: 'COMPROBANTE_INGRESO', auto_applied: false });
         await this.linkDocument(tx, actor, expedienteId, document.id, 'COMPROBANTE_INGRESO', key, { ingreso_reportado_id: report.id });
         await this.record(tx, actor, expedienteId, 'EXP008_REPORT_INCOME', report.id, 'Comprobante reportado', 'Se reportó un comprobante; permanece pendiente de aplicación.', { documento_id: document.id, auto_applied: false });
@@ -84,6 +91,7 @@ export class ExpedienteFinanceService {
         if (concurrent) return { item: concurrent, idempotent: true };
         await this.assertExpediente(tx, actor, expedienteId);
         const request = await tx.expedienteSolicitudPago.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, via: 'INTERNA', concepto: concept, importe: amount, dependencia: clean(input.dependencia, 300) || null, beneficiario: clean(input.beneficiario, 300) || null, referencia: clean(input.referencia, 180) || null, fecha_limite: input.fecha_limite ? new Date(input.fecha_limite) : null, notas: clean(input.notas, 2_000) || null, formato_version_id: format.id, formato_fuente: format.source, creado_por_id: actor.id, idempotency_key: key } });
+        await openPaymentRequestTiming(tx, actor.organizationId, { sourceId: request.id, openedAt: request.created_at });
         const document = await this.createDocument(tx, actor, expedienteId, stored, 'EXP008_SOLICITUD_GENERADA', { source: 'EXP-008', role: 'SOLICITUD_GENERADA', format_source: format.source, format_version_id: format.id });
         await this.linkDocument(tx, actor, expedienteId, document.id, 'SOLICITUD_GENERADA', key, { solicitud_pago_id: request.id });
         await this.record(tx, actor, expedienteId, 'EXP008_CREATE_PAYMENT_REQUEST', request.id, 'Solicitud de pago creada', `Se creó una solicitud por ${amount.toFixed(2)} MXN.`, { via: 'INTERNA', documento_id: document.id, format_source: format.source });
@@ -111,6 +119,7 @@ export class ExpedienteFinanceService {
         if (concurrent) return { item: concurrent, idempotent: true };
         await this.assertExpediente(tx, actor, expedienteId);
         const request = await tx.expedienteSolicitudPago.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, via: 'DOCUMENTO_EXTERNO', concepto: concept, importe: amount, dependencia: clean(input.dependencia, 300) || null, beneficiario: clean(input.beneficiario, 300) || null, referencia: clean(input.referencia, 180) || null, fecha_limite: input.fecha_limite ? new Date(input.fecha_limite) : null, notas: clean(input.notas, 2_000) || null, creado_por_id: actor.id, idempotency_key: key } });
+        await openPaymentRequestTiming(tx, actor.organizationId, { sourceId: request.id, openedAt: request.created_at });
         const document = await this.createDocument(tx, actor, expedienteId, stored, 'EXP008_SOLICITUD_ORIGEN', { source: 'EXP-008', role: 'SOLICITUD_ORIGEN' });
         await this.linkDocument(tx, actor, expedienteId, document.id, 'SOLICITUD_ORIGEN', key, { solicitud_pago_id: request.id });
         await this.record(tx, actor, expedienteId, 'EXP008_CREATE_PAYMENT_REQUEST', request.id, 'Solicitud de pago creada', `Se creó una solicitud por ${amount.toFixed(2)} MXN.`, { via: 'DOCUMENTO_EXTERNO', documento_id: document.id });
@@ -187,7 +196,9 @@ export class ExpedienteFinanceService {
       const byKey = new Map(categories.map((category) => [category.clave, category]));
       if ((allocation.honorarios.gt(0) && !byKey.get('HONORARIOS')) || (allocation.impuestosDerechos.gt(0) && !byKey.get('IMPUESTOS'))) throw new ExpedienteFinanceError(409, 'EXP008_CANONICAL_CATEGORIES_MISSING', 'Configura las categorías canónicas Honorarios e Impuestos antes de aplicar.');
       const result = await this.ledger.applyOperationalMovementInTransaction(tx, { organizationId: actor.organizationId, expedienteId, actorId: actor.id, correlationId: randomUUID(), nature: 'INGRESO', amount: allocation.total, concept: clean(input.concepto, 500) || report.concepto_contexto || 'Ingreso reportado en expediente', accountId: clean(input.cuenta_id, 36), paymentMethod: clean(input.forma_pago, 100) || report.forma_pago, reference: clean(input.referencia, 180) || report.referencia, idempotencyKey: `EXP008:INGRESO:${incomeId}:${key}`, allocations: [ ...(allocation.honorarios.gt(0) ? [{ categoryId: byKey.get('HONORARIOS')!.id, amount: allocation.honorarios, note: 'Aplicación general: Honorarios' }] : []), ...(allocation.impuestosDerechos.gt(0) ? [{ categoryId: byKey.get('IMPUESTOS')!.id, amount: allocation.impuestosDerechos, note: 'Aplicación general: Impuestos y derechos' }] : []) ] });
-      const updated = await tx.expedienteIngresoReportado.update({ where: { id: report.id }, data: { estado: 'APLICADO', monto_validado: allocation.total, honorarios_aplicados: allocation.honorarios, impuestos_derechos_aplicados: allocation.impuestosDerechos, fecha_ingreso: input.fecha_ingreso ? new Date(input.fecha_ingreso) : report.fecha_ingreso || new Date(), forma_pago: clean(input.forma_pago, 100) || report.forma_pago, referencia: clean(input.referencia, 180) || report.referencia, cuenta_id: input.cuenta_id, movimiento_id: result.movement.id, aplicado_por_id: actor.id, aplicado_at: new Date(), version: { increment: 1 } } });
+      const appliedAt = new Date();
+      const updated = await tx.expedienteIngresoReportado.update({ where: { id: report.id }, data: { estado: 'APLICADO', monto_validado: allocation.total, honorarios_aplicados: allocation.honorarios, impuestos_derechos_aplicados: allocation.impuestosDerechos, fecha_ingreso: input.fecha_ingreso ? new Date(input.fecha_ingreso) : report.fecha_ingreso || appliedAt, forma_pago: clean(input.forma_pago, 100) || report.forma_pago, referencia: clean(input.referencia, 180) || report.referencia, cuenta_id: input.cuenta_id, movimiento_id: result.movement.id, aplicado_por_id: actor.id, aplicado_at: appliedAt, version: { increment: 1 } } });
+      await closeReceiptApplicationTiming(tx, actor.organizationId, report.id, appliedAt);
       await tx.movimientoDocumento.createMany({ data: report.documentos.map((link) => ({ organization_id: actor.organizationId, movimiento_id: result.movement.id, documento_id: link.documento_id, tipo_vinculo: 'COMPROBANTE_PAGO', creado_por_id: actor.id })), skipDuplicates: true });
       await this.record(tx, actor, expedienteId, 'EXP008_APPLY_REPORTED_INCOME', report.id, 'Comprobante aplicado', `Se aplicó un ingreso por ${allocation.total.toFixed(2)} MXN.`, { movimiento_id: result.movement.id, honorarios: allocation.honorarios.toFixed(2), impuestos_derechos: allocation.impuestosDerechos.toFixed(2), idempotency_key: key });
       return { item: updated, movement: result.movement, idempotent: result.idempotent };
@@ -220,7 +231,9 @@ export class ExpedienteFinanceService {
           await this.linkDocument(tx, actor, expedienteId, document.id, upload.type, `${key}:${upload.type}`, { solicitud_pago_id: request.id, movimiento_id: movement.movement.id });
           if (upload.type === 'COMPROBANTE_PAGO') await tx.movimientoDocumento.create({ data: { organization_id: actor.organizationId, movimiento_id: movement.movement.id, documento_id: document.id, tipo_vinculo: 'COMPROBANTE_PAGO', creado_por_id: actor.id } });
         }
-        const updated = await tx.expedienteSolicitudPago.update({ where: { id: request.id }, data: { estado: 'PAGADA', categoria_id: category.id, cuenta_id: input.cuenta_id, movimiento_id: movement.movement.id, pagado_por_id: actor.id, pagado_at: new Date(), version: { increment: 1 } } });
+        const paidAt = new Date();
+        const updated = await tx.expedienteSolicitudPago.update({ where: { id: request.id }, data: { estado: 'PAGADA', categoria_id: category.id, cuenta_id: input.cuenta_id, movimiento_id: movement.movement.id, pagado_por_id: actor.id, pagado_at: paidAt, version: { increment: 1 } } });
+        await closePaymentRequestTiming(tx, actor.organizationId, request.id, paidAt);
         await this.record(tx, actor, expedienteId, 'EXP008_PAY_REQUEST', request.id, 'Solicitud pagada', `Se registró el egreso por ${request.importe.toFixed(2)} MXN.`, { movimiento_id: movement.movement.id, comprobante_pago: Boolean(files.payment), comprobante_fiscal: Boolean(files.fiscal), reconciled: false });
         return { item: updated, movement: movement.movement, idempotent: false };
       }, { timeout: 20_000 });
@@ -307,13 +320,17 @@ export class ExpedienteFinanceService {
         if (!row) throw new ExpedienteFinanceError(404, 'EXP008_INCOME_NOT_FOUND', 'El comprobante no está disponible.');
         if (row.estado === 'APLICADO') throw new ExpedienteFinanceError(409, 'EXP008_LEDGER_REVERSE_REQUIRED', 'El ingreso aplicado debe corregirse mediante el reverso financiero canónico.');
         if (row.estado === 'ANULADO') return { voided: true, idempotent: true };
-        await tx.expedienteIngresoReportado.update({ where: { id }, data: { estado: 'ANULADO', anulado_por_id: actor.id, anulado_at: new Date(), motivo_anulacion: why, version: { increment: 1 } } });
+        const voidedAt = new Date();
+        await tx.expedienteIngresoReportado.update({ where: { id }, data: { estado: 'ANULADO', anulado_por_id: actor.id, anulado_at: voidedAt, motivo_anulacion: why, version: { increment: 1 } } });
+        await closeReceiptApplicationTiming(tx, actor.organizationId, row.id, voidedAt);
       } else {
         const row = await tx.expedienteSolicitudPago.findFirst({ where: { id, organization_id: actor.organizationId, expediente_id: expedienteId } });
         if (!row) throw new ExpedienteFinanceError(404, 'EXP008_REQUEST_NOT_FOUND', 'La solicitud no está disponible.');
         if (row.estado === 'PAGADA') throw new ExpedienteFinanceError(409, 'EXP008_LEDGER_REVERSE_REQUIRED', 'La solicitud pagada debe corregirse mediante el reverso financiero canónico.');
         if (row.estado === 'ANULADA') return { voided: true, idempotent: true };
-        await tx.expedienteSolicitudPago.update({ where: { id }, data: { estado: 'ANULADA', anulado_por_id: actor.id, anulado_at: new Date(), motivo_anulacion: why, version: { increment: 1 } } });
+        const voidedAt = new Date();
+        await tx.expedienteSolicitudPago.update({ where: { id }, data: { estado: 'ANULADA', anulado_por_id: actor.id, anulado_at: voidedAt, motivo_anulacion: why, version: { increment: 1 } } });
+        await closePaymentRequestTiming(tx, actor.organizationId, row.id, voidedAt);
       }
       await this.record(tx, actor, expedienteId, 'EXP008_VOID_OPERATIONAL_RECORD', id, kind === 'income' ? 'Comprobante reportado anulado' : 'Solicitud anulada', 'El registro fue anulado sin eliminar su trazabilidad.', { kind, reason: why, hard_delete: false });
       return { voided: true, idempotent: false };

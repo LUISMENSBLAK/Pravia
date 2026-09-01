@@ -1,12 +1,22 @@
 import { apiRequest } from '../../services/api/client';
 import type { ManagedUser, NotificationItem, SearchResult, Session, UserPreferences } from './settings.types';
 import type { ActListPayload, CatalogAct, CatalogArtifact, CatalogFolder, CatalogOwner, ExplorerPayload, SupportingCatalogs } from './catalogs/catalogs.types';
+import type { PublishTimingPolicyInput, TimingPolicyDefinition, TimingPolicyRevision } from './timing/timing.types';
 
 const qs = (params: Record<string, string | number | undefined>) => {
   const query = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); });
   return query.toString();
 };
+
+const timingVisualFixture = import.meta.env.DEV && new URLSearchParams(window.location.search).get('fixture') === 'g0c';
+const timingVisualPolicies: TimingPolicyDefinition[] = [
+  ['PROSPECT_INFO_COLLECTION', 'COMMERCIAL', 'Prospecto · Recabando información', 'Desde la entrada efectiva a Recabando información hasta la salida de esa etapa.'],
+  ['PROSPECT_READY_TO_REQUEST', 'COMMERCIAL', 'Prospecto · Listo para solicitar', 'Desde Listo para solicitar hasta el envío efectivo confirmado a Notaría.'],
+  ['PROSPECT_NOTARY_WAIT', 'COMMERCIAL', 'Prospecto · Espera de Notaría', 'Desde el envío efectivo hasta la recepción efectiva de la cotización notarial.'],
+  ['ADMIN_PAYMENT_REQUEST_PENDING', 'ADMINISTRATIVE', 'Solicitud de pago pendiente', 'Desde la creación pendiente hasta que se paga o anula.'],
+  ['ADMIN_RECEIPT_PENDING_APPLICATION', 'ADMINISTRATIVE', 'Comprobante pendiente de aplicación', 'Desde el reporte del comprobante hasta que se aplica o anula.'],
+].map(([type, domain, label, description]) => ({ type, domain, label, description, status: 'NOT_CONFIGURED', current: null, history: [] } as TimingPolicyDefinition));
 
 export const settingsService = {
   overview: () => apiRequest<any>('/settings/overview'),
@@ -32,6 +42,15 @@ export const settingsService = {
   readNotification: (id: string) => apiRequest(`/settings/notifications/${id}/read`, { method: 'POST' }),
   readAllNotifications: () => apiRequest('/settings/notifications/read-all', { method: 'POST' }),
   search: (query: string) => apiRequest<{ data: SearchResult[] }>(`/settings/search?q=${encodeURIComponent(query)}`),
+  timingPolicies: () => timingVisualFixture ? Promise.resolve(timingVisualPolicies) : apiRequest<{ success: true; data: TimingPolicyDefinition[] }>('/settings/timing-policies').then((payload) => payload.data),
+  publishTimingPolicy: (data: PublishTimingPolicyInput) => {
+    const idempotencyKey = globalThis.crypto?.randomUUID?.() ?? `timing-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    return apiRequest<{ success: true; data: { revision: TimingPolicyRevision; idempotent: boolean } }>('/settings/timing-policies', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(data),
+    }).then((payload) => payload.data);
+  },
   catalogActs: (search = '') => apiRequest<{ data: ActListPayload }>(`/settings/catalogs/acts${search ? `?search=${encodeURIComponent(search)}` : ''}`).then((payload) => payload.data),
   catalogAct: (id: string) => apiRequest<{ data: CatalogAct }>(`/settings/catalogs/acts/${id}`).then((payload) => payload.data),
   createCatalogAct: (data: Record<string, unknown>) => apiRequest<{ data: CatalogAct }>('/settings/catalogs/acts', { method: 'POST', body: JSON.stringify(data) }).then((payload) => payload.data),

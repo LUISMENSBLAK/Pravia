@@ -17,10 +17,10 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const visualParams = new URLSearchParams(window.location.search);
 const fixtureName = visualParams.get('fixture') || '';
 const visualFixture = import.meta.env.DEV && (
-  ['exp008', 'exp009'].includes(fixtureName)
+  ['exp008', 'exp009', 'g0c'].includes(fixtureName)
   || (window.location.pathname.startsWith('/calculo-isr') && Boolean(fixtureName) && visualParams.get('visual') === '1')
 );
-const visualUser: SessionUser = { id: 'visual-admin', name: 'Andrea Ruiz', email: 'andrea@local.invalid', role: 'ADMINISTRACION', notary: 'Notaría 12', organization: { id: 'org-visual', name: 'PRAVIA' }, organizations: [{ id: 'org-visual', name: 'PRAVIA' }], scope: 'GLOBAL', permissions: ['expedientes.read','expedientes.write','finanzas.read','finanzas.write','finanzas.validate','documentos.read','documentos.write','documentos.unlink','isr.read','isr.write','isr.calculate','ia.execute'] };
+const visualUser: SessionUser = { id: 'visual-admin', name: 'Andrea Ruiz', email: 'andrea@local.invalid', role: 'ADMINISTRACION', notary: 'Notaría 12', organization: { id: 'org-visual', name: 'PRAVIA' }, organizations: [{ id: 'org-visual', name: 'PRAVIA' }], scope: 'GLOBAL', permissions: ['expedientes.read','expedientes.write','finanzas.read','finanzas.write','finanzas.validate','documentos.read','documentos.write','documentos.unlink','isr.read','isr.write','isr.calculate','ia.execute','configuracion.catalogos.read','configuracion.actos_tiempos.manage'] };
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [status, setStatus] = useState<AuthStatus>(visualFixture ? 'authenticated' : 'checking');

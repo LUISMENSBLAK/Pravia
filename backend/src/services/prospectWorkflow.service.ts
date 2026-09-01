@@ -8,6 +8,7 @@ import { allowedProspectActions, assertProspectFields, assertProspectReplay, ass
   nextProspectStage, PROSPECT_ACTIONS, PROSPECT_CONTRACT_STAGES, ProspectAction, prospectEffectiveAt,
   prospectHash, prospectJson, prospectKey, prospectWait, stageLabel } from '../domain/prospectWorkflow';
 import { initializeQuoteContractInTransaction } from './cotizacionWorkflow.service';
+import { applyProspectTimingTransition } from './timingPolicy.service';
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -75,6 +76,12 @@ export class ProspectWorkflowService {
     } });
     await this.audit(tx, actor, p.id, input.action, { stage: p.etapa_contractual, version: p.version_operativa },
       { stage: input.next, version: p.version_operativa + 1, effectiveAt: input.effectiveAt }, event.id);
+    await applyProspectTimingTransition(tx, actor.organizationId, p.etapa_contractual, input.next, {
+      prospectoId: p.id,
+      transitionId: event.id,
+      effectiveAt: input.effectiveAt,
+      action: input.action,
+    });
     return event;
   }
   private async folio(tx: Prisma.TransactionClient, kind: 'PRO' | 'COT', date: Date) {

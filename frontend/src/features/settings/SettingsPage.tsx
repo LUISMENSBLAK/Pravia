@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell, Bot, Building2, Check, ChevronRight, Clock3, Files, KeyRound, LayoutDashboard, LockKeyhole, Mail,
-  MonitorSmartphone, Pencil, Search, ShieldCheck, SlidersHorizontal, Trash2, UserRound, UsersRound, X,
+  MonitorSmartphone, Pencil, Search, ShieldCheck, SlidersHorizontal, TimerReset, Trash2, UserRound, UsersRound, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PageContainer } from '../../components/layout/PageContainer';
@@ -15,6 +15,7 @@ import { settingsService } from './settings.service';
 import { ROLE_LABELS, type ManagedUser, type Session, type UserInvitation, type UserPreferences } from './settings.types';
 import { ActsTimesCatalog } from './catalogs/ActsTimesCatalog';
 import { TemplatesFormatsCatalog } from './catalogs/TemplatesFormatsCatalog';
+import { TimingPolicies } from './timing/TimingPolicies';
 import styles from './Settings.module.css';
 
 type AsyncState<T> = { loading: boolean; error: string; data: T | null };
@@ -63,6 +64,7 @@ const adminItems: SettingsNavItem[] = [
   { to: '/configuracion/auditoria', label: 'Auditoría', icon: Search, permission: 'configuracion.manage' },
 ];
 const catalogItems: SettingsNavItem[] = [
+  { to: '/configuracion/politicas-tiempo', label: 'Políticas de tiempo', icon: TimerReset, permission: 'configuracion.catalogos.read' },
   { to: '/configuracion/actos-tiempos', label: 'Actos y tiempos', icon: Clock3, permission: 'configuracion.catalogos.read' },
   { to: '/configuracion/plantillas-formatos', label: 'Plantillas y formatos', icon: Files, permission: 'configuracion.catalogos.read' },
 ];
@@ -198,10 +200,10 @@ export function SettingsPage() {
   const location = useLocation(); const { user } = useAuth();
   const segment = location.pathname.split('/')[2] || 'overview';
   const titles: Record<string, [string, string]> = {
-    overview: ['Configuración', 'Administra tu cuenta, preferencias y controles de acceso.'], perfil: ['Mi perfil', 'Información personal y alcance operativo.'], seguridad: ['Seguridad y sesiones', 'Contraseña y dispositivos con acceso vigente.'], preferencias: ['Preferencias', 'Personaliza tu experiencia de trabajo.'], organizacion: ['Organización', 'Fuente operativa y ámbito de tu cuenta.'], usuarios: ['Usuarios y accesos', 'Invitaciones, estados, roles y trazabilidad.'], roles: ['Roles y permisos', 'Matriz efectiva definida por la política del servidor.'], inteligencia: ['Administración de IA', 'Estado técnico, política y consumo real.'], auditoria: ['Auditoría', 'Trazabilidad de acciones administrativas.'], notificaciones: ['Notificaciones', 'Actividad relevante de tu cuenta.'], 'actos-tiempos': ['Actos y tiempos', 'Catálogo canónico y configuración operativa privada.'], 'plantillas-formatos': ['Plantillas y formatos', 'Repositorio maestro privado por Notaría, banco o fiduciaria.'],
+    overview: ['Configuración', 'Administra tu cuenta, preferencias y controles de acceso.'], perfil: ['Mi perfil', 'Información personal y alcance operativo.'], seguridad: ['Seguridad y sesiones', 'Contraseña y dispositivos con acceso vigente.'], preferencias: ['Preferencias', 'Personaliza tu experiencia de trabajo.'], organizacion: ['Organización', 'Fuente operativa y ámbito de tu cuenta.'], usuarios: ['Usuarios y accesos', 'Invitaciones, estados, roles y trazabilidad.'], roles: ['Roles y permisos', 'Matriz efectiva definida por la política del servidor.'], inteligencia: ['Administración de IA', 'Estado técnico, política y consumo real.'], auditoria: ['Auditoría', 'Trazabilidad de acciones administrativas.'], notificaciones: ['Notificaciones', 'Actividad relevante de tu cuenta.'], 'politicas-tiempo': ['Políticas de tiempo', 'Revisiones organizacionales para intervalos comerciales y administrativos.'], 'actos-tiempos': ['Actos y tiempos', 'Catálogo canónico y configuración operativa privada.'], 'plantillas-formatos': ['Plantillas y formatos', 'Repositorio maestro privado por Notaría, banco o fiduciaria.'],
   };
-  const denied = (segment === 'usuarios' && !user?.permissions?.includes('usuarios.manage')) || (segment === 'auditoria' && !user?.permissions?.includes('configuracion.manage')) || (segment === 'inteligencia' && !user?.permissions?.includes('ai.admin.read')) || (['actos-tiempos', 'plantillas-formatos'].includes(segment) && !user?.permissions?.includes('configuracion.catalogos.read'));
-  const section = denied ? <div className={styles.state} role="alert"><LockKeyhole /><strong>Acceso restringido</strong><span>Tu rol no incluye esta sección administrativa.</span></div> : segment === 'perfil' ? <ProfileSection /> : segment === 'seguridad' ? <SecuritySection /> : segment === 'preferencias' ? <PreferencesSection /> : segment === 'organizacion' ? <OrganizationSection /> : segment === 'usuarios' ? <UsersSection /> : segment === 'roles' ? <RolesSection /> : segment === 'inteligencia' ? <AISection /> : segment === 'auditoria' ? <AuditSection /> : segment === 'notificaciones' ? <NotificationsSection /> : segment === 'actos-tiempos' ? <ActsTimesCatalog /> : segment === 'plantillas-formatos' ? <TemplatesFormatsCatalog /> : <OverviewSection />;
+  const denied = (segment === 'usuarios' && !user?.permissions?.includes('usuarios.manage')) || (segment === 'auditoria' && !user?.permissions?.includes('configuracion.manage')) || (segment === 'inteligencia' && !user?.permissions?.includes('ai.admin.read')) || (['politicas-tiempo', 'actos-tiempos', 'plantillas-formatos'].includes(segment) && !user?.permissions?.includes('configuracion.catalogos.read'));
+  const section = denied ? <div className={styles.state} role="alert"><LockKeyhole /><strong>Acceso restringido</strong><span>Tu rol no incluye esta sección administrativa.</span></div> : segment === 'perfil' ? <ProfileSection /> : segment === 'seguridad' ? <SecuritySection /> : segment === 'preferencias' ? <PreferencesSection /> : segment === 'organizacion' ? <OrganizationSection /> : segment === 'usuarios' ? <UsersSection /> : segment === 'roles' ? <RolesSection /> : segment === 'inteligencia' ? <AISection /> : segment === 'auditoria' ? <AuditSection /> : segment === 'notificaciones' ? <NotificationsSection /> : segment === 'politicas-tiempo' ? <TimingPolicies /> : segment === 'actos-tiempos' ? <ActsTimesCatalog /> : segment === 'plantillas-formatos' ? <TemplatesFormatsCatalog /> : <OverviewSection />;
   const [title, subtitle] = titles[segment] || titles.overview;
   return <PageContainer title={title} subtitle={subtitle}><div className={styles.layout}><SettingsNavigation /><div className={styles.content}>{section}</div></div></PageContainer>;
 }

@@ -2935,6 +2935,60 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+/// Revisión publicada e inmutable de una de las cinco políticas temporales
+/// cerradas de G0-C. La ausencia de filas es un estado válido: no hay defaults.
+model TimingPolicyRevision {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  organization_id    String                  @db.Uuid
+  domain             TimingPolicyDomain
+  policy_type        TimingPolicyType
+  revision           Int
+  duration           Int
+  unit               TimingPolicyUnit
+  calendar_semantics TimingCalendarSemantics
+  provenance         Json
+  created_by_id      String                  @db.Uuid
+  created_at         DateTime                @default(now())
+  published_at       DateTime
+  superseded_at      DateTime?
+  idempotency_key    String                  @db.VarChar(120)
+  payload_hash       String                  @db.VarChar(64)
+
+  @@unique([organization_id, policy_type, revision], map: "uq_timing_policy_revision")
+  @@unique([organization_id, policy_type, idempotency_key], map: "uq_timing_policy_publication_key")
+  @@unique([id, organization_id, policy_type], map: "uq_timing_policy_revision_tenant_type")
+  @@index([organization_id, domain, policy_type, published_at], map: "idx_timing_policy_history")
+  @@map("timing_policy_revisions")
+}
+
+/// Snapshot de la revisión aplicable cuando nace el hecho de negocio. Nunca
+/// consulta la política corriente para recalcular un intervalo ya abierto.
+model TimingInterval {
+  id                   String                  @id @default(uuid()) @db.Uuid
+  organization_id      String                  @db.Uuid
+  policy_type          TimingPolicyType
+  calculation_status   TimingCalculationStatus
+  policy_revision_id   String?                 @db.Uuid
+  prospecto_id         String?                 @db.Uuid
+  payment_request_id   String?                 @db.Uuid
+  receipt_report_id    String?                 @db.Uuid
+  opened_transition_id String?                 @db.Uuid
+  closed_transition_id String?                 @db.Uuid
+  opened_at            DateTime
+  closed_at            DateTime?
+  provenance           Json
+  created_at           DateTime                @default(now())
+
+  @@unique([organization_id, policy_type, prospecto_id], map: "uq_timing_interval_prospect")
+  @@unique([organization_id, policy_type, payment_request_id], map: "uq_timing_interval_payment")
+  @@unique([organization_id, policy_type, receipt_report_id], map: "uq_timing_interval_receipt")
+  @@index([organization_id, policy_type, calculation_status, opened_at], map: "idx_timing_interval_source")
+  @@index([policy_revision_id], map: "idx_timing_interval_revision_fk")
+  @@index([opened_transition_id], map: "idx_timing_interval_open_transition_fk")
+  @@index([closed_transition_id], map: "idx_timing_interval_close_transition_fk")
+  @@map("timing_intervals")
+}
+
 model CalculoISR {
   id                     String                @id @default(uuid()) @db.Uuid
   organization_id        String?               @db.Uuid
@@ -4440,6 +4494,35 @@ enum ComparecePor {
 enum ConfiguracionTipoDias {
   HABILES
   NATURALES
+}
+
+enum TimingPolicyDomain {
+  COMMERCIAL
+  ADMINISTRATIVE
+}
+
+enum TimingPolicyType {
+  PROSPECT_INFO_COLLECTION
+  PROSPECT_READY_TO_REQUEST
+  PROSPECT_NOTARY_WAIT
+  ADMIN_PAYMENT_REQUEST_PENDING
+  ADMIN_RECEIPT_PENDING_APPLICATION
+}
+
+enum TimingPolicyUnit {
+  HOURS
+  DAYS
+}
+
+enum TimingCalendarSemantics {
+  ELAPSED_UTC
+}
+
+enum TimingCalculationStatus {
+  CALCULABLE
+  NOT_CONFIGURED
+  UNKNOWN_LEGACY
+  NOT_APPLICABLE
 }
 
 enum ConfiguracionSelectorExcepcion {
