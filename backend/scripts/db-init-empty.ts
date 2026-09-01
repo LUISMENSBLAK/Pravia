@@ -5,20 +5,18 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PrismaClient } from '@prisma/client';
 import { postgresEnv } from './database-tooling';
-
-const confirmation = 'INITIALIZE_EMPTY_PRAVIA_TARGET';
+import {
+  assertEmptyBootstrapConfirmation,
+  buildHistoricalArtifactPlan,
+  HistoricalArtifact,
+  HistoricalArtifactPlan,
+  isObsoleteHistoricalArtifactError,
+  planFromHistoricalArtifacts,
+  validateEmptyBootstrapTarget,
+} from './db-init-empty-artifacts';
 
 function explicitTargetUrl() {
-  const raw = String(process.env.INIT_DATABASE_URL || '').trim();
-  if (!raw) throw new Error('INIT_DATABASE_URL es obligatoria y debe apuntar a una base nueva.');
-  const url = new URL(raw);
-  if (url.protocol !== 'postgresql:' && url.protocol !== 'postgres:') {
-    throw new Error('INIT_DATABASE_URL debe usar PostgreSQL.');
-  }
-  if (url.searchParams.get('schema') !== 'pravia_os') {
-    throw new Error('INIT_DATABASE_URL debe incluir schema=pravia_os.');
-  }
-  return url;
+  return validateEmptyBootstrapTarget(process.env.INIT_DATABASE_URL);
 }
 
 function prisma(args: string[], url: URL) {
@@ -48,10 +46,94 @@ async function countApplicationTables(url: URL) {
   }
 }
 
-async function main() {
-  if (process.env.INIT_CONFIRMATION !== confirmation) {
-    throw new Error(`INIT_CONFIRMATION debe ser ${confirmation}.`);
+async function verifyHistoricalArtifacts(url: URL, plan: HistoricalArtifactPlan) {
+  const client = new PrismaClient({ datasources: { db: { url: url.toString() } } });
+  try {
+    const rows = await client.$queryRawUnsafe<Array<{ kind: string; name: string }>>(`
+      SELECT 'FUNCTION' AS kind, p.proname AS name
+      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = 'pravia_os'
+      UNION ALL
+      SELECT 'TRIGGER', t.tgname
+      FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'pravia_os' AND NOT t.tgisinternal
+      UNION ALL
+      SELECT 'CHECK', c.conname
+      FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+      WHERE n.nspname = 'pravia_os' AND c.contype = 'c'
+      UNION ALL
+      SELECT 'INDEX', indexname FROM pg_indexes WHERE schemaname = 'pravia_os'
+      UNION ALL
+      SELECT 'SEQUENCE', c.relname
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'pravia_os' AND c.relkind = 'S'
+      UNION ALL
+      SELECT 'EXTENSION', e.extname FROM pg_extension e
+      UNION ALL
+      SELECT 'RLS', c.relname
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'pravia_os' AND c.relrowsecurity
+    `);
+    const present = new Map<string, Set<string>>();
+    for (const row of rows) {
+      if (!present.has(row.kind)) present.set(row.kind, new Set());
+      present.get(row.kind)!.add(row.name);
+    }
+    const expected = [
+      ['EXTENSION', plan.expected.extensions],
+      ['FUNCTION', plan.expected.functions],
+      ['TRIGGER', plan.expected.triggers],
+      ['CHECK', plan.expected.checks],
+      ['INDEX', plan.expected.indexes],
+      ['SEQUENCE', plan.expected.sequences],
+      ['RLS', plan.expected.rlsTables],
+    ] as const;
+    const missing = expected.flatMap(([kind, names]) => names.filter((name) => !present.get(kind)?.has(name)).map((name) => `${kind}:${name}`));
+    if (missing.length) throw new Error(`Artefactos históricos ausentes: ${missing.join(', ')}.`);
+    if (!present.get('FUNCTION')?.has('enforce_same_organization')) {
+      throw new Error('La función multitenant enforce_same_organization no quedó restaurada.');
+    }
+  } finally {
+    await client.$disconnect();
   }
+}
+
+async function restoreHistoricalArtifacts(url: URL, plan: HistoricalArtifactPlan) {
+  const client = new PrismaClient({ datasources: { db: { url: url.toString() } } });
+  const restored: HistoricalArtifact[] = [];
+  const obsolete: HistoricalArtifact[] = [];
+  try {
+    await client.$transaction(async (transaction) => {
+      await transaction.$executeRawUnsafe('SET LOCAL search_path TO pravia_os, public');
+      for (const [index, artifact] of plan.artifacts.entries()) {
+        const savepoint = `historical_artifact_${index}`;
+        await transaction.$executeRawUnsafe(`SAVEPOINT ${savepoint}`);
+        try {
+          await transaction.$executeRawUnsafe(artifact.sql);
+          restored.push(artifact);
+          await transaction.$executeRawUnsafe(`RELEASE SAVEPOINT ${savepoint}`);
+        } catch (error) {
+          await transaction.$executeRawUnsafe(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+          if (!isObsoleteHistoricalArtifactError(error)) throw error;
+          obsolete.push(artifact);
+          await transaction.$executeRawUnsafe(`RELEASE SAVEPOINT ${savepoint}`);
+        }
+      }
+    }, { maxWait: 30_000, timeout: 300_000 });
+  } finally {
+    await client.$disconnect();
+  }
+  if (!restored.some((artifact) => artifact.kind === 'FUNCTION' && /\benforce_same_organization\b/i.test(artifact.sql))) {
+    throw new Error('La restauración aplicable no contiene enforce_same_organization.');
+  }
+  for (const artifact of obsolete) {
+    console.warn(`Artefacto histórico obsoleto omitido: ${artifact.migration} · ${artifact.kind}.`);
+  }
+  return planFromHistoricalArtifacts(restored);
+}
+
+async function main() {
+  assertEmptyBootstrapConfirmation(process.env.INIT_CONFIRMATION);
   const url = explicitTargetUrl();
   if (await countApplicationTables(url) !== 0) {
     throw new Error('Inicialización rechazada: el destino ya contiene tablas en public o pravia_os.');
@@ -67,7 +149,6 @@ async function main() {
 
   const temporaryDirectory = await mkdtemp(path.join(tmpdir(), 'pravia-baseline-'));
   const baselineFile = path.join(temporaryDirectory, 'baseline.sql');
-  const artifactsFile = path.join(temporaryDirectory, 'operational-artifacts.sql');
   try {
     prisma([
       'migrate', 'diff',
@@ -80,24 +161,9 @@ async function main() {
     await writeFile(baselineFile, `BEGIN;\n${baselineSql}\nCOMMIT;\n`, { mode: 0o600 });
     prisma(['db', 'execute', '--file', baselineFile, '--schema', 'prisma/schema.prisma'], url);
 
-    const indexMigrationNames = [
-      '20260811050000_add_operational_fk_indexes',
-      '20260811051000_complete_operational_fk_indexes',
-      '20260811052000_add_compareciente_link_validation',
-    ];
-    const indexStatements: string[] = [];
-    for (const migrationName of indexMigrationNames) {
-      const sql = await readFile(path.join(migrationsRoot, migrationName, 'migration.sql'), 'utf8');
-      indexStatements.push(...(sql.match(/CREATE INDEX IF NOT EXISTS[\s\S]*?;/g) || []));
-    }
-    if (indexStatements.length < 100) throw new Error('No se recuperó el inventario completo de índices operativos para la línea base.');
-    await writeFile(artifactsFile, [
-      'BEGIN;',
-      'SET search_path TO pravia_os, public;',
-      'CREATE SEQUENCE IF NOT EXISTS pravia_os.finance_movement_folio_seq START 1;',
-      'CREATE SEQUENCE IF NOT EXISTS pravia_os.finance_receipt_folio_seq START 1;',
-      ...indexStatements,
-      `DO $$
+    const historicalPlan = await buildHistoricalArtifactPlan(migrationsRoot, migrationNames);
+    const restoredPlan = await restoreHistoricalArtifacts(url, historicalPlan);
+    const missingFkIndexes = `DO $$
       DECLARE fk record;
       BEGIN
         FOR fk IN
@@ -128,11 +194,14 @@ async function main() {
             fk.columns_sql
           );
         END LOOP;
-      END $$;`,
-      'COMMIT;',
-      '',
-    ].join('\n'), { mode: 0o600 });
-    prisma(['db', 'execute', '--file', artifactsFile, '--schema', 'prisma/schema.prisma'], url);
+      END $$;`;
+    const client = new PrismaClient({ datasources: { db: { url: url.toString() } } });
+    try {
+      await client.$executeRawUnsafe(missingFkIndexes);
+    } finally {
+      await client.$disconnect();
+    }
+    await verifyHistoricalArtifacts(url, restoredPlan);
     for (const migrationName of migrationNames) {
       prisma(['migrate', 'resolve', '--applied', migrationName, '--schema', 'prisma/schema.prisma'], url);
     }
