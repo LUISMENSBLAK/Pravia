@@ -14,8 +14,29 @@ import { buildQuoteAnalytics, parseQuoteListQuery, quoteAnalyticsRange } from '.
 import { recognizeAcceptedQuote } from '../services/honorarioRecognition.service';
 import { ProspectWorkflowService } from '../services/prospectWorkflow.service';
 import { prospectWorkflowError } from './prospectWorkflowError';
+import { CotizacionWorkflowService } from '../services/cotizacionWorkflow.service';
+import { allowedQuoteActions, QuoteContractError, quoteKnowledge, quoteStageLabel } from '../domain/cotizacionContract';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
+const cotizacionWorkflowService = new CotizacionWorkflowService(prisma);
+
+const quoteWorkflowError = (res: Response, error: unknown) => {
+  if (error instanceof QuoteContractError) return res.status(error.status).json({ error: error.message, code: error.code });
+  if (error instanceof CotizacionBusinessError) return res.status(error.status).json({ error: error.message, code: error.code });
+  return res.status(500).json({ error: 'No fue posible completar la operación.', code: 'COT001_OPERATION_FAILED' });
+};
+
+const quoteWorkflowSummary = (quote: any, req: Request) => ({
+  stage: quote.etapa_contractual,
+  stageLabel: quoteStageLabel(quote.etapa_contractual),
+  stageEnteredAt: quote.transicion_actual?.effective_at ?? null,
+  knowledge: quoteKnowledge(quote.etapa_contractual),
+  version: quote.version_operativa,
+  actions: req.user?.permissions.includes('cotizaciones.write')
+    ? allowedQuoteActions(quote.etapa_contractual)
+      .filter((action) => action !== 'CONVERTIR' || req.user?.permissions.includes('expedientes.write'))
+    : [],
+});
 
 export const getCotizaciones = async (req: Request, res: Response) => {
   try {
@@ -50,11 +71,13 @@ export const getCotizaciones = async (req: Request, res: Response) => {
           select: { id: true, monto: true, estatus: true, categoria_ingreso: true, fecha_pago: true },
         },
         expediente: parsed.paginated ? { select: { id: true, numero_pravia: true } } : true,
+        transicion_actual: true,
         ...(parsed.paginated ? { seguimientos: { orderBy: { created_at: 'desc' as const }, take: 1 } } : {}),
       },
       orderBy: { [parsed.sortBy]: parsed.sortOrder },
     });
-    if (!parsed.paginated) return res.json(cotizaciones);
+    const rows = cotizaciones.map((quote) => ({ ...quote, workflow: quoteWorkflowSummary(quote, req) }));
+    if (!parsed.paginated) return res.json(rows);
 
     const analyticsRange = quoteAnalyticsRange(parsed.period);
     const [total, sent, accepted, amount, stateCounts, facetRows, analyticsRows] = await Promise.all([
@@ -73,7 +96,7 @@ export const getCotizaciones = async (req: Request, res: Response) => {
     const responsibles = Array.from(new Map(facetRows.map((item) => [item.creada_por.id, { id: item.creada_por.id, name: `${item.creada_por.nombre}${item.creada_por.apellido ? ` ${item.creada_por.apellido}` : ''}` }])).values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
     const acts = Array.from(new Set(facetRows.map((item) => item.prospecto?.tipo_acto).filter((item): item is string => Boolean(item)))).sort((a, b) => a.localeCompare(b, 'es'));
     return res.json({
-      data: cotizaciones,
+      data: rows,
       meta: {
         page: parsed.page,
         pageSize: parsed.pageSize,
@@ -93,7 +116,7 @@ export const getCotizaciones = async (req: Request, res: Response) => {
       analytics: buildQuoteAnalytics(analyticsRows, parsed.period),
     });
   } catch (error: any) {
-    res.status(500).json({ error: 'Error al obtener cotizaciones', detail: error.message });
+    res.status(500).json({ error: 'No fue posible obtener las cotizaciones.', code: 'QUOTE_LIST_FAILED' });
   }
 };
 
@@ -119,6 +142,7 @@ export const getCotizacionById = async (req: Request, res: Response) => {
     });
 
     if (!cotizacion) return res.status(404).json({ error: 'Cotización no encontrada' });
+    const workflow = await cotizacionWorkflowService.read(req.user!, id);
     const safeCotizacion = {
       ...cotizacion,
       versiones: cotizacion.versiones || [],
@@ -127,10 +151,11 @@ export const getCotizacionById = async (req: Request, res: Response) => {
       fuente_notarial: req.user?.permissions.includes('documentos.read') ? cotizacion.fuente_notarial : null,
       transiciones_permitidas: getAllowedCotizacionTransitions(cotizacion.estado, Boolean(cotizacion.fuente_notarial_id)),
       conversion: evaluateConversionEligibility(cotizacion),
+      workflow,
     };
     res.json(safeCotizacion);
   } catch (error: any) {
-    res.status(500).json({ error: 'Error al obtener cotización', detail: error.message });
+    return quoteWorkflowError(res, error);
   }
 };
 
@@ -166,6 +191,13 @@ export const updateCotizacionEstado = async (req: Request, res: Response) => {
       });
       if (!current) {
         throw new CotizacionBusinessError('Cotización no encontrada.', 'COTIZACION_NOT_FOUND', 404);
+      }
+      if (current.etapa_contractual) {
+        throw new CotizacionBusinessError(
+          'Usa las acciones comerciales de la ficha para registrar el siguiente hito.',
+          'COT001_CANONICAL_ACTION_REQUIRED',
+          409,
+        );
       }
 
       validateCotizacionTransition({
@@ -267,6 +299,7 @@ export const createCotizacionVersion = async (req: Request, res: Response) => {
 
       const version = await tx.cotizacionVersion.create({
         data: {
+          organization_id: cotizacion.organization_id,
           cotizacion_id: id,
           version: newVersionNum,
           desglose_notaria,
@@ -518,7 +551,10 @@ export const validarAnticipo = async (req: Request, res: Response) => {
 export const convertToExpediente = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { tipo_acto_id, abogado_id } = req.body;
+    const { tipo_acto_id, abogado_id, expectedVersion, idempotencyKey, confirm, effectiveAt, ...extra } = req.body ?? {};
+    if (Object.keys(extra).length) {
+      return res.status(400).json({ error: 'La solicitud contiene campos no permitidos.', code: 'COT001_FIELDS_DENIED' });
+    }
     if (!req.user || !(await canAccessCotizacion(req.user, id))) {
       return res.status(403).json({ error: 'No tienes acceso a esta cotización.', code: 'COTIZACION_ACCESS_DENIED' });
     }
@@ -530,6 +566,11 @@ export const convertToExpediente = async (req: Request, res: Response) => {
       tipoActoId: tipo_acto_id,
       abogadoId: abogado_id,
       correlationId: (req as any).correlationId,
+      actor: req.user,
+      expectedVersion,
+      idempotencyKey,
+      confirm,
+      effectiveAt,
     });
     res.status(result.alreadyConverted ? 200 : 201).json({
       ...result.expediente,
@@ -538,10 +579,16 @@ export const convertToExpediente = async (req: Request, res: Response) => {
       anticipo_validado: result.validatedAdvanceTotal,
     });
   } catch (error: any) {
-    if (error instanceof CotizacionBusinessError) {
-      return res.status(error.status).json({ error: error.message, code: error.code });
-    }
-    res.status(500).json({ error: 'Error al convertir a expediente', code: 'CONVERSION_FAILED' });
+    return quoteWorkflowError(res, error);
+  }
+};
+
+export const actCotizacionContract = async (req: Request, res: Response) => {
+  try {
+    const result = await cotizacionWorkflowService.act(req.user!, req.params.id, req.body ?? {});
+    return res.status(result.idempotent ? 200 : 201).json(result);
+  } catch (error) {
+    return quoteWorkflowError(res, error);
   }
 };
 
@@ -614,6 +661,13 @@ export const registerCotizacionDelivery = async (req: Request, res: Response) =>
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:cotizacion-state:${id}`}))`);
       const current = await tx.cotizacion.findUnique({ where: { id }, include: { versiones: { select: { aprobada: true } } } });
       if (!current) throw new CotizacionBusinessError('Cotización no encontrada.', 'COTIZACION_NOT_FOUND', 404);
+      if (current.etapa_contractual) {
+        throw new CotizacionBusinessError(
+          'Usa la acción “Registrar envío al cliente” de la ficha.',
+          'COT001_CANONICAL_ACTION_REQUIRED',
+          409,
+        );
+      }
       validateCotizacionTransition({
         current: current.estado,
         next: nextState,

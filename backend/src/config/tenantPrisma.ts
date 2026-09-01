@@ -5,7 +5,7 @@ import { currentActorContext, TenantContextError } from '../auth/actorContext';
 // conservan para defensa en profundidad, consultas directas e índices eficientes.
 export const TENANT_SCOPED_MODELS = new Set([
   'UserInvitation', 'Notification', 'Prospecto', 'ProspectoSeguimiento', 'ProspectoTransicion', 'ProspectoFuenteNotarial', 'Notaria', 'NotariaContacto',
-  'Cotizacion', 'CotizacionVersion', 'CotizacionSeguimiento', 'Expediente', 'ExpedienteEstatus_Log',
+  'Cotizacion', 'CotizacionVersion', 'CotizacionSeguimiento', 'CotizacionTransicion', 'Expediente', 'ExpedienteEstatus_Log',
   'ExpedienteEtapa', 'Documento', 'ExpedienteDocumento', 'CotizacionDocumento', 'ProspectoDocumento',
   'RequisitoDocumentoVinculo', 'MovimientoDocumento', 'ComunicacionDocumento', 'Compareciente',
   'PersonaFisica', 'RelacionConyugal', 'PersonaMoral', 'PersonaMoralInstrumento', 'ComparecienteDomicilio',

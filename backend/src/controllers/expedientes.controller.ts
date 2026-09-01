@@ -9,6 +9,7 @@ import { downloadFile, uploadFile, deleteFile } from '../services/supabase.servi
 import prisma from '../config/prisma';
 import { CotizacionConversionService } from '../services/cotizacionConversion.service';
 import { CotizacionBusinessError, evaluateConversionEligibility } from '../domain/cotizacionWorkflow';
+import { QuoteContractError } from '../domain/cotizacionContract';
 import {
   EXPEDIENTE_STATUS_LABELS,
   ExpedienteWorkflowError,
@@ -117,6 +118,7 @@ export const getEligibleCotizacionesForExpediente = async (req: Request, res: Re
           select: { id: true, monto: true, estatus: true, categoria_ingreso: true },
         },
         expediente: { select: { id: true, numero_pravia: true } },
+        transicion_actual: true,
       },
       orderBy: { updated_at: 'desc' },
       take: 100,
@@ -134,6 +136,11 @@ export const getEligibleCotizacionesForExpediente = async (req: Request, res: Re
         notaria: cotizacion.notaria,
         creada_por: cotizacion.creada_por,
         conversion,
+        workflow: {
+          stage: cotizacion.etapa_contractual,
+          version: cotizacion.version_operativa,
+          stageEnteredAt: cotizacion.transicion_actual?.effective_at ?? null,
+        },
       }];
     });
     return res.json({ data: eligible, total: eligible.length });
@@ -396,7 +403,8 @@ export const createExpediente = async (req: Request, res: Response) => {
 // 4. Conversión de Cotización Aceptada a Expediente
 export const convertCotizacionToExpediente = async (req: Request, res: Response) => {
   try {
-    const { cotizacion_id, abogado_id, tipo_acto_id } = req.body;
+    const { cotizacion_id, abogado_id, tipo_acto_id, expectedVersion, idempotencyKey, confirm, effectiveAt, ...extra } = req.body ?? {};
+    if (Object.keys(extra).length) return res.status(400).json({ error: 'La solicitud contiene campos no permitidos.', code: 'COT001_FIELDS_DENIED' });
     if (!req.user || !(await canAccessCotizacion(req.user, String(cotizacion_id)))) {
       return res.status(403).json({ error: 'No tienes acceso a esta cotización.', code: 'COTIZACION_ACCESS_DENIED' });
     }
@@ -408,6 +416,11 @@ export const convertCotizacionToExpediente = async (req: Request, res: Response)
       actorOrganizationId: req.user.organizationId,
       actorSessionId: req.user.sessionId,
       correlationId: (req as any).correlationId,
+      actor: req.user,
+      expectedVersion,
+      idempotencyKey,
+      confirm,
+      effectiveAt,
     });
     res.status(result.alreadyConverted ? 200 : 201).json({
       ...result.expediente,
@@ -418,6 +431,9 @@ export const convertCotizacionToExpediente = async (req: Request, res: Response)
   } catch (error: any) {
     console.error('[CONVERT_COTIZACION_ERROR]', error);
     if (error instanceof CotizacionBusinessError) {
+      return res.status(error.status).json({ error: error.message, code: error.code });
+    }
+    if (error instanceof QuoteContractError) {
       return res.status(error.status).json({ error: error.message, code: error.code });
     }
     res.status(500).json({ error: 'No fue posible convertir la cotización a expediente.', code: 'CONVERSION_FAILED' });

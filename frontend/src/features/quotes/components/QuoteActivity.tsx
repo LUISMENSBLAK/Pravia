@@ -4,6 +4,10 @@ import type { Quote } from '../quotes.types';
 import styles from '../Quotes.module.css';
 
 export function QuoteActivity({ quote }: { quote: Quote }) {
+  if (quote.workflow?.events?.length) {
+    const events = [...quote.workflow.events].sort((a, b) => new Date(b.effectiveAt).getTime() - new Date(a.effectiveAt).getTime());
+    return <section className={styles.detailSection}><header><div><h2>Historia comercial</h2><p>Hechos contractuales confirmados, con fecha efectiva y procedencia.</p></div></header><ol className={styles.activityList}>{events.map((event) => <li key={event.id}><span><CheckCircle2 size={17} /></span><div><strong>{event.actionLabel}</strong><small>{event.previousLabel ? `${event.previousLabel} → ` : ''}{event.nextLabel} · {event.actor || 'Actor registrado'}{event.channel ? ` · ${event.channel}` : ''}</small></div><time>{shortDate(event.effectiveAt)}</time></li>)}</ol></section>;
+  }
   const lifecycle = [
     { date: quote.fecha_aceptacion_cliente, title: 'Aceptada por cliente', detail: 'Aceptada por el cliente.', icon: CheckCircle2 },
     { date: quote.fecha_enviada_cliente, title: 'Envío a cliente registrado', detail: 'Compartida con el cliente.', icon: Send },

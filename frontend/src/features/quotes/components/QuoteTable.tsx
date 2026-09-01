@@ -16,7 +16,7 @@ export function QuoteTable({ quotes }: { quotes: Quote[] }) {
         <td><strong>{quote.prospecto?.nombre || 'Prospecto no disponible'}</strong></td>
         <td>{quote.prospecto?.tipo_acto || 'Sin especificar'}</td>
         <td className={styles.amount}>{quote.total_cliente == null ? 'Sin importe' : money(quote.total_cliente)}</td>
-        <td><QuoteStatusBadge state={quote.estado} /></td>
+        <td><QuoteStatusBadge quote={quote} /></td>
         <td><span className={`${styles.deadline} ${styles[`deadline-${deadline.tone}`]}`}>{deadline.label}</span></td>
         <td><button type="button" className={styles.rowAction} aria-label={`Abrir ${quote.numero_cotizacion || 'cotización'}`} onClick={() => navigate(`/cotizaciones/${quote.id}`)}><MoreHorizontal size={17} /><ChevronRight size={15} /></button></td>
       </tr>;

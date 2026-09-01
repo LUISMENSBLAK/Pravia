@@ -8,7 +8,7 @@ import { runWithActorContext } from '../auth/actorContext';
 import { getAllowedCotizacionTransitions, validateCotizacionTransition } from '../domain/cotizacionWorkflow';
 
 // Deliberately cannot inherit DATABASE_URL or credentials from .env.
-const url = 'postgresql://postgres:test@127.0.0.1:55440/pravia_g0a?schema=pravia_os';
+const url = process.env.G0A_DATABASE_URL ?? 'postgresql://postgres:test@127.0.0.1:55440/pravia_g0a?schema=pravia_os';
 const db = new PrismaClient({ datasources: { db: { url } } });
 const scoped = new PrismaClient({ datasources: { db: { url } } });
 scoped.$use(tenantIsolationMiddleware);

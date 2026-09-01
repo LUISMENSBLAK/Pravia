@@ -32,24 +32,26 @@ model Organization {
   expedienteActividades     ExpedienteActividad[]
   prospectoTransiciones     ProspectoTransicion[]
   prospectoFuentes          ProspectoFuenteNotarial[]
+  cotizacionTransiciones    CotizacionTransicion[]
 
   @@index([status])
   @@map("organizations")
 }
 
 model OrganizationMembership {
-  id              String        @id @default(uuid()) @db.Uuid
-  organization_id String        @db.Uuid
-  user_id         String        @db.Uuid
-  rol             Role
-  status          String        @default("ACTIVE")
-  created_at      DateTime      @default(now())
-  updated_at      DateTime      @updatedAt
-  organization    Organization  @relation(fields: [organization_id], references: [id], onDelete: Restrict)
-  user            User          @relation(fields: [user_id], references: [id], onDelete: Restrict)
-  sessions        AuthSession[]
-  prospectoTransiciones ProspectoTransicion[]
-  prospectoFuentes ProspectoFuenteNotarial[]
+  id                     String                    @id @default(uuid()) @db.Uuid
+  organization_id        String                    @db.Uuid
+  user_id                String                    @db.Uuid
+  rol                    Role
+  status                 String                    @default("ACTIVE")
+  created_at             DateTime                  @default(now())
+  updated_at             DateTime                  @updatedAt
+  organization           Organization              @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  user                   User                      @relation(fields: [user_id], references: [id], onDelete: Restrict)
+  sessions               AuthSession[]
+  prospectoTransiciones  ProspectoTransicion[]
+  prospectoFuentes       ProspectoFuenteNotarial[]
+  cotizacionTransiciones CotizacionTransicion[]
 
   @@unique([organization_id, user_id])
   @@index([user_id, status])
@@ -331,11 +333,11 @@ model Prospecto {
   etapa_operativa          ProspectoEtapaCatalogo?    @relation(fields: [etapa_operativa_codigo], references: [codigo])
   servicio_catalogo        ProspectoServicioCatalogo? @relation(fields: [servicio_catalogo_codigo], references: [codigo])
 
+  @@unique([organization_id, creation_key], map: "uq_prospecto_creation_key")
   @@index([archived_by], map: "idx_prospectos_archivado_por_fk")
   @@index([user_id], map: "idx_prospectos_user_fk")
   @@index([etapa_operativa_codigo], map: "idx_prospectos_etapa_operativa_fk")
   @@index([servicio_catalogo_codigo], map: "idx_prospectos_servicio_catalogo_fk")
-  @@unique([organization_id, creation_key], map: "uq_prospecto_creation_key")
   @@index([notaria_id, organization_id], map: "idx_prospecto_notaria_org")
   @@index([transicion_actual_id], map: "idx_prospecto_current_transition")
   @@index([organization_id, etapa_contractual], map: "idx_prospecto_contract_stage")
@@ -354,25 +356,25 @@ enum ProspectoEtapaContractual {
 
 // Hechos de negocio append-only, no notas libres ni AuditLog técnico.
 model ProspectoTransicion {
-  id              String                    @id @default(uuid()) @db.Uuid
-  organization_id String                    @db.Uuid
-  prospecto_id    String                    @db.Uuid
-  actor_id        String                    @db.Uuid
+  id              String                     @id @default(uuid()) @db.Uuid
+  organization_id String                     @db.Uuid
+  prospecto_id    String                     @db.Uuid
+  actor_id        String                     @db.Uuid
   etapa_anterior  ProspectoEtapaContractual?
   etapa_nueva     ProspectoEtapaContractual
   hito_intermedio ProspectoEtapaContractual?
   effective_at    DateTime
-  recorded_at     DateTime                  @default(now())
-  accion          String                    @db.VarChar(60)
-  procedencia     String                    @db.VarChar(60)
+  recorded_at     DateTime                   @default(now())
+  accion          String                     @db.VarChar(60)
+  procedencia     String                     @db.VarChar(60)
   evidencia       Json
   version         Int
-  idempotency_key String                    @db.VarChar(120)
-  payload_hash    String                    @db.VarChar(64)
-  organization    Organization              @relation(fields: [organization_id], references: [id], onDelete: Restrict)
-  prospecto       Prospecto                 @relation("ProspectoTransitions", fields: [prospecto_id], references: [id], onDelete: Restrict)
-  actor           OrganizationMembership    @relation(fields: [organization_id, actor_id], references: [organization_id, user_id], onDelete: Restrict)
-  actual_para     Prospecto[]               @relation("ProspectoCurrentTransition")
+  idempotency_key String                     @db.VarChar(120)
+  payload_hash    String                     @db.VarChar(64)
+  organization    Organization               @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  prospecto       Prospecto                  @relation("ProspectoTransitions", fields: [prospecto_id], references: [id], onDelete: Restrict)
+  actor           OrganizationMembership     @relation(fields: [organization_id, actor_id], references: [organization_id, user_id], onDelete: Restrict)
+  actual_para     Prospecto[]                @relation("ProspectoCurrentTransition")
 
   @@unique([organization_id, prospecto_id, idempotency_key], map: "uq_prospecto_transition_key")
   @@unique([prospecto_id, version], map: "uq_prospecto_transition_version")
@@ -383,25 +385,25 @@ model ProspectoTransicion {
 
 // Versiones de una fuente: referencia al mismo sistema documental, no otro almacén.
 model ProspectoFuenteNotarial {
-  id              String                 @id @default(uuid()) @db.Uuid
-  organization_id String                 @db.Uuid
-  prospecto_id    String                 @db.Uuid
-  documento_id    String                 @db.Uuid
-  notaria_id      String                 @db.Uuid
-  actor_id        String                 @db.Uuid
+  id              String                   @id @default(uuid()) @db.Uuid
+  organization_id String                   @db.Uuid
+  prospecto_id    String                   @db.Uuid
+  documento_id    String                   @db.Uuid
+  notaria_id      String                   @db.Uuid
+  actor_id        String                   @db.Uuid
   version         Int
   received_at     DateTime
-  recorded_at     DateTime               @default(now())
-  origen          String                 @db.VarChar(60)
+  recorded_at     DateTime                 @default(now())
+  origen          String                   @db.VarChar(60)
   motivo          String
-  sustituye_id    String?                @unique @db.Uuid
-  idempotency_key String                 @db.VarChar(120)
-  payload_hash    String                 @db.VarChar(64)
-  organization    Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict)
-  prospecto       Prospecto              @relation(fields: [prospecto_id], references: [id], onDelete: Restrict)
-  documento       Documento              @relation(fields: [documento_id], references: [id], onDelete: Restrict)
-  notaria         Notaria                @relation(fields: [notaria_id], references: [id], onDelete: Restrict)
-  actor           OrganizationMembership @relation(fields: [organization_id, actor_id], references: [organization_id, user_id], onDelete: Restrict)
+  sustituye_id    String?                  @unique @db.Uuid
+  idempotency_key String                   @db.VarChar(120)
+  payload_hash    String                   @db.VarChar(64)
+  organization    Organization             @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  prospecto       Prospecto                @relation(fields: [prospecto_id], references: [id], onDelete: Restrict)
+  documento       Documento                @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  notaria         Notaria                  @relation(fields: [notaria_id], references: [id], onDelete: Restrict)
+  actor           OrganizationMembership   @relation(fields: [organization_id, actor_id], references: [organization_id, user_id], onDelete: Restrict)
   sustituye       ProspectoFuenteNotarial? @relation("NotarySourceVersions", fields: [sustituye_id], references: [id], onDelete: Restrict)
   sustituida_por  ProspectoFuenteNotarial? @relation("NotarySourceVersions")
   cotizaciones    Cotizacion[]
@@ -532,13 +534,13 @@ model NotariaContacto {
 }
 
 model Cotizacion {
-  id                             String                  @id @default(uuid()) @db.Uuid
-  organization_id                String?                 @db.Uuid
-  prospecto_id                   String?                 @unique @db.Uuid
-  user_id                        String                  @db.Uuid
-  estado                         CotizacionEstado        @default(BORRADOR)
-  created_at                     DateTime                @default(now())
-  updated_at                     DateTime                @default(now()) @updatedAt
+  id                             String                      @id @default(uuid()) @db.Uuid
+  organization_id                String?                     @db.Uuid
+  prospecto_id                   String?                     @unique @db.Uuid
+  user_id                        String                      @db.Uuid
+  estado                         CotizacionEstado            @default(BORRADOR)
+  created_at                     DateTime                    @default(now())
+  updated_at                     DateTime                    @default(now()) @updatedAt
   cuerpo_correo_cliente          String?
   cuerpo_correo_notaria          String?
   fecha_aceptacion_cliente       DateTime?
@@ -546,35 +548,86 @@ model Cotizacion {
   fecha_limite_respuesta_notaria DateTime?
   fecha_presupuesto_recibido     DateTime?
   fecha_solicitud_notaria        DateTime?
-  honorarios_pravia              Decimal?                @db.Decimal(14, 2)
-  notaria_id                     String?                 @db.Uuid
-  numero_cotizacion              String?                 @unique
-  numero_solicitud               String?                 @unique
-  fuente_notarial_id             String?                 @db.Uuid
-  fuente_notarial                ProspectoFuenteNotarial? @relation(fields: [fuente_notarial_id], references: [id], onDelete: Restrict)
-  total_cliente                  Decimal?                @db.Decimal(14, 2)
-  total_notaria                  Decimal?                @db.Decimal(14, 2)
-  version_actual                 Int                     @default(1)
+  honorarios_pravia              Decimal?                    @db.Decimal(14, 2)
+  notaria_id                     String?                     @db.Uuid
+  numero_cotizacion              String?                     @unique
+  numero_solicitud               String?                     @unique
+  fuente_notarial_id             String?                     @db.Uuid
+  fuente_notarial                ProspectoFuenteNotarial?    @relation(fields: [fuente_notarial_id], references: [id], onDelete: Restrict)
+  total_cliente                  Decimal?                    @db.Decimal(14, 2)
+  total_notaria                  Decimal?                    @db.Decimal(14, 2)
+  version_actual                 Int                         @default(1)
   fecha_aprobacion_version       DateTime?
   fecha_conversion_expediente    DateTime?
+  etapa_contractual              CotizacionEtapaContractual?
+  version_operativa              Int                         @default(0)
+  transicion_actual_id           String?                     @db.Uuid
   cotizacionDocumentos           CotizacionDocumento[]
   seguimientos                   CotizacionSeguimiento[]
   versiones                      CotizacionVersion[]
-  notaria                        Notaria?                @relation(fields: [notaria_id], references: [id])
-  prospecto                      Prospecto?              @relation(fields: [prospecto_id], references: [id])
-  creada_por                     User                    @relation(fields: [user_id], references: [id])
+  notaria                        Notaria?                    @relation(fields: [notaria_id], references: [id])
+  prospecto                      Prospecto?                  @relation(fields: [prospecto_id], references: [id])
+  creada_por                     User                        @relation(fields: [user_id], references: [id])
   documentos                     Documento[]
   expediente                     Expediente?
   expedienteActosOrigen          ExpedienteActo[]
   honorariosGenerados            HonorarioGenerado?
   movimientosFinancieros         MovimientoFinanciero[]
   pagos                          Pago[]
+  transicion_actual              CotizacionTransicion?       @relation("CotizacionCurrentTransition", fields: [transicion_actual_id], references: [id], onDelete: Restrict)
+  transiciones                   CotizacionTransicion[]      @relation("CotizacionTransitions")
 
   @@unique([id, organization_id], map: "uq_cotizaciones_id_org")
   @@index([notaria_id], map: "idx_cotizaciones_notaria_fk")
   @@index([user_id], map: "idx_cotizaciones_user_fk")
   @@index([fuente_notarial_id, organization_id], map: "idx_cotizaciones_source_org")
+  @@index([transicion_actual_id], map: "idx_cotizacion_current_transition")
+  @@index([organization_id, etapa_contractual], map: "idx_cotizacion_contract_stage")
   @@map("cotizaciones")
+}
+
+enum CotizacionEtapaContractual {
+  BORRADOR
+  ENVIADA_CLIENTE
+  ACEPTO_ANTICIPO
+  SUSPENDIDA
+  CANCELADA
+  CONVERTIDA_EXPEDIENTE
+}
+
+// Hechos comerciales append-only. AuditLog conserva auditoría técnica, no sustituye esta historia.
+model CotizacionTransicion {
+  id                    String                      @id @default(uuid()) @db.Uuid
+  organization_id       String                      @db.Uuid
+  cotizacion_id         String                      @db.Uuid
+  actor_id              String                      @db.Uuid
+  etapa_anterior        CotizacionEtapaContractual?
+  etapa_nueva           CotizacionEtapaContractual
+  effective_at          DateTime
+  recorded_at           DateTime                    @default(now())
+  accion                String                      @db.VarChar(60)
+  procedencia           String                      @db.VarChar(60)
+  canal                 String?                     @db.VarChar(100)
+  destinatario          String?                     @db.VarChar(320)
+  causa                 String?
+  evidencia             Json
+  version               Int
+  idempotency_key       String                      @db.VarChar(120)
+  payload_hash          String                      @db.VarChar(64)
+  cambia_etapa          Boolean                     @default(true)
+  cotizacion_version_id String?                     @db.Uuid
+  organization          Organization                @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  cotizacion            Cotizacion                  @relation("CotizacionTransitions", fields: [cotizacion_id], references: [id], onDelete: Restrict)
+  actor                 OrganizationMembership      @relation(fields: [organization_id, actor_id], references: [organization_id, user_id], onDelete: Restrict)
+  cotizacion_version    CotizacionVersion?          @relation(fields: [cotizacion_version_id], references: [id], onDelete: Restrict)
+  actual_para           Cotizacion[]                @relation("CotizacionCurrentTransition")
+
+  @@unique([organization_id, cotizacion_id, idempotency_key], map: "uq_cotizacion_transition_key")
+  @@unique([cotizacion_id, version], map: "uq_cotizacion_transition_version")
+  @@index([organization_id, actor_id], map: "idx_cotizacion_transition_actor")
+  @@index([cotizacion_id, organization_id, effective_at], map: "idx_cotizacion_transition_history")
+  @@index([cotizacion_version_id], map: "idx_cotizacion_transition_version_fk")
+  @@map("cotizacion_transiciones")
 }
 
 model CotizacionVersion {
@@ -596,6 +649,7 @@ model CotizacionVersion {
   cotizacion          Cotizacion              @relation(fields: [cotizacion_id], references: [id], onDelete: Cascade)
   honorariosGenerados HonorarioGenerado[]
   presupuestosOrigen  ExpedientePresupuesto[]
+  transiciones        CotizacionTransicion[]
 
   @@unique([cotizacion_id, version])
   @@map("cotizacion_versiones")
@@ -1083,7 +1137,7 @@ model Expediente {
   gestor                     User?                          @relation("ExpedienteGestor", fields: [gestor_id], references: [id])
   notaria                    Notaria?                       @relation(fields: [notaria_id], references: [id])
   plantillaDocVersion        PlantillaDocumentalVersion?    @relation(fields: [plantilla_doc_version_id], references: [id])
-  tipo_acto                  TipoActo?                      @relation(fields: [tipo_acto_id], references: [id])
+  tipo_acto              TipoActo?                      @relation(fields: [tipo_acto_id], references: [id])
   honorariosGenerados        HonorarioGenerado[]
   movimientosFinancieros     MovimientoFinanciero[]
   pagos                      Pago[]
@@ -1236,7 +1290,7 @@ model ExpedienteActo {
   removed_reason          String?
   organization            Organization                   @relation(fields: [organization_id], references: [id], onDelete: Restrict)
   expediente              Expediente                     @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
-  tipo_acto              TipoActo                       @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
+  tipo_acto               TipoActo                       @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
   source_cotizacion       Cotizacion?                    @relation(fields: [source_cotizacion_id], references: [id], onDelete: Restrict)
   creador                 User                           @relation("ExpedienteActoCreador", fields: [created_by], references: [id], onDelete: Restrict)
   retirado_por            User?                          @relation("ExpedienteActoRetirador", fields: [removed_by], references: [id], onDelete: Restrict)
@@ -1689,7 +1743,7 @@ model Documento {
   presupuestoHistorico         ExpedientePresupuestoDocumento?
   finanzaVinculosExp008        ExpedienteFinanzaDocumento[]
   finanzaPropuestasExp008      ExpedienteFinanzaPropuestaIA[]
-  fuentesNotarialesProspecto    ProspectoFuenteNotarial[]
+  fuentesNotarialesProspecto   ProspectoFuenteNotarial[]
 
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
   @@index([cotizacion_id], map: "idx_documentos_cotizacion_fk")
@@ -2751,8 +2805,8 @@ model ExpedienteFinanzaPropuestaIA {
   solicitudPago        ExpedienteSolicitudPago?         @relation(fields: [solicitud_pago_id], references: [id], onDelete: Restrict)
   revisadoPor          User?                            @relation("Exp008PropuestaRevisor", fields: [revisado_por_id], references: [id], onDelete: Restrict)
 
-  @@index([organization_id, expediente_id, estado], map: "idx_exp008_propuesta_tenant_state")
   @@unique([organization_id, operation_id], map: "uq_exp008_ai_operation_tenant")
+  @@index([organization_id, expediente_id, estado], map: "idx_exp008_propuesta_tenant_state")
   @@index([documento_id], map: "idx_exp008_propuesta_documento_fk")
   @@index([ingreso_reportado_id], map: "idx_exp008_propuesta_ingreso_fk")
   @@index([solicitud_pago_id], map: "idx_exp008_propuesta_solicitud_fk")
@@ -2829,27 +2883,27 @@ model Pago {
 }
 
 model ExpedienteActividad {
-  id                      String                       @id @default(uuid()) @db.Uuid
-  organization_id         String                       @db.Uuid
-  expediente_id           String                       @db.Uuid
-  usuario_id              String                       @db.Uuid
-  tipo                    TipoActividad
-  categoria               ExpedienteActividadCategoria @default(SISTEMA)
-  titulo                  String
-  descripcion             String
-  metadatos               Json?
-  valores_anteriores      Json?
-  valores_nuevos          Json?
-  seccion_relacionada     String?
-  entidad_relacionada     String?
-  entidad_relacionada_id  String?                      @db.Uuid
-  correlation_id          String?                      @db.Uuid
-  idempotency_key         String?
-  es_nota_manual          Boolean                      @default(false)
-  created_at              DateTime                     @default(now())
-  organization            Organization                 @relation(fields: [organization_id], references: [id], onDelete: Restrict)
-  expediente              Expediente                   @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "expediente_actividades_expediente_tenant_fkey")
-  usuario                 User                         @relation(fields: [usuario_id], references: [id], onDelete: Restrict)
+  id                     String                       @id @default(uuid()) @db.Uuid
+  organization_id        String                       @db.Uuid
+  expediente_id          String                       @db.Uuid
+  usuario_id             String                       @db.Uuid
+  tipo                   TipoActividad
+  categoria              ExpedienteActividadCategoria @default(SISTEMA)
+  titulo                 String
+  descripcion            String
+  metadatos              Json?
+  valores_anteriores     Json?
+  valores_nuevos         Json?
+  seccion_relacionada    String?
+  entidad_relacionada    String?
+  entidad_relacionada_id String?                      @db.Uuid
+  correlation_id         String?                      @db.Uuid
+  idempotency_key        String?
+  es_nota_manual         Boolean                      @default(false)
+  created_at             DateTime                     @default(now())
+  organization           Organization                 @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  expediente             Expediente                   @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "expediente_actividades_expediente_tenant_fkey")
+  usuario                User                         @relation(fields: [usuario_id], references: [id], onDelete: Restrict)
 
   @@unique([organization_id, expediente_id, idempotency_key], map: "uq_exp_actividad_idempotency")
   @@index([organization_id, expediente_id, created_at], map: "idx_exp_actividad_tenant_timeline")
@@ -2947,22 +3001,22 @@ model CalculoISRVersion {
 }
 
 model CalculoISRDocumento {
-  id                  String         @id @default(uuid()) @db.Uuid
-  organization_id     String?        @db.Uuid
-  calculo_id          String         @db.Uuid
-  documento_id        String         @db.Uuid
-  creado_por_id       String         @db.Uuid
-  estatus             VinculoEstatus @default(ACTIVO)
-  fecha_vinculo       DateTime       @default(now())
-  inactivado_at       DateTime?
-  inactivado_por_id   String?        @db.Uuid
-  motivo_inactivacion String?
-  idempotency_key     String?
+  id                     String         @id @default(uuid()) @db.Uuid
+  organization_id        String?        @db.Uuid
+  calculo_id             String         @db.Uuid
+  documento_id           String         @db.Uuid
+  creado_por_id          String         @db.Uuid
+  estatus                VinculoEstatus @default(ACTIVO)
+  fecha_vinculo          DateTime       @default(now())
+  inactivado_at          DateTime?
+  inactivado_por_id      String?        @db.Uuid
+  motivo_inactivacion    String?
+  idempotency_key        String?
   generated_from_version Int?
-  format_source       String?
-  calculo             CalculoISR     @relation(fields: [calculo_id], references: [id], onDelete: Restrict)
-  documento           Documento      @relation(fields: [documento_id], references: [id], onDelete: Restrict)
-  creado_por          User           @relation("CalculoISRDocumentoActor", fields: [creado_por_id], references: [id])
+  format_source          String?
+  calculo                CalculoISR     @relation(fields: [calculo_id], references: [id], onDelete: Restrict)
+  documento              Documento      @relation(fields: [documento_id], references: [id], onDelete: Restrict)
+  creado_por             User           @relation("CalculoISRDocumentoActor", fields: [creado_por_id], references: [id])
 
   @@unique([calculo_id, documento_id])
   @@unique([organization_id, calculo_id, idempotency_key], map: "uq_isr001_pdf_idempotency")
@@ -3927,6 +3981,8 @@ enum CotizacionEstado {
   RECHAZADA
   VENCIDA
   CONVERTIDA_EXPEDIENTE
+  SUSPENDIDA
+  CANCELADA
 }
 
 enum DocCategoria {

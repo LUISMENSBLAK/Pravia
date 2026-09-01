@@ -1,9 +1,10 @@
-import { CotizacionEstado } from '@prisma/client';
+import { CotizacionEtapaContractual, CotizacionEstado } from '@prisma/client';
 
 export type MoneyLike = number | string | { toString(): string };
 
 export interface ConversionCandidate {
   estado: CotizacionEstado;
+  etapa_contractual?: CotizacionEtapaContractual | null;
   prospecto_id?: string | null;
   expediente?: { id: string } | null;
   versiones: Array<{ aprobada: boolean }>;
@@ -47,6 +48,8 @@ export const COTIZACION_TRANSITIONS: Record<CotizacionEstado, CotizacionEstado[]
   RECHAZADA: [],
   VENCIDA: [],
   CONVERTIDA_EXPEDIENTE: [],
+  SUSPENDIDA: [],
+  CANCELADA: [],
 };
 
 export function getAllowedCotizacionTransitions(current: CotizacionEstado, hasCanonicalNotarySource = false): CotizacionEstado[] {
@@ -91,7 +94,10 @@ export function validateCotizacionTransition(input: {
 }
 
 export function evaluateConversionEligibility(candidate: ConversionCandidate): ConversionEligibility {
-  const accepted = candidate.estado === CotizacionEstado.ACEPTADA;
+  const canonical = Boolean(candidate.etapa_contractual);
+  const accepted = canonical
+    ? candidate.etapa_contractual === CotizacionEtapaContractual.ACEPTO_ANTICIPO
+    : candidate.estado === CotizacionEstado.ACEPTADA;
   const approvedVersion = candidate.versiones.some((version) => version.aprobada);
   const validatedAdvances = candidate.pagos.filter(
     (payment) => payment.categoria_ingreso === 'ANTICIPO_NOTARIA'
@@ -100,13 +106,19 @@ export function evaluateConversionEligibility(candidate: ConversionCandidate): C
   );
   const validatedAdvanceTotal = validatedAdvances.reduce((sum, payment) => sum + Number(payment.monto), 0);
   const validatedAdvance = validatedAdvanceTotal > 0;
-  const notConverted = candidate.estado !== CotizacionEstado.CONVERTIDA_EXPEDIENTE && !candidate.expediente;
+  const notConverted = candidate.etapa_contractual !== CotizacionEtapaContractual.CONVERTIDA_EXPEDIENTE
+    && candidate.estado !== CotizacionEstado.CONVERTIDA_EXPEDIENTE
+    && !candidate.expediente;
   const linkedProspect = Boolean(candidate.prospecto_id);
   const failures: string[] = [];
 
-  if (!accepted) failures.push('La cotización debe estar ACEPTADA por el cliente.');
+  if (!accepted) failures.push(canonical
+    ? 'Registra primero el hito Aceptó / Anticipo.'
+    : 'La cotización histórica debe estar aceptada por el cliente.');
   if (!approvedVersion) failures.push('Debe existir una versión de presupuesto aprobada.');
-  if (!validatedAdvance) failures.push('Debe existir un anticipo mayor a cero validado por administración.');
+  // In COT-001, “Aceptó / Anticipo” is one commercial milestone. A financial
+  // payment is deliberately informational and is never a conversion gate.
+  if (!canonical && !validatedAdvance) failures.push('Debe existir un anticipo mayor a cero validado por administración.');
   if (!notConverted) failures.push('La cotización ya fue convertida a expediente.');
   if (!linkedProspect) failures.push('La cotización debe conservar un prospecto vinculado.');
 

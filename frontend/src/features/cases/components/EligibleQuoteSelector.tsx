@@ -18,6 +18,7 @@ export function EligibleQuoteSelector({ onClose, onConverted }: {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error' | 'denied'>('loading');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [conversionKey, setConversionKey] = useState(() => crypto.randomUUID());
 
   const load = () => {
     const controller = new AbortController();
@@ -43,12 +44,12 @@ export function EligibleQuoteSelector({ onClose, onConverted }: {
     if (!selected || saving) return;
     setSaving(true); setError('');
     try {
-      onConverted(await expedientesService.convertQuote(selected.id));
+      onConverted(await expedientesService.convertQuote(selected.id, selected.workflow?.stage ? { version: selected.workflow.version, effectiveAt: new Date().toISOString(), idempotencyKey: conversionKey } : undefined));
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 403) setError('No tienes permiso para convertir esta cotización.');
       else if (cause instanceof ApiError && cause.status === 409) setError('La cotización cambió mientras la revisabas. Actualiza la lista para abrir el expediente existente o elegir otra.');
       else setError(cause instanceof ApiError ? cause.message : 'No pudimos convertir la cotización. Inténtalo nuevamente.');
-      setSaving(false);
+      setConversionKey(crypto.randomUUID()); setSaving(false);
     }
   };
 
@@ -59,8 +60,8 @@ export function EligibleQuoteSelector({ onClose, onConverted }: {
         {status === 'loading' && <div className={styles.formState} role="status"><LoaderCircle className={styles.spin} />Consultando cotizaciones elegibles…</div>}
         {status === 'denied' && <div className={styles.quoteSelectorState} role="alert"><FileCheck2 /><strong>No tienes permiso para abrir expedientes.</strong><p>Solicita acceso a una persona administradora.</p></div>}
         {status === 'error' && <div className={styles.quoteSelectorState} role="alert"><FileCheck2 /><strong>No pudimos cargar las cotizaciones.</strong><p>La fuente operativa no está disponible en este momento.</p><button type="button" className={styles.secondaryButton} onClick={load}><RefreshCw size={16} />Reintentar</button></div>}
-        {status === 'ready' && !quotes.length && <div className={styles.quoteSelectorState}><FileCheck2 /><strong>No hay cotizaciones listas para convertir.</strong><p>Una cotización aparecerá aquí cuando esté aceptada, tenga versión aprobada y anticipo validado.</p></div>}
-        {status === 'ready' && quotes.length > 0 && <fieldset className={styles.flowStep}><legend>Cotizaciones disponibles</legend><p>La elegibilidad fue validada por PRAVIA. Selecciona una para continuar.</p><div className={styles.eligibleQuoteList}>{quotes.map((quote) => <button type="button" key={quote.id} className={selectedId === quote.id ? styles.choiceSelected : ''} aria-pressed={selectedId === quote.id} onClick={() => setSelectedId(quote.id)}><span className={styles.quoteSelectorIcon}><FileCheck2 size={18} /></span><span className={styles.quoteSelectorCopy}><strong>{quote.numero_cotizacion || quote.numero_solicitud || 'Cotización'}</strong><b>{quote.prospecto.nombre}</b><small>{quote.prospecto.tipo_acto || 'Acto sin especificar'} · {quote.notaria?.numero_notaria ? `Notaría ${quote.notaria.numero_notaria}` : quote.notaria?.nombre || 'Sin notaría'}</small></span><span className={styles.quoteSelectorAmount}><strong>{money(quote.total_cliente)}</strong><small>Anticipo validado {money(quote.conversion.validatedAdvanceTotal)}</small></span>{selectedId === quote.id && <Check className={styles.quoteSelectorCheck} size={18} />}</button>)}</div></fieldset>}
+        {status === 'ready' && !quotes.length && <div className={styles.quoteSelectorState}><FileCheck2 /><strong>No hay cotizaciones listas para convertir.</strong><p>Una cotización aparecerá aquí cuando tenga el hito Aceptó / Anticipo y una versión aprobada.</p></div>}
+        {status === 'ready' && quotes.length > 0 && <fieldset className={styles.flowStep}><legend>Cotizaciones disponibles</legend><p>La elegibilidad fue validada por PRAVIA. Selecciona una para continuar.</p><div className={styles.eligibleQuoteList}>{quotes.map((quote) => <button type="button" key={quote.id} className={selectedId === quote.id ? styles.choiceSelected : ''} aria-pressed={selectedId === quote.id} onClick={() => setSelectedId(quote.id)}><span className={styles.quoteSelectorIcon}><FileCheck2 size={18} /></span><span className={styles.quoteSelectorCopy}><strong>{quote.numero_cotizacion || quote.numero_solicitud || 'Cotización'}</strong><b>{quote.prospecto.nombre}</b><small>{quote.prospecto.tipo_acto || 'Acto sin especificar'} · {quote.notaria?.numero_notaria ? `Notaría ${quote.notaria.numero_notaria}` : quote.notaria?.nombre || 'Sin notaría'}</small></span><span className={styles.quoteSelectorAmount}><strong>{money(quote.total_cliente)}</strong><small>{quote.workflow?.stage ? 'Aceptó / Anticipo confirmado' : `Anticipo histórico validado ${money(quote.conversion.validatedAdvanceTotal)}`}</small></span>{selectedId === quote.id && <Check className={styles.quoteSelectorCheck} size={18} />}</button>)}</div></fieldset>}
         {error && <div className={styles.formError} role="alert">{error}</div>}
       </div>
       <footer className={styles.drawerFooter}><button type="button" className={styles.secondaryButton} onClick={onClose} disabled={saving}>Cancelar</button><span /><button type="button" className={styles.primaryButton} disabled={!selected || saving || status !== 'ready'} onClick={convert}>{saving ? <><LoaderCircle className={styles.spin} size={17} />Convirtiendo…</> : 'Convertir en expediente'}</button></footer>

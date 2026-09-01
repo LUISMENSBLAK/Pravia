@@ -1,17 +1,35 @@
 import { Prisma, PrismaClient } from '@prisma/client';
+import type { Request } from 'express';
 import { CotizacionBusinessError, evaluateConversionEligibility } from '../domain/cotizacionWorkflow';
 import { ExpedienteOpeningService } from './expedienteOpening.service';
 import { attachGeneratedFeeToExpediente } from './honorarioRecognition.service';
 import { ExpedienteBudgetService } from './expedienteBudget.service';
+import {
+  assertQuoteReplay,
+  assertQuoteVersion,
+  failQuote,
+  quoteActionResult,
+  quoteEffectiveAt,
+  quoteHash,
+  quoteKey,
+} from '../domain/cotizacionContract';
+import { recordQuoteTransitionInTransaction } from './cotizacionWorkflow.service';
+
+type Actor = NonNullable<Request['user']>;
 
 export interface ConvertCotizacionInput {
   cotizacionId: string;
   actorUserId?: string;
   actorOrganizationId: string;
   actorSessionId?: string;
+  actor?: Actor;
   abogadoId?: string;
   tipoActoId?: string;
   correlationId?: string;
+  expectedVersion?: unknown;
+  idempotencyKey?: unknown;
+  confirm?: unknown;
+  effectiveAt?: unknown;
 }
 
 export interface ConvertCotizacionResult {
@@ -32,7 +50,7 @@ export class CotizacionConversionService {
     const correlationId = input.correlationId || crypto.randomUUID();
 
     return this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:cotizacion:${input.cotizacionId}`}))`);
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:cot001:${input.actorOrganizationId}:${input.cotizacionId}`}))`);
 
       const cotizacion = await tx.cotizacion.findFirst({
         where: { id: input.cotizacionId, organization_id: input.actorOrganizationId },
@@ -41,11 +59,36 @@ export class CotizacionConversionService {
           expediente: true,
           versiones: { orderBy: { version: 'desc' } },
           pagos: true,
+          transicion_actual: true,
         },
       });
 
       if (!cotizacion) {
         throw new CotizacionBusinessError('Cotización no encontrada.', 'COTIZACION_NOT_FOUND', 404);
+      }
+
+      const canonical = Boolean(cotizacion.etapa_contractual);
+      const key = canonical ? quoteKey(input.idempotencyKey) : null;
+      const hash = canonical ? quoteHash({
+        cotizacionId: input.cotizacionId,
+        tipoActoId: input.tipoActoId ?? null,
+        abogadoId: input.abogadoId ?? null,
+        expectedVersion: input.expectedVersion,
+        effectiveAt: input.effectiveAt,
+        actor: input.actorUserId,
+      }) : null;
+      const replay = canonical && key
+        ? await tx.cotizacionTransicion.findFirst({ where: {
+          organization_id: input.actorOrganizationId,
+          cotizacion_id: input.cotizacionId,
+          idempotency_key: key,
+        } })
+        : null;
+      if (replay) {
+        assertQuoteReplay(replay, hash!, input.actorUserId || '');
+        if (!cotizacion.expediente) {
+          failQuote(409, 'COT001_REPLAY_INCOMPLETE', 'La conversión anterior requiere revisión antes de volver a intentarla.');
+        }
       }
 
       if (cotizacion.expediente) {
@@ -85,6 +128,19 @@ export class CotizacionConversionService {
       const approvedVersion = cotizacion.versiones.find((version) => version.aprobada)
         || cotizacion.versiones[0];
       if (!approvedVersion) throw new CotizacionBusinessError('La cotización no tiene una versión estructurada aprobada.', 'APPROVED_VERSION_REQUIRED');
+
+      let workflowEffectiveAt: Date | null = null;
+      if (canonical) {
+        if (input.confirm !== true) failQuote(400, 'COT001_CONFIRM_REQUIRED', 'Revisa y confirma la conversión antes de continuar.');
+        assertQuoteVersion(input.expectedVersion, cotizacion.version_operativa);
+        quoteActionResult(cotizacion.etapa_contractual, 'CONVERTIR');
+        workflowEffectiveAt = quoteEffectiveAt(
+          input.effectiveAt,
+          new Date(),
+          cotizacion.transicion_actual?.effective_at ?? null,
+          true,
+        );
+      }
 
       const expediente = await new ExpedienteOpeningService(this.prisma).openInTransaction(tx, {
         tipoActoId: tipoActo.id,
@@ -143,10 +199,39 @@ export class CotizacionConversionService {
       });
       await attachGeneratedFeeToExpediente(tx, { cotizacionId: cotizacion.id, expedienteId: expediente.id });
 
-      await tx.cotizacion.update({
-        where: { id: cotizacion.id },
-        data: { estado: 'CONVERTIDA_EXPEDIENTE', fecha_conversion_expediente: new Date() },
-      });
+      if (canonical) {
+        const workflowActor = input.actor ?? ({
+          id: actor.id,
+          email: actor.email,
+          nombre: actor.nombre,
+          apellido: actor.apellido,
+          rol: actor.rol,
+          sessionId: input.actorSessionId || correlationId,
+          organizationId: input.actorOrganizationId,
+          membershipId: '',
+          scope: 'GLOBAL',
+          permissions: [],
+          requiresPasswordChange: false,
+        } as Actor);
+        await recordQuoteTransitionInTransaction(tx, {
+          actor: workflowActor,
+          quote: cotizacion,
+          action: 'CONVERTIR',
+          next: quoteActionResult(cotizacion.etapa_contractual, 'CONVERTIR').next,
+          changesStage: true,
+          effectiveAt: workflowEffectiveAt!,
+          recordedAt: new Date(),
+          key: key!,
+          hash: hash!,
+          quoteVersionId: approvedVersion.id,
+          evidence: { expedienteId: expediente.id, numeroPravia, source: 'COT-001' },
+        });
+      } else {
+        await tx.cotizacion.update({
+          where: { id: cotizacion.id },
+          data: { estado: 'CONVERTIDA_EXPEDIENTE', fecha_conversion_expediente: new Date() },
+        });
+      }
       if (cotizacion.prospecto_id) {
         await tx.prospecto.update({
           where: { id: cotizacion.prospecto_id },
@@ -161,7 +246,9 @@ export class CotizacionConversionService {
           usuario_id: actor.id,
           tipo: 'AUDITORIA',
           titulo: 'Conversión desde cotización aceptada',
-          descripcion: `Expediente ${numeroPravia} creado con anticipo validado por ${eligibility.validatedAdvanceTotal.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}. Se vincularon ${documentLinks.size} documento(s) sin duplicar archivos.`,
+          descripcion: canonical
+            ? `Expediente ${numeroPravia} creado después del hito comercial Aceptó / Anticipo. Se vincularon ${documentLinks.size} documento(s) sin duplicar archivos.`
+            : `Expediente ${numeroPravia} creado con anticipo validado por ${eligibility.validatedAdvanceTotal.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}. Se vincularon ${documentLinks.size} documento(s) sin duplicar archivos.`,
           metadatos: {
             cotizacion_id: cotizacion.id,
             anticipo_validado: eligibility.validatedAdvanceTotal,
@@ -169,7 +256,7 @@ export class CotizacionConversionService {
           },
         },
       });
-      await tx.auditLog.create({
+      if (!canonical) await tx.auditLog.create({
         data: {
           user_id: actor.id,
           accion: 'CONVERT_TO_EXPEDIENTE',

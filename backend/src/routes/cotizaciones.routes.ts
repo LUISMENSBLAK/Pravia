@@ -14,6 +14,7 @@ import {
   getCotizacionSeguimientos,
   createCotizacionSeguimiento,
   registerCotizacionDelivery,
+  actCotizacionContract,
   updateParticipacionPravia,
   getCotizacionDocumentos,
   unlinkCotizacionDocumento
@@ -38,6 +39,7 @@ router.post('/:id/convertir', requirePermission('expedientes.write'), convertToE
 router.get('/:id/seguimientos', getCotizacionSeguimientos);
 router.post('/:id/seguimientos', createCotizacionSeguimiento);
 router.post('/:id/registrar-envio', registerCotizacionDelivery);
+router.post('/:id/acciones', actCotizacionContract);
 router.put('/:id/participacion-pravia', requirePermission('finanzas.write'), updateParticipacionPravia);
 router.patch('/:id/participacion-pravia', requirePermission('finanzas.write'), updateParticipacionPravia);
 

@@ -7,6 +7,7 @@ import { normalizeProspectName, prospectServiceByCode, prospectStageByCode } fro
 import { allowedProspectActions, assertProspectFields, assertProspectReplay, assertProspectVersion, failProspect,
   nextProspectStage, PROSPECT_ACTIONS, PROSPECT_CONTRACT_STAGES, ProspectAction, prospectEffectiveAt,
   prospectHash, prospectJson, prospectKey, prospectWait, stageLabel } from '../domain/prospectWorkflow';
+import { initializeQuoteContractInTransaction } from './cotizacionWorkflow.service';
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -34,7 +35,7 @@ export class ProspectWorkflowService {
   }
   private async prospect(db: Db, actor: Actor, id: string) {
     permission(actor, 'prospectos.read');
-    const row = await db.prospecto.findFirst({ where: { id, organization_id: actor.organizationId, archived_at: null, ...prospectoObjectWhere(actor) }, include: detailInclude });
+    const row = await db.prospecto.findFirst({ where: { id, archived_at: null, ...prospectoObjectWhere(actor) }, include: detailInclude });
     if (!row) return failProspect(404, 'PRO001_NOT_FOUND', 'No se encontró el prospecto o no tienes acceso.');
     return row;
   }
@@ -267,6 +268,12 @@ export class ProspectWorkflowService {
           estado: 'BORRADOR', fecha_presupuesto_recibido: source.received_at } });
         await tx.cotizacionDocumento.create({ data: { organization_id: actor.organizationId, cotizacion_id: quote.id,
           documento_id: source.documento_id, tipo_vinculo: 'COTIZACION_NOTARIA', creado_por_id: actor.id, estatus: 'ACTIVO' } });
+        await initializeQuoteContractInTransaction(tx, actor, quote, {
+          effectiveAt: recordedAt,
+          idempotencyKey: `cot001:${key}`,
+          sourceId: source.id,
+          prospectId: id,
+        });
         quoteId = quote.id; evidence = { quoteId, sourceId: source.id };
       }
       const event = await this.event(tx, actor, p, { action, next, effectiveAt, recordedAt, key, hash, evidence });

@@ -1,4 +1,4 @@
-import type { Quote, QuoteConcept, QuoteState, QuoteVersion } from './quotes.types';
+import type { Quote, QuoteConcept, QuoteContractStage, QuoteState, QuoteVersion } from './quotes.types';
 
 export const QUOTE_STATE_LABELS: Record<QuoteState, string> = {
   BORRADOR: 'Borrador',
@@ -10,17 +10,41 @@ export const QUOTE_STATE_LABELS: Record<QuoteState, string> = {
   ACEPTADA: 'Aceptada',
   RECHAZADA: 'Rechazada',
   VENCIDA: 'Vencida',
+  SUSPENDIDA: 'Suspendida',
+  CANCELADA: 'Cancelada',
   CONVERTIDA_EXPEDIENTE: 'Convertida',
+};
+
+export const QUOTE_CONTRACT_STAGE_LABELS: Record<QuoteContractStage, string> = {
+  BORRADOR: 'Borrador',
+  ENVIADA_CLIENTE: 'Enviada al cliente',
+  ACEPTO_ANTICIPO: 'Aceptó / Anticipo',
+  SUSPENDIDA: 'Suspendida',
+  CANCELADA: 'Cancelada',
+  CONVERTIDA_EXPEDIENTE: 'Convertida en expediente',
 };
 
 export const quoteTone = (state: QuoteState) => {
   if (state === 'ACEPTADA') return 'success';
   if (state === 'CONVERTIDA_EXPEDIENTE') return 'converted';
-  if (state === 'RECHAZADA' || state === 'VENCIDA') return 'danger';
+  if (state === 'RECHAZADA' || state === 'VENCIDA' || state === 'CANCELADA') return 'danger';
+  if (state === 'SUSPENDIDA') return 'warning';
   if (state === 'ENVIADA_CLIENTE' || state === 'ENVIADA_NOTARIA') return 'info';
   if (state === 'PRESUPUESTO_RECIBIDO' || state === 'EN_REVISION_ABOGADO' || state === 'EN_NEGOCIACION') return 'warning';
   return 'neutral';
 };
+
+export const quoteDisplayStage = (quote: Quote) => ({
+  label: quote.workflow?.stage
+    ? QUOTE_CONTRACT_STAGE_LABELS[quote.workflow.stage]
+    : QUOTE_STATE_LABELS[quote.estado],
+  tone: quote.workflow?.stage === 'ACEPTO_ANTICIPO' ? 'success'
+    : quote.workflow?.stage === 'CONVERTIDA_EXPEDIENTE' ? 'converted'
+      : quote.workflow?.stage === 'CANCELADA' ? 'danger'
+        : quote.workflow?.stage === 'SUSPENDIDA' ? 'warning'
+          : quote.workflow?.stage === 'ENVIADA_CLIENTE' ? 'info'
+            : quoteTone(quote.estado),
+});
 
 export const money = (value: number | string | null | undefined) => {
   const amount = Number(value ?? 0);
@@ -31,6 +55,13 @@ export const compactMoney = (value: number) => new Intl.NumberFormat('es-MX', { 
 export const shortDate = (value?: string | null) => value ? new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value)) : '—';
 
 export const quoteDeadline = (quote: Quote) => {
+  if (quote.workflow?.stage) {
+    if (quote.workflow.stage === 'ACEPTO_ANTICIPO') return { label: quote.workflow.acceptedAdvanceAt ? `Aceptó / Anticipo · ${shortDate(quote.workflow.acceptedAdvanceAt)}` : 'Aceptó / Anticipo', tone: 'success' };
+    if (quote.workflow.stage === 'CONVERTIDA_EXPEDIENTE') return { label: 'Convertida en expediente', tone: 'converted' };
+    if (quote.workflow.stage === 'SUSPENDIDA') return { label: 'Suspendida', tone: 'warning' };
+    if (quote.workflow.stage === 'CANCELADA') return { label: 'Cancelada', tone: 'danger' };
+    return { label: quote.workflow.stageEnteredAt ? `Desde ${shortDate(quote.workflow.stageEnteredAt)}` : 'Sin fecha registrada', tone: 'muted' };
+  }
   if (quote.estado === 'VENCIDA') return { label: 'Vencida', tone: 'danger' };
   if (quote.estado === 'ACEPTADA') return { label: quote.fecha_aceptacion_cliente ? `Aceptada ${shortDate(quote.fecha_aceptacion_cliente)}` : 'Aceptada', tone: 'success' };
   if (quote.estado === 'CONVERTIDA_EXPEDIENTE') return { label: 'Convertida', tone: 'converted' };

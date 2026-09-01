@@ -1,5 +1,24 @@
-export const QUOTE_STATES = ['BORRADOR', 'ENVIADA_NOTARIA', 'PRESUPUESTO_RECIBIDO', 'EN_REVISION_ABOGADO', 'ENVIADA_CLIENTE', 'EN_NEGOCIACION', 'ACEPTADA', 'RECHAZADA', 'VENCIDA', 'CONVERTIDA_EXPEDIENTE'] as const;
+export const QUOTE_STATES = ['BORRADOR', 'ENVIADA_NOTARIA', 'PRESUPUESTO_RECIBIDO', 'EN_REVISION_ABOGADO', 'ENVIADA_CLIENTE', 'EN_NEGOCIACION', 'ACEPTADA', 'RECHAZADA', 'VENCIDA', 'SUSPENDIDA', 'CANCELADA', 'CONVERTIDA_EXPEDIENTE'] as const;
 export type QuoteState = typeof QUOTE_STATES[number];
+
+export const QUOTE_CONTRACT_STAGES = ['BORRADOR', 'ENVIADA_CLIENTE', 'ACEPTO_ANTICIPO', 'SUSPENDIDA', 'CANCELADA', 'CONVERTIDA_EXPEDIENTE'] as const;
+export type QuoteContractStage = typeof QUOTE_CONTRACT_STAGES[number];
+export type QuoteContractAction = 'ENVIAR_CLIENTE' | 'REENVIAR_CLIENTE' | 'REGISTRAR_ACEPTACION_ANTICIPO' | 'SUSPENDER' | 'CANCELAR' | 'CONVERTIR';
+export type QuoteWorkflowEvent = {
+  id: string; previous: QuoteContractStage | null; next: QuoteContractStage;
+  previousLabel?: string | null; nextLabel: string; action: string; actionLabel: string;
+  effectiveAt: string; recordedAt: string; channel?: string | null; recipient?: string | null;
+  reason?: string | null; changesStage: boolean; actor: string;
+  quoteVersion?: { id: string; version: number; pdf_url?: string | null } | null;
+};
+export type QuoteWorkflow = {
+  stage: QuoteContractStage | null; stageLabel: string; stageEnteredAt?: string | null;
+  knowledge: 'KNOWN' | 'UNKNOWN_LEGACY' | 'NOT_APPLICABLE'; version: number;
+  actions: Array<QuoteContractAction | { code: QuoteContractAction; label: string }>;
+  firstSentAt?: string | null; lastSentAt?: string | null; acceptedAdvanceAt?: string | null;
+  suspendedAt?: string | null; cancelledAt?: string | null; convertedAt?: string | null;
+  provenance?: string | null; events?: QuoteWorkflowEvent[];
+};
 
 export type QuoteConceptCategory = 'HONORARIOS' | 'DERECHOS' | 'IMPUESTOS' | 'GASTOS' | 'OTROS';
 export type QuoteConcept = { categoria: QuoteConceptCategory; concepto: string; monto: number };
@@ -86,6 +105,7 @@ export type Quote = {
   expediente?: { id: string; numero_pravia?: string | null } | null;
   transiciones_permitidas?: QuoteState[];
   conversion?: ConversionEligibility;
+  workflow?: QuoteWorkflow;
 };
 
 export type QuoteMetrics = { sent: number; accepted: number; totalAmount: number; conversionRate: number | null };

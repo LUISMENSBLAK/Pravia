@@ -8,10 +8,16 @@ const hasGlobalRead = (user: AuthUser) => ['DIRECCION', 'ADMINISTRACION', 'CONSU
 const canOperateCommercialCatalog = (user: AuthUser) => user.rol === 'RECEPCION';
 
 export const prospectoObjectWhere = (user: AuthUser) =>
-  hasGlobalRead(user) || canOperateCommercialCatalog(user) ? {} : { user_id: user.id };
+  ({
+    organization_id: user.organizationId,
+    ...(hasGlobalRead(user) || canOperateCommercialCatalog(user) ? {} : { user_id: user.id }),
+  });
 
 export const cotizacionObjectWhere = (user: AuthUser) =>
-  hasGlobalRead(user) || canOperateCommercialCatalog(user) ? {} : { user_id: user.id };
+  ({
+    organization_id: user.organizationId,
+    ...(hasGlobalRead(user) || canOperateCommercialCatalog(user) ? {} : { user_id: user.id }),
+  });
 
 export const comparecienteObjectWhere = (user: AuthUser) => {
   if (hasGlobalRead(user)) return {};
@@ -38,12 +44,10 @@ export const predioObjectWhere = (user: AuthUser) => {
 };
 
 export async function canAccessProspecto(user: AuthUser, id: string) {
-  if (hasGlobalRead(user) || canOperateCommercialCatalog(user)) return true;
   return Boolean(await prisma.prospecto.findFirst({ where: { id, archived_at: null, ...prospectoObjectWhere(user) }, select: { id: true } }));
 }
 
 export async function canAccessCotizacion(user: AuthUser, id: string) {
-  if (hasGlobalRead(user) || canOperateCommercialCatalog(user)) return true;
   return Boolean(await prisma.cotizacion.findFirst({ where: { id, ...cotizacionObjectWhere(user) }, select: { id: true } }));
 }
 
@@ -67,9 +71,8 @@ export async function canAccessPredio(user: AuthUser, id: string) {
 }
 
 export async function canAccessDocumento(user: AuthUser, id: string) {
-  if (hasGlobalRead(user)) return true;
-  const document = await prisma.documento.findUnique({
-    where: { id },
+  const document = await prisma.documento.findFirst({
+    where: { id, organization_id: user.organizationId },
     select: {
       id: true,
       subido_por_id: true,
@@ -87,6 +90,7 @@ export async function canAccessDocumento(user: AuthUser, id: string) {
     },
   });
   if (!document) return false;
+  if (hasGlobalRead(user)) return true;
   if (document.subido_por_id === user.id) return true;
 
   const prospectIds = [document.prospecto_id, ...document.prospectoVinculos.map((link) => link.prospecto_id), ...(document.fuentesNotarialesProspecto ?? []).map((source) => source.prospecto_id)].filter(Boolean) as string[];

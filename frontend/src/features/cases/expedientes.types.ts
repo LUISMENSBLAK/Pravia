@@ -131,6 +131,7 @@ export type EligibleQuoteCandidate = {
   notaria?: { id: string; nombre: string; numero_notaria?: string | null; municipio?: string | null } | null;
   creada_por: { id: string; nombre: string; apellido?: string | null };
   conversion: { eligible: true; validatedAdvanceTotal: number };
+  workflow?: { stage: 'BORRADOR' | 'ENVIADA_CLIENTE' | 'ACEPTO_ANTICIPO' | 'SUSPENDIDA' | 'CANCELADA' | 'CONVERTIDA_EXPEDIENTE' | null; version: number; stageEnteredAt?: string | null };
 };
 
 export type ReadinessIndicator = { key: string; label: string; state: 'COMPLETO' | 'PENDIENTE' | 'NO_APLICA' | 'NO_CONFIGURADO'; detail: string };

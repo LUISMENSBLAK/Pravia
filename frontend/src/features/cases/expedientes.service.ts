@@ -51,9 +51,9 @@ export const expedientesService = {
   eligibleQuotes(signal?: AbortSignal) {
     return apiRequest<{ data: EligibleQuoteCandidate[]; total: number }>('/expedientes/cotizaciones-elegibles', { signal });
   },
-  convertQuote(cotizacionId: string) {
+  convertQuote(cotizacionId: string, workflow?: { version: number; effectiveAt: string; idempotencyKey: string }) {
     return apiRequest<ExpedienteDetail & { idempotent?: boolean }>('/expedientes/convertir-cotizacion', {
-      method: 'POST', body: JSON.stringify({ cotizacion_id: cotizacionId }),
+      method: 'POST', body: JSON.stringify({ cotizacion_id: cotizacionId, ...(workflow ? { expectedVersion: workflow.version, effectiveAt: workflow.effectiveAt, idempotencyKey: workflow.idempotencyKey, confirm: true } : {}) }),
     });
   },
   transition(id: string, input: { expected_version: number; nuevo_estatus: string; nueva_etapa_clave?: string; notas?: string; fecha_efectiva?: string; datos_firma?: { fecha_firma: string; lugar: string }; document_revision?: string }) {

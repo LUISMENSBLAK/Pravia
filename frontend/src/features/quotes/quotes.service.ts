@@ -1,5 +1,5 @@
 import { apiRequest } from '../../services/api/client';
-import type { CreateQuoteVersionInput, NotaryOption, ProspectCandidate, Quote, QuoteDocument, QuoteFollowUp, QuoteListFilters, QuoteListResult, QuoteState, QuoteVersion } from './quotes.types';
+import type { CreateQuoteVersionInput, NotaryOption, ProspectCandidate, Quote, QuoteContractAction, QuoteDocument, QuoteFollowUp, QuoteListFilters, QuoteListResult, QuoteState, QuoteVersion } from './quotes.types';
 
 const asObject = (value: unknown): Record<string, unknown> | null => value && typeof value === 'object' ? value as Record<string, unknown> : null;
 const queryString = (filters: QuoteListFilters) => {
@@ -65,8 +65,11 @@ export const quotesService = {
   async registerDelivery(id: string, input: { destino: 'NOTARIA' | 'CLIENTE'; canal: string; destinatario: string; resumen: string }) {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/registrar-envio`, { method: 'POST', body: JSON.stringify(input) });
   },
-  async convert(id: string): Promise<{ id: string; numero_pravia?: string; idempotent?: boolean }> {
-    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/convertir`, { method: 'POST', body: JSON.stringify({}) });
+  async contractAction(id: string, input: { action: Exclude<QuoteContractAction, 'CONVERTIR'>; expectedVersion: number; idempotencyKey: string; confirm: true; effectiveAt: string; channel?: string; recipient?: string; evidence?: string; versionId?: string; reason?: string }) {
+    return apiRequest<{ idempotent: boolean; eventId: string }>(`/cotizaciones/${encodeURIComponent(id)}/acciones`, { method: 'POST', body: JSON.stringify(input) });
+  },
+  async convert(id: string, input?: { expectedVersion: number; idempotencyKey: string; confirm: true; effectiveAt: string }): Promise<{ id: string; numero_pravia?: string; idempotent?: boolean }> {
+    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/convertir`, { method: 'POST', body: JSON.stringify(input ?? {}) });
   },
   async documentUrl(documentId: string): Promise<string> {
     const payload = await apiRequest<{ url: string }>(`/documentos/${encodeURIComponent(documentId)}/url`);
