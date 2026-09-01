@@ -144,24 +144,36 @@ describe('ReportingService', () => {
   });
 
   it('calcula honorarios semanales y mensuales con ventanas temporales independientes', async () => {
-    const db = database();
-    const { week, month } = reportingCalendarRanges('America/Mexico_City');
-    const inWeek = new Date(week.from.getTime() + 60 * 60_000);
-    const inMonthOutsideWeek = new Date(month.from.getTime() + 24 * 60 * 60_000);
-    const priorMonth = new Date(month.from.getTime() - 24 * 60 * 60_000);
-    const yearFees = [
-      fee('week', 80_000, 0, { recognized: inWeek }),
-      fee('month', 120_000, 0, { recognized: inMonthOutsideWeek }),
-      fee('prior', 300_000, 0, { recognized: priorMonth }),
-    ];
-    db.user.findMany.mockResolvedValue([{ id: 'u1', nombre: 'Ana', apellido: 'Ruiz' }]);
-    db.honorarioGenerado.findMany.mockImplementation(({ where }: any) => {
-      const from = where.fecha_reconocimiento?.gte?.getTime();
-      return Promise.resolve(from === month.from.getTime() ? yearFees.slice(0, 2) : yearFees);
-    });
-    const result = await new ReportingService(db).lawyers(user(), { periodo: 'ESTE_ANO' });
-    expect(result.rows[0]).toMatchObject({ honorarios_generados: 500_000, honorarios_semana: 80_000, honorarios_mes: 200_000 });
-    expect(result.rows[0]?.honorarios_semana).not.toBe(result.rows[0]?.honorarios_mes);
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-08-19T18:00:00.000Z'));
+      const db = database();
+      const { week, month } = reportingCalendarRanges('America/Mexico_City');
+      const inWeek = new Date(week.from.getTime() + 60 * 60_000);
+      const inMonthOutsideWeek = new Date(month.from.getTime() + 24 * 60 * 60_000);
+      const priorMonth = new Date(month.from.getTime() - 24 * 60 * 60_000);
+      const yearFees = [
+        fee('week', 80_000, 0, { recognized: inWeek }),
+        fee('month', 120_000, 0, { recognized: inMonthOutsideWeek }),
+        fee('prior', 300_000, 0, { recognized: priorMonth }),
+      ];
+      const memberIds = (from: Date, to: Date) => yearFees
+        .filter((item) => item.fecha_reconocimiento >= from && item.fecha_reconocimiento <= to)
+        .map((item) => item.id);
+      expect(memberIds(week.from, week.to)).toEqual(['week']);
+      expect(memberIds(month.from, month.to)).toEqual(['week', 'month']);
+
+      db.user.findMany.mockResolvedValue([{ id: 'u1', nombre: 'Ana', apellido: 'Ruiz' }]);
+      db.honorarioGenerado.findMany.mockImplementation(({ where }: any) => {
+        const from = where.fecha_reconocimiento?.gte?.getTime();
+        return Promise.resolve(from === month.from.getTime() ? yearFees.slice(0, 2) : yearFees);
+      });
+      const result = await new ReportingService(db).lawyers(user(), { periodo: 'ESTE_ANO' });
+      expect(result.rows[0]).toMatchObject({ honorarios_generados: 500_000, honorarios_semana: 80_000, honorarios_mes: 200_000 });
+      expect(result.rows[0]?.honorarios_semana).not.toBe(result.rows[0]?.honorarios_mes);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('presenta porcentaje y monto restante por abogado y deja Sin meta cuando no existe', async () => {
