@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 
 export interface DomainEvent<T = Record<string, unknown>> {
   event_id: string;
+  organization_id: string;
   event_type: string;
   aggregate_type: string;
   aggregate_id: string;
@@ -20,6 +21,7 @@ export class DomainEventBus {
     if (!this.handlers.has(eventType)) {
       this.handlers.set(eventType, []);
     }
+    if (this.handlers.get(eventType)!.some((registered) => registered.name === handlerName)) return;
     this.handlers.get(eventType)!.push({ name: handlerName, handler });
   }
 

@@ -32,6 +32,8 @@ import { errorLogLevel, normalizeErrorBody } from './utils/httpError';
 import { getStorageCompensationHealth, storageCompensationWorker } from './workers/storageCompensation.worker';
 import { resolveRuntimeConfig, validateRuntimeConfig } from './config/runtime';
 import { validateJwtSecret } from './auth/authTokens';
+import './events/screeningEventHandlers';
+import { DomainEventOutboxService } from './services/domainEventOutbox.service';
 
 const startupErrors = validateRuntimeConfig(resolveRuntimeConfig());
 const jwtSecretError = validateJwtSecret(process.env.AUTH_JWT_SECRET);
@@ -293,6 +295,18 @@ if (String(process.env.STORAGE_COMPENSATION_WORKER_ENABLED || 'false').toLowerCa
   storageCompensationWorker.start();
 }
 
+const h3Outbox = new DomainEventOutboxService(prisma);
+let h3OutboxBusy = false;
+const h3OutboxTimer = setInterval(() => {
+  if (h3OutboxBusy) return;
+  h3OutboxBusy = true;
+  void h3Outbox.processPendingOutboxEvents(10, `h3-screening-${process.pid}`, [
+    'ComparecienteCreado', 'ComparecienteIdentityChanged', 'ComplianceVulnerableOperationDetected',
+    'ExpedientePartyLinked', 'ExpedientePartyRelationUpdated',
+  ]).catch((error) => console.error(JSON.stringify({ type: 'h3_screening_outbox_error', error_name: error instanceof Error ? error.name : 'UnknownError' }))).finally(() => { h3OutboxBusy = false; });
+}, 2_000);
+h3OutboxTimer.unref();
+
 let shuttingDown = false;
 async function shutdown(signal: string) {
   if (shuttingDown) return;
@@ -305,6 +319,7 @@ async function shutdown(signal: string) {
   }, 15_000);
   forced.unref();
   const workerDrained = await storageCompensationWorker.stop(10_000);
+  clearInterval(h3OutboxTimer);
   await new Promise<void>((resolve) => server.close(() => resolve()));
   await prisma.$disconnect().catch(() => undefined);
   clearTimeout(forced);

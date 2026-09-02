@@ -10,11 +10,49 @@ function mockDb(overrides: Record<string, unknown> = {}) {
     storageCompensationJob: { findFirst: vi.fn().mockResolvedValue(job), updateMany: vi.fn().mockResolvedValue({ count: 1 }), findUnique: vi.fn().mockResolvedValue(job), update: vi.fn().mockResolvedValue({}), create: vi.fn().mockResolvedValue({}) },
     cargaTemporalDocumento: { findUnique: vi.fn().mockResolvedValue(carga), count: vi.fn().mockResolvedValue(0), update: vi.fn().mockResolvedValue({}) },
     assistantAttachment: { findFirst: vi.fn().mockResolvedValue(null), findUnique: vi.fn(), count: vi.fn().mockResolvedValue(0), update: vi.fn().mockResolvedValue({}) },
+    screeningReport: { findUnique: vi.fn().mockResolvedValue(null) },
     documento: { count: vi.fn().mockResolvedValue(0) }, ...overrides,
   } as any;
 }
 
 describe('StorageCompensationWorker', () => {
+  it('completa idempotentemente un cleanup de reporte sin ganador cuando el blob ya no existe', async () => {
+    const reportJob = {
+      ...job, id: 'job-orphan-report', carga_temporal_id: null, screening_report_id: null,
+      organization_id: organizationId, tipo_operacion: 'ELIMINAR_REPORTE_SCREENING_HUERFANO',
+      storage_key: `organizations/${organizationId}/screening/query-1/orphan.pdf`,
+    };
+    const db = mockDb(); db.storageCompensationJob.findFirst.mockResolvedValue(reportJob); db.storageCompensationJob.findUnique.mockResolvedValue(reportJob);
+    const remove = vi.fn().mockResolvedValue(undefined);
+    await new StorageCompensationWorker(db, remove, { pollMs: 1000, maxAttempts: 3, staleMs: 60_000 }).runOnce();
+    expect(remove).toHaveBeenCalledWith(reportJob.storage_key);
+    expect(db.storageCompensationJob.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ estatus: 'COMPLETADO' }) }));
+  });
+
+  it('no elimina un blob huérfano programado si ahora está referenciado por Documento', async () => {
+    const reportJob = {
+      ...job, id: 'job-referenced-report', carga_temporal_id: null, screening_report_id: null,
+      organization_id: organizationId, tipo_operacion: 'ELIMINAR_REPORTE_SCREENING_HUERFANO',
+      storage_key: `organizations/${organizationId}/screening/query-1/referenced.pdf`,
+    };
+    const db = mockDb(); db.storageCompensationJob.findFirst.mockResolvedValue(reportJob); db.storageCompensationJob.findUnique.mockResolvedValue(reportJob); db.documento.count.mockResolvedValue(1);
+    const remove = vi.fn();
+    await new StorageCompensationWorker(db, remove, { pollMs: 1000, maxAttempts: 3, staleMs: 60_000 }).runOnce();
+    expect(remove).not.toHaveBeenCalled();
+    expect(db.storageCompensationJob.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ estatus: 'FALLIDO' }) }));
+  });
+
+  it('no elimina el blob ganador cuando el job referencia un ScreeningReport canónico', async () => {
+    const winnerKey = `organizations/${organizationId}/screening/query-1/winner.pdf`;
+    const reportJob = { ...job, id: 'job-winner', carga_temporal_id: null, screening_report_id: 'report-1', organization_id: organizationId, tipo_operacion: 'ELIMINAR_REPORTE_SCREENING_HUERFANO', storage_key: winnerKey };
+    const db = mockDb(); db.storageCompensationJob.findFirst.mockResolvedValue(reportJob); db.storageCompensationJob.findUnique.mockResolvedValue(reportJob);
+    db.screeningReport.findUnique.mockResolvedValue({ id: 'report-1', organization_id: organizationId, query_id: 'query-1', documento: { storage_key: winnerKey } });
+    const remove = vi.fn();
+    await new StorageCompensationWorker(db, remove, { pollMs: 1000, maxAttempts: 3, staleMs: 60_000 }).runOnce();
+    expect(remove).not.toHaveBeenCalled();
+    expect(db.storageCompensationJob.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ estatus: 'FALLIDO' }) }));
+  });
+
   it('elimina de forma idempotente solo una referencia temporal sin propietarios activos', async () => {
     const db = mockDb();
     const remove = vi.fn().mockResolvedValue(undefined);

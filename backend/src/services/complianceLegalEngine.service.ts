@@ -14,6 +14,7 @@ import {
 } from '../domain/complianceLegalEngine';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { ComplianceDocumentService } from './complianceDocument.service';
+import { ensureOperationScreeningForPartyTx } from './operationScreening.service';
 
 type User = NonNullable<Request['user']>;
 const ENGINE_VERSION = 'H1-CUM-MAT-1';
@@ -243,6 +244,7 @@ export class ComplianceLegalEngineService {
         await tx.complianceAlert.create({ data: { organization_id: user.organizationId, expediente_id: expediente.id, state_id: state.id, review_id: review.id, requirement_id: requirement.id, alert_key: 'NO_AUTHORITATIVE_RULES', level: 'CRITICA', message: 'No existe una regla legal verificada y vigente para la fecha confirmada; no se emitió una conclusión legal.' } });
       }
 
+      const lstMaterialized = new Set<string>();
       for (const item of evaluations) {
         const result = await tx.complianceRuleResult.create({ data: { organization_id: user.organizationId, review_id: review.id, rule_revision_id: item.revision.id, expediente_acto_id: item.act.id, applicability: item.result.applicability, vulnerable_activity: item.result.vulnerableActivity, notice_required: item.result.noticeRequired, notice_type: item.result.noticeType, notice_channel: item.result.noticeChannel, missing_paths: json(item.result.missingPaths), result_snapshot: json(item.result), legal_basis_snapshot: json({ legal_basis: item.result.legalBasis, revision_id: item.revision.id, checksum: item.revision.checksum }) } });
         const deadlineInfo = calculateLegalDeadline(item.result.obligation?.deadline, legalDate.date);
@@ -265,6 +267,27 @@ export class ComplianceLegalEngineService {
           await tx.complianceAlert.create({ data: { organization_id: user.organizationId, expediente_id: expediente.id, state_id: state.id, review_id: review.id, requirement_id: requirement.id, rule_revision_id: item.revision.id, alert_key: `DEADLINE:${key}`, level, message: level === 'CRITICA' ? 'Una obligación jurídica aplicable se encuentra vencida y requiere atención.' : 'Existe una obligación jurídica aplicable con plazo determinado por la regla vigente.', deadline: deadlineInfo.deadline, responsible_id: expediente.abogado_id || null, ...alertWindow } });
         }
         if (item.result.obligation) await tx.complianceObligation.create({ data: { review_id: review.id, type: `${item.result.obligation.type}:${item.result.stableKey}:${item.act.id}`, legal_basis: item.result.legalBasis, rule_version: String(item.result.version), rule_status: 'ACTIVE', origin_date: legalDate.date!, due_at: deadlineInfo.deadline, channel: item.result.obligation.channel, status: 'POR_DETERMINAR', checklist: json({}), snapshot: json(item.result), rule_result_id: result.id, rule_revision_id: item.revision.id, obligation_key: item.result.obligation.key, idempotency_key: `${review.id}:${item.revision.id}:${item.act.id}:${item.result.obligation.key}`, legal_deadline_source: deadlineInfo.source } });
+        if (item.result.vulnerableActivity === true) {
+          const relevantParties = expediente.comparecientes.filter((party) => !party.expediente_acto_id || party.expediente_acto_id === item.act.id);
+          for (const party of relevantParties) {
+            const lstKey = `LST:${item.act.id}:${party.compareciente_id}`;
+            if (lstMaterialized.has(lstKey)) continue;
+            lstMaterialized.add(lstKey);
+            const screeningEvent = await tx.domainEventOutbox.create({ data: {
+              organization_id: user.organizationId, event_type: 'ComplianceVulnerableOperationDetected', aggregate_type: 'Expediente', aggregate_id: expediente.id,
+              actor_user_id: user.id, correlation_id: correlationId,
+              payload: json({ expediente_id: expediente.id, compareciente_id: party.compareciente_id, expediente_acto_id: item.act.id, review_id: review.id, actor_user_id: user.id }),
+            } });
+            const operation = await ensureOperationScreeningForPartyTx(tx, {
+              organizationId: user.organizationId, expedienteId: expediente.id,
+              comparecienteId: party.compareciente_id, expedienteActoId: item.act.id, reviewId: review.id,
+              actorUserId: user.id, correlationId, triggerEventId: screeningEvent.id,
+            });
+            if (operation.eligible) {
+              statuses.push('PENDIENTE'); deadlines.push(null);
+            }
+          }
+        }
       }
 
       const nextDeadline = deadlines.filter((date): date is Date => Boolean(date)).sort((a, b) => a.getTime() - b.getTime())[0] || null;

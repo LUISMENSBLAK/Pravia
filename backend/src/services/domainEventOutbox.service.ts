@@ -13,7 +13,7 @@ export class DomainEventOutboxService {
    * Procesador del Outbox con Reclamación Atómica (FOR UPDATE SKIP LOCKED)
    * y Garantía Estricta de Idempotencia por Handler.
    */
-  public async processPendingOutboxEvents(batchSize: number = 10, workerId: string = `worker-${process.pid}`): Promise<number> {
+  public async processPendingOutboxEvents(batchSize: number = 10, workerId: string = `worker-${process.pid}`, eventTypes?: string[]): Promise<number> {
     // 1. Reclamación Atómica de Eventos usando FOR UPDATE SKIP LOCKED
     // Esto garantiza que múltiples workers concurrentes nunca reclamen ni procesen el mismo evento.
     const claimedEvents: any[] = await runWithPlatformOperation('DOMAIN_OUTBOX_CLAIM', () => this.prisma.$queryRawUnsafe(`
@@ -26,6 +26,7 @@ export class DomainEventOutboxService {
         SELECT "id" FROM pravia_os."domain_event_outbox"
         WHERE "attempts" < 5
           AND "organization_id" IS NOT NULL
+          AND ($3::text[] IS NULL OR "event_type" = ANY($3::text[]))
           AND (
             ("estatus" IN ('PENDIENTE', 'FALLIDO') AND "available_at" <= NOW())
             OR ("estatus" = 'PROCESANDO' AND "locked_at" < NOW() - INTERVAL '5 minutes')
@@ -35,7 +36,7 @@ export class DomainEventOutboxService {
         LIMIT $2
       )
       RETURNING *;
-    `, workerId, batchSize));
+    `, workerId, batchSize, eventTypes?.length ? eventTypes : null));
 
     if (!claimedEvents || claimedEvents.length === 0) {
       return 0;
@@ -66,10 +67,11 @@ export class DomainEventOutboxService {
 
       const domainEvent: DomainEvent = {
         event_id: outboxRecord.id,
+        organization_id: outboxRecord.organization_id,
         event_type: outboxRecord.event_type,
         aggregate_type: outboxRecord.aggregate_type,
         aggregate_id: outboxRecord.aggregate_id,
-        actor_user_id: (outboxRecord.payload as any)?.actor_user_id || 'system',
+        actor_user_id: (outboxRecord.payload as any)?.actor_user_id || outboxRecord.actor_user_id || 'system',
         occurred_at: outboxRecord.occurred_at,
         correlation_id: outboxRecord.correlation_id,
         payload: outboxRecord.payload as Record<string, unknown>

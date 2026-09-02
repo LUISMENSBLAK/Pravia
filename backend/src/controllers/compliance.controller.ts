@@ -4,17 +4,73 @@ import { ComplianceReviewService } from '../services/complianceReview.service';
 import { ComplianceLegalEngineService } from '../services/complianceLegalEngine.service';
 import { ComplianceDocumentService } from '../services/complianceDocument.service';
 import { downloadFile } from '../services/supabase.service';
+import { complianceScreeningService, ScreeningError } from '../services/complianceScreening.service';
 
 const actor = (req: Request) => req.user?.id;
 const correlation = (req: Request) => (req as any).correlationId;
 
 const sendError = (res: Response, error: any, fallback: string) => {
-  const status = error instanceof ComplianceError ? error.status : error.code === 'P2002' ? 409 : 500;
-  const message = error.code === 'P2002' ? 'El registro ya existe.' : error instanceof ComplianceError ? error.message : 'No fue posible completar la operación de cumplimiento.';
-  return res.status(status).json({ success: false, error: message, code: error instanceof ComplianceError ? error.code : error.code === 'P2002' ? 'COMPLIANCE_CONFLICT' : fallback });
+  const controlled = error instanceof ComplianceError || error instanceof ScreeningError;
+  const status = controlled ? error.status : error.code === 'P2002' ? 409 : 500;
+  const message = error.code === 'P2002' ? 'El registro ya existe.' : controlled ? error.message : 'No fue posible completar la operación de cumplimiento.';
+  return res.status(status).json({ success: false, error: message, code: controlled ? error.code : error.code === 'P2002' ? 'COMPLIANCE_CONFLICT' : fallback });
 };
 
 export class ComplianceController {
+  static async screeningCurrent(req: Request, res: Response) {
+    try { return res.json({ success: true, ...(await complianceScreeningService.current(req.user!, req.params.comparecienteId)) }); }
+    catch (error) { return sendError(res, error, 'SCREENING_CURRENT_FAILED'); }
+  }
+
+  static async screeningRerun(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, data: await complianceScreeningService.manualRerun(req.user!, req.params.comparecienteId, String(req.body.idempotency_key || req.header('idempotency-key') || ''), correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'SCREENING_RERUN_FAILED'); }
+  }
+
+  static async screeningTechnicalRetry(req: Request, res: Response) {
+    try { return res.status(200).json({ success: true, data: await complianceScreeningService.technicalRetry(req.user!, req.params.comparecienteId, req.params.queryId, correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'SCREENING_TECHNICAL_RETRY_FAILED'); }
+  }
+
+  static async screeningResolve(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, resolution: await complianceScreeningService.resolve(req.user!, req.params.comparecienteId, req.params.queryId, req.params.candidateId, String(req.body.decision || ''), String(req.body.rationale || ''), correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'SCREENING_RESOLUTION_FAILED'); }
+  }
+
+  static async screeningReport(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, ...(await complianceScreeningService.generateReport(req.user!, req.params.comparecienteId, req.params.queryId, String(req.body.idempotency_key || req.header('idempotency-key') || ''), correlation(req))) }); }
+    catch (error) { return sendError(res, error, 'SCREENING_REPORT_FAILED'); }
+  }
+
+  static async screeningFree(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, data: await complianceScreeningService.freeSearch(req.user!, req.body.identity, String(req.body.idempotency_key || req.header('idempotency-key') || ''), correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'SCREENING_FREE_FAILED'); }
+  }
+
+  static async screeningOperation(req: Request, res: Response) {
+    try { return res.json({ success: true, ...(await complianceScreeningService.operationStatus(req.user!, req.params.expedienteId)) }); }
+    catch (error) { return sendError(res, error, 'SCREENING_OPERATION_FAILED'); }
+  }
+
+  static async screeningSources(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await complianceScreeningService.listSources(req.user!) }); }
+    catch (error) { return sendError(res, error, 'SCREENING_SOURCES_FAILED'); }
+  }
+
+  static async createScreeningSource(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, data: await complianceScreeningService.createSource(req.user!, req.body) }); }
+    catch (error) { return sendError(res, error, 'SCREENING_SOURCE_CREATE_FAILED'); }
+  }
+
+  static async createScreeningSourceVersion(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, data: await complianceScreeningService.createSourceVersion(req.user!, req.params.sourceId, req.body) }); }
+    catch (error) { return sendError(res, error, 'SCREENING_SOURCE_VERSION_CREATE_FAILED'); }
+  }
+
+  static async activateScreeningSourceVersion(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await complianceScreeningService.activateSourceVersion(req.user!, req.params.sourceId, req.params.versionId) }); }
+    catch (error) { return sendError(res, error, 'SCREENING_SOURCE_VERSION_ACTIVATE_FAILED'); }
+  }
   static async documentStructure(req: Request, res: Response) {
     try { return res.json({ success: true, ...(await ComplianceDocumentService.read(req.user!, req.params.expedienteId)) }); }
     catch (error) { return sendError(res, error, 'COMPLIANCE_DOCUMENT_STRUCTURE_FAILED'); }

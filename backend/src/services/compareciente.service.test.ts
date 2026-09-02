@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { runWithActorContext, TEST_MEMBERSHIP_ID, TEST_ORGANIZATION_ID } from '../auth/actorContext';
 import { ComparecienteService } from './compareciente.service';
 
 const now = new Date('2026-08-12T17:00:00.000Z');
@@ -81,11 +82,11 @@ describe('ComparecienteService human review', () => {
     const writePrisma = { $transaction: vi.fn(async (callback: any) => callback(tx)) };
     const service = new ComparecienteService(writePrisma as any);
 
-    await service.actualizarMaster('party-1', {
+    await runWithActorContext({ userId: 'user-1', organizationId: TEST_ORGANIZATION_ID, membershipId: TEST_MEMBERSHIP_ID, role: 'DIRECCION', permissions: [], scope: 'GLOBAL', sessionId: 'test-session' }, () => service.actualizarMaster('party-1', {
       nombre: 'Maria',
       rfc: 'LOPM900101AA1',
       domicilio_fiscal: { codigo_postal: '63100', pais: 'México' },
-    }, 'user-1');
+    }, 'user-1'));
 
     expect(tx.comparecienteDatoFuente.update).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'source-rfc' },

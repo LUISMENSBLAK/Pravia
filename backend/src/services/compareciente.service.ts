@@ -6,6 +6,8 @@ import { extraerMultiplesDocumentos, type DocumentoParaExtraccion } from './open
 import { recordAIFailure, recordAIUsages } from './aiUsage.service';
 import { requireActorContext } from '../auth/actorContext';
 import { ComplianceDocumentService } from './complianceDocument.service';
+import { enqueueComparecienteCreatedTx, loadScreeningIdentity, queueMasterScreeningTx } from './complianceScreening.service';
+import { screeningIdentityFingerprint } from '../domain/complianceScreening';
 
 type IdentityState = 'VERIFICADA' | 'PENDIENTE' | 'OBSERVACION';
 type HealthState = 'COMPLETO' | 'PENDIENTE' | 'OBSERVACION' | 'NO_APLICA' | 'NO_CONFIGURADO';
@@ -602,19 +604,10 @@ export class ComparecienteService {
         }
       });
 
-      await tx.domainEventOutbox.create({
-        data: {
-          event_type: 'ComparecienteCreado',
-          aggregate_type: 'Compareciente',
-          aggregate_id: compareciente.id,
-          payload: {
-            compareciente_id: compareciente.id,
-            tipo_persona: 'FISICA',
-            nombre_completo: nombreCompleto,
-            actor_user_id: dto.creado_por_id
-          },
-          correlation_id: correlationId
-        }
+      const organizationId = requireActorContext().organizationId;
+      await enqueueComparecienteCreatedTx(tx, {
+        organizationId, comparecienteId: compareciente.id, actorUserId: dto.creado_por_id,
+        tipoPersona: 'FISICA', identityLabel: nombreCompleto, correlationId,
       });
 
       return { compareciente, personaFisica };
@@ -750,19 +743,10 @@ export class ComparecienteService {
         }
       });
 
-      await tx.domainEventOutbox.create({
-        data: {
-          event_type: 'ComparecienteCreado',
-          aggregate_type: 'Compareciente',
-          aggregate_id: compareciente.id,
-          payload: {
-            compareciente_id: compareciente.id,
-            tipo_persona: 'MORAL',
-            razon_social: dto.razon_social,
-            actor_user_id: dto.creado_por_id
-          },
-          correlation_id: correlationId
-        }
+      const organizationId = requireActorContext().organizationId;
+      await enqueueComparecienteCreatedTx(tx, {
+        organizationId, comparecienteId: compareciente.id, actorUserId: dto.creado_por_id,
+        tipoPersona: 'MORAL', identityLabel: dto.razon_social, correlationId,
       });
 
       return { compareciente, personaMoral };
@@ -772,6 +756,7 @@ export class ComparecienteService {
   /** Edición explícita del dato maestro. No altera snapshots de cumplimiento ni relaciones históricas. */
   public async actualizarMaster(id: string, dto: Record<string, any>, actorUserId: string) {
     return this.prisma.$transaction(async (tx) => {
+      const organizationId = requireActorContext().organizationId;
       const current = await tx.compareciente.findFirst({ where: { id, archived_at: null }, include: {
         personaFisica: true, personaMoral: true,
         domicilios: { where: { archived_at: null, vigente: true } },
@@ -781,6 +766,7 @@ export class ComparecienteService {
         datosFuente: { where: { archived_at: null, estado: { in: ['PENDIENTE_CONFIRMACION', 'EN_CONFLICTO'] } } },
       } });
       if (!current) throw new Error('Compareciente no encontrado.');
+      const identityBefore = await loadScreeningIdentity(tx, organizationId, id);
       let nombreBusqueda = current.nombre_busqueda;
       if (current.tipo_persona === 'FISICA' && current.personaFisica) {
         const nombre = this.uppercase(dto.nombre ?? current.personaFisica.nombre) || '';
@@ -893,7 +879,17 @@ export class ComparecienteService {
           },
         });
       }
-      await tx.auditLog.create({ data: { user_id: actorUserId, accion: 'EDITAR_COMPARECIENTE', entidad: 'Compareciente', entidad_id: id, valores_anteriores: { version: current.version }, valores_nuevos: { version: header.version, campos: Object.keys(dto) }, detalles: { modulo: 'COMPARECIENTES' }, correlation_id: crypto.randomUUID() } });
+      const correlationId = crypto.randomUUID();
+      await tx.auditLog.create({ data: { user_id: actorUserId, accion: 'EDITAR_COMPARECIENTE', entidad: 'Compareciente', entidad_id: id, valores_anteriores: { version: current.version }, valores_nuevos: { version: header.version, campos: Object.keys(dto) }, detalles: { modulo: 'COMPARECIENTES' }, correlation_id: correlationId } });
+      const identityAfter = await loadScreeningIdentity(tx, organizationId, id);
+      if (screeningIdentityFingerprint(identityBefore) !== screeningIdentityFingerprint(identityAfter)) {
+        const event = await tx.domainEventOutbox.create({ data: {
+          organization_id: organizationId, event_type: 'ComparecienteIdentityChanged', aggregate_type: 'Compareciente', aggregate_id: id,
+          actor_user_id: actorUserId, correlation_id: correlationId,
+          payload: JSON.parse(JSON.stringify({ compareciente_id: id, actor_user_id: actorUserId, from_fingerprint: screeningIdentityFingerprint(identityBefore), to_fingerprint: screeningIdentityFingerprint(identityAfter) })),
+        } });
+        await queueMasterScreeningTx(tx, { organizationId, comparecienteId: id, requestedById: actorUserId, triggerReason: 'RELEVANT_IDENTITY_CHANGED', triggerKey: `event:${event.id}`, triggerEventId: event.id, correlationId });
+      }
       return header;
     });
   }
@@ -901,6 +897,8 @@ export class ComparecienteService {
   /** Resuelve de forma auditable un conflicto documental de RFC/CURP. */
   public async resolverConflictoDato(comparecienteId: string, sourceId: string, action: 'CONSERVAR_ACTUAL' | 'ACTUALIZAR', actorUserId: string) {
     return this.prisma.$transaction(async (tx) => {
+      const organizationId = requireActorContext().organizationId;
+      const identityBefore = await loadScreeningIdentity(tx, organizationId, comparecienteId);
       const source = await tx.comparecienteDatoFuente.findFirst({ where: { id: sourceId, compareciente_id: comparecienteId, archived_at: null, estado: 'EN_CONFLICTO' }, include: { compareciente: { include: { personaFisica: true, personaMoral: true } } } });
       if (!source) throw new Error('El conflicto ya no está disponible.');
       const field = source.campo.toLowerCase();
@@ -914,7 +912,15 @@ export class ComparecienteService {
         await tx.compareciente.update({ where: { id: comparecienteId }, data: { version: { increment: 1 } } });
       }
       const updated = await tx.comparecienteDatoFuente.update({ where: { id: source.id }, data: { estado: action === 'ACTUALIZAR' ? 'CONFIRMADO' : 'DESCARTADO', valor_confirmado: action === 'ACTUALIZAR' ? detected : currentValue || null, confirmado_por_id: actorUserId, confirmado_at: new Date() } });
-      await tx.auditLog.create({ data: { user_id: actorUserId, accion: action === 'ACTUALIZAR' ? 'ACTUALIZAR_DATO_DESDE_DOCUMENTO' : 'CONSERVAR_DATO_MAESTRO', entidad: 'Compareciente', entidad_id: comparecienteId, valores_anteriores: { campo: source.campo, actual: currentValue, detectado: detected }, valores_nuevos: { campo: source.campo, valor: updated.valor_confirmado, estado: updated.estado }, detalles: { modulo: 'COMPARECIENTES', fuente_id: source.id }, correlation_id: crypto.randomUUID() } });
+      const correlationId = crypto.randomUUID();
+      await tx.auditLog.create({ data: { user_id: actorUserId, accion: action === 'ACTUALIZAR' ? 'ACTUALIZAR_DATO_DESDE_DOCUMENTO' : 'CONSERVAR_DATO_MAESTRO', entidad: 'Compareciente', entidad_id: comparecienteId, valores_anteriores: { campo: source.campo, actual: currentValue, detectado: detected }, valores_nuevos: { campo: source.campo, valor: updated.valor_confirmado, estado: updated.estado }, detalles: { modulo: 'COMPARECIENTES', fuente_id: source.id }, correlation_id: correlationId } });
+      if (action === 'ACTUALIZAR') {
+        const identityAfter = await loadScreeningIdentity(tx, organizationId, comparecienteId);
+        if (screeningIdentityFingerprint(identityBefore) !== screeningIdentityFingerprint(identityAfter)) {
+          const event = await tx.domainEventOutbox.create({ data: { organization_id: organizationId, event_type: 'ComparecienteIdentityChanged', aggregate_type: 'Compareciente', aggregate_id: comparecienteId, actor_user_id: actorUserId, correlation_id: correlationId, payload: JSON.parse(JSON.stringify({ compareciente_id: comparecienteId, actor_user_id: actorUserId, source: 'DOCUMENT_CONFLICT_RESOLUTION' })) } });
+          await queueMasterScreeningTx(tx, { organizationId, comparecienteId, requestedById: actorUserId, triggerReason: 'RELEVANT_IDENTITY_CHANGED', triggerKey: `event:${event.id}`, triggerEventId: event.id, correlationId });
+        }
+      }
       return updated;
     });
   }

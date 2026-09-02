@@ -17,6 +17,7 @@ import { validateCurp, validateOptionalDate, validateRfc } from '../domain/mexic
 import { consolidateExtractedFields } from '../domain/documentExtraction';
 import { recordAIFailure, recordAIUsages } from './aiUsage.service';
 import { requireActorContext } from '../auth/actorContext';
+import { enqueueComparecienteCreatedTx } from './complianceScreening.service';
 
 const EXPIRATION_HOURS = parseInt(process.env.COMPARECIENTE_ALTA_EXPIRATION_HOURS || '24', 10);
 
@@ -602,6 +603,7 @@ export class ComparecienteAltaSessionService {
     const { sessionId, usuarioId, datosFormulario, documentosIntegrarIds } = params;
 
     const sesion = await this.obtenerSesion(sessionId);
+    const organizationId = requireActorContext().organizationId;
     let finalUsuarioId = sesion.usuario_id;
 
     if (usuarioId) {
@@ -694,6 +696,18 @@ export class ComparecienteAltaSessionService {
     const incorporationDate = !esFisica ? validateOptionalDate(fecha_constitucion, 'La fecha de constitución') : null;
 
     return await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:compareciente-alta-confirm:${sessionId}`}))`);
+      const currentSession = await tx.comparecienteAltaSession.findFirst({
+        where: { id: sessionId, organization_id: organizationId, archived_at: null },
+        include: { cargasTemporales: { where: { archived_at: null } } },
+      });
+      if (!currentSession) throw new Error('Sesión de alta no encontrada');
+      const currentDraft = (currentSession.borrador_json as any) || {};
+      if (currentSession.estatus === 'COMPLETADO' && currentDraft._resultado_compareciente_id) {
+        const existing = await tx.compareciente.findFirst({ where: { id: String(currentDraft._resultado_compareciente_id), organization_id: organizationId, archived_at: null } });
+        if (!existing) throw new Error('La confirmación previa no conserva un Compareciente resoluble.');
+        return { compareciente: existing, docs_integrados_count: Number(currentDraft._resultado_docs_integrados_count || 0) };
+      }
       const identityKey = cleanCurp || cleanRfc || nombreCompleto.toUpperCase();
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:compareciente:${identityKey}`}))`);
       const duplicate = esFisica
@@ -871,7 +885,7 @@ export class ComparecienteAltaSessionService {
 
       // Si no se creó ninguno desde los datos explícitos del formulario, revisar borradorJson.domicilios_detectados
       if (!creoParticular && !dom_fiscal_calle) {
-        const borradorJson = (sesion.borrador_json as any) || {};
+        const borradorJson = (currentSession.borrador_json as any) || {};
         const domiciliosDetectados: any[] = borradorJson.domicilios_detectados || [];
         const TIPO_MAP: Record<string, string> = {
           FISCAL: 'FISCAL',
@@ -967,7 +981,7 @@ export class ComparecienteAltaSessionService {
             user_id: finalUsuarioId, accion: 'CARGAR_DOCUMENTO_COMPARECIENTE', entidad: 'Documento', entidad_id: docMaestro.id,
             valores_nuevos: { nombre: tempDoc.nombre_original, categoria },
             detalles: { modulo: 'COMPARECIENTES', compareciente_id: compareciente.id, origen: 'ALTA_SESSION' },
-            correlation_id: sesion.correlation_id,
+            correlation_id: currentSession.correlation_id,
           } });
           documentosDefinitivos.set(tempDoc.id, docMaestro.id);
 
@@ -981,11 +995,11 @@ export class ComparecienteAltaSessionService {
       }
 
       // 7. Conservar la procedencia de cada propuesta, incluso si fue corregida o quedó en conflicto.
-      const borradorIA = (sesion.borrador_json as any) || {};
+      const borradorIA = (currentSession.borrador_json as any) || {};
       const propuestaIA = borradorIA._ia_propuesta && typeof borradorIA._ia_propuesta === 'object'
         ? borradorIA._ia_propuesta as Record<string, any>
         : {};
-      const cargasSesion = new Set(sesion.cargasTemporales.map((item) => item.id));
+      const cargasSesion = new Set(currentSession.cargasTemporales.map((item) => item.id));
       const normalizeSourceValue = (value: unknown) => String(value ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
       for (const [campo, propuesta] of Object.entries(propuestaIA)) {
         const alternatives = propuesta?.estado === 'EN_CONFLICTO' && Array.isArray(propuesta.alternativas)
@@ -1021,7 +1035,7 @@ export class ComparecienteAltaSessionService {
               estado: sourceState as any,
               confirmado_por_id: sourceState === 'CONFIRMADO' || sourceState === 'EDITADO_MANUALMENTE' ? finalUsuarioId : null,
               confirmado_at: sourceState === 'CONFIRMADO' || sourceState === 'EDITADO_MANUALMENTE' ? new Date() : null,
-              correlation_id: sesion.correlation_id,
+              correlation_id: currentSession.correlation_id,
             },
           });
         }
@@ -1039,7 +1053,7 @@ export class ComparecienteAltaSessionService {
               estado: 'EDITADO_MANUALMENTE',
               confirmado_por_id: finalUsuarioId,
               confirmado_at: new Date(),
-              correlation_id: sesion.correlation_id,
+              correlation_id: currentSession.correlation_id,
             },
           });
         }
@@ -1050,15 +1064,21 @@ export class ComparecienteAltaSessionService {
         where: { id: sessionId },
         data: {
           estatus: 'COMPLETADO',
-          confirmado_at: new Date()
+          confirmado_at: new Date(),
+          borrador_json: { ...currentDraft, _resultado_compareciente_id: compareciente.id, _resultado_docs_integrados_count: docsIntegradosCount }
         }
       });
       await tx.auditLog.create({ data: {
         user_id: finalUsuarioId, accion: esFisica ? 'CREAR_PERSONA_FISICA' : 'CREAR_PERSONA_MORAL', entidad: 'Compareciente', entidad_id: compareciente.id,
         valores_nuevos: { tipo_persona: tipo_persona || 'FISICA', nombre_busqueda: nombreCompleto, documentos_integrados: docsIntegradosCount },
         detalles: { modulo: 'COMPARECIENTES', origen: 'WORKSPACE_UNICO', campos_confirmados: Object.keys(datosFormulario) },
-        correlation_id: sesion.correlation_id,
+        correlation_id: currentSession.correlation_id,
       } });
+      await enqueueComparecienteCreatedTx(tx, {
+        organizationId, comparecienteId: compareciente.id, actorUserId: finalUsuarioId,
+        tipoPersona: esFisica ? 'FISICA' : 'MORAL', identityLabel: nombreCompleto,
+        correlationId: currentSession.correlation_id || crypto.randomUUID(),
+      });
 
       return {
         compareciente,

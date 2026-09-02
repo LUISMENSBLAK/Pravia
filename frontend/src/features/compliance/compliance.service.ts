@@ -1,6 +1,6 @@
 import { apiRequest, tokenStore } from '../../services/api/client';
 import { apiUrl } from '../../services/api/config';
-import type { ComplianceCatalogs, ComplianceDetail, ComplianceDocumentStructure, ComplianceList, ComplianceReview } from './compliance.types';
+import type { ComplianceCatalogs, ComplianceDetail, ComplianceDocumentStructure, ComplianceList, ComplianceReview, ComplianceScreeningOperation } from './compliance.types';
 
 const query = (values: Record<string, string | number | undefined>) => {
   const params = new URLSearchParams();
@@ -9,6 +9,7 @@ const query = (values: Record<string, string | number | undefined>) => {
 };
 
 export const complianceService = {
+  screeningOperation: async (expedienteId: string, signal?: AbortSignal) => apiRequest<{ success: boolean } & ComplianceScreeningOperation>(`/cumplimiento/screening/expedientes/${encodeURIComponent(expedienteId)}`, { signal }),
   documentStructure: async (expedienteId: string, signal?: AbortSignal) => apiRequest<{ success: boolean } & ComplianceDocumentStructure>(`/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/documental`, { signal }),
   uploadSignedEvidence: async (expedienteId: string, requirementId: string, file: File) => {
     const body = new FormData(); body.set('file', file);

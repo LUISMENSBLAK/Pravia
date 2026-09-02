@@ -48,3 +48,19 @@ export type ComplianceDocumentStructure = {
   requirements?: ComplianceDocumentRequirement[];
   missing: ComplianceDocumentRequirement[];
 };
+
+export type ComplianceScreeningOperationRow = {
+  requirement: {
+    id: string;
+    status: string;
+    label: string;
+    target_compareciente_id?: string | null;
+    target_name?: string | null;
+    source_snapshot?: Record<string, unknown> | null;
+  };
+  snapshot: { id: string; query_id: string; unresolved_count: number; created_at: string } | null;
+  query: { id: string; compareciente_id: string | null; execution_state: string | null; completed_at: string | null } | null;
+  action: string | null;
+};
+
+export type ComplianceScreeningOperation = { data: ComplianceScreeningOperationRow[] };

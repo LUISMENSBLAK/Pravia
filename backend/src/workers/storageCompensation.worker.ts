@@ -4,7 +4,7 @@ import prisma from '../config/prisma';
 import { deleteFile } from '../services/supabase.service';
 import { runWithPlatformOperation } from '../auth/actorContext';
 
-type WorkerDatabase = Pick<PrismaClient, 'storageCompensationJob' | 'cargaTemporalDocumento' | 'assistantAttachment' | 'documento'>;
+type WorkerDatabase = Pick<PrismaClient, 'storageCompensationJob' | 'cargaTemporalDocumento' | 'assistantAttachment' | 'screeningReport' | 'documento'>;
 type DeleteStorageObject = (key: string) => Promise<void>;
 
 export class UnsafeStorageCompensationError extends Error {
@@ -97,7 +97,7 @@ export class StorageCompensationWorker {
       await this.removeObject(job.storage_key);
       if (owner.kind === 'compareciente') {
         await this.db.cargaTemporalDocumento.update({ where: { id: owner.record.id }, data: { eliminado_storage_at: new Date(), ultimo_error_limpieza: null } });
-      } else {
+      } else if (owner.kind === 'assistant') {
         await this.db.assistantAttachment.update({ where: { id: owner.record.id }, data: { storage_deleted_at: new Date(), cleanup_error: null } });
       }
       await this.db.storageCompensationJob.update({ where: { id: job.id }, data: { estatus: 'COMPLETADO', intentos: job.intentos + 1, ultimo_error: null } });
@@ -154,6 +154,28 @@ export class StorageCompensationWorker {
   }
 
   private async assertSafeOwnership(job: StorageCompensationJob) {
+    if (job.tipo_operacion === 'ELIMINAR_REPORTE_SCREENING_HUERFANO') {
+      if (!job.organization_id) throw new UnsafeStorageCompensationError('El job de reporte no identifica una organización.', 'STORAGE_JOB_TENANT_REQUIRED');
+      const report = job.screening_report_id
+        ? await this.db.screeningReport.findUnique({ where: { id: job.screening_report_id }, include: { documento: { select: { storage_key: true } } } })
+        : null;
+      if (job.screening_report_id && (!report || report.organization_id !== job.organization_id)) {
+        throw new UnsafeStorageCompensationError('El reporte ganador no pertenece a la organización del job.', 'STORAGE_JOB_TENANT_MISMATCH');
+      }
+      if (report?.documento.storage_key === job.storage_key) {
+        throw new UnsafeStorageCompensationError('La referencia corresponde al blob ganador y no puede eliminarse.', 'STORAGE_JOB_REFERENCE_IN_USE');
+      }
+      const expectedPrefix = report
+        ? `organizations/${job.organization_id}/screening/${report.query_id}/`
+        : `organizations/${job.organization_id}/screening/`;
+      if (!job.storage_key.startsWith(expectedPrefix) || job.storage_key.includes('..')) {
+        throw new UnsafeStorageCompensationError('La referencia no pertenece al espacio de reportes de la consulta.', 'STORAGE_JOB_KEY_UNSAFE');
+      }
+      if (await this.db.documento.count({ where: { storage_key: job.storage_key } }) > 0) {
+        throw new UnsafeStorageCompensationError('La referencia todavía pertenece a un documento oficial.', 'STORAGE_JOB_REFERENCE_IN_USE');
+      }
+      return { kind: 'screening-report' as const, record: report };
+    }
     if (job.tipo_operacion === 'ELIMINAR_ADJUNTO_ASSISTANT' && job.assistant_attachment_id) {
       const attachment = await this.db.assistantAttachment.findUnique({ where: { id: job.assistant_attachment_id } });
       if (!attachment || attachment.source !== 'TEMPORARY_UPLOAD' || attachment.storage_key !== job.storage_key) {

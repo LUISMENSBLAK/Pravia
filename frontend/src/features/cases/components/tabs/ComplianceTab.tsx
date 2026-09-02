@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../auth/AuthProvider';
 import { complianceService } from '../../../compliance/compliance.service';
-import type { ComplianceDocumentRequirement, ComplianceDocumentStructure } from '../../../compliance/compliance.types';
+import type { ComplianceDocumentRequirement, ComplianceDocumentStructure, ComplianceScreeningOperation } from '../../../compliance/compliance.types';
 import { humanComplianceLabel } from '../../../compliance/complianceLabels';
 import type { ExpedienteDetail } from '../../expedientes.types';
 import { dateTime } from '../../expedienteFormatters';
@@ -23,6 +23,8 @@ export function ComplianceTab({ expediente }: { expediente: ExpedienteDetail }) 
   const returnQuery = expedienteReturnParams(expediente.id, 'cumplimiento');
   const reviewPath = (id: string) => `/riesgos/revisiones/${id}?${returnQuery}`;
   const [documental, setDocumental] = useState<ComplianceDocumentStructure | null>(null);
+  const [screening, setScreening] = useState<ComplianceScreeningOperation | null>(null);
+  const [screeningStatus, setScreeningStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [busy, setBusy] = useState<string | null>(null);
   const [showMissing, setShowMissing] = useState(false);
@@ -31,12 +33,19 @@ export function ComplianceTab({ expediente }: { expediente: ExpedienteDetail }) 
   const canWrite = Boolean(user?.permissions?.includes('compliance.write'));
   const canReview = Boolean(user?.permissions?.includes('compliance.review'));
   const canExport = Boolean(user?.permissions?.includes('documentos.read') && user?.permissions?.includes('compliance.sensitive.read'));
+  const canReadScreening = Boolean(user?.permissions?.includes('expedientes.read') && user?.permissions?.includes('compliance.read') && user?.permissions?.includes('compliance.sensitive.read'));
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try { setDocumental(await complianceService.documentStructure(expediente.id, signal)); setStatus('ready'); }
     catch (error) { if (!(error instanceof DOMException && error.name === 'AbortError')) setStatus('error'); }
   }, [expediente.id]);
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
+  useEffect(() => {
+    if (!canReadScreening) { setScreening(null); setScreeningStatus('idle'); return; }
+    const controller = new AbortController(); setScreeningStatus('loading');
+    void complianceService.screeningOperation(expediente.id, controller.signal).then((result) => { setScreening(result); setScreeningStatus('ready'); }).catch((error) => { if (!(error instanceof DOMException && error.name === 'AbortError')) setScreeningStatus('error'); });
+    return () => controller.abort();
+  }, [canReadScreening, expediente.id]);
 
   const revealMissing = () => { setShowMissing(true); window.setTimeout(() => missingRef.current?.focus(), 0); };
   const uploadSigned = async (requirement: ComplianceDocumentRequirement, file?: File) => {
@@ -70,6 +79,13 @@ export function ComplianceTab({ expediente }: { expediente: ExpedienteDetail }) 
   };
 
   return <div className={styles.complianceWorkspace}>
+    {canReadScreening && <section className={styles.sectionCard} aria-labelledby="operation-screening-title">
+      <header><div><h2 id="operation-screening-title">Consulta nominal de la operación</h2><p>Estado de las consultas vinculadas a las partes de esta operación.</p></div></header>
+      {screeningStatus === 'loading' && <p className={styles.sectionEmpty} role="status"><LoaderCircle className={styles.spin} />Consultando estados…</p>}
+      {screeningStatus === 'error' && <p className={styles.sectionEmpty} role="alert">No pudimos consultar los estados nominales dentro de tus permisos.</p>}
+      {screeningStatus === 'ready' && !screening?.data.length && <p className={styles.sectionEmpty}>No hay obligaciones de consulta nominal vinculadas a esta operación.</p>}
+      {screeningStatus === 'ready' && screening && screening.data.length > 0 && <div className={styles.screeningOperationList}>{screening.data.map((row) => <article key={row.requirement.id}><span className={row.requirement.status === 'CUMPLIDO' ? styles.complianceOk : styles.complianceAlert}>{row.requirement.status === 'CUMPLIDO' ? <CheckCircle2 /> : <ShieldCheck />}</span><div><strong>{row.requirement.target_name || row.requirement.label}</strong><small>{humanComplianceLabel(row.requirement.status, 'Pendiente')} · {row.query ? humanComplianceLabel(row.query.execution_state, 'Consulta pendiente') : 'Consulta pendiente'}</small>{row.snapshot && <em>Snapshot vinculado · {row.snapshot.unresolved_count} pendiente{row.snapshot.unresolved_count === 1 ? '' : 's'} de resolución</em>}</div>{row.action && <button type="button" onClick={() => navigate(`${row.action!.split('#')[0]}?${returnQuery}#screening`)}>Abrir ficha <ChevronRight /></button>}</article>)}</div>}
+    </section>}
     <section className={styles.sectionCard}>
       <header><div><h2>Cumplimiento</h2><p>Evaluaciones y obligaciones realmente registradas para este expediente.</p></div><button type="button" onClick={() => navigate(`/riesgos?expediente_id=${expediente.id}&${returnQuery}`)}>Abrir Riesgos / UIF <ChevronRight /></button></header>
       {reviews.length ? <div className={styles.complianceList}>{reviews.map((review: any) => { const classification = review.resultado_json?.clasificacion; const attention = ['REQUIERE_AVISO', 'INCOMPLETO', 'INSUMOS_INCOMPLETOS'].includes(classification); return <article key={review.id} role="button" tabIndex={0} onClick={() => navigate(reviewPath(review.id))} onKeyDown={(event) => { if (event.key === 'Enter') navigate(reviewPath(review.id)); }}><span className={attention ? styles.complianceAlert : styles.complianceOk}>{attention ? <AlertTriangle /> : review.estatus === 'CONFIRMADO' ? <CheckCircle2 /> : <ShieldCheck />}</span><div><strong>{review.ruleSet?.nombre || (review.tipo === 'LEGAL_H1' ? 'Evaluación legal' : 'Evaluación de cumplimiento')}</strong><small>{humanComplianceLabel(review.estatus, 'En revisión')} · {dateTime(review.updated_at)}</small></div><b>{attention ? 'Atención' : review.estatus === 'CONFIRMADO' ? 'Confirmado' : 'En revisión'}</b></article>; })}</div> : <p className={styles.sectionEmpty}>No hay evaluaciones de cumplimiento para este expediente.</p>}

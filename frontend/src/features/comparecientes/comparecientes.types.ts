@@ -43,3 +43,16 @@ export type ComparecienteDetail = ComparecienteListItem & {
 };
 
 export type NewComparecienteDraft = Record<string, string> & { tipo_persona: PersonType };
+
+export type ScreeningResolutionDecision = 'NO_CORRESPONDE' | 'REVISION_ADICIONAL' | 'COINCIDENCIA_CONFIRMADA';
+export type ScreeningCandidate = {
+  id: string; source_record_ref: string; display_name: string; score: string | number | null;
+  match_fields: string[]; latest_resolution: { id: string; decision: ScreeningResolutionDecision; rationale: string; created_at: string } | null;
+};
+export type ScreeningQuery = {
+  id: string; query_kind: 'MASTER' | 'FREE'; execution_state: 'NOT_EXECUTED' | 'QUEUED' | 'RUNNING' | 'NOT_CONFIGURED' | 'SUCCEEDED' | 'PARTIAL' | 'ERROR';
+  trigger_reason: string; created_at: string; completed_at: string | null; human_status: string;
+  candidates: ScreeningCandidate[]; sourceExecutions: Array<{ id: string; execution_state: string; source: { display_name: string }; sourceVersion?: { version: number } | null }>;
+  reports: Array<{ id: string; documento_id: string; created_at: string }>;
+};
+export type ScreeningHistory = { current: ScreeningQuery | null; history: ScreeningQuery[] };

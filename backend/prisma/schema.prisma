@@ -9,30 +9,30 @@ datasource db {
 }
 
 model Organization {
-  id                        String                              @id @default(uuid()) @db.Uuid
-  name                      String
-  status                    String                              @default("ACTIVE")
-  created_at                DateTime                            @default(now())
-  updated_at                DateTime                            @updatedAt
-  memberships               OrganizationMembership[]
-  sessions                  AuthSession[]
-  expedienteActos           ExpedienteActo[]
-  predios                   Predio[]
-  predioColindancias        PredioColindancia[]
-  expedientePredios         ExpedientePredio[]
-  expedienteActoPredios     ExpedienteActoPredio[]
-  predioDocumentos          PredioDocumento[]
-  predioDatosFuente         PredioDatoFuente[]
-  exp006Pendientes          ExpedienteArtefactoPendiente[]      @relation("Exp006PendingOrganization")
-  exp006Documentos          ExpedienteArtefactoDocumento[]      @relation("Exp006DocumentOrganization")
-  presupuestos              ExpedientePresupuesto[]
-  presupuestoConceptos      ExpedientePresupuestoConcepto[]
-  presupuestoDistribuciones ExpedientePresupuestoDistribucion[]
-  presupuestoDocumentos     ExpedientePresupuestoDocumento[]
-  expedienteActividades     ExpedienteActividad[]
-  prospectoTransiciones     ProspectoTransicion[]
-  prospectoFuentes          ProspectoFuenteNotarial[]
-  cotizacionTransiciones    CotizacionTransicion[]
+  id                         String                              @id @default(uuid()) @db.Uuid
+  name                       String
+  status                     String                              @default("ACTIVE")
+  created_at                 DateTime                            @default(now())
+  updated_at                 DateTime                            @updatedAt
+  memberships                OrganizationMembership[]
+  sessions                   AuthSession[]
+  expedienteActos            ExpedienteActo[]
+  predios                    Predio[]
+  predioColindancias         PredioColindancia[]
+  expedientePredios          ExpedientePredio[]
+  expedienteActoPredios      ExpedienteActoPredio[]
+  predioDocumentos           PredioDocumento[]
+  predioDatosFuente          PredioDatoFuente[]
+  exp006Pendientes           ExpedienteArtefactoPendiente[]      @relation("Exp006PendingOrganization")
+  exp006Documentos           ExpedienteArtefactoDocumento[]      @relation("Exp006DocumentOrganization")
+  presupuestos               ExpedientePresupuesto[]
+  presupuestoConceptos       ExpedientePresupuestoConcepto[]
+  presupuestoDistribuciones  ExpedientePresupuestoDistribucion[]
+  presupuestoDocumentos      ExpedientePresupuestoDocumento[]
+  expedienteActividades      ExpedienteActividad[]
+  prospectoTransiciones      ProspectoTransicion[]
+  prospectoFuentes           ProspectoFuenteNotarial[]
+  cotizacionTransiciones     CotizacionTransicion[]
   complianceLegalRules       ComplianceLegalRule[]
   complianceRuleRevisions    ComplianceLegalRuleRevision[]
   expedienteComplianceStates ExpedienteComplianceState[]
@@ -46,19 +46,19 @@ model Organization {
 }
 
 model OrganizationMembership {
-  id                     String                    @id @default(uuid()) @db.Uuid
-  organization_id        String                    @db.Uuid
-  user_id                String                    @db.Uuid
-  rol                    Role
-  status                 String                    @default("ACTIVE")
-  created_at             DateTime                  @default(now())
-  updated_at             DateTime                  @updatedAt
-  organization           Organization              @relation(fields: [organization_id], references: [id], onDelete: Restrict)
-  user                   User                      @relation(fields: [user_id], references: [id], onDelete: Restrict)
-  sessions               AuthSession[]
-  prospectoTransiciones  ProspectoTransicion[]
-  prospectoFuentes       ProspectoFuenteNotarial[]
-  cotizacionTransiciones CotizacionTransicion[]
+  id                                String                        @id @default(uuid()) @db.Uuid
+  organization_id                   String                        @db.Uuid
+  user_id                           String                        @db.Uuid
+  rol                               Role
+  status                            String                        @default("ACTIVE")
+  created_at                        DateTime                      @default(now())
+  updated_at                        DateTime                      @updatedAt
+  organization                      Organization                  @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  user                              User                          @relation(fields: [user_id], references: [id], onDelete: Restrict)
+  sessions                          AuthSession[]
+  prospectoTransiciones             ProspectoTransicion[]
+  prospectoFuentes                  ProspectoFuenteNotarial[]
+  cotizacionTransiciones            CotizacionTransicion[]
   complianceLegalRulesCreated       ComplianceLegalRule[]         @relation("ComplianceLegalRuleCreatorMembership")
   complianceRuleRevisionsCreated    ComplianceLegalRuleRevision[] @relation("ComplianceRuleRevisionCreatorMembership")
   complianceRuleRevisionsVerified   ComplianceLegalRuleRevision[] @relation("ComplianceRuleRevisionVerifierMembership")
@@ -1762,7 +1762,9 @@ model Documento {
   finanzaVinculosExp008        ExpedienteFinanzaDocumento[]
   finanzaPropuestasExp008      ExpedienteFinanzaPropuestaIA[]
   fuentesNotarialesProspecto   ProspectoFuenteNotarial[]
+  screeningReports             ScreeningReport[]
 
+  @@unique([id, organization_id], map: "h2_documentos_id_tenant_key")
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
   @@index([cotizacion_id], map: "idx_documentos_cotizacion_fk")
   @@index([expediente_id], map: "idx_documentos_expediente_fk")
@@ -3575,26 +3577,26 @@ model ComplianceRuleSet {
 }
 
 model ComplianceReview {
-  id                    String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id       String?              @db.Uuid
-  expediente_id         String               @db.Uuid
+  id                        String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id           String?                     @db.Uuid
+  expediente_id             String                      @db.Uuid
   rule_set_id               String?                     @db.Uuid
-  tipo                  String
-  estatus               String               @default("BORRADOR")
-  fecha_operacion       DateTime?
-  rule_version_snapshot String
-  cuestionario_json     Json
-  resultado_json        Json?
-  explicacion           String?
-  creado_por_id         String               @db.Uuid
-  revisado_por_id       String?              @db.Uuid
-  revisado_at           DateTime?
-  created_at            DateTime             @default(now())
-  updated_at            DateTime             @default(now()) @updatedAt
-  rule_snapshot         Json
-  master_snapshot       Json
-  snapshot_captured_at  DateTime             @default(now())
-  supersedes_review_id  String?              @db.Uuid
+  tipo                      String
+  estatus                   String                      @default("BORRADOR")
+  fecha_operacion           DateTime?
+  rule_version_snapshot     String
+  cuestionario_json         Json
+  resultado_json            Json?
+  explicacion               String?
+  creado_por_id             String                      @db.Uuid
+  revisado_por_id           String?                     @db.Uuid
+  revisado_at               DateTime?
+  created_at                DateTime                    @default(now())
+  updated_at                DateTime                    @default(now()) @updatedAt
+  rule_snapshot             Json
+  master_snapshot           Json
+  snapshot_captured_at      DateTime                    @default(now())
+  supersedes_review_id      String?                     @db.Uuid
   engine_version            String?
   idempotency_key           String?
   legal_date_source         String?
@@ -3602,14 +3604,14 @@ model ComplianceReview {
   rule_collection_checksum  String?
   canonical_state_snapshot  Json?
   is_canonical_legal_engine Boolean                     @default(false)
-  decisiones            ComplianceDecision[]
-  evidencias            ComplianceEvidence[]
-  creado_por            User                 @relation("ComplianceReviewCreator", fields: [creado_por_id], references: [id], onUpdate: NoAction)
-  expediente            Expediente           @relation(fields: [expediente_id], references: [id], onUpdate: NoAction)
-  revisado_por          User?                @relation("ComplianceReviewReviewer", fields: [revisado_por_id], references: [id], onUpdate: NoAction)
+  decisiones                ComplianceDecision[]
+  evidencias                ComplianceEvidence[]
+  creado_por                User                        @relation("ComplianceReviewCreator", fields: [creado_por_id], references: [id], onUpdate: NoAction)
+  expediente                Expediente                  @relation(fields: [expediente_id], references: [id], onUpdate: NoAction)
+  revisado_por              User?                       @relation("ComplianceReviewReviewer", fields: [revisado_por_id], references: [id], onUpdate: NoAction)
   ruleSet                   ComplianceRuleSet?          @relation(fields: [rule_set_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  supersedes            ComplianceReview?    @relation("ComplianceReviewLineage", fields: [supersedes_review_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  reevaluations         ComplianceReview[]   @relation("ComplianceReviewLineage")
+  supersedes                ComplianceReview?           @relation("ComplianceReviewLineage", fields: [supersedes_review_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  reevaluations             ComplianceReview[]          @relation("ComplianceReviewLineage")
   currentComplianceStates   ExpedienteComplianceState[]
   legalRuleResults          ComplianceRuleResult[]
   legalRequirements         ComplianceRequirement[]
@@ -3645,37 +3647,37 @@ model ComplianceDecision {
 }
 
 model ComplianceEvidence {
-  id                String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id   String?          @db.Uuid
-  review_id         String           @db.Uuid
-  documento_id      String           @db.Uuid
-  tipo_evidencia    String
-  observaciones     String?
-  agregado_por_id   String           @db.Uuid
-  estatus           String           @default("ACTIVO")
-  created_at        DateTime         @default(now())
-  retention_until   DateTime?
-  legal_hold        Boolean          @default(false)
-  retired_at        DateTime?
-  retired_by_id     String?          @db.Uuid
-  retirement_reason String?
-  expediente_id                String?                            @db.Uuid
-  requirement_id               String?                            @db.Uuid
-  target_compareciente_id      String?                            @db.Uuid
-  document_version             String?                            @db.VarChar(128)
-  document_checksum_snapshot   String?                            @db.VarChar(64)
-  storage_key_snapshot         String?
-  source                       ComplianceEvidenceSource?
-  document_state               ComplianceEvidenceDocumentState?
-  validation_status            ComplianceEvidenceValidationStatus?
-  linked_by_system             Boolean                            @default(false)
-  validated_by_id              String?                            @db.Uuid
-  validated_at                 DateTime?
-  validation_notes             String?
-  agregado_por      User             @relation("ComplianceEvidenceAdder", fields: [agregado_por_id], references: [id], onUpdate: NoAction)
-  documento         Documento        @relation(fields: [documento_id], references: [id], onUpdate: NoAction)
-  review            ComplianceReview @relation(fields: [review_id], references: [id], onUpdate: NoAction)
-  requirement       ComplianceRequirement? @relation(fields: [requirement_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  id                         String                              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id            String?                             @db.Uuid
+  review_id                  String                              @db.Uuid
+  documento_id               String                              @db.Uuid
+  tipo_evidencia             String
+  observaciones              String?
+  agregado_por_id            String                              @db.Uuid
+  estatus                    String                              @default("ACTIVO")
+  created_at                 DateTime                            @default(now())
+  retention_until            DateTime?
+  legal_hold                 Boolean                             @default(false)
+  retired_at                 DateTime?
+  retired_by_id              String?                             @db.Uuid
+  retirement_reason          String?
+  expediente_id              String?                             @db.Uuid
+  requirement_id             String?                             @db.Uuid
+  target_compareciente_id    String?                             @db.Uuid
+  document_version           String?                             @db.VarChar(128)
+  document_checksum_snapshot String?                             @db.VarChar(64)
+  storage_key_snapshot       String?
+  source                     ComplianceEvidenceSource?
+  document_state             ComplianceEvidenceDocumentState?
+  validation_status          ComplianceEvidenceValidationStatus?
+  linked_by_system           Boolean                             @default(false)
+  validated_by_id            String?                             @db.Uuid
+  validated_at               DateTime?
+  validation_notes           String?
+  agregado_por               User                                @relation("ComplianceEvidenceAdder", fields: [agregado_por_id], references: [id], onUpdate: NoAction)
+  documento                  Documento                           @relation(fields: [documento_id], references: [id], onUpdate: NoAction)
+  review                     ComplianceReview                    @relation(fields: [review_id], references: [id], onUpdate: NoAction)
+  requirement                ComplianceRequirement?              @relation(fields: [requirement_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
 
   @@index([documento_id])
   @@index([agregado_por_id], map: "idx_compliance_evidence_agregado_fk")
@@ -3764,25 +3766,260 @@ model CompliancePepReview {
 }
 
 model ComplianceScreeningResult {
-  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id  String?   @db.Uuid
-  review_id        String    @db.Uuid
-  compareciente_id String    @db.Uuid
-  provider         String
-  provider_version String?
-  status           String    @default("NOT_CONFIGURED")
-  queried_at       DateTime?
-  query_snapshot   Json?
-  match_evidence   Json?
-  reviewed_by_id   String?   @db.Uuid
-  reviewed_at      DateTime?
-  human_decision   String?
-  created_at       DateTime  @default(now())
+  id                   String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id      String?                      @db.Uuid
+  review_id            String?                      @db.Uuid
+  compareciente_id     String?                      @db.Uuid
+  provider             String
+  provider_version     String?
+  status               String                       @default("NOT_CONFIGURED")
+  queried_at           DateTime?
+  query_snapshot       Json?
+  match_evidence       Json?
+  reviewed_by_id       String?                      @db.Uuid
+  reviewed_at          DateTime?
+  human_decision       String?
+  created_at           DateTime                     @default(now())
+  contract_version     String?                      @db.VarChar(24)
+  query_kind           ScreeningQueryKind?
+  execution_state      ScreeningExecutionState?
+  trigger_reason       ScreeningTriggerReason?
+  trigger_key          String?                      @db.VarChar(200)
+  trigger_event_id     String?                      @db.Uuid
+  owner_user_id        String?                      @db.Uuid
+  requested_by_id      String?                      @db.Uuid
+  identity_fingerprint String?                      @db.VarChar(64)
+  started_at           DateTime?
+  completed_at         DateTime?
+  correlation_id       String?                      @db.Uuid
+  sourceExecutions     ScreeningSourceExecution[]
+  candidates           ScreeningCandidate[]
+  operationSnapshots   ScreeningOperationSnapshot[]
+  reports              ScreeningReport[]
 
+  @@unique([id, organization_id], map: "compliance_screening_results_id_tenant_key")
+  @@unique([organization_id, trigger_key], map: "compliance_screening_results_tenant_trigger_key")
+  @@unique([id, organization_id, compareciente_id], map: "compliance_screening_results_party_lineage_key")
   @@index([review_id, status])
+  @@index([organization_id, compareciente_id, query_kind, created_at], map: "idx_screening_query_current")
+  @@index([organization_id, owner_user_id, query_kind, created_at], map: "idx_screening_free_owner")
   @@index([compareciente_id], map: "idx_uif_screening_party_fk")
   @@index([reviewed_by_id], map: "idx_uif_screening_reviewer_fk")
   @@map("compliance_screening_results")
+}
+
+enum ScreeningQueryKind {
+  MASTER
+  FREE
+}
+
+enum ScreeningExecutionState {
+  NOT_EXECUTED
+  QUEUED
+  RUNNING
+  NOT_CONFIGURED
+  SUCCEEDED
+  PARTIAL
+  ERROR
+}
+
+enum ScreeningTriggerReason {
+  COMPARECIENTE_CREATED
+  RELEVANT_IDENTITY_CHANGED
+  VULNERABLE_OPERATION
+  MANUAL_RERUN
+  FREE_SEARCH
+}
+
+enum ScreeningSourceStatus {
+  DISABLED
+  ACTIVE
+}
+
+enum ScreeningSourceVersionStatus {
+  DRAFT
+  ACTIVE
+  RETIRED
+}
+
+enum ScreeningHumanDecision {
+  NO_CORRESPONDE
+  REVISION_ADICIONAL
+  COINCIDENCIA_CONFIRMADA
+}
+
+model ScreeningSource {
+  id                 String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id    String                     @db.Uuid
+  code               String                     @db.VarChar(80)
+  display_name       String                     @db.VarChar(160)
+  provider_key       String                     @db.VarChar(120)
+  status             ScreeningSourceStatus      @default(DISABLED)
+  configuration_hint Json?
+  created_by_id      String                     @db.Uuid
+  created_at         DateTime                   @default(now())
+  updated_at         DateTime                   @default(now()) @updatedAt
+  versions           ScreeningSourceVersion[]
+  executions         ScreeningSourceExecution[]
+
+  @@unique([organization_id, code], map: "screening_sources_tenant_code_key")
+  @@unique([id, organization_id], map: "screening_sources_id_tenant_key")
+  @@index([organization_id, status], map: "idx_screening_sources_status")
+  @@map("screening_sources")
+}
+
+model ScreeningSourceVersion {
+  id               String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String                       @db.Uuid
+  source_id        String                       @db.Uuid
+  version          Int
+  status           ScreeningSourceVersionStatus @default(DRAFT)
+  dataset_checksum String                       @db.VarChar(64)
+  adapter_key      String                       @db.VarChar(120)
+  adapter_version  String                       @db.VarChar(80)
+  provenance       Json
+  available_at     DateTime
+  effective_from   DateTime?
+  effective_to     DateTime?
+  created_by_id    String                       @db.Uuid
+  activated_by_id  String?                      @db.Uuid
+  created_at       DateTime                     @default(now())
+  activated_at     DateTime?
+  retired_at       DateTime?
+  source           ScreeningSource              @relation(fields: [source_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_source_versions_source_fkey")
+  executions       ScreeningSourceExecution[]
+
+  @@unique([organization_id, source_id, version], map: "screening_source_versions_tenant_version_key")
+  @@unique([id, organization_id], map: "screening_source_versions_id_tenant_key")
+  @@index([organization_id, source_id, status], map: "idx_screening_source_versions_status")
+  @@map("screening_source_versions")
+}
+
+model ScreeningSourceExecution {
+  id                String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id   String                    @db.Uuid
+  query_id          String                    @db.Uuid
+  source_id         String                    @db.Uuid
+  source_version_id String?                   @db.Uuid
+  execution_state   ScreeningExecutionState   @default(QUEUED)
+  started_at        DateTime?
+  completed_at      DateTime?
+  result_summary    Json?
+  error_code        String?                   @db.VarChar(120)
+  error_detail      String?
+  created_at        DateTime                  @default(now())
+  query             ComplianceScreeningResult @relation(fields: [query_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_source_executions_query_fkey")
+  source            ScreeningSource           @relation(fields: [source_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_source_executions_source_fkey")
+  sourceVersion     ScreeningSourceVersion?   @relation(fields: [source_version_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_source_executions_version_fkey")
+  candidates        ScreeningCandidate[]
+  attempts          ScreeningSourceExecutionAttempt[]
+
+  @@unique([organization_id, query_id, source_id], map: "screening_source_executions_query_source_key")
+  @@unique([id, organization_id], map: "screening_source_executions_id_tenant_key")
+  @@index([organization_id, query_id, execution_state], map: "idx_screening_source_executions_state")
+  @@index([source_version_id, organization_id], map: "idx_fk_screening_source_executions_7338f7bd")
+  @@map("screening_source_executions")
+}
+
+model ScreeningSourceExecutionAttempt {
+  id                  String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id     String                     @db.Uuid
+  source_execution_id String                     @db.Uuid
+  attempt_number      Int
+  execution_state     ScreeningExecutionState    @default(RUNNING)
+  started_at          DateTime                   @default(now())
+  completed_at        DateTime?
+  error_code          String?                    @db.VarChar(120)
+  error_detail        String?
+  result_digest       String?                    @db.VarChar(64)
+  result_metadata     Json?
+  created_at          DateTime                   @default(now())
+  sourceExecution     ScreeningSourceExecution   @relation(fields: [source_execution_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_source_execution_attempts_execution_fkey")
+
+  @@unique([organization_id, source_execution_id, attempt_number], map: "screening_source_execution_attempts_tenant_number_key")
+  @@unique([id, organization_id], map: "screening_source_execution_attempts_id_tenant_key")
+  @@index([organization_id, source_execution_id, created_at], map: "idx_screening_source_execution_attempts_history")
+  @@map("screening_source_execution_attempts")
+}
+
+model ScreeningCandidate {
+  id                  String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id     String                     @db.Uuid
+  query_id            String                     @db.Uuid
+  source_execution_id String                     @db.Uuid
+  stable_candidate_id String                     @db.VarChar(200)
+  source_record_ref   String                     @db.VarChar(240)
+  display_name        String                     @db.VarChar(300)
+  score               Decimal?                   @db.Decimal(7, 6)
+  match_fields        Json
+  evidence_snapshot   Json
+  created_at          DateTime                   @default(now())
+  query               ComplianceScreeningResult  @relation(fields: [query_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_candidates_query_fkey")
+  sourceExecution     ScreeningSourceExecution   @relation(fields: [source_execution_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_candidates_execution_fkey")
+  resolutions         ScreeningHumanResolution[]
+
+  @@unique([organization_id, source_execution_id, stable_candidate_id], map: "screening_candidates_stable_key")
+  @@unique([id, organization_id], map: "screening_candidates_id_tenant_key")
+  @@index([organization_id, query_id, created_at], map: "idx_screening_candidates_query")
+  @@map("screening_candidates")
+}
+
+model ScreeningHumanResolution {
+  id              String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String                 @db.Uuid
+  candidate_id    String                 @db.Uuid
+  decision        ScreeningHumanDecision
+  rationale       String
+  resolved_by_id  String                 @db.Uuid
+  created_at      DateTime               @default(now())
+  candidate       ScreeningCandidate     @relation(fields: [candidate_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_human_resolutions_candidate_fkey")
+
+  @@unique([id, organization_id], map: "screening_human_resolutions_id_tenant_key")
+  @@index([organization_id, candidate_id, created_at], map: "idx_screening_human_resolutions_candidate")
+  @@map("screening_human_resolutions")
+}
+
+model ScreeningOperationSnapshot {
+  id                 String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id    String                    @db.Uuid
+  requirement_id     String                    @db.Uuid
+  query_id           String                    @db.Uuid
+  source_summary     Json
+  resolution_summary Json
+  unresolved_count   Int
+  captured_by_id     String?                   @db.Uuid
+  created_at         DateTime                  @default(now())
+  query              ComplianceScreeningResult @relation(fields: [query_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_operation_snapshots_query_fkey")
+  requirement        ComplianceRequirement     @relation(fields: [requirement_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_operation_snapshots_requirement_fkey")
+
+  @@unique([organization_id, requirement_id, query_id], map: "screening_operation_snapshots_requirement_query_key")
+  @@unique([id, organization_id], map: "screening_operation_snapshots_id_tenant_key")
+  @@index([organization_id, requirement_id, created_at], map: "idx_screening_operation_snapshots_requirement")
+  @@map("screening_operation_snapshots")
+}
+
+model ScreeningReport {
+  id               String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String                    @db.Uuid
+  query_id         String                    @db.Uuid
+  documento_id     String                    @db.Uuid
+  generated_by_id  String                    @db.Uuid
+  idempotency_key  String                    @db.VarChar(120)
+  cutoff_at        DateTime                  @default(now())
+  semantic_fingerprint String                @db.VarChar(64)
+  content_checksum String                    @db.VarChar(64)
+  created_at       DateTime                  @default(now())
+  query            ComplianceScreeningResult @relation(fields: [query_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_reports_query_fkey")
+  documento        Documento                 @relation(fields: [documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_reports_document_fkey")
+  compensationJobs StorageCompensationJob[]
+
+  @@unique([organization_id, query_id, content_checksum], map: "screening_reports_query_checksum_key")
+  @@unique([organization_id, query_id, semantic_fingerprint], map: "screening_reports_query_semantic_key")
+  @@unique([organization_id, query_id, idempotency_key], map: "screening_reports_query_idempotency_key")
+  @@unique([id, organization_id], map: "screening_reports_id_tenant_key")
+  @@index([organization_id, query_id, created_at], map: "idx_screening_reports_query")
+  @@index([documento_id, organization_id], map: "idx_fk_screening_reports_c5c9eac2")
+  @@map("screening_reports")
 }
 
 model CompliancePayment {
@@ -3809,9 +4046,9 @@ model CompliancePayment {
 }
 
 model ComplianceObligation {
-  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id       String?   @db.Uuid
-  review_id             String    @db.Uuid
+  id                    String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id       String?                      @db.Uuid
+  review_id             String                       @db.Uuid
   type                  String
   legal_basis           String
   rule_version          String
@@ -3819,17 +4056,17 @@ model ComplianceObligation {
   origin_date           DateTime
   due_at                DateTime?
   channel               String
-  status                String    @default("POR_DETERMINAR")
-  responsible_id        String?   @db.Uuid
+  status                String                       @default("POR_DETERMINAR")
+  responsible_id        String?                      @db.Uuid
   checklist             Json
   external_filed_at     DateTime?
   external_folio        String?
-  external_receipt_id   String?   @db.Uuid
-  external_confirmed_by String?   @db.Uuid
+  external_receipt_id   String?                      @db.Uuid
+  external_confirmed_by String?                      @db.Uuid
   notes                 String?
   snapshot              Json
-  created_at            DateTime  @default(now())
-  updated_at            DateTime  @default(now()) @updatedAt
+  created_at            DateTime                     @default(now())
+  updated_at            DateTime                     @default(now()) @updatedAt
   rule_result_id        String?                      @db.Uuid
   rule_revision_id      String?                      @db.Uuid
   obligation_key        String?
@@ -4093,36 +4330,37 @@ model ComplianceAlertLeadRevision {
 }
 
 model ComplianceRequirement {
-  id                String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id   String                        @db.Uuid
-  expediente_id     String                        @db.Uuid
-  state_id          String                        @db.Uuid
-  review_id         String                        @db.Uuid
-  rule_result_id    String?                       @db.Uuid
-  provider          ComplianceRequirementProvider
-  requirement_key   String
-  label             String
-  status            ComplianceRequirementStatus
-  deadline          DateTime?
-  blocks_completion Boolean                       @default(true)
-  source_snapshot   Json
-  document_category            ComplianceDocumentCategory?
-  expected_document_type       String?
-  target_compareciente_id      String?                      @db.Uuid
-  requires_signed_document     Boolean                      @default(false)
-  requires_human_validation    Boolean                      @default(true)
-  missing_action               ComplianceMissingActionType?
-  action_target                Json?
-  is_documental                Boolean                      @default(false)
-  created_at        DateTime                      @default(now())
-  updated_at        DateTime                      @default(now()) @updatedAt
-  organization      Organization                  @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_org_fkey")
-  expediente        Expediente                    @relation(fields: [expediente_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_exp_fkey")
-  state             ExpedienteComplianceState     @relation(fields: [state_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_state_fkey")
-  review            ComplianceReview              @relation(fields: [review_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_review_fkey")
-  ruleResult        ComplianceRuleResult?         @relation(fields: [rule_result_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_result_fkey")
-  alerts            ComplianceAlert[]
-  evidence          ComplianceEvidence[]
+  id                        String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id           String                        @db.Uuid
+  expediente_id             String                        @db.Uuid
+  state_id                  String                        @db.Uuid
+  review_id                 String                        @db.Uuid
+  rule_result_id            String?                       @db.Uuid
+  provider                  ComplianceRequirementProvider
+  requirement_key           String
+  label                     String
+  status                    ComplianceRequirementStatus
+  deadline                  DateTime?
+  blocks_completion         Boolean                       @default(true)
+  source_snapshot           Json
+  document_category         ComplianceDocumentCategory?
+  expected_document_type    String?
+  target_compareciente_id   String?                       @db.Uuid
+  requires_signed_document  Boolean                       @default(false)
+  requires_human_validation Boolean                       @default(true)
+  missing_action            ComplianceMissingActionType?
+  action_target             Json?
+  is_documental             Boolean                       @default(false)
+  created_at                DateTime                      @default(now())
+  updated_at                DateTime                      @default(now()) @updatedAt
+  organization              Organization                  @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_org_fkey")
+  expediente                Expediente                    @relation(fields: [expediente_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_exp_fkey")
+  state                     ExpedienteComplianceState     @relation(fields: [state_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_state_fkey")
+  review                    ComplianceReview              @relation(fields: [review_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_review_fkey")
+  ruleResult                ComplianceRuleResult?         @relation(fields: [rule_result_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_result_fkey")
+  alerts                    ComplianceAlert[]
+  evidence                  ComplianceEvidence[]
+  screeningSnapshots        ScreeningOperationSnapshot[]
 
   @@unique([organization_id, review_id, provider, requirement_key], map: "compliance_requirements_tenant_review_provider_key")
   @@unique([id, organization_id], map: "compliance_requirements_id_tenant_key")
@@ -4243,6 +4481,7 @@ model StorageCompensationJob {
   organization_id         String?                    @db.Uuid
   carga_temporal_id       String?                    @db.Uuid
   assistant_attachment_id String?                    @unique @db.Uuid
+  screening_report_id     String?                    @db.Uuid
   storage_key             String
   tipo_operacion          String                     @default("ELIMINAR_TEMPORAL")
   estatus                 StorageCompensationEstatus @default(PENDIENTE)
@@ -4254,10 +4493,12 @@ model StorageCompensationJob {
   updated_at              DateTime                   @default(now()) @updatedAt
   cargaTemporal           CargaTemporalDocumento?    @relation(fields: [carga_temporal_id], references: [id], map: "fk_storage_job_carga_temporal")
   assistantAttachment     AssistantAttachment?       @relation(fields: [assistant_attachment_id], references: [id], map: "fk_storage_job_assistant_attachment")
+  screeningReport         ScreeningReport?           @relation(fields: [screening_report_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "fk_storage_job_screening_report")
 
   @@index([estatus, proxima_ejecucion_at], map: "idx_storage_compensation_jobs_estatus_exec")
   @@index([carga_temporal_id], map: "idx_storage_jobs_carga_fk")
   @@index([assistant_attachment_id], map: "idx_storage_jobs_assistant_attachment_fk")
+  @@index([screening_report_id, organization_id], map: "idx_storage_jobs_screening_report_fk")
   @@map("storage_compensation_jobs")
 }
 

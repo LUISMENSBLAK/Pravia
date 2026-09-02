@@ -1,6 +1,6 @@
 import { apiRequest, tokenStore } from '../../services/api/client';
 import { apiUrl } from '../../services/api/config';
-import type { ComparecienteDetail, ComparecienteFilters, ComparecienteListResult, DuplicateCandidate, NewComparecienteDraft } from './comparecientes.types';
+import type { ComparecienteDetail, ComparecienteFilters, ComparecienteListResult, DuplicateCandidate, NewComparecienteDraft, ScreeningHistory, ScreeningQuery, ScreeningResolutionDecision } from './comparecientes.types';
 
 const query = (filters: ComparecienteFilters) => {
   const params = new URLSearchParams();
@@ -52,6 +52,10 @@ export const comparecientesService = {
   uploadDocument(id: string, file: File, category: string, metadata: { issueDate?: string; expiryDate?: string; notes?: string } = {}) { const body = new FormData(); body.set('file', file); body.set('categoria', category); if (metadata.issueDate) body.set('fecha_emision', metadata.issueDate); if (metadata.expiryDate) body.set('fecha_vencimiento', metadata.expiryDate); if (metadata.notes) body.set('observaciones', metadata.notes); return apiRequest(`/comparecientes/${encodeURIComponent(id)}/documentos`, { method: 'POST', body }); },
   deleteDocument(id: string, documentId: string) { return apiRequest(`/comparecientes/${encodeURIComponent(id)}/documentos/${encodeURIComponent(documentId)}`, { method: 'DELETE' }); },
   extractExisting(id: string) { return apiRequest<{ data: { values: Record<string,string>; proposals: Record<string,any>; conflicts: Array<Record<string,any>>; domicilios_detectados: Array<Record<string,any>> } }>(`/comparecientes/${encodeURIComponent(id)}/extraer-ia`, { method: 'POST' }).then(unwrap); },
+  screening(id: string, signal?: AbortSignal) { return apiRequest<ScreeningHistory>(`/cumplimiento/screening/comparecientes/${encodeURIComponent(id)}`, { signal }); },
+  rerunScreening(id: string, idempotencyKey: string) { return apiRequest<{ data: ScreeningQuery }>(`/cumplimiento/screening/comparecientes/${encodeURIComponent(id)}/rerun`, { method: 'POST', body: JSON.stringify({ idempotency_key: idempotencyKey }) }).then(unwrap); },
+  resolveScreeningCandidate(id: string, queryId: string, candidateId: string, decision: ScreeningResolutionDecision, rationale: string) { return apiRequest(`/cumplimiento/screening/comparecientes/${encodeURIComponent(id)}/queries/${encodeURIComponent(queryId)}/candidates/${encodeURIComponent(candidateId)}/resolutions`, { method: 'POST', body: JSON.stringify({ decision, rationale }) }); },
+  generateScreeningReport(id: string, queryId: string, idempotencyKey: string) { return apiRequest(`/cumplimiento/screening/comparecientes/${encodeURIComponent(id)}/queries/${encodeURIComponent(queryId)}/reports`, { method: 'POST', body: JSON.stringify({ idempotency_key: idempotencyKey }) }); },
   async previewDocument(id: string, documentId: string) {
     const headers = new Headers(); const token = tokenStore.get(); if (token) headers.set('Authorization', `Bearer ${token}`);
     const response = await fetch(apiUrl(`/comparecientes/${encodeURIComponent(id)}/documentos/${encodeURIComponent(documentId)}/visualizar`), { credentials: 'include', headers });

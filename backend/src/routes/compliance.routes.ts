@@ -5,6 +5,17 @@ import { requireExpedienteAccess, requirePermission } from '../middleware/auth.m
 
 const router = Router();
 const signedUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
+router.get('/screening/comparecientes/:comparecienteId', requirePermission('comparecientes.read'), requirePermission('compliance.sensitive.read'), ComplianceController.screeningCurrent);
+router.post('/screening/comparecientes/:comparecienteId/rerun', requirePermission('comparecientes.read'), requirePermission('comparecientes.write'), requirePermission('compliance.write'), requirePermission('compliance.sensitive.read'), ComplianceController.screeningRerun);
+router.post('/screening/comparecientes/:comparecienteId/queries/:queryId/technical-retry', requirePermission('comparecientes.read'), requirePermission('comparecientes.write'), requirePermission('compliance.write'), requirePermission('compliance.sensitive.read'), ComplianceController.screeningTechnicalRetry);
+router.post('/screening/comparecientes/:comparecienteId/queries/:queryId/candidates/:candidateId/resolutions', requirePermission('compliance.review'), requirePermission('compliance.sensitive.read'), ComplianceController.screeningResolve);
+router.post('/screening/comparecientes/:comparecienteId/queries/:queryId/reports', requirePermission('comparecientes.read'), requirePermission('compliance.sensitive.read'), requirePermission('documentos.write'), ComplianceController.screeningReport);
+router.post('/screening/free', requirePermission('compliance.write'), requirePermission('compliance.sensitive.read'), ComplianceController.screeningFree);
+router.get('/screening/expedientes/:expedienteId', requirePermission('expedientes.read'), requirePermission('compliance.sensitive.read'), ComplianceController.screeningOperation);
+router.get('/screening/sources', requirePermission('compliance.rules.read'), ComplianceController.screeningSources);
+router.post('/screening/sources', requirePermission('compliance.rules.manage'), ComplianceController.createScreeningSource);
+router.post('/screening/sources/:sourceId/versions', requirePermission('compliance.rules.manage'), ComplianceController.createScreeningSourceVersion);
+router.post('/screening/sources/:sourceId/versions/:versionId/activate', requirePermission('compliance.rules.manage'), ComplianceController.activateScreeningSourceVersion);
 router.get('/expedientes/:expedienteId/documental', ComplianceController.documentStructure);
 router.post('/expedientes/:expedienteId/documental/requisitos/:requirementId/evidencias', requirePermission('compliance.write'), requirePermission('documentos.read'), ComplianceController.linkDocumentEvidence);
 router.post('/expedientes/:expedienteId/documental/requisitos/:requirementId/cargar-firmado', requirePermission('compliance.write'), requirePermission('documentos.write'), signedUpload.single('file'), ComplianceController.uploadSignedEvidence);
