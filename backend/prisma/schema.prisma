@@ -33,6 +33,13 @@ model Organization {
   prospectoTransiciones     ProspectoTransicion[]
   prospectoFuentes          ProspectoFuenteNotarial[]
   cotizacionTransiciones    CotizacionTransicion[]
+  complianceLegalRules       ComplianceLegalRule[]
+  complianceRuleRevisions    ComplianceLegalRuleRevision[]
+  expedienteComplianceStates ExpedienteComplianceState[]
+  complianceRuleResults      ComplianceRuleResult[]
+  complianceAlertLeads       ComplianceAlertLeadRevision[]
+  complianceRequirements     ComplianceRequirement[]
+  complianceAlerts           ComplianceAlert[]
 
   @@index([status])
   @@map("organizations")
@@ -52,6 +59,14 @@ model OrganizationMembership {
   prospectoTransiciones  ProspectoTransicion[]
   prospectoFuentes       ProspectoFuenteNotarial[]
   cotizacionTransiciones CotizacionTransicion[]
+  complianceLegalRulesCreated       ComplianceLegalRule[]         @relation("ComplianceLegalRuleCreatorMembership")
+  complianceRuleRevisionsCreated    ComplianceLegalRuleRevision[] @relation("ComplianceRuleRevisionCreatorMembership")
+  complianceRuleRevisionsVerified   ComplianceLegalRuleRevision[] @relation("ComplianceRuleRevisionVerifierMembership")
+  complianceRuleRevisionsActivated  ComplianceLegalRuleRevision[] @relation("ComplianceRuleRevisionActivatorMembership")
+  expedienteComplianceStatesUpdated ExpedienteComplianceState[]   @relation("ExpedienteComplianceStateUpdaterMembership")
+  complianceAlertLeadsCreated       ComplianceAlertLeadRevision[] @relation("ComplianceAlertLeadCreatorMembership")
+  complianceAlertsResponsible       ComplianceAlert[]             @relation("ComplianceAlertResponsibleMembership")
+  complianceAlertsResolved          ComplianceAlert[]             @relation("ComplianceAlertResolverMembership")
 
   @@unique([organization_id, user_id])
   @@index([user_id, status])
@@ -1151,6 +1166,9 @@ model Expediente {
   solicitudesPago            ExpedienteSolicitudPago[]
   finanzaDocumentos          ExpedienteFinanzaDocumento[]
   finanzaPropuestasIA        ExpedienteFinanzaPropuestaIA[]
+  complianceStates           ExpedienteComplianceState[]
+  complianceRequirements     ComplianceRequirement[]
+  complianceAlerts           ComplianceAlert[]
 
   @@unique([id, organization_id], map: "uq_expedientes_id_org")
   @@index([abogado_id], map: "idx_expedientes_abogado_fk")
@@ -3560,7 +3578,7 @@ model ComplianceReview {
   id                    String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organization_id       String?              @db.Uuid
   expediente_id         String               @db.Uuid
-  rule_set_id           String               @db.Uuid
+  rule_set_id               String?                     @db.Uuid
   tipo                  String
   estatus               String               @default("BORRADOR")
   fecha_operacion       DateTime?
@@ -3577,15 +3595,27 @@ model ComplianceReview {
   master_snapshot       Json
   snapshot_captured_at  DateTime             @default(now())
   supersedes_review_id  String?              @db.Uuid
+  engine_version            String?
+  idempotency_key           String?
+  legal_date_source         String?
+  input_snapshot            Json?
+  rule_collection_checksum  String?
+  canonical_state_snapshot  Json?
+  is_canonical_legal_engine Boolean                     @default(false)
   decisiones            ComplianceDecision[]
   evidencias            ComplianceEvidence[]
   creado_por            User                 @relation("ComplianceReviewCreator", fields: [creado_por_id], references: [id], onUpdate: NoAction)
   expediente            Expediente           @relation(fields: [expediente_id], references: [id], onUpdate: NoAction)
   revisado_por          User?                @relation("ComplianceReviewReviewer", fields: [revisado_por_id], references: [id], onUpdate: NoAction)
-  ruleSet               ComplianceRuleSet    @relation(fields: [rule_set_id], references: [id], onUpdate: NoAction)
+  ruleSet                   ComplianceRuleSet?          @relation(fields: [rule_set_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
   supersedes            ComplianceReview?    @relation("ComplianceReviewLineage", fields: [supersedes_review_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
   reevaluations         ComplianceReview[]   @relation("ComplianceReviewLineage")
+  currentComplianceStates   ExpedienteComplianceState[]
+  legalRuleResults          ComplianceRuleResult[]
+  legalRequirements         ComplianceRequirement[]
+  legalAlerts               ComplianceAlert[]
 
+  @@unique([organization_id, expediente_id, idempotency_key], map: "compliance_reviews_tenant_case_idempotency_key")
   @@index([estatus, created_at])
   @@index([expediente_id, tipo], map: "compliance_reviews_expediente_tipo_idx")
   @@index([supersedes_review_id])
@@ -3785,14 +3815,290 @@ model ComplianceObligation {
   snapshot              Json
   created_at            DateTime  @default(now())
   updated_at            DateTime  @default(now()) @updatedAt
+  rule_result_id        String?                      @db.Uuid
+  rule_revision_id      String?                      @db.Uuid
+  obligation_key        String?
+  idempotency_key       String?
+  legal_deadline_source String?
+  ruleResult            ComplianceRuleResult?        @relation(fields: [rule_result_id, organization_id, review_id, rule_revision_id], references: [id, organization_id, review_id, rule_revision_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_obligation_lineage_fkey")
+  ruleRevision          ComplianceLegalRuleRevision? @relation(fields: [rule_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_obligation_revision_fkey")
 
   @@unique([review_id, type])
+  @@unique([organization_id, rule_result_id, obligation_key], map: "compliance_obligations_canonical_key")
   @@index([review_id, status])
   @@index([due_at, status])
   @@index([external_confirmed_by], map: "idx_uif_obligations_external_confirmer_fk")
   @@index([external_receipt_id], map: "idx_uif_obligations_external_receipt_fk")
   @@index([responsible_id], map: "idx_uif_obligations_responsible_fk")
   @@map("compliance_obligations")
+}
+
+enum ComplianceRuleFamily {
+  CUM_MAT_001
+  CUM_MAT_002
+  CUM_MAT_003
+  CUM_MAT_004
+  CUM_MAT_005
+  CUM_MAT_006
+  CUM_MAT_007
+}
+
+enum ComplianceRuleRevisionStatus {
+  DRAFT
+  VERIFIED
+  ACTIVE
+  RETIRED
+  LEGACY_UNVERIFIED
+}
+
+enum ComplianceApplicabilityState {
+  NO_APLICA
+  APLICA_SIN_AVISO
+  APLICA_CON_AVISO
+  INFORMACION_INCOMPLETA
+}
+
+enum ComplianceGeneralState {
+  NO_APLICA
+  PENDIENTE
+  EN_PROCESO
+  LISTO
+  CUMPLIMIENTO_COMPLETO
+  VENCIDO
+}
+
+enum ComplianceRequirementProvider {
+  LEGAL
+  DOC
+  LST
+  BC
+  CUE
+  PAG
+  FIR
+  AVI
+}
+
+enum ComplianceRequirementStatus {
+  PENDIENTE
+  EN_PROCESO
+  LISTO
+  CUMPLIDO
+  NO_APLICA
+  VENCIDO
+  BLOQUEADO_POR_FALTA_DATOS
+}
+
+enum ComplianceAlertLevel {
+  INFORMATIVA
+  ADVERTENCIA
+  CRITICA
+}
+
+enum ComplianceAlertStatus {
+  ABIERTA
+  RESUELTA
+  DESCARTADA
+}
+
+model ComplianceLegalRule {
+  id              String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String                        @db.Uuid
+  stable_key      String
+  family          ComplianceRuleFamily
+  name            String
+  description     String?
+  created_by_id   String                        @db.Uuid
+  created_at      DateTime                      @default(now())
+  updated_at      DateTime                      @default(now()) @updatedAt
+  organization    Organization                  @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_legal_rules_org_fkey")
+  createdBy       OrganizationMembership        @relation("ComplianceLegalRuleCreatorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_legal_rules_actor_fkey")
+  revisions       ComplianceLegalRuleRevision[]
+
+  @@unique([organization_id, stable_key], map: "compliance_legal_rules_tenant_stable_key")
+  @@unique([id, organization_id], map: "compliance_legal_rules_id_tenant_key")
+  @@index([organization_id, family], map: "idx_compliance_legal_rules_tenant_family")
+  @@map("compliance_legal_rules")
+}
+
+model ComplianceLegalRuleRevision {
+  id                     String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id        String                        @db.Uuid
+  rule_id                String                        @db.Uuid
+  version                Int
+  status                 ComplianceRuleRevisionStatus  @default(DRAFT)
+  effective_from         DateTime
+  effective_to           DateTime?
+  conditions             Json
+  outcome                Json
+  legal_basis            String
+  source_name            String?
+  source_url             String?
+  source_published_at    DateTime?
+  source_checksum        String?
+  verified_by_id         String?                       @db.Uuid
+  verified_at            DateTime?
+  activated_by_id        String?                       @db.Uuid
+  activated_at           DateTime?
+  supersedes_revision_id String?                       @db.Uuid
+  checksum               String
+  created_by_id          String                        @db.Uuid
+  created_at             DateTime                      @default(now())
+  organization           Organization                  @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_rule_revision_org_fkey")
+  rule                   ComplianceLegalRule           @relation(fields: [rule_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_rule_revision_rule_fkey")
+  createdBy              OrganizationMembership        @relation("ComplianceRuleRevisionCreatorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_rule_revision_actor_fkey")
+  verifiedBy             OrganizationMembership?       @relation("ComplianceRuleRevisionVerifierMembership", fields: [organization_id, verified_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_rule_revision_verifier_fkey")
+  activatedBy            OrganizationMembership?       @relation("ComplianceRuleRevisionActivatorMembership", fields: [organization_id, activated_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_rule_revision_activator_fkey")
+  supersedes             ComplianceLegalRuleRevision?  @relation("ComplianceRuleRevisionLineage", fields: [supersedes_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_rule_revision_supersedes_fkey")
+  supersededBy           ComplianceLegalRuleRevision[] @relation("ComplianceRuleRevisionLineage")
+  results                ComplianceRuleResult[]
+  obligations            ComplianceObligation[]
+  alerts                 ComplianceAlert[]
+
+  @@unique([organization_id, rule_id, version], map: "compliance_rule_revisions_tenant_rule_version")
+  @@unique([id, organization_id], map: "compliance_rule_revisions_id_tenant_key")
+  @@index([organization_id, status, effective_from, effective_to], map: "idx_compliance_rule_revisions_effective")
+  @@index([organization_id, rule_id, status], map: "idx_compliance_rule_revisions_rule_status")
+  @@map("compliance_legal_rule_revisions")
+}
+
+model ExpedienteComplianceState {
+  id                String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id   String                  @db.Uuid
+  expediente_id     String                  @unique(map: "expediente_compliance_states_expediente_key") @db.Uuid
+  current_review_id String?                 @db.Uuid
+  state             ComplianceGeneralState  @default(PENDIENTE)
+  pending_count     Int                     @default(0)
+  next_deadline     DateTime?
+  version           Int                     @default(1)
+  updated_by_id     String                  @db.Uuid
+  created_at        DateTime                @default(now())
+  updated_at        DateTime                @default(now()) @updatedAt
+  organization      Organization            @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "exp_compliance_state_org_fkey")
+  expediente        Expediente              @relation(fields: [expediente_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "exp_compliance_state_exp_fkey")
+  updatedBy         OrganizationMembership  @relation("ExpedienteComplianceStateUpdaterMembership", fields: [organization_id, updated_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "exp_compliance_state_actor_fkey")
+  currentReview     ComplianceReview?       @relation(fields: [current_review_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "exp_compliance_state_current_review_fkey")
+  requirements      ComplianceRequirement[]
+  alerts            ComplianceAlert[]
+
+  @@unique([id, organization_id], map: "expediente_compliance_states_id_tenant_key")
+  @@unique([organization_id, expediente_id], map: "expediente_compliance_states_tenant_case_key")
+  @@index([organization_id, state, next_deadline], map: "idx_exp_compliance_state_alerting")
+  @@map("expediente_compliance_states")
+}
+
+model ComplianceRuleResult {
+  id                   String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id      String                       @db.Uuid
+  review_id            String                       @db.Uuid
+  rule_revision_id     String                       @db.Uuid
+  expediente_acto_id   String?                      @db.Uuid
+  applicability        ComplianceApplicabilityState
+  vulnerable_activity  Boolean?
+  notice_required      Boolean?
+  notice_type          String?
+  notice_channel       String?
+  missing_paths        Json
+  result_snapshot      Json
+  legal_basis_snapshot Json
+  created_at           DateTime                     @default(now())
+  organization         Organization                 @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_rule_result_org_fkey")
+  review               ComplianceReview             @relation(fields: [review_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_rule_result_review_fkey")
+  ruleRevision         ComplianceLegalRuleRevision  @relation(fields: [rule_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_rule_result_revision_fkey")
+  requirements         ComplianceRequirement[]
+  obligations          ComplianceObligation[]
+
+  @@unique([id, organization_id], map: "compliance_rule_results_id_tenant_key")
+  @@unique([id, organization_id, review_id, rule_revision_id], map: "compliance_rule_results_lineage_key")
+  @@index([organization_id, review_id, applicability], map: "idx_compliance_rule_results_review")
+  @@map("compliance_rule_results")
+}
+
+model ComplianceAlertLeadRevision {
+  id              String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String                 @db.Uuid
+  revision        Int
+  lead_days       Int
+  provenance      Json
+  created_by_id   String                 @db.Uuid
+  published_at    DateTime               @default(now())
+  superseded_at   DateTime?
+  idempotency_key String                 @db.VarChar(160)
+  payload_hash    String                 @db.VarChar(64)
+  organization    Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_alert_lead_org_fkey")
+  createdBy       OrganizationMembership @relation("ComplianceAlertLeadCreatorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_alert_lead_actor_fkey")
+  alerts          ComplianceAlert[]
+
+  @@unique([organization_id, revision], map: "compliance_alert_lead_tenant_revision_key")
+  @@unique([organization_id, idempotency_key], map: "compliance_alert_lead_tenant_idempotency_key")
+  @@unique([id, organization_id], map: "compliance_alert_lead_id_tenant_key")
+  @@index([organization_id, published_at, superseded_at], map: "idx_compliance_alert_lead_current")
+  @@map("compliance_alert_lead_revisions")
+}
+
+model ComplianceRequirement {
+  id                String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id   String                        @db.Uuid
+  expediente_id     String                        @db.Uuid
+  state_id          String                        @db.Uuid
+  review_id         String                        @db.Uuid
+  rule_result_id    String?                       @db.Uuid
+  provider          ComplianceRequirementProvider
+  requirement_key   String
+  label             String
+  status            ComplianceRequirementStatus
+  deadline          DateTime?
+  blocks_completion Boolean                       @default(true)
+  source_snapshot   Json
+  created_at        DateTime                      @default(now())
+  updated_at        DateTime                      @default(now()) @updatedAt
+  organization      Organization                  @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_org_fkey")
+  expediente        Expediente                    @relation(fields: [expediente_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_exp_fkey")
+  state             ExpedienteComplianceState     @relation(fields: [state_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_state_fkey")
+  review            ComplianceReview              @relation(fields: [review_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_review_fkey")
+  ruleResult        ComplianceRuleResult?         @relation(fields: [rule_result_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_result_fkey")
+  alerts            ComplianceAlert[]
+
+  @@unique([organization_id, review_id, provider, requirement_key], map: "compliance_requirements_tenant_review_provider_key")
+  @@unique([id, organization_id], map: "compliance_requirements_id_tenant_key")
+  @@index([organization_id, expediente_id, status, deadline], map: "idx_compliance_requirements_case_status")
+  @@map("compliance_requirements")
+}
+
+model ComplianceAlert {
+  id                 String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id    String                       @db.Uuid
+  expediente_id      String                       @db.Uuid
+  state_id           String                       @db.Uuid
+  review_id          String                       @db.Uuid
+  requirement_id     String?                      @db.Uuid
+  rule_revision_id   String?                      @db.Uuid
+  alert_key          String
+  level              ComplianceAlertLevel
+  status             ComplianceAlertStatus        @default(ABIERTA)
+  message            String
+  deadline           DateTime?
+  lead_revision_id   String?                      @db.Uuid
+  lead_days_snapshot Int?
+  opens_at           DateTime?
+  responsible_id     String?                      @db.Uuid
+  resolved_at        DateTime?
+  resolved_by_id     String?                      @db.Uuid
+  created_at         DateTime                     @default(now())
+  updated_at         DateTime                     @default(now()) @updatedAt
+  organization       Organization                 @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_alert_org_fkey")
+  expediente         Expediente                   @relation(fields: [expediente_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_alert_exp_fkey")
+  state              ExpedienteComplianceState    @relation(fields: [state_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_alert_state_fkey")
+  review             ComplianceReview             @relation(fields: [review_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_alert_review_fkey")
+  requirement        ComplianceRequirement?       @relation(fields: [requirement_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_alert_requirement_fkey")
+  ruleRevision       ComplianceLegalRuleRevision? @relation(fields: [rule_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_alert_revision_fkey")
+  leadRevision       ComplianceAlertLeadRevision? @relation(fields: [lead_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_alert_lead_revision_fkey")
+  responsible        OrganizationMembership?      @relation("ComplianceAlertResponsibleMembership", fields: [organization_id, responsible_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_alert_responsible_fkey")
+  resolvedBy         OrganizationMembership?      @relation("ComplianceAlertResolverMembership", fields: [organization_id, resolved_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_alert_resolver_fkey")
+
+  @@unique([organization_id, review_id, alert_key], map: "compliance_alerts_tenant_review_key")
+  @@unique([id, organization_id], map: "compliance_alerts_id_tenant_key")
+  @@index([organization_id, expediente_id, status, level, deadline], map: "idx_compliance_alerts_case_status")
+  @@map("compliance_alerts")
 }
 
 model ComplianceEvent {

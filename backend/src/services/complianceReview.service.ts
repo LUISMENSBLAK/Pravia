@@ -133,7 +133,13 @@ export class ComplianceReviewService {
       prisma.complianceAiProposal.findMany({ where: { review_id: review.id }, orderBy: { created_at: 'desc' }, take: 50 }),
     ]);
     const sensitive = user.permissions.includes('compliance.sensitive.read');
-    return { revision: { ...review, master_data_changed: changed }, historial: history, workspace: { parties, beneficialOwners: sensitive ? owners : [], pepReviews: sensitive ? pepReviews : [], screenings: sensitive ? screenings : [], payments, obligations, events, aiProposals: sensitive ? aiProposals : [], sensitiveRedacted: !sensitive } };
+    const canonical = review.is_canonical_legal_engine ? await Promise.all([
+      prisma.expedienteComplianceState.findFirst({ where: { current_review_id: review.id } }),
+      prisma.complianceRuleResult.findMany({ where: { review_id: review.id }, orderBy: { created_at: 'asc' } }),
+      prisma.complianceRequirement.findMany({ where: { review_id: review.id }, orderBy: [{ deadline: 'asc' }, { created_at: 'asc' }] }),
+      prisma.complianceAlert.findMany({ where: { review_id: review.id }, orderBy: [{ level: 'desc' }, { created_at: 'asc' }] }),
+    ]) : [null, [], [], []];
+    return { revision: { ...review, master_data_changed: changed }, historial: history, workspace: { parties, beneficialOwners: sensitive ? owners : [], pepReviews: sensitive ? pepReviews : [], screenings: sensitive ? screenings : [], payments, obligations, events, aiProposals: sensitive ? aiProposals : [], sensitiveRedacted: !sensitive, state: canonical[0], ruleResults: canonical[1], requirements: canonical[2], alerts: canonical[3] } };
   }
 
   static async create(user: User, userId: unknown, body: any, correlationId?: string) {
@@ -148,6 +154,10 @@ export class ComplianceReviewService {
     ]);
     if (!expediente) throw new ComplianceError('El expediente no está activo o no está dentro de tu alcance.', 'COMPLIANCE_EXPEDIENTE_INVALID', 404);
     if (!rule) throw new ComplianceError('La versión de reglas no es aplicable a la fecha indicada.', 'COMPLIANCE_RULE_INVALID', 409);
+    if (body.supersedes_review_id) {
+      const superseded = await prisma.complianceReview.findFirst({ where: { id: String(body.supersedes_review_id), expediente_id: expediente.id, tipo: type, is_canonical_legal_engine: false, expediente: { archived_at: null, ...expedienteAccessWhere(user) } }, select: { id: true } });
+      if (!superseded) throw new ComplianceError('La revisión anterior no pertenece a la misma cadena, expediente y tipo.', 'COMPLIANCE_SUPERSEDES_SCOPE_INVALID', 409);
+    }
     const master = await captureMasterSnapshot(prisma, expediente.id);
     if (!master) throw new ComplianceError('No fue posible capturar el expediente.', 'COMPLIANCE_SNAPSHOT_FAILED', 409);
     const ruleSnapshot = snapshotRule(rule);
@@ -209,6 +219,7 @@ export class ComplianceReviewService {
     const decision = String(body.decision || '').toUpperCase();
     if (!['CONFIRMAR', 'REQUIERE_AJUSTES'].includes(decision)) throw new ComplianceError('La decisión humana no es válida.', 'COMPLIANCE_DECISION_INVALID');
     const current = await scopedReview(user, id, {});
+    if (current.is_canonical_legal_engine) throw new ComplianceError('El estado canónico se deriva de requisitos y no admite cierre manual.', 'COMPLIANCE_CANONICAL_STATE_DERIVED', 409);
     if (current.estatus === 'CONFIRMADO') throw new ComplianceError('La revisión confirmada es histórica y no puede sobrescribirse.', 'COMPLIANCE_REVIEW_LOCKED', 409);
     if (!current.resultado_json) throw new ComplianceError('Primero ejecuta la evaluación explicable.', 'COMPLIANCE_RESULT_REQUIRED', 409);
     const status = decision === 'CONFIRMAR' ? 'CONFIRMADO' : 'REQUIERE_AJUSTES';

@@ -19,6 +19,8 @@ export const TENANT_SCOPED_MODELS = new Set([
   'AssistantAttachment', 'ComplianceReview', 'ComplianceDecision', 'ComplianceEvidence', 'CompliancePartySnapshot',
   'ComplianceBeneficialOwner', 'CompliancePepReview', 'ComplianceScreeningResult', 'CompliancePayment',
   'ComplianceObligation', 'ComplianceEvent', 'ComplianceAiProposal', 'CargaTemporalDocumento',
+  'ComplianceLegalRule', 'ComplianceLegalRuleRevision', 'ExpedienteComplianceState', 'ComplianceRuleResult',
+  'ComplianceAlertLeadRevision', 'ComplianceRequirement', 'ComplianceAlert',
   'StorageCompensationJob', 'ComparecienteDatoFuente', 'ComparecienteAlias', 'ComparecienteActividadEconomica',
   'ConfiguracionActo', 'ConfiguracionEtapa', 'ConfiguracionActividad', 'ConfiguracionDependencia',
   'ConfiguracionExcepcion', 'ConfiguracionExcepcionDependencia', 'CatalogoInstitucion', 'CatalogoCarpeta',

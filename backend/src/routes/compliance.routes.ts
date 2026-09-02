@@ -3,6 +3,13 @@ import { ComplianceController } from '../controllers/compliance.controller';
 import { requireExpedienteAccess, requirePermission } from '../middleware/auth.middleware';
 
 const router = Router();
+router.post('/configuracion/anticipacion-alertas', requirePermission('compliance.rules.manage'), ComplianceController.publishAlertLead);
+router.post('/reglas-legales', requirePermission('compliance.rules.manage'), ComplianceController.createLegalRule);
+router.post('/reglas-legales/:ruleId/revisiones', requirePermission('compliance.rules.manage'), ComplianceController.createLegalRuleRevision);
+router.post('/reglas-legales/:ruleId/revisiones/:revisionId/verificar', requirePermission('compliance.rules.manage'), ComplianceController.verifyLegalRuleRevision);
+router.post('/reglas-legales/:ruleId/revisiones/:revisionId/activar', requirePermission('compliance.rules.manage'), ComplianceController.activateLegalRuleRevision);
+router.post('/expedientes/:expedienteId/evaluaciones-legales', requirePermission('compliance.write'), ComplianceController.evaluateLegalCase);
+router.get('/expedientes/:expedienteId/estado', ComplianceController.legalCaseState);
 router.get('/catalogos', ComplianceController.catalogs);
 router.get('/revisiones', ComplianceController.list);
 router.get('/revisiones/:id', ComplianceController.detail);

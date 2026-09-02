@@ -153,8 +153,9 @@ export const getEligibleCotizacionesForExpediente = async (req: Request, res: Re
 export const getExpedienteById = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    const canReadCompliance = Boolean(req.user?.permissions.includes('compliance.read'));
 
-    const expediente = await prisma.expediente.findUnique({
+    const expediente: any = await prisma.expediente.findUnique({
       where: { id },
       include: {
         actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: true }, orderBy: { created_at: 'asc' } },
@@ -235,11 +236,11 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         },
         tareas_externas: { orderBy: { updated_at: 'desc' } },
         entrega: true,
-        complianceReviews: {
+        ...(canReadCompliance ? { complianceReviews: {
           orderBy: { updated_at: 'desc' },
           take: 20,
           include: { ruleSet: { select: { nombre: true, tipo: true, version: true } }, evidencias: true },
-        },
+        } } : {}),
       }
     });
 
@@ -278,13 +279,13 @@ export const getExpedienteById = async (req: Request, res: Response) => {
 
     const canReadFinance = req.user?.permissions.includes('finanzas.read');
     const financialSummary = canReadFinance ? calculateFinanceAggregates({
-      generatedFees: expediente.honorariosGenerados.map((item) => Number(item.monto)),
-      movements: expediente.movimientosFinancieros.map((movement) => ({
+      generatedFees: expediente.honorariosGenerados.map((item: any) => Number(item.monto)),
+      movements: expediente.movimientosFinancieros.map((movement: any) => ({
         nature: movement.naturaleza,
         amount: Number(movement.monto),
         status: movement.estatus,
         allocations: movement.distribuciones.length
-          ? movement.distribuciones.map((allocation) => ({
+          ? movement.distribuciones.map((allocation: any) => ({
             nature: allocation.categoria.naturaleza as EconomicNature,
             amount: Number(allocation.monto),
           }))
@@ -312,7 +313,7 @@ export const getExpedienteById = async (req: Request, res: Response) => {
     };
     if (req.user && ['RECEPCION', 'GESTORIA'].includes(req.user.rol)) {
       const isReception = req.user.rol === 'RECEPCION';
-      const permittedTransitions = transitions.filter((item) => isReception
+      const permittedTransitions = transitions.filter((item: any) => isReception
         ? item.status === 'ENTREGADO'
         : ['POST_FIRMA', 'LISTO_ENTREGA'].includes(item.status));
       return res.json({
@@ -329,7 +330,7 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         macrofase: macrophaseForStatus(expediente.estatus),
         cliente_principal: expediente.cliente_alias || 'Sin cliente',
         comparecientes_adicionales: Math.max(0, expediente.comparecientes.length - 1),
-        riesgo: { label: complianceLabel(expediente.complianceReviews[0]?.resultado_json), requires_attention: complianceAttention(expediente.complianceReviews[0]?.resultado_json) },
+        riesgo: canReadCompliance ? { label: complianceLabel(expediente.complianceReviews?.[0]?.resultado_json), requires_attention: complianceAttention(expediente.complianceReviews?.[0]?.resultado_json) } : { label: 'Restringido', requires_attention: false },
         tipo_acto: { id: primaryAct.id, nombre: primaryAct.nombre },
         actos: expediente.actos,
         notaria: isReception || !expediente.notaria ? null : {
@@ -339,10 +340,10 @@ export const getExpedienteById = async (req: Request, res: Response) => {
           contacto_principal: expediente.notaria.contacto_principal,
           telefono: expediente.notaria.telefono,
         },
-        requisitos_docs: expediente.requisitos_docs.map((item) => ({
+        requisitos_docs: expediente.requisitos_docs.map((item: any) => ({
           id: item.id, nombre: item.nombre, categoria: item.categoria, obligatorio: item.obligatorio, estatus: item.estatus,
         })),
-        documentos_autorizados: expediente.expedienteDocumentos.map((link) => ({
+        documentos_autorizados: expediente.expedienteDocumentos.map((link: any) => ({
           id: link.documento.id,
           nombre: link.documento.nombre_original,
           tipo: link.documento.tipo,
@@ -353,7 +354,7 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         tareas_postfirma: isReception ? [] : expediente.tareas_externas,
         entrega: expediente.entrega,
         workflow: {
-          current_status_label: EXPEDIENTE_STATUS_LABELS[expediente.estatus],
+          current_status_label: EXPEDIENTE_STATUS_LABELS[expediente.estatus as ExpedienteEstatus],
           transitions: permittedTransitions,
           next_stage: nextStage,
         },
@@ -362,8 +363,10 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         capabilities,
       });
     }
+    const serializedExpediente = { ...expediente };
+    if (!canReadCompliance) delete serializedExpediente.complianceReviews;
     res.json({
-      ...expediente,
+      ...serializedExpediente,
       tipo_acto: primaryAct,
       macrofase: macrophaseForStatus(expediente.estatus),
       cliente_principal: expediente.comparecientes[0]?.compareciente.personaFisica?.nombre_completo_calculado
@@ -371,12 +374,12 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         || expediente.cliente_alias
         || 'Sin cliente',
       comparecientes_adicionales: Math.max(0, expediente.comparecientes.length - 1),
-      riesgo: { label: complianceLabel(expediente.complianceReviews[0]?.resultado_json), requires_attention: complianceAttention(expediente.complianceReviews[0]?.resultado_json) },
+      riesgo: canReadCompliance ? { label: complianceLabel(expediente.complianceReviews?.[0]?.resultado_json), requires_attention: complianceAttention(expediente.complianceReviews?.[0]?.resultado_json) } : { label: 'Restringido', requires_attention: false },
       ...(canReadFinance
         ? { financialSummary }
         : { valor_operacion: null, movimientosFinancieros: [], honorariosGenerados: [], financialSummary: null, financial_access: false }),
       workflow: {
-        current_status_label: EXPEDIENTE_STATUS_LABELS[expediente.estatus],
+        current_status_label: EXPEDIENTE_STATUS_LABELS[expediente.estatus as ExpedienteEstatus],
         transitions,
         next_stage: nextStage,
         stages: workflowStages,
@@ -386,7 +389,7 @@ export const getExpedienteById = async (req: Request, res: Response) => {
       capabilities,
     });
   } catch (error: any) {
-    res.status(500).json({ error: 'Error al obtener detalle del expediente', detail: error.message });
+    res.status(500).json({ error: 'No fue posible obtener el detalle del expediente.', code: 'EXPEDIENTE_DETAIL_UNAVAILABLE' });
   }
 };
 

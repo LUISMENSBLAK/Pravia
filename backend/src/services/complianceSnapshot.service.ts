@@ -118,6 +118,9 @@ export async function masterChangedSince(db: any, snapshot: any) {
   });
   if (!current) return false;
   if (Number(current.version) !== Number(snapshot.expediente.version)) return true;
-  const previous = new Map((snapshot.comparecientes || []).map((item: any) => [item.id, Number(item.version)]));
+  const previous = new Map((snapshot.comparecientes || []).map((item: any) => {
+    const master = item.compareciente || item;
+    return [master.id, Number(master.version)];
+  }));
   return current.comparecientes.some((link: any) => previous.get(link.compareciente.id) !== Number(link.compareciente.version));
 }

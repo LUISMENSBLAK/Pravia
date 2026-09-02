@@ -70,3 +70,32 @@ export const fixtureComplianceDetail: ComplianceDetail = {
     sensitiveRedacted: false,
   },
 };
+
+export const fixtureH1ComplianceDetail: ComplianceDetail = {
+  revision: {
+    ...review,
+    id: 'fixture-h1', tipo: 'LEGAL_H1', estatus: 'EVALUACION_DETERMINISTA', is_canonical_legal_engine: true,
+    fecha_operacion: '2026-08-17T12:00:00.000Z', legal_date_source: 'CONFIRMADA_POR_USUARIO',
+    engine_version: 'H1-CUM-MAT-1', rule_version_snapshot: 'synthetic-development-checksum', ruleSet: null,
+    resultado_json: { clasificacion: 'INFORMACION_INCOMPLETA', estado: 'PENDIENTE' }, evidencias: [], decisiones: [], supersedes: null,
+  },
+  historial: [],
+  workspace: {
+    parties: [], beneficialOwners: [], pepReviews: [], screenings: [], payments: [], obligations: [], aiProposals: [], sensitiveRedacted: false,
+    state: { state: 'PENDIENTE', pending_count: 3, next_deadline: '2026-09-17T23:59:59.999Z' },
+    ruleResults: [
+      { id: 'h1-result-1', applicability: 'APLICA_CON_AVISO', vulnerable_activity: true, notice_required: true, result_snapshot: { requirementLabel: 'Integrar requisitos de la operación', legalBasis: 'Fundamento sintético de desarrollo, pendiente de fuente oficial.' }, legal_basis_snapshot: { legal_basis: 'Fundamento sintético de desarrollo, pendiente de fuente oficial.' } },
+      { id: 'h1-result-2', applicability: 'INFORMACION_INCOMPLETA', vulnerable_activity: null, notice_required: null, result_snapshot: { requirementLabel: 'Confirmar información de las personas participantes', legalBasis: 'Regla sintética de desarrollo.' }, legal_basis_snapshot: { legal_basis: 'Regla sintética de desarrollo.' } },
+    ],
+    requirements: [
+      { id: 'h1-req-1', provider: 'LEGAL', label: 'Integrar requisitos de la operación', status: 'PENDIENTE', deadline: '2026-09-17T23:59:59.999Z' },
+      { id: 'h1-req-2', provider: 'LEGAL', label: 'Confirmar información de las personas participantes', status: 'BLOQUEADO_POR_FALTA_DATOS', deadline: null },
+      { id: 'h1-req-3', provider: 'LEGAL', label: 'Revisión jurídica pendiente de información', status: 'PENDIENTE', deadline: null },
+    ],
+    alerts: [
+      { id: 'h1-alert-1', level: 'ADVERTENCIA', status: 'ABIERTA', message: 'Falta información confirmada para determinar completamente la aplicabilidad.', deadline: null },
+      { id: 'h1-alert-2', level: 'INFORMATIVA', status: 'ABIERTA', message: 'Existe una obligación jurídica aplicable con plazo determinado por la regla vigente.', deadline: '2026-09-17T23:59:59.999Z' },
+    ],
+    events: [{ id: 'h1-event-1', event_type: 'EVALUACION_LEGAL_H1_CREADA', summary: 'Se ejecutó una evaluación jurídica determinista y versionada.', created_at: '2026-08-17T14:00:00.000Z' }],
+  },
+};

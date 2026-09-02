@@ -12,6 +12,10 @@ export const complianceService = {
   list: async (filters: Record<string, string | number | undefined>, signal?: AbortSignal) => { const response = await apiRequest<{ success: boolean } & ComplianceList>(`/cumplimiento/revisiones?${query(filters)}`, { signal }); return response; },
   detail: async (id: string, signal?: AbortSignal) => { const response = await apiRequest<{ success: boolean } & ComplianceDetail>(`/cumplimiento/revisiones/${id}`, { signal }); return response; },
   create: async (body: any) => { const response = await apiRequest<{ revision: ComplianceReview }>('/cumplimiento/revisiones', { method: 'POST', body: JSON.stringify(body) }); return response.revision; },
+  evaluateLegalCase: async (expedienteId: string, body: { idempotency_key: string; fecha_juridica_confirmada?: string }) => {
+    const response = await apiRequest<{ evaluation: { review: ComplianceReview } }>(`/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/evaluaciones-legales`, { method: 'POST', body: JSON.stringify(body) });
+    return response.evaluation.review;
+  },
   evaluate: async (id: string, cuestionario: Record<string, any>) => { const response = await apiRequest<{ revision: ComplianceReview }>(`/cumplimiento/revisiones/${id}/evaluar`, { method: 'POST', body: JSON.stringify({ cuestionario }) }); return response.revision; },
   decide: async (id: string, decision: 'CONFIRMAR' | 'REQUIERE_AJUSTES', observaciones: string) => { const response = await apiRequest<{ revision: ComplianceReview }>(`/cumplimiento/revisiones/${id}/revisar`, { method: 'POST', body: JSON.stringify({ decision, observaciones }) }); return response.revision; },
   reevaluate: async (id: string) => { const response = await apiRequest<{ revision: ComplianceReview }>(`/cumplimiento/revisiones/${id}/reevaluar`, { method: 'POST', body: JSON.stringify({ conservar_respuestas: true }) }); return response.revision; },

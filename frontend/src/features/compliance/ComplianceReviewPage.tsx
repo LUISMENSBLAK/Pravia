@@ -1,5 +1,5 @@
 import {
-  AlertTriangle, ArrowLeft, Bot, CalendarClock, ChevronRight, CircleDollarSign, ExternalLink,
+  AlertTriangle, ArrowLeft, Bot, CalendarClock, ChevronRight, CircleDollarSign, ClipboardCheck, ExternalLink,
   FileCheck2, FileSearch, Fingerprint, History, Landmark, Link2, RefreshCw, Scale,
   ShieldAlert, ShieldCheck, Sparkles, UserCheck, UsersRound, WalletCards,
 } from 'lucide-react';
@@ -9,9 +9,10 @@ import { DocumentViewer } from '../../components/documents/DocumentViewer';
 import { useAssistant } from '../assistant/AssistantProvider';
 import { useAuth } from '../auth/AuthProvider';
 import { resolveExpedienteReturn } from '../cases/expedienteNavigation';
-import { fixtureComplianceDetail } from './compliance.fixtures';
+import { fixtureComplianceDetail, fixtureH1ComplianceDetail } from './compliance.fixtures';
 import { activityLabels, evaluationLabels, noticeLabels } from './CompliancePage';
 import { complianceService } from './compliance.service';
+import { humanComplianceLabel } from './complianceLabels';
 import type { ComplianceDetail } from './compliance.types';
 import styles from './Compliance.module.css';
 
@@ -28,9 +29,10 @@ const text = (value: unknown, fallback = 'Por determinar') => value == null || v
 export function ComplianceReviewPage() {
   const { id = '' } = useParams(); const location = useLocation(); const navigate = useNavigate(); const { user } = useAuth(); const assistant = useAssistant();
   const returnPath = resolveExpedienteReturn(location.search);
-  const fixture = import.meta.env.DEV && new URLSearchParams(location.search).get('fixture') === 'workspace';
+  const fixtureName = new URLSearchParams(location.search).get('fixture');
+  const fixture = import.meta.env.DEV && ['workspace', 'h1'].includes(fixtureName || '');
   const localVisual = fixture && new URLSearchParams(location.search).get('visual') === '1';
-  const [data, setData] = useState<ComplianceDetail | null>(fixture ? fixtureComplianceDetail : null);
+  const [data, setData] = useState<ComplianceDetail | null>(fixture ? fixtureName === 'h1' ? fixtureH1ComplianceDetail : fixtureComplianceDetail : null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(fixture ? 'ready' : 'loading'); const [saving, setSaving] = useState(false); const [message, setMessage] = useState('');
   const [viewer, setViewer] = useState<{ open: boolean; name: string; mime?: string; url?: string; loading?: boolean; error?: string }>({ open: false, name: '' });
   const canWrite = localVisual || Boolean(user?.permissions?.some((permission) => ['compliance.write', 'cumplimiento.write'].includes(permission)));
@@ -43,6 +45,7 @@ export function ComplianceReviewPage() {
   if (status === 'loading') return <main className={styles.workspacePage}><div className={styles.reviewSkeleton}><span/><span/><section/><section/></div></main>;
   if (status === 'error' || !data) return <main className={styles.workspacePage}><section className={styles.error}><AlertTriangle/><h2>No pudimos cargar esta evaluación.</h2><p>La información no está disponible en este momento.</p><button type="button" onClick={() => void load()}><RefreshCw/>Reintentar</button></section></main>;
   const review = data.revision; const workspace = data.workspace || { parties: [], beneficialOwners: [], pepReviews: [], screenings: [], payments: [], obligations: [], events: [], aiProposals: [], sensitiveRedacted: false }; const result: any = review.resultado_json || {}; const questionnaire = review.cuestionario_json || {};
+  if (review.is_canonical_legal_engine || review.tipo === 'LEGAL_H1') return <CanonicalLegalReview data={data} returnPath={returnPath} onBack={() => navigate(returnPath || '/riesgos')} onAssistant={() => assistant.openAssistant({ prefill: 'Resume el estado jurídico de cumplimiento, los requisitos, alertas y fundamentos de esta evaluación sin emitir un dictamen ni cambiar datos.' })}/>;
   const operationValue = result.monto_base_mxn ?? questionnaire.precio_pactado ?? review.expediente.valor_operacion; const paymentTotal = workspace.payments.reduce((sum: number, payment: any) => sum + Number(payment.amount_mxn || 0), 0); const evaluation = result.estado_evaluacion || (review.estatus === 'CONFIRMADO' ? 'EVALUADO' : 'SIN_EVALUAR');
   return <main className={styles.workspacePage}>
     <header className={styles.workspaceHeader}><button type="button" className={styles.backLink} onClick={() => navigate(returnPath || '/riesgos')}><ArrowLeft/>{returnPath ? 'Volver al expediente' : 'Riesgos / UIF'}</button><div className={styles.workspaceTitle}><div><span>Evaluación UIF · versión {review.rule_version_snapshot}</span><h1>{review.expediente.numero_pravia}</h1><p>{review.expediente.cliente_alias || 'Cliente por confirmar'} · {review.expediente.tipo_acto?.nombre || 'Acto por determinar'}</p></div><div className={styles.workspaceActions}><b data-tone={evaluation}>{evaluationLabels[evaluation] || text(evaluation)}</b>{canWrite && <button type="button" disabled={saving} onClick={() => void reevaluate()}><RefreshCw/>Reevaluar</button>}</div></div><div className={styles.workspaceMeta}><span><Landmark/>Notaría {review.expediente.notaria?.numero_notaria || 'sin asignar'}</span><span><UserCheck/>{review.expediente.abogado ? `${review.expediente.abogado.nombre} ${review.expediente.abogado.apellido}` : 'Sin responsable'}</span><span><CalendarClock/>Operación: {date(review.fecha_operacion)}</span><span><History/>Snapshot: {date(review.snapshot_captured_at)}</span></div>{review.master_data_changed && <p className={styles.snapshotWarning}><AlertTriangle/>Los datos maestros cambiaron después del snapshot. Reevalúa para incorporarlos sin alterar esta versión.</p>}</header>
@@ -61,6 +64,52 @@ export function ComplianceReviewPage() {
     </div><aside className={styles.workspaceAside}><section className={styles.assistantCard}><header><Sparkles/><span>PRAVIA IA</span><b>Contextual</b></header><h2>Apoyo para esta evaluación</h2><p>Consulta faltantes, alertas y fuentes de esta versión. PRAVIA IA no confirma personas, no presenta Avisos y no emite dictámenes.</p><button type="button" onClick={() => assistant.openAssistant({ prefill: 'Resume esta evaluación UIF, sus faltantes y fuentes, sin emitir un dictamen legal.' })}><Bot/>Abrir con contexto</button></section>{workspace.aiProposals.map((proposal: any) => <section className={styles.aiProposal} key={proposal.id}><small>Propuesta automatizada</small><strong>PROPUESTA — REQUIERE CONFIRMACIÓN HUMANA.</strong><p>{proposal.content?.message || 'Información extraída pendiente de revisión.'}</p><dl><div><dt>Documento</dt><dd>{proposal.source_document_id || 'Fuente registrada'}</dd></div><div><dt>Página</dt><dd>{proposal.source_page || '—'}</dd></div><div><dt>Modelo</dt><dd>{proposal.model}</dd></div><div><dt>Versión</dt><dd>{proposal.prompt_version}</dd></div></dl></section>)}<section className={styles.disclaimerCard}><ShieldCheck/><div><strong>Apoyo operativo, no dictamen</strong><p>{result.disclaimer || 'La decisión requiere revisión humana autorizada.'}</p></div></section></aside></div>
     <DocumentViewer open={viewer.open} name={viewer.name} mimeType={viewer.mime} url={viewer.url} loading={viewer.loading} error={viewer.error} onClose={() => setViewer({ open: false, name: '' })}/>
   </main>;
+}
+
+const legalSourceLabels: Record<string, string> = {
+  EXPEDIENTE_FECHA_REAL_FIRMA: 'Fecha real de firma registrada en el expediente',
+  CONFIRMADA_POR_USUARIO: 'Fecha jurídica confirmada por una persona autorizada',
+};
+
+function CanonicalLegalReview({ data, returnPath, onBack, onAssistant }: { data: ComplianceDetail; returnPath?: string | null; onBack: () => void; onAssistant: () => void }) {
+  const review = data.revision;
+  const workspace = data.workspace || { parties: [], beneficialOwners: [], pepReviews: [], screenings: [], payments: [], obligations: [], events: [], aiProposals: [], sensitiveRedacted: false };
+  const state: any = workspace.state || review.canonical_state_snapshot || {};
+  const results = workspace.ruleResults || [];
+  const requirements = workspace.requirements || [];
+  const alerts = workspace.alerts || [];
+  const operationSource = legalSourceLabels[String(review.legal_date_source || '')] || 'Fecha jurídica aún no confirmada';
+  return <main className={styles.workspacePage}>
+    <header className={styles.workspaceHeader}>
+      <button type="button" className={styles.backLink} onClick={onBack}><ArrowLeft/>{returnPath ? 'Volver al expediente' : 'Riesgos / UIF'}</button>
+      <div className={styles.workspaceTitle}><div><span>Evaluación jurídica de cumplimiento</span><h1>{review.expediente.numero_pravia}</h1><p>{review.expediente.cliente_alias || 'Cliente por confirmar'} · evaluación determinista y versionada</p></div><div className={styles.workspaceActions}><b data-tone={state.state}>{humanComplianceLabel(state.state)}</b></div></div>
+      <div className={styles.workspaceMeta}><span><Landmark/>Notaría {review.expediente.notaria?.numero_notaria || 'sin asignar'}</span><span><UserCheck/>{review.expediente.abogado ? `${review.expediente.abogado.nombre} ${review.expediente.abogado.apellido}` : 'Sin responsable'}</span><span><CalendarClock/>Fecha jurídica: {date(review.fecha_operacion)}</span><span><History/>Evaluación: {date(review.snapshot_captured_at)}</span></div>
+      {review.master_data_changed && <p className={styles.snapshotWarning}><AlertTriangle/>Los datos maestros cambiaron después de esta evaluación. El historial permanece intacto y una nueva evaluación podrá incorporar los cambios.</p>}
+    </header>
+    <nav className={styles.sectionNav} aria-label="Secciones de la evaluación jurídica"><a href="#estado"><span>01</span>Estado</a><a href="#resultados"><span>02</span>Resultados</a><a href="#requisitos"><span>03</span>Requisitos</a><a href="#alertas"><span>04</span>Alertas</a><a href="#historial"><span>05</span>Historial</a></nav>
+    <div className={styles.workspaceLayout}><div className={styles.workspaceSections}>
+      <WorkspaceSection id="estado" number="01" icon={ShieldCheck} title="Estado actual de cumplimiento" subtitle="Estado derivado de requisitos y fechas; no puede marcarse completo manualmente."><div className={styles.legalDecision}><span>{humanComplianceLabel(state.state)}</span><h3>{Number(state.pending_count || 0) ? `${Number(state.pending_count)} requisitos requieren atención` : 'Sin pendientes derivados en esta evaluación'}</h3><p>Este estado pertenece al expediente y conserva cada evaluación anterior como historial inmutable.</p></div><KeyGrid items={[["Fecha jurídica", date(review.fecha_operacion)], ["Origen de la fecha", operationSource], ["Próximo vencimiento", date(state.next_deadline)], ["Resultados evaluados", results.length], ["Requisitos", requirements.length], ["Alertas abiertas", alerts.filter((item: any) => item.status === 'ABIERTA').length]]}/></WorkspaceSection>
+      <WorkspaceSection id="resultados" number="02" icon={Scale} title="Detección jurídica" subtitle="Cada acto se contrasta con todas las reglas verificadas y vigentes para la fecha jurídica.">{results.length ? <div className={styles.recordList}>{results.map((item: any, index: number) => { const snapshot = item.result_snapshot || {}; const basis = item.legal_basis_snapshot || {}; return <article key={item.id}><div><strong>{snapshot.requirementLabel || `Resultado jurídico ${index + 1}`}</strong><p>{humanComplianceLabel(item.applicability)}{item.notice_required === true ? ' · genera obligación de aviso según la regla vigente' : ''}</p><LegalFoundation text={basis.legal_basis || snapshot.legalBasis || 'El fundamento no está disponible en esta versión.'}/></div><span>{item.vulnerable_activity === true ? 'Actividad identificada' : item.vulnerable_activity === false ? 'Actividad no identificada' : 'Pendiente de información'}</span></article>; })}</div> : <EmptyLine text="No se emitieron resultados legales: revisa los requisitos y alertas de información."/>}</WorkspaceSection>
+      <WorkspaceSection id="requisitos" number="03" icon={ClipboardCheck} title="Requisitos derivados" subtitle="La conclusión general depende de estos requisitos y de los módulos que correspondan.">{requirements.length ? <div className={styles.recordList}>{requirements.map((item: any) => <article key={item.id}><div><strong>{item.label || 'Requisito de cumplimiento'}</strong><p>{humanComplianceLabel(item.status)} · proveedor {humanProvider(item.provider)}</p></div><span>{item.deadline ? `Límite ${date(item.deadline)}` : 'Sin fecha inventada'}</span></article>)}</div> : <EmptyLine text="Esta evaluación no generó requisitos."/>}</WorkspaceSection>
+      <WorkspaceSection id="alertas" number="04" icon={ShieldAlert} title="Alertas fundacionales" subtitle="Las alertas informan y priorizan; no bloquean globalmente el expediente.">{alerts.length ? <div className={styles.recordList}>{alerts.map((item: any) => <article key={item.id}><div><strong>{humanComplianceLabel(item.level)} · {humanComplianceLabel(item.status)}</strong><p>{item.message}</p></div><span>{item.deadline ? `Fecha ${date(item.deadline)}` : 'Sin fecha global'}</span></article>)}</div> : <EmptyLine text="No hay alertas para esta evaluación."/>}</WorkspaceSection>
+      <WorkspaceSection id="historial" number="05" icon={History} title="Historial de evaluaciones" subtitle="Cada reevaluación crea una versión nueva y no reescribe los resultados anteriores."><div className={styles.timeline}>{workspace.events.map((event: any) => <article key={event.id}><span/><div><strong>{humanEvent(event.event_type)}</strong><p>{event.summary}</p><small>{date(event.created_at)}</small></div></article>)}</div>{!workspace.events.length && <EmptyLine text="No hay eventos adicionales en esta versión."/>}<h3 className={styles.subsectionTitle}>Versiones anteriores</h3><div className={styles.versionGrid}>{data.historial.map((item: any) => <article key={item.id}><strong>{humanComplianceLabel(item.resultado_json?.estado || item.estatus)}</strong><p>Evaluación jurídica conservada en solo lectura</p><small>{date(item.created_at)}</small></article>)}</div>{!data.historial.length && <EmptyLine text="Esta es la primera evaluación jurídica del expediente."/>}</WorkspaceSection>
+    </div><aside className={styles.workspaceAside}><section className={styles.assistantCard}><header><Sparkles/><span>PRAVIA IA</span><b>Contextual</b></header><h2>Apoyo para esta evaluación</h2><p>Consulta estados, faltantes, alertas y fundamentos. PRAVIA IA no decide aplicabilidad jurídica, no cambia el estado y no escribe datos maestros sin confirmación.</p><button type="button" onClick={onAssistant}><Bot/>Abrir con contexto</button></section><section className={styles.disclaimerCard}><ShieldCheck/><div><strong>Motor determinista versionado</strong><p>Solo usa reglas verificadas y vigentes. Si falta información, lo indica expresamente en lugar de asumir que no aplica.</p></div></section></aside></div>
+  </main>;
+}
+
+function humanProvider(value: unknown) {
+  const labels: Record<string, string> = { LEGAL: 'jurídico', DOC: 'documental', LST: 'listas', BC: 'beneficiario controlador', CUE: 'cuestionario', PAG: 'pagos', FIR: 'firma', AVI: 'avisos' };
+  return labels[String(value || '')] || 'por determinar';
+}
+
+function humanEvent(value: unknown) {
+  const labels: Record<string, string> = { EVALUACION_LEGAL_H1_CREADA: 'Evaluación jurídica creada', REEVALUACION_CREADA: 'Reevaluación creada', EVALUACION_CREADA: 'Evaluación creada' };
+  return labels[String(value || '')] || 'Evento de cumplimiento';
+}
+
+function LegalFoundation({ text: foundation }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return <div><button type="button" className={styles.foundationToggle} aria-expanded={open} onClick={() => setOpen((current) => !current)}>Ver fundamento</button>{open && <p className={styles.foundationText}>{foundation}</p>}</div>;
 }
 
 function WorkspaceSection({ id, number, icon: Icon, title, subtitle, children }: any) { return <section className={styles.workspaceSection} id={id}><header><span>{number}</span><Icon/><div><h2>{title}</h2><p>{subtitle}</p></div></header><div className={styles.sectionBody}>{children}</div></section>; }

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { prefillFromSnapshot, snapshotRule } from './complianceSnapshot.service';
+import { describe, expect, it, vi } from 'vitest';
+import { masterChangedSince, prefillFromSnapshot, snapshotRule } from './complianceSnapshot.service';
 
 describe('snapshots de cumplimiento', () => {
   it('congela versión, vigencia, fuente y parámetros del RuleSet', () => {
@@ -22,5 +22,37 @@ describe('snapshots de cumplimiento', () => {
 
   it('ISR sólo reutiliza identificador y no calcula impuesto', () => {
     expect(prefillFromSnapshot('ISR',{comparecientes:[{rfc:'LORM900101AA1',curp:'CURP'}]})).toEqual({enajenante_rfc_curp:'LORM900101AA1'});
+  });
+
+  it('compares nested canonical comparecientes against their master identity', async () => {
+    const findUnique = vi.fn().mockResolvedValue({
+      version: 4,
+      updated_at: new Date('2026-08-31T10:00:00.000Z'),
+      comparecientes: [{
+        compareciente: { id: 'party-1', version: 7, updated_at: new Date('2026-08-31T09:00:00.000Z') },
+      }],
+    });
+    const snapshot = {
+      expediente: { id: 'case-1', version: 4 },
+      comparecientes: [{ id: 'case-party-link-1', compareciente: { id: 'party-1', version: 7 } }],
+    };
+
+    await expect(masterChangedSince({ expediente: { findUnique } }, snapshot)).resolves.toBe(false);
+  });
+
+  it('detects a changed nested canonical compareciente version', async () => {
+    const findUnique = vi.fn().mockResolvedValue({
+      version: 4,
+      updated_at: new Date('2026-08-31T10:00:00.000Z'),
+      comparecientes: [{
+        compareciente: { id: 'party-1', version: 8, updated_at: new Date('2026-08-31T09:00:00.000Z') },
+      }],
+    });
+    const snapshot = {
+      expediente: { id: 'case-1', version: 4 },
+      comparecientes: [{ id: 'case-party-link-1', compareciente: { id: 'party-1', version: 7 } }],
+    };
+
+    await expect(masterChangedSince({ expediente: { findUnique } }, snapshot)).resolves.toBe(true);
   });
 });

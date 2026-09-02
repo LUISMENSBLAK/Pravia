@@ -127,6 +127,19 @@ describe('frontera tenant canónica', () => {
     expect(sql).toContain('CROSS_TENANT_RELATION_DENIED');
   });
 
+  it('cierra bypasses MATCH SIMPLE y contradicciones de linaje en obligaciones H1 sin romper legacy', () => {
+    const sql = readFileSync(resolve(process.cwd(), 'prisma/migrations/20260831050000_create_h1_compliance_legal_engine/migration.sql'), 'utf8');
+    expect(sql).toContain('CONSTRAINT "ck_compliance_obligation_h1_tenant_required" CHECK');
+    expect(sql).toContain('"organization_id" IS NOT NULL OR ("rule_result_id" IS NULL AND "rule_revision_id" IS NULL)');
+    expect(sql).toContain('CONSTRAINT "ck_compliance_obligation_h1_lineage_required" CHECK');
+    expect(sql).toContain('"rule_result_id" IS NULL OR ("organization_id" IS NOT NULL AND "rule_revision_id" IS NOT NULL)');
+    expect(sql).toContain('CONSTRAINT "compliance_rule_results_lineage_key" UNIQUE ("id","organization_id","review_id","rule_revision_id")');
+    expect(sql).toContain('CONSTRAINT "compliance_obligation_lineage_fkey" FOREIGN KEY ("rule_result_id","organization_id","review_id","rule_revision_id") REFERENCES "compliance_rule_results"("id","organization_id","review_id","rule_revision_id")');
+    expect(sql).toContain('"compliance_obligations_canonical_key" ON "compliance_obligations"("organization_id","rule_result_id","obligation_key")');
+    expect(sql).not.toContain('CONSTRAINT "compliance_obligation_result_fkey"');
+    expect(sql).not.toContain('"organization_id","review_id","rule_revision_id","obligation_key"');
+  });
+
   it('mantiene alineados schema, middleware, FKs e índices para cada modelo tenant-owned', () => {
     const schema = readFileSync(resolve(process.cwd(), 'prisma/schema.prisma'), 'utf8');
     const migrations = readAllMigrations();
@@ -154,6 +167,7 @@ describe('frontera tenant canónica', () => {
     const schema = readFileSync(resolve(process.cwd(), 'prisma/schema.prisma'), 'utf8');
     const migrations = readAllMigrations();
     const normalizedMigrations = migrations.replaceAll('"', '').replace(/\s+/g, ' ');
+    const compactMigrations = normalizedMigrations.replace(/\s/g, '');
     const models = new Map<string, { body: string; table: string; tenant: boolean }>();
     for (const match of schema.matchAll(/^model\s+(\w+)\s*\{([\s\S]*?)^\}/gm)) {
       const [, name, body] = match;
@@ -162,12 +176,25 @@ describe('frontera tenant canónica', () => {
     for (const [name, model] of models) {
       if (!model.tenant || ['OrganizationMembership', 'AuthSession'].includes(name)) continue;
       for (const line of model.body.split('\n')) {
-        const relation = line.match(/^\s*\w+\s+(\w+)(?:\?|\[\])?\s+@relation\([^\n]*fields:\s*\[([^\]]+)\]/);
+        const relation = line.match(/^\s*\w+\s+(\w+)(?:\?|\[\])?\s+@relation\([^\n]*fields:\s*\[([^\]]+)\][^\n]*references:\s*\[([^\]]+)\]/);
         if (!relation) continue;
-        const [, parentName, rawFields] = relation;
+        const [, parentName, rawFields, rawReferences] = relation;
         const parent = models.get(parentName);
         if (!parent) continue;
-        for (const field of rawFields.split(',').map((item) => item.trim()).filter((item) => item !== 'organization_id')) {
+        const relationFields = rawFields.split(',').map((item) => item.trim());
+        const referenceFields = rawReferences.split(',').map((item) => item.trim());
+        const exactRelationCandidates = [
+          `FOREIGNKEY(${relationFields.join(',')})REFERENCES${parent.table}(${referenceFields.join(',')})`,
+          `FOREIGNKEY(${relationFields.join(',')})REFERENCESpravia_os.${parent.table}(${referenceFields.join(',')})`,
+        ];
+        const exactCompositeFk = relationFields.includes('organization_id')
+          && referenceFields.includes('organization_id')
+          && exactRelationCandidates.some((candidate) => compactMigrations.includes(candidate));
+        if (parent.tenant && exactCompositeFk) {
+          expect(relationFields.indexOf('organization_id')).toBe(referenceFields.indexOf('organization_id'));
+          continue;
+        }
+        for (const field of relationFields.filter((item) => item !== 'organization_id')) {
           if (parentName === 'Organization') continue;
           if (parentName === 'User') {
             const tuple = `('${model.table}','${field}')`;
@@ -177,16 +204,21 @@ describe('frontera tenant canónica', () => {
             expect(normalizedMigrations).toContain(`FOREIGN KEY (${field}) REFERENCES pravia_os.${parent.table}(id)`);
           } else if (parent.tenant) {
             const tuple = `('${model.table}','${parent.table}','${field}')`;
-            const explicitTrigger = new RegExp(`ON\\s+pravia_os\\.${model.table}[\\s\\S]{0,220}enforce_same_organization\\('${parent.table}','${field}'\\)`);
-            const compositeFk = normalizedMigrations.includes(
-              `FOREIGN KEY (${field}, organization_id) REFERENCES pravia_os.${parent.table}(id, organization_id)`,
-            );
-            // A membership relation references (organization_id,user_id), not membership.id.
-            // Check the actual composite FK emitted by Prisma, preserving the existing checks.
+            const explicitTrigger = new RegExp(`ON(?:pravia_os\\.)?${model.table}[\\s\\S]{0,400}enforce_same_organization\\('${parent.table}','${field}'\\)`);
+            const compositeCandidates = [
+              `FOREIGNKEY(${field},organization_id)REFERENCES${parent.table}(id,organization_id)`,
+              `FOREIGNKEY(${field},organization_id)REFERENCESpravia_os.${parent.table}(id,organization_id)`,
+              `FOREIGNKEY(organization_id,${field})REFERENCES${parent.table}(organization_id,id)`,
+              `FOREIGNKEY(organization_id,${field})REFERENCESpravia_os.${parent.table}(organization_id,id)`,
+            ];
+            const compositeFk = compositeCandidates.some((candidate) => compactMigrations.includes(candidate));
             const membershipFk = parentName === 'OrganizationMembership'
               && rawFields.replace(/\s/g, '') === `organization_id,${field}`
-              && normalizedMigrations.includes(`FOREIGN KEY (organization_id, ${field}) REFERENCES organization_memberships(organization_id, user_id)`);
-            expect(migrations.includes(tuple) || explicitTrigger.test(migrations) || compositeFk || membershipFk, `${model.table}.${field} debe coincidir con ${parent.table}`).toBe(true);
+              && [
+                `FOREIGNKEY(organization_id,${field})REFERENCESorganization_memberships(organization_id,user_id)`,
+                `FOREIGNKEY(organization_id,${field})REFERENCESpravia_os.organization_memberships(organization_id,user_id)`,
+              ].some((candidate) => compactMigrations.includes(candidate));
+            expect(migrations.includes(tuple) || explicitTrigger.test(compactMigrations) || compositeFk || membershipFk, `${model.table}.${field} debe coincidir con ${parent.table}`).toBe(true);
           }
         }
       }

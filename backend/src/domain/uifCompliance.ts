@@ -70,6 +70,11 @@ export class UifRuleError extends Error {
 
 export const UIF_RULE_VERSION = 'LFPIORPI-2025-07-16+RLFPIORPI-2026-03-27+UMA';
 
+/**
+ * Compatibilidad histórica para revisiones UIF creadas antes de H1.
+ * No es una fuente normativa autorizada para evaluaciones nuevas: el motor H1
+ * usa exclusivamente revisiones verificadas, versionadas y vigentes en DB.
+ */
 export const NOTARIAL_RULES: Record<VulnerableActivityKey, NormativeRule> = {
   TRANSMISION_DERECHOS_REALES_INMUEBLES: {
     activity: 'TRANSMISION_DERECHOS_REALES_INMUEBLES',

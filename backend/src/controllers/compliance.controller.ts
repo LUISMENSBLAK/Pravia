@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { ComplianceError } from '../domain/compliance';
 import { ComplianceReviewService } from '../services/complianceReview.service';
+import { ComplianceLegalEngineService } from '../services/complianceLegalEngine.service';
 import { downloadFile } from '../services/supabase.service';
 
 const actor = (req: Request) => req.user?.id;
@@ -13,6 +14,40 @@ const sendError = (res: Response, error: any, fallback: string) => {
 };
 
 export class ComplianceController {
+  static async publishAlertLead(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, revision: await ComplianceLegalEngineService.publishAlertLead(req.user!, req.body, correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_ALERT_LEAD_PUBLISH_FAILED'); }
+  }
+
+  static async createLegalRule(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, rule: await ComplianceLegalEngineService.createRule(req.user!, req.body, correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_LEGAL_RULE_CREATE_FAILED'); }
+  }
+
+  static async createLegalRuleRevision(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, revision: await ComplianceLegalEngineService.createRevision(req.user!, req.params.ruleId, req.body, correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_LEGAL_RULE_REVISION_CREATE_FAILED'); }
+  }
+
+  static async verifyLegalRuleRevision(req: Request, res: Response) {
+    try { return res.json({ success: true, revision: await ComplianceLegalEngineService.verifyRevision(req.user!, req.params.ruleId, req.params.revisionId, req.body, correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_LEGAL_RULE_REVISION_VERIFY_FAILED'); }
+  }
+
+  static async activateLegalRuleRevision(req: Request, res: Response) {
+    try { return res.json({ success: true, revision: await ComplianceLegalEngineService.activateRevision(req.user!, req.params.ruleId, req.params.revisionId, correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_LEGAL_RULE_REVISION_ACTIVATE_FAILED'); }
+  }
+
+  static async evaluateLegalCase(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, evaluation: await ComplianceLegalEngineService.evaluateCase(req.user!, req.params.expedienteId, req.body, correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_LEGAL_EVALUATION_FAILED'); }
+  }
+
+  static async legalCaseState(req: Request, res: Response) {
+    try { return res.json({ success: true, ...(await ComplianceLegalEngineService.readState(req.user!, req.params.expedienteId)) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_LEGAL_STATE_FAILED'); }
+  }
   static async catalogs(req: Request, res: Response) {
     try { return res.json({ success: true, ...(await ComplianceReviewService.catalogs(req.user!)) }); }
     catch (error) { return sendError(res, error, 'COMPLIANCE_CATALOGS_FAILED'); }
