@@ -5,6 +5,7 @@ import { consolidateExtractedFields } from '../domain/documentExtraction';
 import { extraerMultiplesDocumentos, type DocumentoParaExtraccion } from './openaiDocument.service';
 import { recordAIFailure, recordAIUsages } from './aiUsage.service';
 import { requireActorContext } from '../auth/actorContext';
+import { ComplianceDocumentService } from './complianceDocument.service';
 
 type IdentityState = 'VERIFICADA' | 'PENDIENTE' | 'OBSERVACION';
 type HealthState = 'COMPLETO' | 'PENDIENTE' | 'OBSERVACION' | 'NO_APLICA' | 'NO_CONFIGURADO';
@@ -1070,7 +1071,8 @@ export class ComparecienteService {
     const fechaEmision = validateOptionalDate(params.fechaEmision, 'La fecha de emisión');
     const fechaVencimiento = validateOptionalDate(params.fechaVencimiento, 'La fecha de vencimiento');
     const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-180) || 'documento';
-    const storageKey = `organizations/${requireActorContext().organizationId}/documentos/comparecientes/${comparecienteId}/${Date.now()}_${crypto.randomUUID()}_${safeFileName}`;
+    const actorContext = requireActorContext();
+    const storageKey = `organizations/${actorContext.organizationId}/documentos/comparecientes/${comparecienteId}/${Date.now()}_${crypto.randomUUID()}_${safeFileName}`;
     const { uploadFile, deleteFile } = await import('./supabase.service');
     await uploadFile(buffer, storageKey, mimeType);
 
@@ -1110,6 +1112,12 @@ export class ComparecienteService {
           valores_nuevos: { documento_id: docMaster.id, nombre: fileName, categoria },
           detalles: { modulo: 'COMPARECIENTES', compareciente_id: comparecienteId }, correlation_id: crypto.randomUUID(),
         } });
+        await ComplianceDocumentService.syncEligibleComparecienteEvidenceTx(tx, {
+          id: actor.id,
+          organizationId: actorContext.organizationId,
+          rol: actorContext.role,
+          sessionId: actorContext.sessionId,
+        }, { comparecienteId, documentId: docMaster.id });
         return { docMaster, vinculo };
       });
     } catch (error) {

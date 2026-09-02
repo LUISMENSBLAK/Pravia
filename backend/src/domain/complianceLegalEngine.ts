@@ -22,7 +22,21 @@ export type LegalRuleOutcome = {
       channel: string;
       deadline?: { kind: 'DAYS_AFTER_LEGAL_DATE'; days: number } | { kind: 'FIXED_DATE'; date: string };
     };
+    document_requirements?: ComplianceDocumentRequirementDefinition[];
   };
+};
+
+export type ComplianceDocumentRequirementDefinition = {
+  key: string;
+  label: string;
+  category: 'IDENTIFICACION' | 'PERSONAS_MORALES' | 'FORMATOS' | 'CUESTIONARIOS_RIESGO' | 'BENEFICIARIO_CONTROLADOR' | 'PAGOS_EVIDENCIAS' | 'AVISOS_ACUSES' | 'REVISIONES';
+  source: 'COMPARECIENTE' | 'EXPEDIENTE' | 'FORMAT_GENERATED' | 'FUTURE_MODULE';
+  target_scope: 'EXPEDIENTE' | 'EACH_RELEVANT_COMPARECIENTE';
+  expected_document_type?: string;
+  requires_signed_document?: boolean;
+  requires_human_validation?: boolean;
+  action: 'GO_TO_COMPARECIENTE' | 'GO_TO_QUESTIONNAIRE' | 'GO_TO_BENEFICIAL_OWNER' | 'UPLOAD_SIGNED' | 'UPLOAD_DOCUMENT' | 'GO_TO_PAYMENT_EVIDENCE' | 'GO_TO_NOTICE';
+  action_target?: Record<string, unknown>;
 };
 
 export type LegalRuleRevisionInput = {
@@ -53,6 +67,7 @@ export type RuleEvaluation = {
   noticeChannel: string | null;
   requirementLabel: string;
   obligation: LegalRuleOutcome['when_true']['obligation'] | null;
+  documentRequirements: ComplianceDocumentRequirementDefinition[];
   legalBasis: string;
 };
 
@@ -137,6 +152,7 @@ export function evaluateLegalRule(revision: LegalRuleRevisionInput, context: unk
     noticeChannel: applicable ? outcome.notice_channel || null : null,
     requirementLabel: outcome.requirement_label || `Revisar ${revision.stable_key}`,
     obligation: applicable ? outcome.obligation || null : null,
+    documentRequirements: applicable && Boolean(outcome.vulnerable_activity) ? outcome.document_requirements || [] : [],
     legalBasis: revision.legal_basis,
   };
 }

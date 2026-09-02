@@ -1,8 +1,15 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { ComplianceController } from '../controllers/compliance.controller';
 import { requireExpedienteAccess, requirePermission } from '../middleware/auth.middleware';
 
 const router = Router();
+const signedUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
+router.get('/expedientes/:expedienteId/documental', ComplianceController.documentStructure);
+router.post('/expedientes/:expedienteId/documental/requisitos/:requirementId/evidencias', requirePermission('compliance.write'), requirePermission('documentos.read'), ComplianceController.linkDocumentEvidence);
+router.post('/expedientes/:expedienteId/documental/requisitos/:requirementId/cargar-firmado', requirePermission('compliance.write'), requirePermission('documentos.write'), signedUpload.single('file'), ComplianceController.uploadSignedEvidence);
+router.post('/expedientes/:expedienteId/documental/evidencias/:evidenceId/validar', requirePermission('compliance.review'), ComplianceController.validateDocumentEvidence);
+router.get('/expedientes/:expedienteId/documental/exportar', requirePermission('documentos.read'), requirePermission('compliance.sensitive.read'), ComplianceController.exportDocumentPackage);
 router.post('/configuracion/anticipacion-alertas', requirePermission('compliance.rules.manage'), ComplianceController.publishAlertLead);
 router.post('/reglas-legales', requirePermission('compliance.rules.manage'), ComplianceController.createLegalRule);
 router.post('/reglas-legales/:ruleId/revisiones', requirePermission('compliance.rules.manage'), ComplianceController.createLegalRuleRevision);

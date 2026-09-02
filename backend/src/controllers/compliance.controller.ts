@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { ComplianceError } from '../domain/compliance';
 import { ComplianceReviewService } from '../services/complianceReview.service';
 import { ComplianceLegalEngineService } from '../services/complianceLegalEngine.service';
+import { ComplianceDocumentService } from '../services/complianceDocument.service';
 import { downloadFile } from '../services/supabase.service';
 
 const actor = (req: Request) => req.user?.id;
@@ -14,6 +15,36 @@ const sendError = (res: Response, error: any, fallback: string) => {
 };
 
 export class ComplianceController {
+  static async documentStructure(req: Request, res: Response) {
+    try { return res.json({ success: true, ...(await ComplianceDocumentService.read(req.user!, req.params.expedienteId)) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_DOCUMENT_STRUCTURE_FAILED'); }
+  }
+
+  static async linkDocumentEvidence(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, ...(await ComplianceDocumentService.linkExisting(req.user!, req.params.expedienteId, req.params.requirementId, String(req.body.document_id || ''), correlation(req))) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_DOCUMENT_LINK_FAILED'); }
+  }
+
+  static async uploadSignedEvidence(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, ...(await ComplianceDocumentService.uploadSigned(req.user!, req.params.expedienteId, req.params.requirementId, req.file!, correlation(req))) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_SIGNED_UPLOAD_FAILED'); }
+  }
+
+  static async validateDocumentEvidence(req: Request, res: Response) {
+    try { return res.json({ success: true, evidence: await ComplianceDocumentService.validate(req.user!, req.params.expedienteId, req.params.evidenceId, req.body, correlation(req)) }); }
+    catch (error) { return sendError(res, error, 'COMPLIANCE_DOCUMENT_VALIDATION_FAILED'); }
+  }
+
+  static async exportDocumentPackage(req: Request, res: Response) {
+    try {
+      const exported = await ComplianceDocumentService.exportPackage(req.user!, req.params.expedienteId, correlation(req));
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(exported.fileName)}`);
+      res.setHeader('Cache-Control', 'private, no-store');
+      return res.send(exported.buffer);
+    } catch (error) { return sendError(res, error, 'COMPLIANCE_DOCUMENT_EXPORT_FAILED'); }
+  }
+
   static async publishAlertLead(req: Request, res: Response) {
     try { return res.status(201).json({ success: true, revision: await ComplianceLegalEngineService.publishAlertLead(req.user!, req.body, correlation(req)) }); }
     catch (error) { return sendError(res, error, 'COMPLIANCE_ALERT_LEAD_PUBLISH_FAILED'); }

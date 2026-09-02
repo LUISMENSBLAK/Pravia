@@ -3659,14 +3659,29 @@ model ComplianceEvidence {
   retired_at        DateTime?
   retired_by_id     String?          @db.Uuid
   retirement_reason String?
+  expediente_id                String?                            @db.Uuid
+  requirement_id               String?                            @db.Uuid
+  target_compareciente_id      String?                            @db.Uuid
+  document_version             String?                            @db.VarChar(128)
+  document_checksum_snapshot   String?                            @db.VarChar(64)
+  storage_key_snapshot         String?
+  source                       ComplianceEvidenceSource?
+  document_state               ComplianceEvidenceDocumentState?
+  validation_status            ComplianceEvidenceValidationStatus?
+  linked_by_system             Boolean                            @default(false)
+  validated_by_id              String?                            @db.Uuid
+  validated_at                 DateTime?
+  validation_notes             String?
   agregado_por      User             @relation("ComplianceEvidenceAdder", fields: [agregado_por_id], references: [id], onUpdate: NoAction)
   documento         Documento        @relation(fields: [documento_id], references: [id], onUpdate: NoAction)
   review            ComplianceReview @relation(fields: [review_id], references: [id], onUpdate: NoAction)
+  requirement       ComplianceRequirement? @relation(fields: [requirement_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
 
-  @@unique([review_id, documento_id, tipo_evidencia])
   @@index([documento_id])
   @@index([agregado_por_id], map: "idx_compliance_evidence_agregado_fk")
   @@index([retired_by_id], map: "idx_compliance_evidence_retired_by_fk")
+  @@index([organization_id, expediente_id, requirement_id, estatus], map: "idx_h2_compliance_evidence_requirement")
+  @@index([organization_id, target_compareciente_id, estatus], map: "idx_h2_compliance_evidence_target")
   @@map("compliance_evidence")
 }
 
@@ -3888,6 +3903,48 @@ enum ComplianceRequirementStatus {
   BLOQUEADO_POR_FALTA_DATOS
 }
 
+enum ComplianceDocumentCategory {
+  IDENTIFICACION
+  PERSONAS_MORALES
+  FORMATOS
+  CUESTIONARIOS_RIESGO
+  BENEFICIARIO_CONTROLADOR
+  PAGOS_EVIDENCIAS
+  AVISOS_ACUSES
+  REVISIONES
+}
+
+enum ComplianceEvidenceSource {
+  COMPARECIENTE
+  EXPEDIENTE
+  FORMAT_GENERATED
+  MANUAL_SIGNED_UPLOAD
+  FUTURE_MODULE
+}
+
+enum ComplianceEvidenceDocumentState {
+  CANONICAL
+  GENERATED
+  SIGNED_UPLOADED
+}
+
+enum ComplianceEvidenceValidationStatus {
+  AUTO_LINKED
+  PENDING_HUMAN
+  VALIDATED
+  REJECTED
+}
+
+enum ComplianceMissingActionType {
+  GO_TO_COMPARECIENTE
+  GO_TO_QUESTIONNAIRE
+  GO_TO_BENEFICIAL_OWNER
+  UPLOAD_SIGNED
+  UPLOAD_DOCUMENT
+  GO_TO_PAYMENT_EVIDENCE
+  GO_TO_NOTICE
+}
+
 enum ComplianceAlertLevel {
   INFORMATIVA
   ADVERTENCIA
@@ -4049,6 +4106,14 @@ model ComplianceRequirement {
   deadline          DateTime?
   blocks_completion Boolean                       @default(true)
   source_snapshot   Json
+  document_category            ComplianceDocumentCategory?
+  expected_document_type       String?
+  target_compareciente_id      String?                      @db.Uuid
+  requires_signed_document     Boolean                      @default(false)
+  requires_human_validation    Boolean                      @default(true)
+  missing_action               ComplianceMissingActionType?
+  action_target                Json?
+  is_documental                Boolean                      @default(false)
   created_at        DateTime                      @default(now())
   updated_at        DateTime                      @default(now()) @updatedAt
   organization      Organization                  @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_org_fkey")
@@ -4057,6 +4122,7 @@ model ComplianceRequirement {
   review            ComplianceReview              @relation(fields: [review_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_review_fkey")
   ruleResult        ComplianceRuleResult?         @relation(fields: [rule_result_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_result_fkey")
   alerts            ComplianceAlert[]
+  evidence          ComplianceEvidence[]
 
   @@unique([organization_id, review_id, provider, requirement_key], map: "compliance_requirements_tenant_review_provider_key")
   @@unique([id, organization_id], map: "compliance_requirements_id_tenant_key")

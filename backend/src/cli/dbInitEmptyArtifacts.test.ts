@@ -57,6 +57,7 @@ const preH1 = [
   '20260831030000_create_cot001_source_prerequisites',
   '20260831040000_create_g0c_configurable_timing_policies',
 ];
+const throughH1 = [...preH1, '20260831050000_create_h1_compliance_legal_engine'];
 
 describe('db:init-empty historical artifacts', () => {
   it('preserves PostgreSQL function bodies while splitting statements', () => {
@@ -77,6 +78,16 @@ describe('db:init-empty historical artifacts', () => {
     expect(plan.expected.indexes).not.toContain('conciliaciones_financieras_movimiento_id_transaccion_bancaria_id_key');
     expect(plan.sql.indexOf('enforce_same_organization')).toBeLessThan(plan.sql.indexOf('trg_tenant_assistant_messages_conversation'));
     expect(plan.sql).not.toContain('CREATE POLICY legacy_data_api_denied');
+  });
+
+  it('restores every H2 integrity artifact on a canonical fresh bootstrap', async () => {
+    const baseline = await buildHistoricalArtifactPlan(migrationsRoot, throughH1);
+    const h2 = await buildHistoricalArtifactPlan(migrationsRoot, [...throughH1, '20260901010000_create_h2_compliance_document_evidence']);
+    expect(h2.artifacts.length - baseline.artifacts.length).toBe(20);
+    expect(h2.expected.functions).toEqual(expect.arrayContaining(['h2_validate_compliance_requirement', 'h2_validate_compliance_evidence', 'h2_compliance_evidence_immutable']));
+    expect(h2.expected.triggers).toEqual(expect.arrayContaining(['h2_validate_compliance_requirement_trigger', 'h2_validate_compliance_evidence_trigger', 'h2_compliance_evidence_immutable_trigger']));
+    expect(h2.expected.checks).toEqual(expect.arrayContaining(['ck_h2_document_requirement_shape', 'ck_h2_evidence_new_lineage', 'ck_h2_evidence_validation_actor', 'ck_h2_evidence_signed_source']));
+    expect(h2.expected.indexes).toEqual(expect.arrayContaining(['uq_h2_compliance_evidence_active_version', 'uq_compliance_evidence_legacy_reference']));
   });
 
   it('fails closed when the multitenant foundation is not in the plan', async () => {

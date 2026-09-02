@@ -1,5 +1,6 @@
-import { apiRequest } from '../../services/api/client';
-import type { ComplianceCatalogs, ComplianceDetail, ComplianceList, ComplianceReview } from './compliance.types';
+import { apiRequest, tokenStore } from '../../services/api/client';
+import { apiUrl } from '../../services/api/config';
+import type { ComplianceCatalogs, ComplianceDetail, ComplianceDocumentStructure, ComplianceList, ComplianceReview } from './compliance.types';
 
 const query = (values: Record<string, string | number | undefined>) => {
   const params = new URLSearchParams();
@@ -8,6 +9,18 @@ const query = (values: Record<string, string | number | undefined>) => {
 };
 
 export const complianceService = {
+  documentStructure: async (expedienteId: string, signal?: AbortSignal) => apiRequest<{ success: boolean } & ComplianceDocumentStructure>(`/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/documental`, { signal }),
+  uploadSignedEvidence: async (expedienteId: string, requirementId: string, file: File) => {
+    const body = new FormData(); body.set('file', file);
+    return apiRequest(`/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/documental/requisitos/${encodeURIComponent(requirementId)}/cargar-firmado`, { method: 'POST', body });
+  },
+  validateDocumentEvidence: async (expedienteId: string, evidenceId: string, result: 'VALIDATED' | 'REJECTED', notes = '') => apiRequest(`/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/documental/evidencias/${encodeURIComponent(evidenceId)}/validar`, { method: 'POST', body: JSON.stringify({ result, notes }) }),
+  exportDocumentPackage: async (expedienteId: string) => {
+    const headers = new Headers(); const token = tokenStore.get(); if (token) headers.set('Authorization', `Bearer ${token}`);
+    const response = await fetch(apiUrl(`/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/documental/exportar`), { credentials: 'include', headers });
+    if (!response.ok) { const payload = await response.json().catch(() => null); throw new Error(payload?.error || 'No fue posible exportar el expediente de cumplimiento.'); }
+    return response.blob();
+  },
   catalogs: async (signal?: AbortSignal) => { const response = await apiRequest<{ success: boolean } & ComplianceCatalogs>('/cumplimiento/catalogos', { signal }); return response; },
   list: async (filters: Record<string, string | number | undefined>, signal?: AbortSignal) => { const response = await apiRequest<{ success: boolean } & ComplianceList>(`/cumplimiento/revisiones?${query(filters)}`, { signal }); return response; },
   detail: async (id: string, signal?: AbortSignal) => { const response = await apiRequest<{ success: boolean } & ComplianceDetail>(`/cumplimiento/revisiones/${id}`, { signal }); return response; },

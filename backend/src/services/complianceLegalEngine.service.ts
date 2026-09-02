@@ -13,6 +13,7 @@ import {
   type LegalRuleRevisionInput,
 } from '../domain/complianceLegalEngine';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { ComplianceDocumentService } from './complianceDocument.service';
 
 type User = NonNullable<Request['user']>;
 const ENGINE_VERSION = 'H1-CUM-MAT-1';
@@ -59,6 +60,30 @@ function validateOutcome(value: unknown): asserts value is LegalRuleOutcome {
     if (deadline.kind === 'DAYS_AFTER_LEGAL_DATE' && (!Number.isInteger(deadline.days) || deadline.days < 0)) throw new ComplianceError('El plazo legal no es válido.', 'LEGAL_RULE_DEADLINE_INVALID');
     if (deadline.kind === 'FIXED_DATE' && Number.isNaN(new Date(`${deadline.date}T00:00:00.000Z`).getTime())) throw new ComplianceError('La fecha legal fija no es válida.', 'LEGAL_RULE_DEADLINE_INVALID');
     if (!['DAYS_AFTER_LEGAL_DATE', 'FIXED_DATE'].includes(deadline.kind)) throw new ComplianceError('La fuente del plazo legal no está permitida.', 'LEGAL_RULE_DEADLINE_INVALID');
+  }
+  if (outcome.document_requirements !== undefined) {
+    if (!Array.isArray(outcome.document_requirements)) throw new ComplianceError('Los requisitos documentales deben ser una lista.', 'LEGAL_RULE_DOCUMENT_REQUIREMENTS_INVALID');
+    const categories = new Set(['IDENTIFICACION','PERSONAS_MORALES','FORMATOS','CUESTIONARIOS_RIESGO','BENEFICIARIO_CONTROLADOR','PAGOS_EVIDENCIAS','AVISOS_ACUSES','REVISIONES']);
+    const sources = new Set(['COMPARECIENTE','EXPEDIENTE','FORMAT_GENERATED','FUTURE_MODULE']);
+    const targets = new Set(['EXPEDIENTE','EACH_RELEVANT_COMPARECIENTE']);
+    const actions = new Set(['GO_TO_COMPARECIENTE','GO_TO_QUESTIONNAIRE','GO_TO_BENEFICIAL_OWNER','UPLOAD_SIGNED','UPLOAD_DOCUMENT','GO_TO_PAYMENT_EVIDENCE','GO_TO_NOTICE']);
+    const keys = new Set<string>();
+    for (const requirement of outcome.document_requirements) {
+      if (!requirement || typeof requirement !== 'object') throw new ComplianceError('La definición documental no es válida.', 'LEGAL_RULE_DOCUMENT_REQUIREMENT_INVALID');
+      const key = requireText(requirement.key, 'LEGAL_RULE_DOCUMENT_REQUIREMENT_KEY_REQUIRED');
+      requireText(requirement.label, 'LEGAL_RULE_DOCUMENT_REQUIREMENT_LABEL_REQUIRED');
+      if (keys.has(key)) throw new ComplianceError('Las claves documentales deben ser únicas dentro de la regla.', 'LEGAL_RULE_DOCUMENT_REQUIREMENT_DUPLICATE');
+      keys.add(key);
+      if (!categories.has(requirement.category) || !sources.has(requirement.source) || !targets.has(requirement.target_scope) || !actions.has(requirement.action)) {
+        throw new ComplianceError('La taxonomía del requisito documental no es válida.', 'LEGAL_RULE_DOCUMENT_REQUIREMENT_TAXONOMY_INVALID');
+      }
+      if (requirement.source === 'COMPARECIENTE' && requirement.target_scope !== 'EACH_RELEVANT_COMPARECIENTE') {
+        throw new ComplianceError('Un documento de compareciente requiere un objetivo personal explícito.', 'LEGAL_RULE_DOCUMENT_REQUIREMENT_TARGET_INVALID');
+      }
+      if (requirement.requires_signed_document && requirement.action !== 'UPLOAD_SIGNED') {
+        throw new ComplianceError('Un requisito firmado debe dirigir a Cargar firmado.', 'LEGAL_RULE_DOCUMENT_REQUIREMENT_SIGNED_ACTION_INVALID');
+      }
+    }
   }
 }
 
@@ -225,6 +250,13 @@ export class ComplianceLegalEngineService {
         statuses.push(status); deadlines.push(deadlineInfo.deadline);
         const key = `${item.result.stableKey}:${item.act.id}`;
         const requirement = await tx.complianceRequirement.create({ data: { organization_id: user.organizationId, expediente_id: expediente.id, state_id: state.id, review_id: review.id, rule_result_id: result.id, provider: 'LEGAL', requirement_key: key, label: item.result.requirementLabel, status: status as any, deadline: deadlineInfo.deadline, source_snapshot: json({ rule_revision_id: item.revision.id, checksum: item.revision.checksum, missing_paths: item.result.missingPaths }) } });
+        const documentStatuses = await ComplianceDocumentService.materializeForRuleResultTx(tx, user, {
+          expedienteId: expediente.id, reviewId: review.id, stateId: state.id, ruleResultId: result.id,
+          expedienteActoId: item.act.id, result: item.result,
+          parties: expediente.comparecientes.map((party) => ({ compareciente_id: party.compareciente_id, expediente_acto_id: party.expediente_acto_id })),
+          correlationId,
+        });
+        statuses.push(...documentStatuses);
         if (status === 'BLOQUEADO_POR_FALTA_DATOS') await tx.complianceAlert.create({ data: { organization_id: user.organizationId, expediente_id: expediente.id, state_id: state.id, review_id: review.id, requirement_id: requirement.id, rule_revision_id: item.revision.id, alert_key: `INCOMPLETE:${key}`, level: 'ADVERTENCIA', message: 'Falta información confirmada para determinar la aplicabilidad de una regla legal.', deadline: null } });
         if (deadlineInfo.deadline) {
           const alertWindow = operationalAlertWindow(deadlineInfo.deadline, alertLead);
