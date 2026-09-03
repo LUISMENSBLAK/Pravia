@@ -35,6 +35,10 @@ export const TENANT_SCOPED_MODELS = new Set([
   'ExpedientePresupuestoDocumento',
   'ExpedienteIngresoReportado', 'ExpedienteSolicitudPago', 'ExpedienteFinanzaDocumento',
   'ExpedienteFinanzaPropuestaIA',
+  'PersonaMoralOwnershipStructure', 'PersonaMoralOwnershipNode', 'PersonaMoralOwnershipEdge',
+  'PersonaMoralControlFact', 'PersonaMoralStructureReconciliation', 'ComplianceBcStructureSnapshot',
+  'ComplianceBcEvaluation', 'ComplianceBcResult', 'ComplianceBcAiProposal', 'ComplianceBcFormatMapping',
+  'ExpedienteSocietyTarget',
   'TimingPolicyRevision', 'TimingInterval',
 ]);
 

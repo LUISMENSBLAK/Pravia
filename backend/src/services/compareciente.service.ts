@@ -636,14 +636,14 @@ export class ComparecienteService {
     estatus_societario?: string;
     observaciones?: string;
     creado_por_id: string;
-  }) {
+  }, transaction?: Prisma.TransactionClient) {
     const cleanLegalName = this.uppercase(dto.razon_social) || '';
     const nombreBusqueda = this.normalizeSearchString(cleanLegalName);
     if (!nombreBusqueda) throw new Error('La razón social es obligatoria.');
     const cleanRfc = validateRfc(dto.rfc, 'MORAL');
     const incorporationDate = validateOptionalDate(dto.fecha_constitucion, 'La fecha de constitución');
 
-    return await this.prisma.$transaction(async (tx) => {
+    const create = async (tx: Prisma.TransactionClient) => {
       const identityKey = cleanRfc || nombreBusqueda;
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:compareciente:${identityKey}`}))`);
       if (cleanRfc) {
@@ -750,7 +750,8 @@ export class ComparecienteService {
       });
 
       return { compareciente, personaMoral };
-    });
+    };
+    return transaction ? create(transaction) : this.prisma.$transaction(create);
   }
 
   /** Edición explícita del dato maestro. No altera snapshots de cumplimiento ni relaciones históricas. */

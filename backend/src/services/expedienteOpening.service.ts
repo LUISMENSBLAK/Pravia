@@ -4,6 +4,7 @@ import { activeOrganizationMembershipWhere, organizationMembershipRoleSelect, us
 import { requireActorContext } from '../auth/actorContext';
 import { ExpedienteActosService } from './expedienteActos.service';
 import { ExpedienteSeguimientoService } from './expedienteSeguimiento.service';
+import { BeneficialControllerService } from './beneficialController.service';
 
 export class ExpedienteOpeningError extends Error {
   constructor(message: string, readonly code: string, readonly status = 400) { super(message); }
@@ -156,6 +157,6 @@ export class ExpedienteOpeningService {
       titulo: 'Apertura de expediente',
       descripcion: `Expediente ${numeroPravia} creado desde una cotización aceptada.`,
     } });
-    return expediente;
+    return { ...expediente, society_setup: BeneficialControllerService.societyOpeningStatus() };
   }
 }

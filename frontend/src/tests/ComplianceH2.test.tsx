@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ComplianceTab } from '../features/cases/components/tabs/ComplianceTab';
 
 const api = vi.hoisted(() => ({
-  documentStructure: vi.fn(), uploadSignedEvidence: vi.fn(), validateDocumentEvidence: vi.fn(), exportDocumentPackage: vi.fn(),
+  documentStructure: vi.fn(), uploadSignedEvidence: vi.fn(), validateDocumentEvidence: vi.fn(), exportDocumentPackage: vi.fn(), beneficialController: vi.fn(), screeningOperation: vi.fn(),
 }));
 
 vi.mock('../features/compliance/compliance.service', () => ({ complianceService: api }));
@@ -46,6 +46,7 @@ describe('H2 CUM-DOC-001 presentation', () => {
     api.documentStructure.mockResolvedValue(structure);
     api.uploadSignedEvidence.mockResolvedValue({});
     api.validateDocumentEvidence.mockResolvedValue({});
+    api.beneficialController.mockResolvedValue({ current_review_id:null, configured_legal_rules:false, evaluations:[], history:[], snapshots:[], legacy_promoted:false });
   });
 
   it('renders the automatic requirement-first structure and exact person/requisite missing action', async () => {

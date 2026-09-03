@@ -2,6 +2,9 @@ import { apiRequest, tokenStore } from '../../services/api/client';
 import { apiUrl } from '../../services/api/config';
 import type { ComplianceCatalogs, ComplianceDetail, ComplianceDocumentStructure, ComplianceList, ComplianceReview, ComplianceScreeningOperation } from './compliance.types';
 
+export type BeneficialControllerEvaluation={id:string;review_id:string;regime:'LFPIORPI'|'CFF_RMF';status:string;legal_date?:string|null;rule_set_checksum?:string|null;created_at:string;reevaluation_required?:boolean;structure_path?:string|null;target_name?:string;supports?:Array<{document_id:string;label:string;path:string}>;results:Array<{id:string;determination:string;subject_name?:string;subject_path?:string|null;subject_compareciente_id?:string|null;subject_snapshot_node_id?:string|null;result_snapshot?:Record<string,unknown>}>;snapshot:{id:string;structure_revision:number;structure_fingerprint:string;incomplete_markers:string[]}};
+export type BeneficialControllerSummary={current_review_id:string|null;configured_legal_rules:boolean;evaluations:BeneficialControllerEvaluation[];history:BeneficialControllerEvaluation[];snapshots:Array<Record<string,unknown>>;legacy_promoted:boolean};
+
 const query = (values: Record<string, string | number | undefined>) => {
   const params = new URLSearchParams();
   Object.entries(values).forEach(([key, value]) => { if (value !== undefined && value !== '' && value !== 'TODOS') params.set(key, String(value)); });
@@ -9,6 +12,7 @@ const query = (values: Record<string, string | number | undefined>) => {
 };
 
 export const complianceService = {
+  beneficialController: async (expedienteId:string,signal?:AbortSignal) => apiRequest<{success:boolean;data:BeneficialControllerSummary}>(`/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/beneficiario-controlador`,{signal}).then(response=>response.data),
   screeningOperation: async (expedienteId: string, signal?: AbortSignal) => apiRequest<{ success: boolean } & ComplianceScreeningOperation>(`/cumplimiento/screening/expedientes/${encodeURIComponent(expedienteId)}`, { signal }),
   documentStructure: async (expedienteId: string, signal?: AbortSignal) => apiRequest<{ success: boolean } & ComplianceDocumentStructure>(`/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/documental`, { signal }),
   uploadSignedEvidence: async (expedienteId: string, requirementId: string, file: File) => {

@@ -17,8 +17,9 @@ type PartyRef = { compareciente_id: string; expediente_acto_id: string | null };
 const json = (value: unknown) => value as Prisma.InputJsonValue;
 const normalize = (value: unknown) => String(value || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
 const checksum = (buffer: Buffer) => createHash('sha256').update(buffer).digest('hex');
-const versionOf = (document: { id: string; storage_key: string; size_bytes: number; fecha_carga: Date; mime_type: string; checksum_sha256: string | null }) =>
+export const complianceDocumentVersion = (document: { id: string; storage_key: string; size_bytes: number; fecha_carga: Date; mime_type: string; checksum_sha256: string | null }) =>
   document.checksum_sha256 || createHash('sha256').update(JSON.stringify([document.id, document.storage_key, document.size_bytes, document.fecha_carga.toISOString(), document.mime_type])).digest('hex');
+const versionOf = complianceDocumentVersion;
 const definitionOf = (requirement: { source_snapshot: unknown }) => {
   const snapshot = requirement.source_snapshot && typeof requirement.source_snapshot === 'object' ? requirement.source_snapshot as Record<string, unknown> : {};
   return snapshot.definition && typeof snapshot.definition === 'object' ? snapshot.definition as Partial<ComplianceDocumentRequirementDefinition> : {};
@@ -380,7 +381,7 @@ export class ComplianceDocumentService {
     await tx.expedienteComplianceState.update({ where: { id: stateId }, data: { state, pending_count: pendingCount, updated_by_id: user.id } });
   }
 
-  private static async assertRequirement(db: Db, user: User, expedienteId: string, requirementId: string) {
+  static async assertRequirement(db: Db, user: User, expedienteId: string, requirementId: string) {
     await this.assertExpediente(db, user, expedienteId);
     const state = await db.expedienteComplianceState.findFirst({ where: { organization_id: user.organizationId, expediente_id: expedienteId }, select: { current_review_id: true } });
     const requirement = await db.complianceRequirement.findFirst({ where: { id: requirementId, organization_id: user.organizationId, expediente_id: expedienteId, review_id: state?.current_review_id || undefined, is_documental: true } });

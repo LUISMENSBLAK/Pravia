@@ -2,7 +2,7 @@ import { AlertTriangle, CheckCircle2, ChevronRight, Download, FileArchive, FileC
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../auth/AuthProvider';
-import { complianceService } from '../../../compliance/compliance.service';
+import { complianceService, type BeneficialControllerEvaluation, type BeneficialControllerSummary } from '../../../compliance/compliance.service';
 import type { ComplianceDocumentRequirement, ComplianceDocumentStructure, ComplianceScreeningOperation } from '../../../compliance/compliance.types';
 import { humanComplianceLabel } from '../../../compliance/complianceLabels';
 import type { ExpedienteDetail } from '../../expedientes.types';
@@ -14,7 +14,18 @@ const evidenceStateLabel: Record<string, string> = {
   CANONICAL: 'Documento canónico', GENERATED: 'Generado · pendiente de firma', SIGNED_UPLOADED: 'Firmado cargado',
   AUTO_LINKED: 'Vinculado automáticamente', PENDING_HUMAN: 'Pendiente de validación humana', VALIDATED: 'Validado', REJECTED: 'Rechazado',
 };
-const futureActions = new Set(['GO_TO_QUESTIONNAIRE', 'GO_TO_BENEFICIAL_OWNER', 'GO_TO_PAYMENT_EVIDENCE', 'GO_TO_NOTICE']);
+const futureActions = new Set(['GO_TO_QUESTIONNAIRE', 'GO_TO_PAYMENT_EVIDENCE', 'GO_TO_NOTICE']);
+const bcRegimeLabel=(regime:string)=>regime==='LFPIORPI'?'LFPIORPI':'CFF / RMF';
+const bcStatusLabel=(status:string)=>status==='NOT_CONFIGURED'?'Regla jurídica no configurada':status==='REQUIRES_REVIEW'?'Requiere revisión humana':status==='EVALUATED'?'Evaluación ejecutada':status==='NOT_APPLICABLE'?'No aplicable según regla verificada':humanComplianceLabel(status,'Revisión requerida');
+const bcDeterminationLabel=(value:string)=>humanComplianceLabel(value,value.replaceAll('_',' ').toLocaleLowerCase('es-MX'));
+
+function BeneficialControllerEvaluationCard({evaluation,historical=false,canWrite=false,busy=false,onReevaluate}:{evaluation:BeneficialControllerEvaluation;historical?:boolean;canWrite?:boolean;busy?:boolean;onReevaluate?:(evaluation:BeneficialControllerEvaluation)=>void}){
+  if(evaluation.regime==='CFF_RMF'&&evaluation.status==='NOT_APPLICABLE'&&evaluation.rule_set_checksum)return null;
+  const complete=evaluation.status==='EVALUATED';
+  return <article className={styles.bcEvaluationCard}><span className={complete?styles.complianceOk:styles.complianceAlert}>{complete?<CheckCircle2/>:<ShieldCheck/>}</span><div><div className={styles.bcEvaluationTitle}><strong>{bcRegimeLabel(evaluation.regime)}{evaluation.target_name&&` · ${evaluation.target_name}`}</strong>{historical&&<em>Histórica</em>}{evaluation.reevaluation_required&&<em>Reevaluación requerida</em>}</div><small>{bcStatusLabel(evaluation.status)} · estructura v{evaluation.snapshot.structure_revision} · snapshot inmutable</small>{evaluation.snapshot.incomplete_markers.length>0&&<p>{evaluation.snapshot.incomplete_markers.length} señales de estructura incompleta</p>}{evaluation.results.length>0&&<ul>{evaluation.results.map(result=><li key={result.id}>{result.subject_path?<a href={result.subject_path}>{result.subject_name}</a>:<strong>{result.subject_name||'Identidad pendiente de revisión'}</strong>} · {bcDeterminationLabel(result.determination)}{!result.subject_compareciente_id&&' · dato estructurado'}</li>)}</ul>}
+    <div className={styles.bcActions}>{evaluation.structure_path&&<a href={evaluation.structure_path}>Ir a Persona Moral / Estructura</a>}{(evaluation.supports||[]).map(support=><a key={support.document_id} href={support.path}>Ver soporte en ficha documental: {support.label}</a>)}{!historical&&evaluation.reevaluation_required&&canWrite&&onReevaluate&&<button type="button" disabled={busy} onClick={()=>onReevaluate(evaluation)}>Reevaluar cumplimiento</button>}</div>
+  </div><b>{complete?`${evaluation.results.length} resultado${evaluation.results.length===1?'':'s'}`:'Pendiente'}</b></article>;
+}
 
 export function ComplianceTab({ expediente }: { expediente: ExpedienteDetail }) {
   const reviews = expediente.complianceReviews || [];
@@ -24,11 +35,15 @@ export function ComplianceTab({ expediente }: { expediente: ExpedienteDetail }) 
   const reviewPath = (id: string) => `/riesgos/revisiones/${id}?${returnQuery}`;
   const [documental, setDocumental] = useState<ComplianceDocumentStructure | null>(null);
   const [screening, setScreening] = useState<ComplianceScreeningOperation | null>(null);
+  const [beneficialController, setBeneficialController] = useState<BeneficialControllerSummary|null>(null);
+  const [beneficialControllerStatus, setBeneficialControllerStatus] = useState<'loading'|'ready'|'error'>('loading');
   const [screeningStatus, setScreeningStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [busy, setBusy] = useState<string | null>(null);
   const [showMissing, setShowMissing] = useState(false);
   const [message, setMessage] = useState('');
+  const [reevaluate, setReevaluate] = useState<BeneficialControllerEvaluation|null>(null);
+  const [legalDate, setLegalDate] = useState('');
   const missingRef = useRef<HTMLDivElement | null>(null);
   const canWrite = Boolean(user?.permissions?.includes('compliance.write'));
   const canReview = Boolean(user?.permissions?.includes('compliance.review'));
@@ -46,6 +61,7 @@ export function ComplianceTab({ expediente }: { expediente: ExpedienteDetail }) 
     void complianceService.screeningOperation(expediente.id, controller.signal).then((result) => { setScreening(result); setScreeningStatus('ready'); }).catch((error) => { if (!(error instanceof DOMException && error.name === 'AbortError')) setScreeningStatus('error'); });
     return () => controller.abort();
   }, [canReadScreening, expediente.id]);
+  useEffect(()=>{const controller=new AbortController();setBeneficialControllerStatus('loading');void complianceService.beneficialController(expediente.id,controller.signal).then(result=>{setBeneficialController(result);setBeneficialControllerStatus('ready')}).catch(error=>{if(!(error instanceof DOMException&&error.name==='AbortError'))setBeneficialControllerStatus('error')});return()=>controller.abort()},[expediente.id]);
 
   const revealMissing = () => { setShowMissing(true); window.setTimeout(() => missingRef.current?.focus(), 0); };
   const uploadSigned = async (requirement: ComplianceDocumentRequirement, file?: File) => {
@@ -71,6 +87,7 @@ export function ComplianceTab({ expediente }: { expediente: ExpedienteDetail }) 
     finally { setBusy(null); }
   };
   const requirementAction = (requirement: ComplianceDocumentRequirement) => {
+    if (requirement.missing_action === 'GO_TO_BENEFICIAL_OWNER') return <button type="button" className={styles.complianceDocumentAction} onClick={() => document.getElementById('beneficial-controller-title')?.scrollIntoView({block:'start'})}>Revisar beneficiario controlador <ChevronRight /></button>;
     if (requirement.missing_action === 'GO_TO_COMPARECIENTE') return <button type="button" className={styles.complianceDocumentAction} onClick={() => navigate('#comparecientes')}>Abrir Comparecientes <ChevronRight /></button>;
     if (requirement.missing_action === 'UPLOAD_DOCUMENT') return <button type="button" className={styles.complianceDocumentAction} onClick={() => navigate('#documentos')}>Cargar documento <ChevronRight /></button>;
     if (requirement.missing_action === 'UPLOAD_SIGNED' && canWrite) return <label className={styles.complianceDocumentUpload}><Upload />{busy === requirement.id ? 'Cargando…' : 'Cargar firmado'}<input aria-label={`Cargar PDF firmado para ${requirement.label}`} type="file" accept="application/pdf" disabled={busy === requirement.id} onChange={(event) => void uploadSigned(requirement, event.currentTarget.files?.[0])} /></label>;
@@ -79,6 +96,16 @@ export function ComplianceTab({ expediente }: { expediente: ExpedienteDetail }) 
   };
 
   return <div className={styles.complianceWorkspace}>
+    <section className={styles.sectionCard} aria-labelledby="beneficial-controller-title">
+      <header><div><h2 id="beneficial-controller-title">Beneficiario controlador</h2><p>Estructura congelada por evaluación y conclusiones separadas por régimen jurídico.</p></div></header>
+      {beneficialControllerStatus==='loading'&&<p className={styles.sectionEmpty} role="status"><LoaderCircle className={styles.spin}/>Consultando estructuras…</p>}
+      {beneficialControllerStatus==='error'&&<p className={styles.sectionEmpty} role="alert">No pudimos consultar esta sección dentro de tus permisos.</p>}
+      {beneficialControllerStatus==='ready'&&beneficialController?.evaluations.length===0&&<p className={styles.sectionEmpty}>Aún no existe una evaluación explícita de beneficiario controlador para este expediente.</p>}
+      {beneficialControllerStatus==='ready'&&beneficialController&&beneficialController.evaluations.length>0&&<div className={styles.complianceList}>{beneficialController.evaluations.map(evaluation=><BeneficialControllerEvaluationCard key={evaluation.id} evaluation={evaluation} canWrite={canWrite} busy={busy==='bc-evaluate'} onReevaluate={item=>{setReevaluate(item);setLegalDate(item.legal_date?.slice(0,10)||'')}}/>)}</div>}
+      {reevaluate&&canWrite&&<section className={styles.bcReevaluate} aria-label="Confirmar reevaluación"><p>Se evaluarán los hechos y requisitos actuales mediante el motor canónico. Confirma la fecha jurídica aplicable; el historial se conservará.</p><label>Fecha jurídica<input aria-label="Fecha jurídica de reevaluación" type="date" value={legalDate} onChange={event=>setLegalDate(event.target.value)}/></label><button type="button" disabled={Boolean(busy)} onClick={()=>setReevaluate(null)}>Cancelar reevaluación</button><button type="button" disabled={Boolean(busy)||!legalDate} onClick={()=>{setBusy('bc-evaluate');setMessage('');void complianceService.evaluateLegalCase(expediente.id,{idempotency_key:crypto.randomUUID(),fecha_juridica_confirmada:legalDate}).then(async()=>{setBeneficialController(await complianceService.beneficialController(expediente.id));await load();setReevaluate(null);setMessage('Cumplimiento reevaluado desde los requisitos actuales.')}).catch(error=>setMessage(error instanceof Error?error.message:'No fue posible reevaluar.')).finally(()=>setBusy(null))}}>Confirmar y reevaluar</button></section>}
+      {beneficialControllerStatus==='ready'&&beneficialController&&!beneficialController.configured_legal_rules&&<p className={styles.complianceDocumentMessage}>No hay reglas legales activadas para esta materia. El sistema conserva los hechos sin inferir una conclusión.</p>}
+      {beneficialControllerStatus==='ready'&&beneficialController&&beneficialController.history.length>0&&<details className={styles.bcHistory}><summary>Ver historial de evaluaciones ({beneficialController.history.length})</summary><div className={styles.complianceList}>{beneficialController.history.map(evaluation=><BeneficialControllerEvaluationCard key={evaluation.id} evaluation={evaluation} historical/>)}</div></details>}
+    </section>
     {canReadScreening && <section className={styles.sectionCard} aria-labelledby="operation-screening-title">
       <header><div><h2 id="operation-screening-title">Consulta nominal de la operación</h2><p>Estado de las consultas vinculadas a las partes de esta operación.</p></div></header>
       {screeningStatus === 'loading' && <p className={styles.sectionEmpty} role="status"><LoaderCircle className={styles.spin} />Consultando estados…</p>}

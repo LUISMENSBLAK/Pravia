@@ -15,6 +15,8 @@ import {
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { ComplianceDocumentService } from './complianceDocument.service';
 import { ensureOperationScreeningForPartyTx } from './operationScreening.service';
+import { BeneficialControllerService } from './beneficialController.service';
+import { bcConfirmedContext } from '../domain/beneficialController';
 
 type User = NonNullable<Request['user']>;
 const ENGINE_VERSION = 'H1-CUM-MAT-1';
@@ -54,6 +56,12 @@ function validateCondition(value: unknown, depth = 0): asserts value is LegalCon
 
 function validateOutcome(value: unknown): asserts value is LegalRuleOutcome {
   if (!value || typeof value !== 'object' || !(value as any).when_true) throw new ComplianceError('El resultado de la regla no es válido.', 'LEGAL_RULE_OUTCOME_INVALID');
+  const bc = (value as any).bc;
+  if (bc !== undefined && (!bc || !['LFPIORPI', 'CFF_RMF'].includes(bc.regime)
+    || !['APPLICABILITY', 'DETERMINATION'].includes(bc.purpose)
+    || (bc.requires_screening !== undefined && typeof bc.requires_screening !== 'boolean'))) {
+    throw new ComplianceError('La configuración de beneficiario controlador no es válida.', 'LEGAL_RULE_BC_ROUTING_INVALID');
+  }
   const outcome = (value as any).when_true;
   if (!['APLICA_SIN_AVISO', 'APLICA_CON_AVISO'].includes(outcome.applicability)) throw new ComplianceError('La aplicabilidad configurada no es válida.', 'LEGAL_RULE_OUTCOME_INVALID');
   if (outcome.obligation?.deadline) {
@@ -204,25 +212,56 @@ export class ComplianceLegalEngineService {
         isr: expediente.calculosISR.map((calculo) => ({ id: calculo.id, estado: calculo.estado, tipo_operacion: calculo.tipo_operacion, version: calculo.versiones[0] || null })),
         legal_date: legalDate.date?.toISOString() || null, legal_date_source: legalDate.source,
       };
-      const requestHash = digest({ expediente_id: expediente.id, snapshot, supplied_legal_date: body.fecha_juridica_confirmada || null });
+      const bcPlan = await BeneficialControllerService.prepareReviewTx(tx, user, expediente);
+      const applicableRevisions = legalDate.date ? await tx.complianceLegalRuleRevision.findMany({ where: { organization_id: user.organizationId, status: { in: ['ACTIVE', 'RETIRED'] }, effective_from: { lte: legalDate.date }, OR: [{ effective_to: null }, { effective_to: { gte: legalDate.date } }] }, orderBy: [{ rule_id: 'asc' }, { version: 'desc' }] }) : [];
+      const revisions = selectEffectiveRuleRevisions(applicableRevisions);
+      const requestHash = digest({ expediente_id: expediente.id, snapshot: bcPlan.targets.length ? bcConfirmedContext(snapshot) : snapshot, supplied_legal_date: body.fecha_juridica_confirmada || null,
+        ...(bcPlan.targets.length ? { bc: bcPlan.identity, rules: revisions.map(rule => ({ id: rule.id, version: rule.version, checksum: rule.checksum })) } : {}) });
       const existing = await tx.complianceReview.findFirst({ where: { expediente_id: expediente.id, idempotency_key: idempotencyKey, is_canonical_legal_engine: true } });
       if (existing) {
         if ((existing.input_snapshot as any)?.request_hash !== requestHash) throw new ComplianceError('La clave de idempotencia ya fue usada con datos distintos.', 'COMPLIANCE_IDEMPOTENCY_CONFLICT', 409);
         return this.readCanonicalEvaluation(tx, existing.id);
       }
 
-      const applicableRevisions = legalDate.date ? await tx.complianceLegalRuleRevision.findMany({ where: { status: { in: ['ACTIVE', 'RETIRED'] }, effective_from: { lte: legalDate.date }, OR: [{ effective_to: null }, { effective_to: { gte: legalDate.date } }] }, orderBy: [{ rule_id: 'asc' }, { version: 'desc' }] }) : [];
-      const revisions = selectEffectiveRuleRevisions(applicableRevisions);
+      let previousReviewId: string | null = null;
+      if (bcPlan.targets.length) {
+        await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', `h4:review:${user.organizationId}:${expediente.id}`);
+        const current = await tx.expedienteComplianceState.findFirst({ where: { organization_id: user.organizationId, expediente_id: expediente.id } });
+        previousReviewId = current?.current_review_id || null;
+        const duplicate = await tx.complianceReview.findFirst({ where: { organization_id: user.organizationId, expediente_id: expediente.id,
+          is_canonical_legal_engine: true, input_snapshot: { path: ['request_hash'], equals: requestHash } }, orderBy: { created_at: 'asc' } });
+        if (duplicate) {
+          if (duplicate.id !== previousReviewId) {
+            if (!current) throw new ComplianceError('La evaluación idéntica no tiene un estado canónico reutilizable.', 'BC_HISTORICAL_IDENTITY_CONFLICT', 409);
+            const requirements = await tx.complianceRequirement.findMany({ where: {
+              organization_id: user.organizationId, state_id: current.id, review_id: duplicate.id,
+            }, select: { status: true, deadline: true } });
+            const statuses = requirements.map(item => item.status), deadlines = requirements.map(item => item.deadline);
+            const generalState = deriveComplianceState(statuses, deadlines);
+            const nextDeadline = deadlines.filter((date): date is Date => Boolean(date)).sort((a, b) => a.getTime() - b.getTime())[0] || null;
+            await tx.expedienteComplianceState.update({ where: { id: current.id }, data: {
+              current_review_id: duplicate.id, state: generalState as any,
+              pending_count: statuses.filter(status => !['CUMPLIDO', 'NO_APLICA'].includes(status)).length,
+              next_deadline: nextDeadline, version: { increment: 1 }, updated_by_id: user.id,
+            } });
+            await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id,
+              accion: 'BC_IDENTICAL_REVIEW_REUSED', entidad: 'ComplianceReview', entidad_id: duplicate.id,
+              detalles: json({ replaced_current_review_id: previousReviewId, request_hash: requestHash }) } });
+          }
+          return this.readCanonicalEvaluation(tx, duplicate.id);
+        }
+      }
       const alertLead = await tx.complianceAlertLeadRevision.findFirst({ where: { superseded_at: null }, orderBy: { revision: 'desc' }, select: { id: true, lead_days: true } });
       const identities = revisions.length ? await tx.complianceLegalRule.findMany({ where: { id: { in: revisions.map((item) => item.rule_id) } } }) : [];
       const identityById = new Map(identities.map((item) => [item.id, item]));
       const collection = revisions.map((item) => ({ id: item.id, rule_id: item.rule_id, version: item.version, checksum: item.checksum }));
       const collectionChecksum = digest(collection);
-      const review = await tx.complianceReview.create({ data: { expediente_id: expediente.id, rule_set_id: null, tipo: 'LEGAL_H1', estatus: 'EVALUACION_DETERMINISTA', fecha_operacion: legalDate.date, rule_version_snapshot: collectionChecksum, cuestionario_json: json({}), resultado_json: json({ estado: 'PENDIENTE' }), explicacion: null, creado_por_id: user.id, rule_snapshot: json(collection), master_snapshot: json(snapshot), input_snapshot: json({ request_hash: requestHash, snapshot }), engine_version: ENGINE_VERSION, idempotency_key: idempotencyKey, legal_date_source: legalDate.source, rule_collection_checksum: collectionChecksum, is_canonical_legal_engine: true } });
+      const review = await tx.complianceReview.create({ data: { organization_id: user.organizationId, expediente_id: expediente.id, rule_set_id: null, tipo: 'LEGAL_H1', estatus: 'EVALUACION_DETERMINISTA', fecha_operacion: legalDate.date, rule_version_snapshot: collectionChecksum, cuestionario_json: json({}), resultado_json: json({ estado: 'PENDIENTE' }), explicacion: null, creado_por_id: user.id, rule_snapshot: json(collection), master_snapshot: json(snapshot), input_snapshot: json({ request_hash: requestHash, snapshot, bc: bcPlan.identity }), supersedes_review_id: previousReviewId, engine_version: ENGINE_VERSION, idempotency_key: idempotencyKey, legal_date_source: legalDate.source, rule_collection_checksum: collectionChecksum, is_canonical_legal_engine: true } });
       const state = await tx.expedienteComplianceState.upsert({ where: { expediente_id: expediente.id }, create: { organization_id: user.organizationId, expediente_id: expediente.id, current_review_id: review.id, state: 'PENDIENTE', pending_count: 0, updated_by_id: user.id }, update: { current_review_id: review.id, state: 'PENDIENTE', pending_count: 0, next_deadline: null, version: { increment: 1 }, updated_by_id: user.id } });
 
       const evaluations: Array<{ revision: any; act: any; result: ReturnType<typeof evaluateLegalRule> }> = [];
       for (const revision of revisions) {
+        if ((revision.outcome as any)?.bc) continue; // Subject-scoped H4 calls the same H1 evaluator below.
         const identity = identityById.get(revision.rule_id)!;
         const input: LegalRuleRevisionInput = { id: revision.id, rule_id: revision.rule_id, stable_key: identity.stable_key, family: identity.family, version: revision.version, checksum: revision.checksum, legal_basis: revision.legal_basis, conditions: revision.conditions as unknown as LegalCondition, outcome: revision.outcome as unknown as LegalRuleOutcome };
         for (const act of expediente.actos) evaluations.push({ revision, act, result: evaluateLegalRule(input, { expediente: snapshot.expediente, acto: act, actos: snapshot.actos, comparecientes: snapshot.comparecientes, predios: snapshot.predios, isr: snapshot.isr }) });
@@ -289,6 +328,20 @@ export class ComplianceLegalEngineService {
           }
         }
       }
+
+      const beneficialControllerStatuses = await BeneficialControllerService.materializeForReviewTx(tx, {
+        organizationId: user.organizationId,
+        expedienteId: expediente.id,
+        reviewId: review.id,
+        stateId: state.id,
+        actorUserId: user.id,
+        actor: user, plan: bcPlan, legalDate: legalDate.date, requestHash, context: snapshot as any, previousReviewId, correlationId,
+        revisions: revisions.filter(revision => (revision.outcome as any)?.bc).map(revision => ({ ...revision,
+          stable_key: identityById.get(revision.rule_id)!.stable_key, family: identityById.get(revision.rule_id)!.family,
+          conditions: revision.conditions as unknown as LegalCondition, outcome: revision.outcome as unknown as LegalRuleOutcome })),
+      });
+      statuses.push(...beneficialControllerStatuses.map((item) => item.status));
+      deadlines.push(...beneficialControllerStatuses.map(() => null));
 
       const nextDeadline = deadlines.filter((date): date is Date => Boolean(date)).sort((a, b) => a.getTime() - b.getTime())[0] || null;
       const generalState = deriveComplianceState(statuses, deadlines) as any;

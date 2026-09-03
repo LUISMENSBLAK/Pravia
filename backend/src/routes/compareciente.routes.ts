@@ -3,6 +3,7 @@ import multer from 'multer';
 import { ComparecienteController } from '../controllers/compareciente.controller';
 import { requireComparecienteObjectAccess } from '../middleware/objectAccess.middleware';
 import { requirePermission } from '../middleware/auth.middleware';
+import { BeneficialControllerController } from '../controllers/beneficialController.controller';
 
 const upload = multer({ limits: { fileSize: 25 * 1024 * 1024 } });
 const router = Router();
@@ -15,6 +16,14 @@ router.get('/', ComparecienteController.listarMaster);
 router.get('/:id', ComparecienteController.obtenerPorId);
 router.patch('/:id', ComparecienteController.actualizarMaster);
 router.patch('/:id/provenance/:sourceId/resolve', ComparecienteController.resolverConflictoDato);
+router.get('/:id/estructura-propiedad', requirePermission('comparecientes.read'), requirePermission('compliance.read'), BeneficialControllerController.current);
+router.put('/:id/estructura-propiedad', requirePermission('comparecientes.write'), requirePermission('compliance.write'), BeneficialControllerController.save);
+router.post('/:id/estructura-propiedad/vinculos/preview', requirePermission('comparecientes.write'), requirePermission('compliance.write'), BeneficialControllerController.previewLinks);
+router.post('/:id/estructura-propiedad/reconciliaciones/:proposalId/decision', requirePermission('comparecientes.write'), requirePermission('compliance.write'), BeneficialControllerController.reconcile);
+router.post('/:id/estructura-propiedad/reconciliaciones/:proposalId/preview', requirePermission('comparecientes.write'), requirePermission('compliance.write'), BeneficialControllerController.previewReconciliation);
+router.post('/:id/estructura-propiedad/propuestas-ia', requirePermission('ia.execute'), requirePermission('comparecientes.write'), requirePermission('compliance.write'), BeneficialControllerController.proposeAi);
+router.get('/:id/estructura-propiedad/propuestas-ia/:proposalId', requirePermission('comparecientes.read'), requirePermission('compliance.read'), BeneficialControllerController.readAi);
+router.post('/:id/estructura-propiedad/propuestas-ia/:proposalId/decision', requirePermission('comparecientes.write'), requirePermission('compliance.write'), BeneficialControllerController.decideAi);
 
 // Archivo Documental del Compareciente
 router.get('/:id/documentos', requirePermission('documentos.read'), ComparecienteController.obtenerArchivoDocumental);

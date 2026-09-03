@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+
 export type TruthValue = 'TRUE' | 'FALSE' | 'UNKNOWN';
 
 export type LegalCondition =
@@ -9,6 +11,8 @@ export type LegalCondition =
   | { op: 'array_some'; path: string; rule: LegalCondition };
 
 export type LegalRuleOutcome = {
+  /** Optional CUM-BC-001 routing, versioned and verified with the H1 revision. */
+  bc?: { regime: 'LFPIORPI' | 'CFF_RMF'; purpose: 'APPLICABILITY' | 'DETERMINATION'; requires_screening?: boolean };
   when_true: {
     applicability: 'APLICA_SIN_AVISO' | 'APLICA_CON_AVISO';
     vulnerable_activity?: boolean;
@@ -101,6 +105,10 @@ function compare(condition: Exclude<Extract<LegalCondition, { path: string }>, {
   if (condition.op === 'exists') return known(true);
   if (condition.op === 'equals') return known(Object.is(resolved.value, condition.value));
   if (condition.op === 'in') return known(condition.values.some((value) => Object.is(value, resolved.value)));
+  // H4 facts carry Decimal values; do not pass them through display/Number rounding.
+  if (Prisma.Decimal.isDecimal(resolved.value) && typeof condition.value === 'number') {
+    return known(condition.op === 'gte' ? resolved.value.gte(condition.value) : resolved.value.lte(condition.value));
+  }
   if (typeof resolved.value !== 'number' || typeof condition.value !== 'number') return missing(condition.path);
   return known(condition.op === 'gte' ? resolved.value >= condition.value : resolved.value <= condition.value);
 }

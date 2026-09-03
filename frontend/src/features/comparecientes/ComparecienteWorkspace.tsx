@@ -8,6 +8,7 @@ import type { ComparecienteDetail, NewComparecienteDraft } from './compareciente
 import { ComparecienteDocuments, type WorkspaceDocument } from './components/ComparecienteDocuments';
 import { ComparecienteForm } from './components/ComparecienteForm';
 import { ScreeningPanel } from './components/ScreeningPanel';
+import { OwnershipStructureEditor } from './components/OwnershipStructureEditor';
 import styles from './Comparecientes.module.css';
 import { resolveExpedienteCreationContext, resolveExpedienteReturn } from '../cases/expedienteNavigation';
 
@@ -112,6 +113,7 @@ export function ComparecienteWorkspace(){
         <main className={styles.unifiedInformation}><header><span>Información del compareciente</span><h2>Datos notariales</h2><p>{canWrite?'Edita directamente y guarda cuando hayas terminado.':'Consulta la información disponible dentro de tus permisos.'}</p></header><ComparecienteForm draft={draft} readOnly={!canWrite} lockType={!createMode} sources={sources} onChange={change}/></main>
         <aside><ComparecienteDocuments comparecienteId={createMode?undefined:id} sessionId={sessionId} documents={documents} canUpload={canUpload} canDelete={canDelete} canExtract={canExtract} busy={busy} extractionState={extractionState} onUpload={upload} onDelete={remove} onExtract={extract}/></aside>
       </div>
+      {!createMode&&item?.tipo_persona==='MORAL'&&user?.permissions?.includes('compliance.read')&&<OwnershipStructureEditor comparecienteId={item.id} name={item.nombre} canWrite={Boolean(canWrite&&user.permissions.includes('compliance.write'))} canUseAi={Boolean(user.permissions.includes('ia.execute'))} documents={documents.map(document=>({id:document.id,name:document.name}))}/>}
       {!createMode&&item&&canReadScreening&&<ScreeningPanel comparecienteId={item.id} canRerun={canRerunScreening} canResolve={canResolveScreening} canReport={canReportScreening}/>}
       {!createMode&&item&&item.complianceSnapshots.length>0&&<section className={styles.complianceBridge} aria-label="Evaluaciones Riesgos / UIF"><header><div><span>Riesgos / UIF</span><h2>Evaluaciones relacionadas</h2><p>Snapshots históricos vinculados mediante los expedientes de este compareciente.</p></div></header><div>{item.complianceSnapshots.map((review:any)=><Link key={review.id} to={`/riesgos/revisiones/${review.id}`}><ShieldCheck/><span><strong>{review.expediente?.numero_pravia||'Expediente relacionado'}</strong><small>{String(review.estatus||'SIN_EVALUAR').replaceAll('_',' ').toLocaleLowerCase('es-MX')} · solo lectura desde esta ficha</small></span><ChevronRight/></Link>)}</div></section>}
     </form>

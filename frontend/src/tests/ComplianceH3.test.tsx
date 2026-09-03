@@ -7,7 +7,7 @@ import { ComplianceTab } from '../features/cases/components/tabs/ComplianceTab';
 
 const mocks = vi.hoisted(() => ({
   screening: vi.fn(), rerunScreening: vi.fn(), resolveScreeningCandidate: vi.fn(), generateScreeningReport: vi.fn(),
-  documentStructure: vi.fn(), screeningOperation: vi.fn(), permissions: ['expedientes.read', 'compliance.read', 'compliance.sensitive.read'],
+  documentStructure: vi.fn(), screeningOperation: vi.fn(), beneficialController: vi.fn(), permissions: ['expedientes.read', 'compliance.read', 'compliance.sensitive.read'],
 }));
 vi.mock('../features/comparecientes/comparecientes.service', () => ({ comparecientesService: mocks }));
 vi.mock('../features/compliance/compliance.service', () => ({ complianceService: mocks }));
@@ -25,6 +25,7 @@ describe('H3 CUM-LST-001 frontend', () => {
     vi.clearAllMocks(); mocks.permissions = ['expedientes.read', 'compliance.read', 'compliance.sensitive.read'];
     mocks.rerunScreening.mockResolvedValue({}); mocks.resolveScreeningCandidate.mockResolvedValue({}); mocks.generateScreeningReport.mockResolvedValue({});
     mocks.documentStructure.mockResolvedValue({ vulnerable: false, automatic_structure: true, groups: [], requirements: [], missing: [] });
+    mocks.beneficialController.mockResolvedValue({ current_review_id:null, configured_legal_rules:false, evaluations:[], history:[], snapshots:[], legacy_promoted:false });
   });
 
   it('01 muestra estado actual, fecha e historial separado', async () => {
@@ -84,5 +85,24 @@ describe('H3 CUM-LST-001 frontend', () => {
     expect(await screen.findByRole('heading', { name: 'Consulta nominal de la operación' })).toBeInTheDocument();
     expect(screen.getByText('Persona sintética')).toBeInTheDocument(); expect(screen.getByText(/Snapshot vinculado · 1 pendiente de resolución/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Abrir ficha/ })).toBeInTheDocument(); expect(screen.queryByLabelText('Motivo de la resolución')).not.toBeInTheDocument();
+  });
+
+  it('12 distingue current de history, ambos regímenes y una regla no configurada sin falsa conclusión', async () => {
+    mocks.screeningOperation.mockResolvedValue({ data: [] });
+    const snapshot = { id: 'snapshot-1', structure_revision: 3, structure_fingerprint: 'a'.repeat(64), incomplete_markers: [] };
+    mocks.beneficialController.mockResolvedValue({ current_review_id: 'review-current', configured_legal_rules: false, snapshots: [snapshot], legacy_promoted: false,
+      evaluations: [
+        { id: 'eval-lfpiorpi', review_id: 'review-current', regime: 'LFPIORPI', status: 'NOT_CONFIGURED', results: [], snapshot, reevaluation_required: false },
+        { id: 'eval-cff', review_id: 'review-current', regime: 'CFF_RMF', status: 'REQUIRES_REVIEW', results: [], snapshot: { ...snapshot, id: 'snapshot-2', incomplete_markers: ['UNKNOWN_PERCENTAGE'] }, reevaluation_required: true },
+      ],
+      history: [{ id: 'eval-old', review_id: 'review-old', regime: 'LFPIORPI', status: 'EVALUATED', results: [{ id: 'result-old', determination: 'IDENTIFIED', subject_compareciente_id: 'party-1' }], snapshot: { ...snapshot, id: 'snapshot-old', structure_revision: 2 }, reevaluation_required: false }],
+    });
+    render(<MemoryRouter><ComplianceTab expediente={{ id: 'exp-1', numero_pravia: 'EXP-0001-2026', complianceReviews: [] } as any} /></MemoryRouter>);
+    expect(await screen.findByText('Regla jurídica no configurada · estructura v3 · snapshot inmutable')).toBeInTheDocument();
+    expect(screen.getByText('CFF / RMF')).toBeInTheDocument();
+    expect(screen.getByText('Reevaluación requerida')).toBeInTheDocument();
+    expect(screen.getByText('Ver historial de evaluaciones (1)')).toBeInTheDocument();
+    expect(screen.queryByText(/sin beneficiario controlador/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no aplica/i)).not.toBeInTheDocument();
   });
 });

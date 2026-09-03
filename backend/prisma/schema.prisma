@@ -40,33 +40,48 @@ model Organization {
   complianceAlertLeads       ComplianceAlertLeadRevision[]
   complianceRequirements     ComplianceRequirement[]
   complianceAlerts           ComplianceAlert[]
+  bcOwnershipStructures      PersonaMoralOwnershipStructure[]
+  bcSnapshots                ComplianceBcStructureSnapshot[]
+  bcFormatMappings           ComplianceBcFormatMapping[]
 
   @@index([status])
   @@map("organizations")
 }
 
 model OrganizationMembership {
-  id                                String                        @id @default(uuid()) @db.Uuid
-  organization_id                   String                        @db.Uuid
-  user_id                           String                        @db.Uuid
+  id                                String                                @id @default(uuid()) @db.Uuid
+  organization_id                   String                                @db.Uuid
+  user_id                           String                                @db.Uuid
   rol                               Role
-  status                            String                        @default("ACTIVE")
-  created_at                        DateTime                      @default(now())
-  updated_at                        DateTime                      @updatedAt
-  organization                      Organization                  @relation(fields: [organization_id], references: [id], onDelete: Restrict)
-  user                              User                          @relation(fields: [user_id], references: [id], onDelete: Restrict)
+  status                            String                                @default("ACTIVE")
+  created_at                        DateTime                              @default(now())
+  updated_at                        DateTime                              @updatedAt
+  organization                      Organization                          @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  user                              User                                  @relation(fields: [user_id], references: [id], onDelete: Restrict)
   sessions                          AuthSession[]
   prospectoTransiciones             ProspectoTransicion[]
   prospectoFuentes                  ProspectoFuenteNotarial[]
   cotizacionTransiciones            CotizacionTransicion[]
-  complianceLegalRulesCreated       ComplianceLegalRule[]         @relation("ComplianceLegalRuleCreatorMembership")
-  complianceRuleRevisionsCreated    ComplianceLegalRuleRevision[] @relation("ComplianceRuleRevisionCreatorMembership")
-  complianceRuleRevisionsVerified   ComplianceLegalRuleRevision[] @relation("ComplianceRuleRevisionVerifierMembership")
-  complianceRuleRevisionsActivated  ComplianceLegalRuleRevision[] @relation("ComplianceRuleRevisionActivatorMembership")
-  expedienteComplianceStatesUpdated ExpedienteComplianceState[]   @relation("ExpedienteComplianceStateUpdaterMembership")
-  complianceAlertLeadsCreated       ComplianceAlertLeadRevision[] @relation("ComplianceAlertLeadCreatorMembership")
-  complianceAlertsResponsible       ComplianceAlert[]             @relation("ComplianceAlertResponsibleMembership")
-  complianceAlertsResolved          ComplianceAlert[]             @relation("ComplianceAlertResolverMembership")
+  complianceLegalRulesCreated       ComplianceLegalRule[]                 @relation("ComplianceLegalRuleCreatorMembership")
+  complianceRuleRevisionsCreated    ComplianceLegalRuleRevision[]         @relation("ComplianceRuleRevisionCreatorMembership")
+  complianceRuleRevisionsVerified   ComplianceLegalRuleRevision[]         @relation("ComplianceRuleRevisionVerifierMembership")
+  complianceRuleRevisionsActivated  ComplianceLegalRuleRevision[]         @relation("ComplianceRuleRevisionActivatorMembership")
+  expedienteComplianceStatesUpdated ExpedienteComplianceState[]           @relation("ExpedienteComplianceStateUpdaterMembership")
+  complianceAlertLeadsCreated       ComplianceAlertLeadRevision[]         @relation("ComplianceAlertLeadCreatorMembership")
+  complianceAlertsResponsible       ComplianceAlert[]                     @relation("ComplianceAlertResponsibleMembership")
+  complianceAlertsResolved          ComplianceAlert[]                     @relation("ComplianceAlertResolverMembership")
+  bcStructuresCreated               PersonaMoralOwnershipStructure[]      @relation("BcStructureCreatorMembership")
+  bcStructuresUpdated               PersonaMoralOwnershipStructure[]      @relation("BcStructureUpdaterMembership")
+  bcEdgesConfirmed                  PersonaMoralOwnershipEdge[]           @relation("BcEdgeConfirmerMembership")
+  bcControlsConfirmed               PersonaMoralControlFact[]             @relation("BcControlConfirmerMembership")
+  bcReconciliationsDecided          PersonaMoralStructureReconciliation[] @relation("BcReconciliationDeciderMembership")
+  bcSnapshotsCaptured               ComplianceBcStructureSnapshot[]       @relation("BcSnapshotActorMembership")
+  bcEvaluationsCreated              ComplianceBcEvaluation[]              @relation("BcEvaluationActorMembership")
+  bcAiProposalsCreated              ComplianceBcAiProposal[]              @relation("BcAiProposalCreatorMembership")
+  bcAiProposalsDecided              ComplianceBcAiProposal[]              @relation("BcAiProposalDeciderMembership")
+  bcFormatMappingsCreated           ComplianceBcFormatMapping[]           @relation("BcFormatCreatorMembership")
+  bcFormatMappingsUpdated           ComplianceBcFormatMapping[]           @relation("BcFormatUpdaterMembership")
+  bcSocietyTargetsCreated           ExpedienteSocietyTarget[]             @relation("BcSocietyTargetCreatorMembership")
 
   @@unique([organization_id, user_id])
   @@index([user_id, status])
@@ -1088,45 +1103,45 @@ model ChecklistItem {
 }
 
 model Expediente {
-  id                         String                         @id @default(uuid()) @db.Uuid
-  organization_id            String?                        @db.Uuid
-  numero_pravia              String                         @unique
+  id                         String                          @id @default(uuid()) @db.Uuid
+  organization_id            String?                         @db.Uuid
+  numero_pravia              String                          @unique
   numero_notaria             String?
-  tipo_acto_id               String?                        @db.Uuid
-  abogado_id                 String                         @db.Uuid
-  creador_id                 String                         @db.Uuid
-  cotizacion_id              String?                        @unique @db.Uuid
+  tipo_acto_id               String?                         @db.Uuid
+  abogado_id                 String                          @db.Uuid
+  creador_id                 String                          @db.Uuid
+  cotizacion_id              String?                         @unique @db.Uuid
   cliente_alias              String?
-  fecha_apertura             DateTime                       @default(now())
-  estatus                    ExpedienteEstatus              @default(ABIERTO)
+  fecha_apertura             DateTime                        @default(now())
+  estatus                    ExpedienteEstatus               @default(ABIERTO)
   archived_at                DateTime?
-  archived_by                String?                        @db.Uuid
-  avance_documental          Int                            @default(0)
-  avance_financiero          Int                            @default(0)
-  avance_general             Int                            @default(0)
-  avance_operativo           Int                            @default(0)
-  created_at                 DateTime                       @default(now())
+  archived_by                String?                         @db.Uuid
+  avance_documental          Int                             @default(0)
+  avance_financiero          Int                             @default(0)
+  avance_general             Int                             @default(0)
+  avance_operativo           Int                             @default(0)
+  created_at                 DateTime                        @default(now())
   datos_operacion            Json?
   descripcion                String?
-  etapa_actual_nombre        String?                        @default("Apertura de Expediente")
-  expediente_etapa_actual_id String?                        @unique @db.Uuid
+  etapa_actual_nombre        String?                         @default("Apertura de Expediente")
+  expediente_etapa_actual_id String?                         @unique @db.Uuid
   fecha_entrega_cliente      DateTime?
   fecha_estimada_firma       DateTime?
   fecha_limite_accion        DateTime?
   fecha_real_firma           DateTime?
-  flujo_version_id           String?                        @db.Uuid
-  formulario_version_id      String?                        @db.Uuid
-  gestor_id                  String?                        @db.Uuid
+  flujo_version_id           String?                         @db.Uuid
+  formulario_version_id      String?                         @db.Uuid
+  gestor_id                  String?                         @db.Uuid
   motivo_archivo             String?
-  notaria_id                 String?                        @db.Uuid
-  plantilla_doc_version_id   String?                        @db.Uuid
+  notaria_id                 String?                         @db.Uuid
+  plantilla_doc_version_id   String?                         @db.Uuid
   proxima_accion             String?
   subtipo_acto               String?
-  updated_at                 DateTime                       @default(now()) @updatedAt
-  valor_operacion            Decimal?                       @db.Decimal(14, 2)
-  version                    Int                            @default(1)
+  updated_at                 DateTime                        @default(now()) @updatedAt
+  valor_operacion            Decimal?                        @db.Decimal(14, 2)
+  version                    Int                             @default(1)
   aiUsageLogs                AIUsageLog[]
-  comparecienteAltaSessions  ComparecienteAltaSession[]     @relation("ComparecienteAltaSessionOrigenExpediente")
+  comparecienteAltaSessions  ComparecienteAltaSession[]      @relation("ComparecienteAltaSessionOrigenExpediente")
   complianceReviews          ComplianceReview[]
   comunicaciones             Comunicacion[]
   documentos                 Documento[]
@@ -1139,19 +1154,19 @@ model Expediente {
   documentoSnapshot          ExpedienteDocumentoSnapshot?
   entrega                    ExpedienteEntrega?
   estatus_logs               ExpedienteEstatus_Log[]
-  etapas                     ExpedienteEtapa[]              @relation("ExpedienteEtapasLista")
+  etapas                     ExpedienteEtapa[]               @relation("ExpedienteEtapasLista")
   expedienteRepresentaciones ExpedienteRepresentacion[]
   requisitos_docs            ExpedienteRequisitoDoc[]
-  abogado                    User                           @relation("ExpedienteAbogado", fields: [abogado_id], references: [id])
-  archived_by_user           User?                          @relation("ExpedienteArchivedBy", fields: [archived_by], references: [id])
-  cotizacion                 Cotizacion?                    @relation(fields: [cotizacion_id], references: [id], onDelete: Restrict)
-  creador                    User                           @relation("ExpedienteCreador", fields: [creador_id], references: [id])
-  etapaActual                ExpedienteEtapa?               @relation("ExpedienteEtapaActual", fields: [expediente_etapa_actual_id], references: [id])
-  flujoVersion               FlujoVersion?                  @relation(fields: [flujo_version_id], references: [id])
-  formularioVersion          FormularioVersion?             @relation(fields: [formulario_version_id], references: [id])
-  gestor                     User?                          @relation("ExpedienteGestor", fields: [gestor_id], references: [id])
-  notaria                    Notaria?                       @relation(fields: [notaria_id], references: [id])
-  plantillaDocVersion        PlantillaDocumentalVersion?    @relation(fields: [plantilla_doc_version_id], references: [id])
+  abogado                    User                            @relation("ExpedienteAbogado", fields: [abogado_id], references: [id])
+  archived_by_user           User?                           @relation("ExpedienteArchivedBy", fields: [archived_by], references: [id])
+  cotizacion                 Cotizacion?                     @relation(fields: [cotizacion_id], references: [id], onDelete: Restrict)
+  creador                    User                            @relation("ExpedienteCreador", fields: [creador_id], references: [id])
+  etapaActual                ExpedienteEtapa?                @relation("ExpedienteEtapaActual", fields: [expediente_etapa_actual_id], references: [id])
+  flujoVersion               FlujoVersion?                   @relation(fields: [flujo_version_id], references: [id])
+  formularioVersion          FormularioVersion?              @relation(fields: [formulario_version_id], references: [id])
+  gestor                     User?                           @relation("ExpedienteGestor", fields: [gestor_id], references: [id])
+  notaria                    Notaria?                        @relation(fields: [notaria_id], references: [id])
+  plantillaDocVersion        PlantillaDocumentalVersion?     @relation(fields: [plantilla_doc_version_id], references: [id])
   tipo_acto              TipoActo?                      @relation(fields: [tipo_acto_id], references: [id])
   honorariosGenerados        HonorarioGenerado[]
   movimientosFinancieros     MovimientoFinanciero[]
@@ -1159,8 +1174,10 @@ model Expediente {
   tareas                     Tarea[]
   tareas_externas            TareaExterna[]
   calculosISR                CalculoISR[]
-  artefactosPendientes       ExpedienteArtefactoPendiente[] @relation("Exp006PendingExpediente")
-  artefactosDocumentos       ExpedienteArtefactoDocumento[] @relation("Exp006DocumentExpediente")
+  artefactosPendientes       ExpedienteArtefactoPendiente[]  @relation("Exp006PendingExpediente")
+  bcSnapshots                ComplianceBcStructureSnapshot[]
+  societyTargets             ExpedienteSocietyTarget[]
+  artefactosDocumentos       ExpedienteArtefactoDocumento[]  @relation("Exp006DocumentExpediente")
   presupuesto                ExpedientePresupuesto?
   ingresosReportados         ExpedienteIngresoReportado[]
   solicitudesPago            ExpedienteSolicitudPago[]
@@ -1291,31 +1308,34 @@ model ExpedientePresupuestoDocumento {
 }
 
 model ExpedienteActo {
-  id                      String                         @id @default(uuid()) @db.Uuid
-  organization_id         String                         @db.Uuid
-  expediente_id           String                         @db.Uuid
-  tipo_acto_id            String                         @db.Uuid
+  id                      String                          @id @default(uuid()) @db.Uuid
+  organization_id         String                          @db.Uuid
+  expediente_id           String                          @db.Uuid
+  tipo_acto_id            String                          @db.Uuid
   origen                  ExpedienteActoOrigen
-  estatus                 ExpedienteActoEstatus          @default(ACTIVO)
-  source_cotizacion_id    String?                        @db.Uuid
+  estatus                 ExpedienteActoEstatus           @default(ACTIVO)
+  source_cotizacion_id    String?                         @db.Uuid
   idempotency_key         String?
   removal_idempotency_key String?
-  created_by              String                         @db.Uuid
-  created_at              DateTime                       @default(now())
-  updated_at              DateTime                       @default(now()) @updatedAt
+  created_by              String                          @db.Uuid
+  created_at              DateTime                        @default(now())
+  updated_at              DateTime                        @default(now()) @updatedAt
   removed_at              DateTime?
-  removed_by              String?                        @db.Uuid
+  removed_by              String?                         @db.Uuid
   removed_reason          String?
-  organization            Organization                   @relation(fields: [organization_id], references: [id], onDelete: Restrict)
-  expediente              Expediente                     @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
-  tipo_acto               TipoActo                       @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
-  source_cotizacion       Cotizacion?                    @relation(fields: [source_cotizacion_id], references: [id], onDelete: Restrict)
-  creador                 User                           @relation("ExpedienteActoCreador", fields: [created_by], references: [id], onDelete: Restrict)
-  retirado_por            User?                          @relation("ExpedienteActoRetirador", fields: [removed_by], references: [id], onDelete: Restrict)
+  organization            Organization                    @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  expediente              Expediente                      @relation(fields: [expediente_id], references: [id], onDelete: Restrict)
+  tipo_acto               TipoActo                        @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict)
+  source_cotizacion       Cotizacion?                     @relation(fields: [source_cotizacion_id], references: [id], onDelete: Restrict)
+  creador                 User                            @relation("ExpedienteActoCreador", fields: [created_by], references: [id], onDelete: Restrict)
+  retirado_por            User?                           @relation("ExpedienteActoRetirador", fields: [removed_by], references: [id], onDelete: Restrict)
   comparecientes          ExpedienteCompareciente[]
   predios                 ExpedienteActoPredio[]
-  artefactosPendientes    ExpedienteArtefactoPendiente[] @relation("Exp006PendingAct")
+  artefactosPendientes    ExpedienteArtefactoPendiente[]  @relation("Exp006PendingAct")
+  bcSnapshots             ComplianceBcStructureSnapshot[]
+  societyTargets          ExpedienteSocietyTarget[]
 
+  @@unique([id, organization_id], map: "uq_expediente_actos_id_org_b4")
   @@unique([organization_id, expediente_id, idempotency_key], map: "uq_expediente_actos_idempotency")
   @@unique([organization_id, expediente_id, removal_idempotency_key], map: "uq_expediente_actos_removal_idempotency")
   @@index([organization_id, expediente_id, estatus], map: "idx_expediente_actos_tenant_expediente_status")
@@ -1763,6 +1783,10 @@ model Documento {
   finanzaPropuestasExp008      ExpedienteFinanzaPropuestaIA[]
   fuentesNotarialesProspecto   ProspectoFuenteNotarial[]
   screeningReports             ScreeningReport[]
+  bcOwnershipEvidence          PersonaMoralOwnershipEdge[]
+  bcControlEvidence            PersonaMoralControlFact[]
+  bcAiProposals                ComplianceBcAiProposal[]
+  bcFormatMappings             ComplianceBcFormatMapping[]
 
   @@unique([id, organization_id], map: "h2_documentos_id_tenant_key")
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
@@ -2004,7 +2028,10 @@ model Compareciente {
   calculosISR                       CalculoISR[]
   personaFisica                     PersonaFisica?
   personaMoral                      PersonaMoral?
+  bcOwnershipNodes                  PersonaMoralOwnershipNode[]
+  bcResults                         ComplianceBcResult[]
 
+  @@unique([id, organization_id], map: "h2_comparecientes_id_tenant_key")
   @@index([creado_por_id], map: "idx_comparecientes_creado_por_fk")
   @@index([nombre_busqueda], map: "idx_comparecientes_nombre_busqueda")
   @@index([tipo_persona], map: "idx_comparecientes_tipo_persona")
@@ -2074,27 +2101,32 @@ model RelacionConyugal {
 }
 
 model PersonaMoral {
-  id                          String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id             String?                     @db.Uuid
-  compareciente_id            String                      @unique @db.Uuid
-  razon_social                String                      @db.VarChar(255)
-  nombre_comercial            String?                     @db.VarChar(255)
-  tipo_societario             String?                     @db.VarChar(100)
-  nacionalidad                String?                     @default("Mexicana") @db.VarChar(100)
-  rfc                         String?                     @db.VarChar(13)
-  fecha_constitucion          DateTime?                   @db.Date
-  duracion                    String?                     @default("Indefinida") @db.VarChar(100)
+  id                          String                                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id             String?                               @db.Uuid
+  compareciente_id            String                                @unique @db.Uuid
+  razon_social                String                                @db.VarChar(255)
+  nombre_comercial            String?                               @db.VarChar(255)
+  tipo_societario             String?                               @db.VarChar(100)
+  nacionalidad                String?                               @default("Mexicana") @db.VarChar(100)
+  rfc                         String?                               @db.VarChar(13)
+  fecha_constitucion          DateTime?                             @db.Date
+  duracion                    String?                               @default("Indefinida") @db.VarChar(100)
   objeto_social_resumido      String?
-  folio_mercantil             String?                     @db.VarChar(100)
-  fecha_inscripcion_mercantil DateTime?                   @db.Date
-  estatus_societario          String?                     @default("ACTIVA") @db.VarChar(50)
-  created_at                  DateTime?                   @default(now()) @db.Timestamptz(6)
-  updated_at                  DateTime?                   @default(now()) @updatedAt @db.Timestamptz(6)
-  archived_at                 DateTime?                   @db.Timestamptz(6)
+  folio_mercantil             String?                               @db.VarChar(100)
+  fecha_inscripcion_mercantil DateTime?                             @db.Date
+  estatus_societario          String?                               @default("ACTIVA") @db.VarChar(50)
+  created_at                  DateTime?                             @default(now()) @db.Timestamptz(6)
+  updated_at                  DateTime?                             @default(now()) @updatedAt @db.Timestamptz(6)
+  archived_at                 DateTime?                             @db.Timestamptz(6)
   instrumentos                PersonaMoralInstrumento[]
   representantes              PersonaMoralRepresentante[]
-  compareciente               Compareciente               @relation(fields: [compareciente_id], references: [id], onUpdate: NoAction)
+  compareciente               Compareciente                         @relation(fields: [compareciente_id], references: [id], onUpdate: NoAction)
+  ownershipStructures         PersonaMoralOwnershipStructure[]
+  structureReconciliations    PersonaMoralStructureReconciliation[]
+  bcSnapshots                 ComplianceBcStructureSnapshot[]
+  societyTargets              ExpedienteSocietyTarget[]
 
+  @@unique([id, organization_id], map: "h4_personas_morales_id_tenant_key")
   @@index([folio_mercantil], map: "idx_personas_morales_folio")
   @@index([razon_social], map: "idx_personas_morales_razon")
   @@map("personas_morales")
@@ -3577,47 +3609,49 @@ model ComplianceRuleSet {
 }
 
 model ComplianceReview {
-  id                        String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id           String?                     @db.Uuid
-  expediente_id             String                      @db.Uuid
-  rule_set_id               String?                     @db.Uuid
+  id                        String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id           String?                         @db.Uuid
+  expediente_id             String                          @db.Uuid
+  rule_set_id               String?                         @db.Uuid
   tipo                      String
-  estatus                   String                      @default("BORRADOR")
+  estatus                   String                          @default("BORRADOR")
   fecha_operacion           DateTime?
   rule_version_snapshot     String
   cuestionario_json         Json
   resultado_json            Json?
   explicacion               String?
-  creado_por_id             String                      @db.Uuid
-  revisado_por_id           String?                     @db.Uuid
+  creado_por_id             String                          @db.Uuid
+  revisado_por_id           String?                         @db.Uuid
   revisado_at               DateTime?
-  created_at                DateTime                    @default(now())
-  updated_at                DateTime                    @default(now()) @updatedAt
+  created_at                DateTime                        @default(now())
+  updated_at                DateTime                        @default(now()) @updatedAt
   rule_snapshot             Json
   master_snapshot           Json
-  snapshot_captured_at      DateTime                    @default(now())
-  supersedes_review_id      String?                     @db.Uuid
+  snapshot_captured_at      DateTime                        @default(now())
+  supersedes_review_id      String?                         @db.Uuid
   engine_version            String?
   idempotency_key           String?
   legal_date_source         String?
   input_snapshot            Json?
   rule_collection_checksum  String?
   canonical_state_snapshot  Json?
-  is_canonical_legal_engine Boolean                     @default(false)
+  is_canonical_legal_engine Boolean                         @default(false)
   decisiones                ComplianceDecision[]
   evidencias                ComplianceEvidence[]
-  creado_por                User                        @relation("ComplianceReviewCreator", fields: [creado_por_id], references: [id], onUpdate: NoAction)
-  expediente                Expediente                  @relation(fields: [expediente_id], references: [id], onUpdate: NoAction)
-  revisado_por              User?                       @relation("ComplianceReviewReviewer", fields: [revisado_por_id], references: [id], onUpdate: NoAction)
-  ruleSet                   ComplianceRuleSet?          @relation(fields: [rule_set_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  supersedes                ComplianceReview?           @relation("ComplianceReviewLineage", fields: [supersedes_review_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  reevaluations             ComplianceReview[]          @relation("ComplianceReviewLineage")
+  creado_por                User                            @relation("ComplianceReviewCreator", fields: [creado_por_id], references: [id], onUpdate: NoAction)
+  expediente                Expediente                      @relation(fields: [expediente_id], references: [id], onUpdate: NoAction)
+  revisado_por              User?                           @relation("ComplianceReviewReviewer", fields: [revisado_por_id], references: [id], onUpdate: NoAction)
+  ruleSet                   ComplianceRuleSet?              @relation(fields: [rule_set_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  supersedes                ComplianceReview?               @relation("ComplianceReviewLineage", fields: [supersedes_review_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  reevaluations             ComplianceReview[]              @relation("ComplianceReviewLineage")
   currentComplianceStates   ExpedienteComplianceState[]
   legalRuleResults          ComplianceRuleResult[]
   legalRequirements         ComplianceRequirement[]
   legalAlerts               ComplianceAlert[]
+  bcSnapshots               ComplianceBcStructureSnapshot[]
 
   @@unique([organization_id, expediente_id, idempotency_key], map: "compliance_reviews_tenant_case_idempotency_key")
+  @@unique([id, organization_id, expediente_id], map: "h2_compliance_reviews_lineage_key")
   @@index([estatus, created_at])
   @@index([expediente_id, tipo], map: "compliance_reviews_expediente_tipo_idx")
   @@index([supersedes_review_id])
@@ -3896,21 +3930,21 @@ model ScreeningSourceVersion {
 }
 
 model ScreeningSourceExecution {
-  id                String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id   String                    @db.Uuid
-  query_id          String                    @db.Uuid
-  source_id         String                    @db.Uuid
-  source_version_id String?                   @db.Uuid
-  execution_state   ScreeningExecutionState   @default(QUEUED)
+  id                String                            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id   String                            @db.Uuid
+  query_id          String                            @db.Uuid
+  source_id         String                            @db.Uuid
+  source_version_id String?                           @db.Uuid
+  execution_state   ScreeningExecutionState           @default(QUEUED)
   started_at        DateTime?
   completed_at      DateTime?
   result_summary    Json?
-  error_code        String?                   @db.VarChar(120)
+  error_code        String?                           @db.VarChar(120)
   error_detail      String?
-  created_at        DateTime                  @default(now())
-  query             ComplianceScreeningResult @relation(fields: [query_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_source_executions_query_fkey")
-  source            ScreeningSource           @relation(fields: [source_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_source_executions_source_fkey")
-  sourceVersion     ScreeningSourceVersion?   @relation(fields: [source_version_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_source_executions_version_fkey")
+  created_at        DateTime                          @default(now())
+  query             ComplianceScreeningResult         @relation(fields: [query_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_source_executions_query_fkey")
+  source            ScreeningSource                   @relation(fields: [source_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_source_executions_source_fkey")
+  sourceVersion     ScreeningSourceVersion?           @relation(fields: [source_version_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_source_executions_version_fkey")
   candidates        ScreeningCandidate[]
   attempts          ScreeningSourceExecutionAttempt[]
 
@@ -3922,19 +3956,19 @@ model ScreeningSourceExecution {
 }
 
 model ScreeningSourceExecutionAttempt {
-  id                  String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id     String                     @db.Uuid
-  source_execution_id String                     @db.Uuid
+  id                  String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id     String                   @db.Uuid
+  source_execution_id String                   @db.Uuid
   attempt_number      Int
-  execution_state     ScreeningExecutionState    @default(RUNNING)
-  started_at          DateTime                   @default(now())
+  execution_state     ScreeningExecutionState  @default(RUNNING)
+  started_at          DateTime                 @default(now())
   completed_at        DateTime?
-  error_code          String?                    @db.VarChar(120)
+  error_code          String?                  @db.VarChar(120)
   error_detail        String?
-  result_digest       String?                    @db.VarChar(64)
+  result_digest       String?                  @db.VarChar(64)
   result_metadata     Json?
-  created_at          DateTime                   @default(now())
-  sourceExecution     ScreeningSourceExecution   @relation(fields: [source_execution_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_source_execution_attempts_execution_fkey")
+  created_at          DateTime                 @default(now())
+  sourceExecution     ScreeningSourceExecution @relation(fields: [source_execution_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_source_execution_attempts_execution_fkey")
 
   @@unique([organization_id, source_execution_id, attempt_number], map: "screening_source_execution_attempts_tenant_number_key")
   @@unique([id, organization_id], map: "screening_source_execution_attempts_id_tenant_key")
@@ -3999,19 +4033,19 @@ model ScreeningOperationSnapshot {
 }
 
 model ScreeningReport {
-  id               String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id  String                    @db.Uuid
-  query_id         String                    @db.Uuid
-  documento_id     String                    @db.Uuid
-  generated_by_id  String                    @db.Uuid
-  idempotency_key  String                    @db.VarChar(120)
-  cutoff_at        DateTime                  @default(now())
-  semantic_fingerprint String                @db.VarChar(64)
-  content_checksum String                    @db.VarChar(64)
-  created_at       DateTime                  @default(now())
-  query            ComplianceScreeningResult @relation(fields: [query_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_reports_query_fkey")
-  documento        Documento                 @relation(fields: [documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_reports_document_fkey")
-  compensationJobs StorageCompensationJob[]
+  id                   String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id      String                    @db.Uuid
+  query_id             String                    @db.Uuid
+  documento_id         String                    @db.Uuid
+  generated_by_id      String                    @db.Uuid
+  idempotency_key      String                    @db.VarChar(120)
+  cutoff_at            DateTime                  @default(now())
+  semantic_fingerprint String                    @db.VarChar(64)
+  content_checksum     String                    @db.VarChar(64)
+  created_at           DateTime                  @default(now())
+  query                ComplianceScreeningResult @relation(fields: [query_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_reports_query_fkey")
+  documento            Documento                 @relation(fields: [documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "screening_reports_document_fkey")
+  compensationJobs     StorageCompensationJob[]
 
   @@unique([organization_id, query_id, content_checksum], map: "screening_reports_query_checksum_key")
   @@unique([organization_id, query_id, semantic_fingerprint], map: "screening_reports_query_semantic_key")
@@ -5216,4 +5250,347 @@ enum ExpedienteActoOrigen {
 enum ExpedienteActoEstatus {
   ACTIVO
   RETIRADO
+}
+
+enum ComplianceBcPartyKind {
+  PF
+  PM
+}
+
+enum ComplianceBcIdentityMode {
+  LINKED
+  STRUCTURED_ONLY
+}
+
+enum ComplianceBcControlKind {
+  VOTE
+  APPOINTMENT
+  MANAGEMENT
+  AGREEMENT
+  OTHER
+}
+
+enum ComplianceBcReconciliationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+enum ComplianceBcRegime {
+  LFPIORPI
+  CFF_RMF
+}
+
+enum ComplianceBcEvaluationStatus {
+  NOT_CONFIGURED
+  INCOMPLETE
+  REQUIRES_REVIEW
+  EVALUATED
+  NOT_APPLICABLE
+}
+
+enum ComplianceBcProposalStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CONFLICT
+}
+
+model PersonaMoralOwnershipStructure {
+  id                 String                                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id    String                                @db.Uuid
+  persona_moral_id   String                                @db.Uuid
+  root_node_id       String                                @db.Uuid
+  revision           Int                                   @default(1)
+  fingerprint        String                                @db.VarChar(64)
+  incomplete_markers Json
+  created_by_id      String                                @db.Uuid
+  updated_by_id      String                                @db.Uuid
+  created_at         DateTime                              @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime                              @default(now()) @updatedAt @db.Timestamptz(6)
+  organization       Organization                          @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h4_structure_org_fkey")
+  personaMoral       PersonaMoral                          @relation(fields: [persona_moral_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_structure_pm_fkey")
+  createdBy          OrganizationMembership                @relation("BcStructureCreatorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_structure_creator_fkey")
+  updatedBy          OrganizationMembership                @relation("BcStructureUpdaterMembership", fields: [organization_id, updated_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_structure_updater_fkey")
+  nodes              PersonaMoralOwnershipNode[]
+  edges              PersonaMoralOwnershipEdge[]
+  controls           PersonaMoralControlFact[]
+  reconciliations    PersonaMoralStructureReconciliation[]
+  snapshots          ComplianceBcStructureSnapshot[]
+  aiProposals        ComplianceBcAiProposal[]
+
+  @@unique([organization_id, persona_moral_id], map: "pm_ownership_structures_tenant_person_key")
+  @@unique([id, organization_id], map: "pm_ownership_structures_id_tenant_key")
+  @@index([organization_id, fingerprint], map: "idx_pm_ownership_structures_fingerprint")
+  @@index([organization_id, created_by_id], map: "idx_fk_persona_moral_ownership_structures_b744060a")
+  @@index([organization_id, updated_by_id], map: "idx_fk_persona_moral_ownership_structures_eb3928fb")
+  @@map("persona_moral_ownership_structures")
+}
+
+model PersonaMoralOwnershipNode {
+  id                      String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id         String                         @db.Uuid
+  structure_id            String                         @db.Uuid
+  party_kind              ComplianceBcPartyKind
+  identity_mode           ComplianceBcIdentityMode
+  linked_compareciente_id String?                        @db.Uuid
+  display_name            String?                        @db.VarChar(255)
+  incomplete              Boolean                        @default(false)
+  metadata                Json
+  created_at              DateTime                       @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime                       @default(now()) @updatedAt @db.Timestamptz(6)
+  structure               PersonaMoralOwnershipStructure @relation(fields: [structure_id, organization_id], references: [id, organization_id], onDelete: Cascade, onUpdate: NoAction, map: "h4_node_structure_fkey")
+  linkedCompareciente     Compareciente?                 @relation(fields: [linked_compareciente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_node_party_fkey")
+  ownershipOutgoing       PersonaMoralOwnershipEdge[]    @relation("BcEdgeOwnerNode")
+  ownershipIncoming       PersonaMoralOwnershipEdge[]    @relation("BcEdgeOwnedNode")
+  controlFacts            PersonaMoralControlFact[]
+
+  @@unique([id, organization_id], map: "pm_ownership_nodes_id_tenant_key")
+  @@index([organization_id, structure_id], map: "idx_pm_ownership_nodes_structure")
+  @@index([organization_id, linked_compareciente_id], map: "idx_pm_ownership_nodes_linked_party")
+  @@map("persona_moral_ownership_nodes")
+}
+
+model PersonaMoralOwnershipEdge {
+  id                         String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id            String                         @db.Uuid
+  structure_id               String                         @db.Uuid
+  owner_node_id              String                         @db.Uuid
+  owned_node_id              String                         @db.Uuid
+  percentage                 Decimal?                       @db.Decimal(9, 6)
+  evidence_document_id       String?                        @db.Uuid
+  evidence_document_version  String?                       @db.VarChar(128)
+  evidence_document_checksum String?                        @db.VarChar(128)
+  confirmed_by_id            String?                        @db.Uuid
+  confirmed_at               DateTime?                      @db.Timestamptz(6)
+  created_at                 DateTime                       @default(now()) @db.Timestamptz(6)
+  structure                  PersonaMoralOwnershipStructure @relation(fields: [structure_id, organization_id], references: [id, organization_id], onDelete: Cascade, onUpdate: NoAction, map: "h4_edge_structure_fkey")
+  ownerNode                  PersonaMoralOwnershipNode      @relation("BcEdgeOwnerNode", fields: [owner_node_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_edge_owner_fkey")
+  ownedNode                  PersonaMoralOwnershipNode      @relation("BcEdgeOwnedNode", fields: [owned_node_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_edge_owned_fkey")
+  evidenceDocument           Documento?                     @relation(fields: [evidence_document_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_edge_document_fkey")
+  confirmedBy                OrganizationMembership?        @relation("BcEdgeConfirmerMembership", fields: [organization_id, confirmed_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_edge_confirmer_fkey")
+
+  @@unique([organization_id, structure_id, owner_node_id, owned_node_id], map: "pm_ownership_edges_identity_key")
+  @@unique([id, organization_id], map: "pm_ownership_edges_id_tenant_key")
+  @@index([organization_id, evidence_document_id], map: "idx_pm_ownership_edges_evidence")
+  @@index([organization_id, confirmed_by_id], map: "idx_fk_persona_moral_ownership_edges_9d3d2550")
+  @@map("persona_moral_ownership_edges")
+}
+
+model PersonaMoralControlFact {
+  id                         String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id            String                         @db.Uuid
+  structure_id               String                         @db.Uuid
+  subject_node_id            String                         @db.Uuid
+  kind                       ComplianceBcControlKind
+  description                String?
+  evidence_document_id       String?                        @db.Uuid
+  evidence_document_version  String?                       @db.VarChar(128)
+  evidence_document_checksum String?                        @db.VarChar(128)
+  confirmed_by_id            String?                        @db.Uuid
+  confirmed_at               DateTime?                      @db.Timestamptz(6)
+  created_at                 DateTime                       @default(now()) @db.Timestamptz(6)
+  structure                  PersonaMoralOwnershipStructure @relation(fields: [structure_id, organization_id], references: [id, organization_id], onDelete: Cascade, onUpdate: NoAction, map: "h4_control_structure_fkey")
+  subjectNode                PersonaMoralOwnershipNode      @relation(fields: [subject_node_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_control_subject_fkey")
+  evidenceDocument           Documento?                     @relation(fields: [evidence_document_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_control_document_fkey")
+  confirmedBy                OrganizationMembership?        @relation("BcControlConfirmerMembership", fields: [organization_id, confirmed_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_control_confirmer_fkey")
+
+  @@unique([id, organization_id], map: "pm_control_facts_id_tenant_key")
+  @@index([organization_id, structure_id], map: "idx_pm_control_facts_structure")
+  @@index([organization_id, evidence_document_id], map: "idx_pm_control_facts_evidence")
+  @@index([organization_id, confirmed_by_id], map: "idx_fk_persona_moral_control_facts_02a34d12")
+  @@index([subject_node_id, organization_id], map: "idx_fk_persona_moral_control_facts_9796eab2")
+  @@map("persona_moral_control_facts")
+}
+
+model PersonaMoralStructureReconciliation {
+  id                      String                           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id         String                           @db.Uuid
+  structure_id            String                           @db.Uuid
+  linked_persona_moral_id String                           @db.Uuid
+  local_branch_snapshot   Json
+  source_node_id          String                           @db.Uuid
+  source_revision         Int
+  source_fingerprint      String                           @db.VarChar(64)
+  target_revision         Int
+  canonical_fingerprint   String                           @db.VarChar(64)
+  status                  ComplianceBcReconciliationStatus @default(PENDING)
+  decided_by_id           String?                          @db.Uuid
+  decided_at              DateTime?                        @db.Timestamptz(6)
+  created_at              DateTime                         @default(now()) @db.Timestamptz(6)
+  structure               PersonaMoralOwnershipStructure   @relation(fields: [structure_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_reconciliation_structure_fkey")
+  linkedPersonaMoral      PersonaMoral                     @relation(fields: [linked_persona_moral_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_reconciliation_pm_fkey")
+  decidedBy               OrganizationMembership?          @relation("BcReconciliationDeciderMembership", fields: [organization_id, decided_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_reconciliation_decider_fkey")
+
+  @@unique([id, organization_id], map: "pm_structure_reconciliations_id_tenant_key")
+  @@index([organization_id, structure_id, status], map: "idx_pm_structure_reconciliations_pending")
+  @@index([organization_id, decided_by_id], map: "idx_fk_persona_moral_structure_reconciliations_10111c06")
+  @@index([linked_persona_moral_id, organization_id], map: "idx_fk_persona_moral_structure_reconciliations_5d1176a8")
+  @@map("persona_moral_structure_reconciliations")
+}
+
+model ComplianceBcStructureSnapshot {
+  id                      String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id         String                         @db.Uuid
+  review_id               String                         @db.Uuid
+  expediente_id           String                         @db.Uuid
+  expediente_acto_id      String?                        @db.Uuid
+  target_persona_moral_id String                         @db.Uuid
+  structure_id            String                         @db.Uuid
+  structure_revision      Int
+  structure_fingerprint   String                         @db.VarChar(64)
+  graph_snapshot          Json
+  incomplete_markers      Json
+  captured_by_id          String                         @db.Uuid
+  captured_at             DateTime                       @default(now()) @db.Timestamptz(6)
+  organization            Organization                   @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h4_snapshot_org_fkey")
+  review                  ComplianceReview               @relation(fields: [review_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_snapshot_review_fkey")
+  expediente              Expediente                     @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_snapshot_case_fkey")
+  expedienteActo          ExpedienteActo?                @relation(fields: [expediente_acto_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_snapshot_act_fkey")
+  targetPersonaMoral      PersonaMoral                   @relation(fields: [target_persona_moral_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_snapshot_pm_fkey")
+  structure               PersonaMoralOwnershipStructure @relation(fields: [structure_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_snapshot_structure_fkey")
+  capturedBy              OrganizationMembership         @relation("BcSnapshotActorMembership", fields: [organization_id, captured_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_snapshot_actor_fkey")
+  evaluations             ComplianceBcEvaluation[]
+
+  @@unique([organization_id, review_id, target_persona_moral_id, expediente_acto_id, structure_fingerprint], map: "compliance_bc_snapshots_identity_key")
+  @@unique([id, organization_id], map: "compliance_bc_snapshots_id_tenant_key")
+  @@index([organization_id, expediente_id, review_id], map: "idx_compliance_bc_snapshots_case")
+  @@index([structure_id, organization_id], map: "idx_fk_compliance_bc_structure_snapshots_4ebf07ec")
+  @@index([organization_id, captured_by_id], map: "idx_fk_compliance_bc_structure_snapshots_d4b02396")
+  @@index([expediente_acto_id, organization_id], map: "idx_fk_compliance_bc_structure_snapshots_f8e5680a")
+  @@map("compliance_bc_structure_snapshots")
+}
+
+model ComplianceBcEvaluation {
+  id                       String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id          String                        @db.Uuid
+  review_id                String                        @db.Uuid
+  expediente_id            String                        @db.Uuid
+  expediente_acto_id       String?                       @db.Uuid
+  target_persona_moral_id  String                        @db.Uuid
+  snapshot_id              String                        @db.Uuid
+  regime                   ComplianceBcRegime
+  status                   ComplianceBcEvaluationStatus
+  logical_hash             String                        @db.VarChar(64)
+  rule_set_checksum        String?                       @db.VarChar(128)
+  legal_date               DateTime?                     @db.Date
+  engine_version           String                        @db.VarChar(50)
+  input_snapshot           Json
+  result_snapshot          Json
+  supersedes_evaluation_id String?                       @db.Uuid
+  created_by_id            String                        @db.Uuid
+  created_at               DateTime                      @default(now()) @db.Timestamptz(6)
+  snapshot                 ComplianceBcStructureSnapshot @relation(fields: [snapshot_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_evaluation_snapshot_fkey")
+  supersedes               ComplianceBcEvaluation?       @relation("BcEvaluationLineage", fields: [supersedes_evaluation_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_evaluation_supersedes_fkey")
+  supersededBy             ComplianceBcEvaluation[]      @relation("BcEvaluationLineage")
+  createdBy                OrganizationMembership        @relation("BcEvaluationActorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_evaluation_actor_fkey")
+  results                  ComplianceBcResult[]
+
+  @@unique([organization_id, logical_hash], map: "compliance_bc_evaluations_logical_key")
+  @@unique([id, organization_id], map: "compliance_bc_evaluations_id_tenant_key")
+  @@index([organization_id, expediente_id, review_id, regime], map: "idx_compliance_bc_evaluations_case")
+  @@index([organization_id, created_by_id], map: "idx_fk_compliance_bc_evaluations_60e98cdc")
+  @@index([snapshot_id, organization_id], map: "idx_fk_compliance_bc_evaluations_79c69633")
+  @@index([supersedes_evaluation_id, organization_id], map: "idx_fk_compliance_bc_evaluations_ee9d6a88")
+  @@map("compliance_bc_evaluations")
+}
+
+model ComplianceBcResult {
+  id                       String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id          String                 @db.Uuid
+  evaluation_id            String                 @db.Uuid
+  subject_compareciente_id String?                @db.Uuid
+  subject_snapshot_node_id String?                @db.Uuid
+  determination            String                 @db.VarChar(80)
+  facts_snapshot           Json
+  result_snapshot          Json
+  created_at               DateTime               @default(now()) @db.Timestamptz(6)
+  evaluation               ComplianceBcEvaluation @relation(fields: [evaluation_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_result_evaluation_fkey")
+  subjectCompareciente     Compareciente?         @relation(fields: [subject_compareciente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_result_subject_fkey")
+
+  @@unique([organization_id, evaluation_id, subject_snapshot_node_id, determination], map: "compliance_bc_results_identity_key")
+  @@unique([id, organization_id], map: "compliance_bc_results_id_tenant_key")
+  @@index([subject_compareciente_id, organization_id], map: "idx_fk_compliance_bc_results_e26f1eb5")
+  @@map("compliance_bc_results")
+}
+
+model ComplianceBcAiProposal {
+  id                       String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id          String                         @db.Uuid
+  structure_id             String                         @db.Uuid
+  source_document_id       String                         @db.Uuid
+  source_document_version  String                         @db.VarChar(128)
+  source_document_checksum String                         @db.VarChar(128)
+  source_pages             Json
+  base_revision            Int
+  base_fingerprint         String                         @db.VarChar(64)
+  proposed_changes         Json
+  provider                 String                         @db.VarChar(80)
+  model                    String                         @db.VarChar(120)
+  prompt_version           String                         @db.VarChar(80)
+  status                   ComplianceBcProposalStatus     @default(PENDING)
+  created_by_id            String                         @db.Uuid
+  decided_by_id            String?                        @db.Uuid
+  decided_at               DateTime?                      @db.Timestamptz(6)
+  created_at               DateTime                       @default(now()) @db.Timestamptz(6)
+  structure                PersonaMoralOwnershipStructure @relation(fields: [structure_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_ai_structure_fkey")
+  sourceDocument           Documento                      @relation(fields: [source_document_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_ai_document_fkey")
+  createdBy                OrganizationMembership         @relation("BcAiProposalCreatorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_ai_creator_fkey")
+  decidedBy                OrganizationMembership?        @relation("BcAiProposalDeciderMembership", fields: [organization_id, decided_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_ai_decider_fkey")
+
+  @@unique([id, organization_id], map: "compliance_bc_ai_proposals_id_tenant_key")
+  @@index([organization_id, structure_id, status], map: "idx_compliance_bc_ai_proposals_pending")
+  @@index([organization_id, created_by_id], map: "idx_fk_compliance_bc_ai_proposals_63f3def5")
+  @@index([organization_id, decided_by_id], map: "idx_fk_compliance_bc_ai_proposals_c2d29517")
+  @@index([source_document_id, organization_id], map: "idx_fk_compliance_bc_ai_proposals_e8f7a06a")
+  @@map("compliance_bc_ai_proposals")
+}
+
+model ComplianceBcFormatMapping {
+  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id      String                 @db.Uuid
+  format_key           String                 @db.VarChar(120)
+  status               String                 @default("NOT_CONFIGURED") @db.VarChar(40)
+  template_document_id String?                @db.Uuid
+  configuration        Json
+  created_by_id        String                 @db.Uuid
+  updated_by_id        String                 @db.Uuid
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  organization         Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h4_format_org_fkey")
+  templateDocument     Documento?             @relation(fields: [template_document_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_format_document_fkey")
+  createdBy            OrganizationMembership @relation("BcFormatCreatorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_format_creator_fkey")
+  updatedBy            OrganizationMembership @relation("BcFormatUpdaterMembership", fields: [organization_id, updated_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_format_updater_fkey")
+
+  @@unique([organization_id, format_key], map: "compliance_bc_format_mappings_tenant_key")
+  @@index([template_document_id, organization_id], map: "idx_fk_compliance_bc_format_mappings_196cca7b")
+  @@index([organization_id, updated_by_id], map: "idx_fk_compliance_bc_format_mappings_863a48d3")
+  @@index([organization_id, created_by_id], map: "idx_fk_compliance_bc_format_mappings_8d2d1ca1")
+  @@map("compliance_bc_format_mappings")
+}
+
+model ExpedienteSocietyTarget {
+  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id      String                 @db.Uuid
+  expediente_id        String                 @db.Uuid
+  expediente_acto_id   String?                @db.Uuid
+  persona_moral_id     String                 @db.Uuid
+  target_intent_key    String                 @db.VarChar(160)
+  status               String                 @default("EN_CONSTITUCION") @db.VarChar(40)
+  applicability_status String                 @default("NOT_CONFIGURED") @db.VarChar(40)
+  created_by_id        String                 @db.Uuid
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  expediente           Expediente             @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_society_case_fkey")
+  expedienteActo       ExpedienteActo?        @relation(fields: [expediente_acto_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_society_act_fkey")
+  personaMoral         PersonaMoral           @relation(fields: [persona_moral_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_society_pm_fkey")
+  createdBy            OrganizationMembership @relation("BcSocietyTargetCreatorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h4_society_creator_fkey")
+
+  @@unique([organization_id, target_intent_key], map: "expediente_society_targets_intent_key")
+  @@unique([id, organization_id], map: "expediente_society_targets_id_tenant_key")
+  @@index([organization_id, expediente_id, status], map: "idx_expediente_society_targets_case")
+  @@index([expediente_acto_id, organization_id], map: "idx_fk_expediente_society_targets_4ca2676c")
+  @@index([persona_moral_id, organization_id], map: "idx_fk_expediente_society_targets_9186dcc4")
+  @@index([organization_id, created_by_id], map: "idx_fk_expediente_society_targets_a1ab134d")
+  @@map("expediente_society_targets")
 }

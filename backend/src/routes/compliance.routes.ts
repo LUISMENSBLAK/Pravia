@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import { ComplianceController } from '../controllers/compliance.controller';
 import { requireExpedienteAccess, requirePermission } from '../middleware/auth.middleware';
+import { BeneficialControllerController } from '../controllers/beneficialController.controller';
 
 const router = Router();
 const signedUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
@@ -28,6 +29,9 @@ router.post('/reglas-legales/:ruleId/revisiones/:revisionId/verificar', requireP
 router.post('/reglas-legales/:ruleId/revisiones/:revisionId/activar', requirePermission('compliance.rules.manage'), ComplianceController.activateLegalRuleRevision);
 router.post('/expedientes/:expedienteId/evaluaciones-legales', requirePermission('compliance.write'), ComplianceController.evaluateLegalCase);
 router.get('/expedientes/:expedienteId/estado', ComplianceController.legalCaseState);
+router.get('/expedientes/:expedienteId/beneficiario-controlador', requirePermission('compliance.read'), BeneficialControllerController.caseSummary);
+router.post('/expedientes/:expedienteId/sociedades-objetivo', requirePermission('compliance.write'), requirePermission('comparecientes.write'), requirePermission('expedientes.write'), BeneficialControllerController.ensureSociety);
+router.get('/expedientes/:expedienteId/beneficiario-controlador/formatos/:requirementId', requirePermission('compliance.read'), requirePermission('documentos.read'), BeneficialControllerController.formatPort);
 router.get('/catalogos', ComplianceController.catalogs);
 router.get('/revisiones', ComplianceController.list);
 router.get('/revisiones/:id', ComplianceController.detail);
