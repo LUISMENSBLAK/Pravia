@@ -1,49 +1,311 @@
-import { Router } from 'express';
-import multer from 'multer';
-import { ComplianceController } from '../controllers/compliance.controller';
-import { requireExpedienteAccess, requirePermission } from '../middleware/auth.middleware';
-import { BeneficialControllerController } from '../controllers/beneficialController.controller';
+import { Router } from "express";
+import multer from "multer";
+import { ComplianceController } from "../controllers/compliance.controller";
+import {
+  requireExpedienteAccess,
+  requirePermission,
+} from "../middleware/auth.middleware";
+import { BeneficialControllerController } from "../controllers/beneficialController.controller";
 
 const router = Router();
-const signedUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
-router.get('/screening/comparecientes/:comparecienteId', requirePermission('comparecientes.read'), requirePermission('compliance.sensitive.read'), ComplianceController.screeningCurrent);
-router.post('/screening/comparecientes/:comparecienteId/rerun', requirePermission('comparecientes.read'), requirePermission('comparecientes.write'), requirePermission('compliance.write'), requirePermission('compliance.sensitive.read'), ComplianceController.screeningRerun);
-router.post('/screening/comparecientes/:comparecienteId/queries/:queryId/technical-retry', requirePermission('comparecientes.read'), requirePermission('comparecientes.write'), requirePermission('compliance.write'), requirePermission('compliance.sensitive.read'), ComplianceController.screeningTechnicalRetry);
-router.post('/screening/comparecientes/:comparecienteId/queries/:queryId/candidates/:candidateId/resolutions', requirePermission('compliance.review'), requirePermission('compliance.sensitive.read'), ComplianceController.screeningResolve);
-router.post('/screening/comparecientes/:comparecienteId/queries/:queryId/reports', requirePermission('comparecientes.read'), requirePermission('compliance.sensitive.read'), requirePermission('documentos.write'), ComplianceController.screeningReport);
-router.post('/screening/free', requirePermission('compliance.write'), requirePermission('compliance.sensitive.read'), ComplianceController.screeningFree);
-router.get('/screening/expedientes/:expedienteId', requirePermission('expedientes.read'), requirePermission('compliance.sensitive.read'), ComplianceController.screeningOperation);
-router.get('/screening/sources', requirePermission('compliance.rules.read'), ComplianceController.screeningSources);
-router.post('/screening/sources', requirePermission('compliance.rules.manage'), ComplianceController.createScreeningSource);
-router.post('/screening/sources/:sourceId/versions', requirePermission('compliance.rules.manage'), ComplianceController.createScreeningSourceVersion);
-router.post('/screening/sources/:sourceId/versions/:versionId/activate', requirePermission('compliance.rules.manage'), ComplianceController.activateScreeningSourceVersion);
-router.get('/expedientes/:expedienteId/documental', ComplianceController.documentStructure);
-router.post('/expedientes/:expedienteId/documental/requisitos/:requirementId/evidencias', requirePermission('compliance.write'), requirePermission('documentos.read'), ComplianceController.linkDocumentEvidence);
-router.post('/expedientes/:expedienteId/documental/requisitos/:requirementId/cargar-firmado', requirePermission('compliance.write'), requirePermission('documentos.write'), signedUpload.single('file'), ComplianceController.uploadSignedEvidence);
-router.post('/expedientes/:expedienteId/documental/evidencias/:evidenceId/validar', requirePermission('compliance.review'), ComplianceController.validateDocumentEvidence);
-router.get('/expedientes/:expedienteId/documental/exportar', requirePermission('documentos.read'), requirePermission('compliance.sensitive.read'), ComplianceController.exportDocumentPackage);
-router.post('/configuracion/anticipacion-alertas', requirePermission('compliance.rules.manage'), ComplianceController.publishAlertLead);
-router.post('/reglas-legales', requirePermission('compliance.rules.manage'), ComplianceController.createLegalRule);
-router.post('/reglas-legales/:ruleId/revisiones', requirePermission('compliance.rules.manage'), ComplianceController.createLegalRuleRevision);
-router.post('/reglas-legales/:ruleId/revisiones/:revisionId/verificar', requirePermission('compliance.rules.manage'), ComplianceController.verifyLegalRuleRevision);
-router.post('/reglas-legales/:ruleId/revisiones/:revisionId/activar', requirePermission('compliance.rules.manage'), ComplianceController.activateLegalRuleRevision);
-router.post('/expedientes/:expedienteId/evaluaciones-legales', requirePermission('compliance.write'), ComplianceController.evaluateLegalCase);
-router.get('/expedientes/:expedienteId/estado', ComplianceController.legalCaseState);
-router.get('/expedientes/:expedienteId/beneficiario-controlador', requirePermission('compliance.read'), BeneficialControllerController.caseSummary);
-router.post('/expedientes/:expedienteId/sociedades-objetivo', requirePermission('compliance.write'), requirePermission('comparecientes.write'), requirePermission('expedientes.write'), BeneficialControllerController.ensureSociety);
-router.get('/expedientes/:expedienteId/beneficiario-controlador/formatos/:requirementId', requirePermission('compliance.read'), requirePermission('documentos.read'), BeneficialControllerController.formatPort);
-router.get('/catalogos', ComplianceController.catalogs);
-router.get('/revisiones', ComplianceController.list);
-router.get('/revisiones/:id', ComplianceController.detail);
-router.post('/revisiones', requirePermission('compliance.write'), requireExpedienteAccess, ComplianceController.create);
-router.post('/revisiones/:id/evaluar', requirePermission('compliance.write'), ComplianceController.evaluate);
-router.post('/revisiones/:id/revisar', requirePermission('compliance.review'), ComplianceController.review);
-router.post('/revisiones/:id/reevaluar', requirePermission('compliance.write'), ComplianceController.reevaluate);
-router.post('/revisiones/:id/evidencias', requirePermission('compliance.write'), ComplianceController.addEvidence);
-router.get('/revisiones/:id/evidencias/:evidenceId/archivo', requirePermission('compliance.sensitive.read'), ComplianceController.viewEvidence);
-router.post('/revisiones/:id/evidencias/:evidenceId/retirar', requirePermission('compliance.write'), ComplianceController.retireEvidence);
-router.post('/revisiones/:id/pagos', requirePermission('compliance.write'), ComplianceController.addPayment);
-router.post('/revisiones/:id/beneficiarios-controladores', requirePermission('compliance.write'), requirePermission('compliance.sensitive.read'), ComplianceController.saveBeneficialOwner);
-router.post('/revisiones/:id/pep', requirePermission('compliance.review'), requirePermission('compliance.sensitive.read'), ComplianceController.savePepReview);
-router.post('/revisiones/:id/obligaciones/:obligationId/presentacion-externa', requirePermission('compliance.notice.confirm'), ComplianceController.confirmExternalNotice);
+const signedUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024, files: 1 },
+});
+router.get(
+  "/screening/comparecientes/:comparecienteId",
+  requirePermission("comparecientes.read"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.screeningCurrent,
+);
+router.post(
+  "/screening/comparecientes/:comparecienteId/rerun",
+  requirePermission("comparecientes.read"),
+  requirePermission("comparecientes.write"),
+  requirePermission("compliance.write"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.screeningRerun,
+);
+router.post(
+  "/screening/comparecientes/:comparecienteId/queries/:queryId/technical-retry",
+  requirePermission("comparecientes.read"),
+  requirePermission("comparecientes.write"),
+  requirePermission("compliance.write"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.screeningTechnicalRetry,
+);
+router.post(
+  "/screening/comparecientes/:comparecienteId/queries/:queryId/candidates/:candidateId/resolutions",
+  requirePermission("compliance.review"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.screeningResolve,
+);
+router.post(
+  "/screening/comparecientes/:comparecienteId/queries/:queryId/reports",
+  requirePermission("comparecientes.read"),
+  requirePermission("compliance.sensitive.read"),
+  requirePermission("documentos.write"),
+  ComplianceController.screeningReport,
+);
+router.post(
+  "/screening/free",
+  requirePermission("compliance.write"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.screeningFree,
+);
+router.get(
+  "/screening/expedientes/:expedienteId",
+  requirePermission("expedientes.read"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.screeningOperation,
+);
+router.get(
+  "/screening/sources",
+  requirePermission("compliance.rules.read"),
+  ComplianceController.screeningSources,
+);
+router.post(
+  "/screening/sources",
+  requirePermission("compliance.rules.manage"),
+  ComplianceController.createScreeningSource,
+);
+router.post(
+  "/screening/sources/:sourceId/versions",
+  requirePermission("compliance.rules.manage"),
+  ComplianceController.createScreeningSourceVersion,
+);
+router.post(
+  "/screening/sources/:sourceId/versions/:versionId/activate",
+  requirePermission("compliance.rules.manage"),
+  ComplianceController.activateScreeningSourceVersion,
+);
+router.get(
+  "/expedientes/:expedienteId/documental",
+  ComplianceController.documentStructure,
+);
+router.post(
+  "/expedientes/:expedienteId/documental/requisitos/:requirementId/evidencias",
+  requirePermission("compliance.write"),
+  requirePermission("documentos.read"),
+  ComplianceController.linkDocumentEvidence,
+);
+router.post(
+  "/expedientes/:expedienteId/documental/requisitos/:requirementId/cargar-firmado",
+  requirePermission("compliance.write"),
+  requirePermission("documentos.write"),
+  signedUpload.single("file"),
+  ComplianceController.uploadSignedEvidence,
+);
+router.post(
+  "/expedientes/:expedienteId/documental/evidencias/:evidenceId/validar",
+  requirePermission("compliance.review"),
+  ComplianceController.validateDocumentEvidence,
+);
+router.get(
+  "/expedientes/:expedienteId/documental/exportar",
+  requirePermission("documentos.read"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.exportDocumentPackage,
+);
+router.post(
+  "/configuracion/anticipacion-alertas",
+  requirePermission("compliance.rules.manage"),
+  ComplianceController.publishAlertLead,
+);
+router.post(
+  "/reglas-legales",
+  requirePermission("compliance.rules.manage"),
+  ComplianceController.createLegalRule,
+);
+router.post(
+  "/reglas-legales/:ruleId/revisiones",
+  requirePermission("compliance.rules.manage"),
+  ComplianceController.createLegalRuleRevision,
+);
+router.post(
+  "/reglas-legales/:ruleId/revisiones/:revisionId/verificar",
+  requirePermission("compliance.rules.manage"),
+  ComplianceController.verifyLegalRuleRevision,
+);
+router.post(
+  "/reglas-legales/:ruleId/revisiones/:revisionId/activar",
+  requirePermission("compliance.rules.manage"),
+  ComplianceController.activateLegalRuleRevision,
+);
+router.post(
+  "/expedientes/:expedienteId/evaluaciones-legales",
+  requirePermission("compliance.write"),
+  ComplianceController.evaluateLegalCase,
+);
+router.get(
+  "/expedientes/:expedienteId/estado",
+  ComplianceController.legalCaseState,
+);
+router.get(
+  "/expedientes/:expedienteId/beneficiario-controlador",
+  requirePermission("compliance.read"),
+  BeneficialControllerController.caseSummary,
+);
+router.post(
+  "/expedientes/:expedienteId/sociedades-objetivo",
+  requirePermission("compliance.write"),
+  requirePermission("comparecientes.write"),
+  requirePermission("expedientes.write"),
+  BeneficialControllerController.ensureSociety,
+);
+router.get(
+  "/expedientes/:expedienteId/beneficiario-controlador/formatos/:requirementId",
+  requirePermission("compliance.read"),
+  requirePermission("documentos.read"),
+  BeneficialControllerController.formatPort,
+);
+router.post(
+  "/configuracion/cuestionarios/:artifactId/versiones",
+  requirePermission("compliance.rules.manage"),
+  ComplianceController.publishH5QuestionnaireDefinition,
+);
+router.post(
+  "/configuracion/metodologias-riesgo",
+  requirePermission("compliance.rules.manage"),
+  ComplianceController.publishH5Methodology,
+);
+router.get("/catalogos", ComplianceController.catalogs);
+router.get("/revisiones", ComplianceController.list);
+router.get(
+  "/revisiones/:id/h5",
+  requirePermission("compliance.read"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.h5Workspace,
+);
+router.post(
+  "/revisiones/:id/h5/cuestionarios/asegurar",
+  requirePermission("compliance.write"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.ensureH5Questionnaires,
+);
+router.post(
+  "/h5/cuestionarios/:assessmentId/revisiones",
+  requirePermission("compliance.write"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.saveH5Questionnaire,
+);
+router.post(
+  "/h5/cuestionarios/:assessmentId/finalizar",
+  requirePermission("compliance.review"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.finalizeH5Questionnaire,
+);
+router.get(
+  "/h5/cuestionarios/:assessmentId/resumen-interno.pdf",
+  requirePermission("compliance.read"),
+  requirePermission("compliance.sensitive.read"),
+  requirePermission("documentos.read"),
+  ComplianceController.h5QuestionnairePdf,
+);
+router.post(
+  "/h5/cuestionarios/:assessmentId/resumen-interno.pdf",
+  requirePermission("compliance.write"),
+  requirePermission("compliance.sensitive.read"),
+  requirePermission("documentos.read"),
+  requirePermission("documentos.write"),
+  ComplianceController.h5QuestionnairePdf,
+);
+router.post(
+  "/revisiones/:id/h5/pagos",
+  requirePermission("compliance.write"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.saveH5Payment,
+);
+router.post(
+  "/h5/pagos/revisiones/:paymentRevisionId/verificaciones",
+  requirePermission("compliance.review"),
+  requirePermission("compliance.sensitive.read"),
+  requirePermission("documentos.read"),
+  ComplianceController.verifyH5Payment,
+);
+router.post(
+  "/h5/pagos/revisiones/:paymentRevisionId/proveedores/:relationId/confirmar",
+  requirePermission("compliance.review"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.confirmH5Provider,
+);
+router.post(
+  "/revisiones/:id/h5/pagos/propuestas",
+  requirePermission("compliance.write"),
+  requirePermission("compliance.sensitive.read"),
+  requirePermission("ia.execute"),
+  requirePermission("documentos.read"),
+  ComplianceController.prepareH5PaymentProposal,
+);
+router.post(
+  "/h5/pagos/propuestas/:proposalId/confirmar",
+  requirePermission("compliance.write"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.confirmH5PaymentProposal,
+);
+router.post(
+  "/h5/pagos/propuestas/:proposalId/rechazar",
+  requirePermission("compliance.write"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.rejectH5PaymentProposal,
+);
+router.get("/revisiones/:id", ComplianceController.detail);
+router.post(
+  "/revisiones",
+  requirePermission("compliance.write"),
+  requireExpedienteAccess,
+  ComplianceController.create,
+);
+router.post(
+  "/revisiones/:id/evaluar",
+  requirePermission("compliance.write"),
+  ComplianceController.evaluate,
+);
+router.post(
+  "/revisiones/:id/revisar",
+  requirePermission("compliance.review"),
+  ComplianceController.review,
+);
+router.post(
+  "/revisiones/:id/reevaluar",
+  requirePermission("compliance.write"),
+  ComplianceController.reevaluate,
+);
+router.post(
+  "/revisiones/:id/evidencias",
+  requirePermission("compliance.write"),
+  ComplianceController.addEvidence,
+);
+router.get(
+  "/revisiones/:id/evidencias/:evidenceId/archivo",
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.viewEvidence,
+);
+router.post(
+  "/revisiones/:id/evidencias/:evidenceId/retirar",
+  requirePermission("compliance.write"),
+  ComplianceController.retireEvidence,
+);
+router.post(
+  "/revisiones/:id/pagos",
+  requirePermission("compliance.write"),
+  ComplianceController.addPayment,
+);
+router.post(
+  "/revisiones/:id/beneficiarios-controladores",
+  requirePermission("compliance.write"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.saveBeneficialOwner,
+);
+router.post(
+  "/revisiones/:id/pep",
+  requirePermission("compliance.review"),
+  requirePermission("compliance.sensitive.read"),
+  ComplianceController.savePepReview,
+);
+router.post(
+  "/revisiones/:id/obligaciones/:obligationId/presentacion-externa",
+  requirePermission("compliance.notice.confirm"),
+  ComplianceController.confirmExternalNotice,
+);
 export default router;

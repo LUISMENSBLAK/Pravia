@@ -17,6 +17,7 @@ import { ComplianceDocumentService } from './complianceDocument.service';
 import { ensureOperationScreeningForPartyTx } from './operationScreening.service';
 import { BeneficialControllerService } from './beneficialController.service';
 import { bcConfirmedContext } from '../domain/beneficialController';
+import { ComplianceH5Service } from './complianceH5.service';
 
 type User = NonNullable<Request['user']>;
 const ENGINE_VERSION = 'H1-CUM-MAT-1';
@@ -144,10 +145,12 @@ export class ComplianceLegalEngineService {
 
   static async createRule(user: User, body: any, correlationId?: string) {
     const family = String(body.family || '');
+    const kind = String(body.kind || 'ACTIVITY');
     if (!families.has(family)) throw new ComplianceError('La familia contractual no es válida.', 'LEGAL_RULE_FAMILY_INVALID');
+    if (!['ACTIVITY', 'PAYMENT_RESTRICTION', 'PROVIDER_IDENTIFICATION'].includes(kind)) throw new ComplianceError('El tipo de regla jurídica no es válido.', 'LEGAL_RULE_KIND_INVALID');
     return serializable(async (tx) => {
-      const rule = await tx.complianceLegalRule.create({ data: { organization_id: user.organizationId, stable_key: requireText(body.stable_key, 'LEGAL_RULE_KEY_REQUIRED'), family: family as any, name: requireText(body.name, 'LEGAL_RULE_NAME_REQUIRED'), description: String(body.description || '').trim() || null, created_by_id: user.id } });
-      await tx.auditLog.create({ data: { user_id: user.id, accion: 'CREATE_COMPLIANCE_LEGAL_RULE', entidad: 'ComplianceLegalRule', entidad_id: rule.id, valores_nuevos: { stable_key: rule.stable_key, family: rule.family }, correlation_id: correlationId } });
+      const rule = await tx.complianceLegalRule.create({ data: { organization_id: user.organizationId, stable_key: requireText(body.stable_key, 'LEGAL_RULE_KEY_REQUIRED'), family: family as any, kind: kind as any, name: requireText(body.name, 'LEGAL_RULE_NAME_REQUIRED'), description: String(body.description || '').trim() || null, created_by_id: user.id } });
+      await tx.auditLog.create({ data: { user_id: user.id, accion: 'CREATE_COMPLIANCE_LEGAL_RULE', entidad: 'ComplianceLegalRule', entidad_id: rule.id, valores_nuevos: { stable_key: rule.stable_key, family: rule.family, kind: rule.kind }, correlation_id: correlationId } });
       return rule;
     });
   }
@@ -263,6 +266,9 @@ export class ComplianceLegalEngineService {
       for (const revision of revisions) {
         if ((revision.outcome as any)?.bc) continue; // Subject-scoped H4 calls the same H1 evaluator below.
         const identity = identityById.get(revision.rule_id)!;
+        // Payment/provider rules share the H1 revision engine, but are evaluated
+        // only against frozen H5 payment contexts, never once per act here.
+        if ((identity.kind || 'ACTIVITY') !== 'ACTIVITY') continue;
         const input: LegalRuleRevisionInput = { id: revision.id, rule_id: revision.rule_id, stable_key: identity.stable_key, family: identity.family, version: revision.version, checksum: revision.checksum, legal_basis: revision.legal_basis, conditions: revision.conditions as unknown as LegalCondition, outcome: revision.outcome as unknown as LegalRuleOutcome };
         for (const act of expediente.actos) evaluations.push({ revision, act, result: evaluateLegalRule(input, { expediente: snapshot.expediente, acto: act, actos: snapshot.actos, comparecientes: snapshot.comparecientes, predios: snapshot.predios, isr: snapshot.isr }) });
       }
@@ -284,6 +290,7 @@ export class ComplianceLegalEngineService {
       }
 
       const lstMaterialized = new Set<string>();
+      const h5Sources: Parameters<typeof ComplianceH5Service.materializeSourceRequirementsTx>[2]['results'] = [];
       for (const item of evaluations) {
         const result = await tx.complianceRuleResult.create({ data: { organization_id: user.organizationId, review_id: review.id, rule_revision_id: item.revision.id, expediente_acto_id: item.act.id, applicability: item.result.applicability, vulnerable_activity: item.result.vulnerableActivity, notice_required: item.result.noticeRequired, notice_type: item.result.noticeType, notice_channel: item.result.noticeChannel, missing_paths: json(item.result.missingPaths), result_snapshot: json(item.result), legal_basis_snapshot: json({ legal_basis: item.result.legalBasis, revision_id: item.revision.id, checksum: item.revision.checksum }) } });
         const deadlineInfo = calculateLegalDeadline(item.result.obligation?.deadline, legalDate.date);
@@ -298,6 +305,8 @@ export class ComplianceLegalEngineService {
           correlationId,
         });
         statuses.push(...documentStatuses);
+        h5Sources.push({ id: result.id, actId: item.act.id, revisionId: item.revision.id, checksum: item.revision.checksum,
+          vulnerable: item.result.vulnerableActivity === true, documents: item.result.documentRequirements });
         if (status === 'BLOQUEADO_POR_FALTA_DATOS') await tx.complianceAlert.create({ data: { organization_id: user.organizationId, expediente_id: expediente.id, state_id: state.id, review_id: review.id, requirement_id: requirement.id, rule_revision_id: item.revision.id, alert_key: `INCOMPLETE:${key}`, level: 'ADVERTENCIA', message: 'Falta información confirmada para determinar la aplicabilidad de una regla legal.', deadline: null } });
         if (deadlineInfo.deadline) {
           const alertWindow = operationalAlertWindow(deadlineInfo.deadline, alertLead);
@@ -329,6 +338,10 @@ export class ComplianceLegalEngineService {
         }
       }
 
+      statuses.push(...await ComplianceH5Service.materializeSourceRequirementsTx(tx, user, {
+        reviewId: review.id, expedienteId: expediente.id, stateId: state.id, results: h5Sources,
+        parties: expediente.comparecientes.map((party) => ({ compareciente_id: party.compareciente_id, expediente_acto_id: party.expediente_acto_id })),
+      }));
       const beneficialControllerStatuses = await BeneficialControllerService.materializeForReviewTx(tx, {
         organizationId: user.organizationId,
         expedienteId: expediente.id,

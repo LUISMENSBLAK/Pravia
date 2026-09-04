@@ -57,6 +57,109 @@ type ImpactItem = { key: string; id: string; name: string; source: 'CFG-002' };
 export class ExpedientePartiesService {
   constructor(private readonly prisma: PrismaClient) {}
 
+  /**
+   * Reuses the canonical expediente-party graph for an additional role whose
+   * legal applicability was already proven by the versioned compliance engine.
+   * It never mutates or replaces the source appearance relation.
+   */
+  async linkAdditionalProviderRoleInTransaction(
+    tx: Prisma.TransactionClient,
+    actor: Actor,
+    input: {
+      expedienteId: string;
+      sourceRelationId: string;
+      paymentRevisionId: string;
+    },
+  ) {
+    if (!actor.organizationId || !actor.permissions.includes('expedientes.write') || !actor.permissions.includes('comparecientes.read'))
+      throw new ExpedientePartyError(403, 'H5_PROVIDER_LINK_PERMISSION_DENIED', 'No tienes permiso para vincular comparecientes.');
+    await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:expediente-parties:${input.expedienteId}`}))`);
+    await this.assertExpediente(tx, actor, input.expedienteId);
+    const [source, role] = await Promise.all([
+      tx.expedienteCompareciente.findFirst({
+        where: {
+          id: input.sourceRelationId,
+          organization_id: actor.organizationId,
+          expediente_id: input.expedienteId,
+          archived_at: null,
+          estatus: 'ACTIVO',
+          compareciente: { organization_id: actor.organizationId, archived_at: null, estatus: 'ACTIVO', ...comparecienteObjectWhere(actor) },
+          expedienteActo: { organization_id: actor.organizationId, expediente_id: input.expedienteId, estatus: 'ACTIVO', removed_at: null },
+        },
+        include: { representacionesComoRepresentante: { where: { archived_at: null } } },
+      }),
+      tx.caracterCompareciente.findFirst({
+        where: { clave: 'PROVEEDOR_RECURSOS', activo: true },
+      }),
+    ]);
+    if (!source) throw new ExpedientePartyError(403, 'H5_PROVIDER_SOURCE_RELATION_DENIED', 'La comparecencia fuente no está disponible.');
+    if (!source.expediente_acto_id) throw new ExpedientePartyError(409, 'H5_PROVIDER_ACT_REQUIRED', 'Asigna un acto a la comparecencia antes de añadir el rol.');
+    if (!role) throw new ExpedientePartyError(409, 'H5_PROVIDER_ROLE_NOT_CONFIGURED', 'El carácter Proveedor de Recursos no está configurado.');
+    const key = `H5-PROVIDER:${input.paymentRevisionId}:${source.compareciente_id}:${source.expediente_acto_id}`;
+    const existing = await tx.expedienteCompareciente.findFirst({
+      where: {
+        organization_id: actor.organizationId,
+        expediente_id: input.expedienteId,
+        expediente_acto_id: source.expediente_acto_id,
+        compareciente_id: source.compareciente_id,
+        caracter_id: role.id,
+        archived_at: null,
+        estatus: 'ACTIVO',
+      },
+    });
+    if (existing) return { relation: existing, idempotent: true };
+    const representations = source.representacionesComoRepresentante || [];
+    if (source.forma_comparecencia && isRepresentation(source.forma_comparecencia)) {
+      if (!representations.length) throw new ExpedientePartyError(409, 'H5_PROVIDER_REPRESENTATION_REQUIRED', 'La comparecencia fuente necesita una representación vigente.');
+      for (const representation of representations) {
+        const represented = await tx.compareciente.findFirst({ where: { id: representation.representado_compareciente_id,
+          organization_id: actor.organizationId, archived_at: null, estatus: 'ACTIVO', ...comparecienteObjectWhere(actor) }, select: { id: true } });
+        if (!represented) throw new ExpedientePartyError(403, 'EXPEDIENTE_PARTY_REPRESENTED_ACCESS_DENIED', 'No tienes acceso a la persona representada.');
+      }
+    }
+    const relation = await tx.expedienteCompareciente.create({
+      data: {
+        organization_id: actor.organizationId,
+        expediente_id: input.expedienteId,
+        expediente_acto_id: source.expediente_acto_id,
+        compareciente_id: source.compareciente_id,
+        caracter_id: role.id,
+        forma_comparecencia: source.forma_comparecencia,
+        orden_comparecencia: source.orden_comparecencia,
+        es_principal: false,
+        observaciones: 'Rol adicional confirmado mediante regla jurídica versionada H5.',
+        creado_por_id: actor.id,
+        idempotency_key: key,
+      },
+    });
+    if (source.forma_comparecencia && isRepresentation(source.forma_comparecencia)) for (const representation of representations) {
+      await tx.expedienteRepresentacion.create({ data: {
+        organization_id: actor.organizationId, expediente_id: input.expedienteId,
+        representado_compareciente_id: representation.representado_compareciente_id,
+        representante_compareciente_id: source.compareciente_id,
+        expediente_compareciente_representado_id: representation.expediente_compareciente_representado_id,
+        expediente_compareciente_representante_id: relation.id,
+        caracter_representacion_id: representation.caracter_representacion_id,
+        cargo_o_caracter_descripcion: representation.cargo_o_caracter_descripcion,
+        facultades_aplicables: representation.facultades_aplicables, creado_por_id: actor.id,
+      } });
+    }
+    await tx.expediente.update({
+      where: { id: input.expedienteId },
+      data: { version: { increment: 1 } },
+    });
+    await new ExpedienteArtifactsService(this.prisma).reconcileContextChangeInTransaction(tx, actor, input.expedienteId, 'EXPEDIENTE_PARTY_CHANGE');
+    const correlationId = randomUUID();
+    const summary = { operation: 'LINK', relation_id: relation.id, expediente_acto_id: relation.expediente_acto_id,
+      compareciente_id: relation.compareciente_id, caracter_id: relation.caracter_id, source: 'H5_VERIFIED_PROVIDER', payment_revision_id: input.paymentRevisionId };
+    await tx.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id,
+      accion: 'LINK_EXPEDIENTE_PARTY', entidad: 'ExpedienteCompareciente', entidad_id: relation.id,
+      valores_nuevos: json(summary), correlation_id: correlationId, session_id: actor.sessionId } });
+    await tx.domainEventOutbox.create({ data: { organization_id: actor.organizationId, event_type: 'ExpedientePartyLinked',
+      aggregate_type: 'Expediente', aggregate_id: input.expedienteId, actor_user_id: actor.id, correlation_id: correlationId, payload: json(summary) } });
+    return { relation, idempotent: false };
+  }
+
   async list(actor: Actor, expedienteId: string) {
     await this.assertExpediente(this.prisma, actor, expedienteId);
     const data = await this.prisma.expedienteCompareciente.findMany({

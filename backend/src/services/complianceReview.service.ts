@@ -142,76 +142,12 @@ export class ComplianceReviewService {
     return { revision: { ...review, master_data_changed: changed }, historial: history, workspace: { parties, beneficialOwners: sensitive ? owners : [], pepReviews: sensitive ? pepReviews : [], screenings: sensitive ? screenings : [], payments, obligations, events, aiProposals: sensitive ? aiProposals : [], sensitiveRedacted: !sensitive, state: canonical[0], ruleResults: canonical[1], requirements: canonical[2], alerts: canonical[3] } };
   }
 
-  static async create(user: User, userId: unknown, body: any, correlationId?: string) {
-    const actorId = await actor(userId);
-    const type = String(body.tipo || '').toUpperCase();
-    if (type !== 'UIF') throw new ComplianceError('Riesgos / UIF solo admite evaluaciones UIF. Cálculo ISR utiliza su módulo independiente.', 'COMPLIANCE_TYPE_INVALID');
-    const operationDate = body.fecha_operacion ? new Date(body.fecha_operacion) : new Date();
-    if (Number.isNaN(operationDate.getTime())) throw new ComplianceError('La fecha de operación no es válida.', 'COMPLIANCE_DATE_INVALID');
-    const [expediente, rule] = await Promise.all([
-      prisma.expediente.findFirst({ where: { id: String(body.expediente_id), archived_at: null, ...expedienteAccessWhere(user) }, select: { id: true } }),
-      prisma.complianceRuleSet.findFirst({ where: { id: String(body.rule_set_id), tipo: type, estatus: { in: allowedRuleStatuses }, vigencia_desde: { lte: operationDate }, OR: [{ vigencia_hasta: null }, { vigencia_hasta: { gte: operationDate } }] } }),
-    ]);
-    if (!expediente) throw new ComplianceError('El expediente no está activo o no está dentro de tu alcance.', 'COMPLIANCE_EXPEDIENTE_INVALID', 404);
-    if (!rule) throw new ComplianceError('La versión de reglas no es aplicable a la fecha indicada.', 'COMPLIANCE_RULE_INVALID', 409);
-    if (body.supersedes_review_id) {
-      const superseded = await prisma.complianceReview.findFirst({ where: { id: String(body.supersedes_review_id), expediente_id: expediente.id, tipo: type, is_canonical_legal_engine: false, expediente: { archived_at: null, ...expedienteAccessWhere(user) } }, select: { id: true } });
-      if (!superseded) throw new ComplianceError('La revisión anterior no pertenece a la misma cadena, expediente y tipo.', 'COMPLIANCE_SUPERSEDES_SCOPE_INVALID', 409);
-    }
-    const master = await captureMasterSnapshot(prisma, expediente.id);
-    if (!master) throw new ComplianceError('No fue posible capturar el expediente.', 'COMPLIANCE_SNAPSHOT_FAILED', 409);
-    const ruleSnapshot = snapshotRule(rule);
-    const questionnaire = { ...prefillFromSnapshot(type, master), ...(body.cuestionario || {}) };
-    return prisma.$transaction(async (tx) => {
-      const created = await tx.complianceReview.create({ data: { expediente_id: expediente.id, rule_set_id: rule.id, tipo: type, fecha_operacion: operationDate, rule_version_snapshot: rule.version, rule_snapshot: ruleSnapshot, master_snapshot: master, snapshot_captured_at: new Date(), cuestionario_json: questionnaire as Prisma.InputJsonObject, creado_por_id: actorId, supersedes_review_id: body.supersedes_review_id || null }, include: complianceReviewInclude });
-      if (type === 'UIF') {
-        for (const party of (master as any).comparecientes || []) {
-          await tx.compliancePartySnapshot.create({ data: { review_id: created.id, compareciente_id: party.id, role: party.caracter?.clave || 'CLIENTE_USUARIO', snapshot: party as Prisma.InputJsonObject, snapshot_version: Number(party.version || 1) } });
-          await tx.compliancePepReview.create({ data: { review_id: created.id, compareciente_id: party.id, status: 'NO_EVALUADO', declaration: party.pep_estado === 'SI' ? 'DECLARADO_SI' : party.pep_estado === 'NO' ? 'DECLARADO_NO' : null, snapshot: { source: 'MASTER_SNAPSHOT', party_version: party.version } } });
-          await tx.complianceScreeningResult.create({ data: { review_id: created.id, compareciente_id: party.id, provider: 'OFFICIAL_UIF_PEP_QUERY', status: 'NOT_CONFIGURED' } });
-        }
-      }
-      await tx.complianceEvent.create({ data: { review_id: created.id, event_type: body.supersedes_review_id ? 'REEVALUACION_CREADA' : 'EVALUACION_CREADA', actor_id: actorId, summary: body.supersedes_review_id ? 'Se creó una nueva versión de evaluación.' : 'Se creó la evaluación de cumplimiento.', detail: { rule_version: rule.version, snapshot_at: new Date().toISOString() }, correlation_id: correlationId } });
-      await tx.auditLog.create({ data: { user_id: actorId, accion: body.supersedes_review_id ? 'REEVALUATE_COMPLIANCE_REVIEW' : 'CREATE_COMPLIANCE_REVIEW', entidad: 'ComplianceReview', entidad_id: created.id, valores_nuevos: { tipo: type, expediente_id: expediente.id, rule_version: rule.version, supersedes_review_id: body.supersedes_review_id || null }, correlation_id: correlationId } });
-      return withCanonicalAct(created);
-    });
+  static async create(user: User, userId: unknown, body: any, correlationId?: string) : Promise<any> {
+    throw new ComplianceError('El flujo anterior es de consulta histórica. Usa la evaluación canónica y los registros versionados de cumplimiento.', 'H5_LEGACY_WRITER_RETIRED', 410);
   }
 
-  static async evaluate(user: User, userId: unknown, id: string, body: any, correlationId?: string) {
-    const actorId = await actor(userId);
-    const current = await scopedReview(user, id, { ruleSet: { select: { id: true } } });
-    if (current.estatus === 'CONFIRMADO') throw new ComplianceError('Una revisión confirmada no puede recalcularse; crea una reevaluación.', 'COMPLIANCE_REVIEW_LOCKED', 409);
-    const answers = { ...((current.cuestionario_json as any) || {}), ...(body.cuestionario || {}) };
-    const parameters = currentRule(current.rule_snapshot);
-    let relatedOperations: RelatedOperation[] = [];
-    if (current.tipo === 'UIF') {
-      const clientId = String(answers.cliente_compareciente_id || current.master_snapshot?.comparecientes?.[0]?.id || '');
-      answers.cliente_compareciente_id = clientId;
-      const operationDate = new Date(current.fecha_operacion || new Date());
-      const from = new Date(operationDate); from.setUTCMonth(from.getUTCMonth() - 6);
-      const candidates = await prisma.complianceReview.findMany({ where: { id: { not: current.id }, tipo: 'UIF', fecha_operacion: { gte: from, lte: operationDate }, resultado_json: { not: Prisma.JsonNull }, expediente: { archived_at: null, ...expedienteAccessWhere(user) } }, select: { id: true, fecha_operacion: true, master_snapshot: true, resultado_json: true } });
-      relatedOperations = candidates.flatMap((candidate: any) => {
-        const result = candidate.resultado_json || {};
-        const parties = candidate.master_snapshot?.comparecientes || [];
-        return parties.some((party: any) => party.id === clientId) && result.acto === answers.tipo_acto_uif && Number(result.monto_base_mxn) >= 0
-          ? [{ id: candidate.id, clientId, activity: result.acto, operationDate: candidate.fecha_operacion.toISOString().slice(0, 10), amountMxn: Number(result.monto_base_mxn), isIdentifiable: result.identificacion_requerida !== 'NO' }]
-          : [];
-      });
-    }
-    const result: any = current.tipo === 'UIF' ? evaluateUif(parameters, answers, { operationDate: current.fecha_operacion || new Date(), relatedOperations }) : assessIsrCompleteness(parameters, answers);
-    return prisma.$transaction(async (tx) => {
-      const review = await tx.complianceReview.update({ where: { id: current.id }, data: { cuestionario_json: answers as Prisma.InputJsonObject, resultado_json: result as Prisma.InputJsonObject, explicacion: result.disclaimer, estatus: 'PENDIENTE_REVISION' }, include: complianceReviewInclude });
-      if (current.tipo === 'UIF') {
-        const existing = await tx.complianceObligation.findFirst({ where: { review_id: current.id, type: 'AVISO_ORDINARIO' } });
-        const noticeStatus = result.requiere_aviso ? 'REQUIERE_AVISO' : result.estado_aviso === 'POR_DETERMINAR' ? 'POR_DETERMINAR' : 'NO_APLICA';
-        const obligationData = { legal_basis: result.fundamento, rule_version: current.rule_version_snapshot, rule_status: result.estatus_normativo || 'VIGENTE', origin_date: new Date(current.fecha_operacion || new Date()), due_at: result.requiere_aviso ? ordinaryNoticeDeadline(new Date(current.fecha_operacion || new Date()).toISOString().slice(0, 10)) : null, channel: result.canal_aviso || 'PENDIENTE_DE_DEFINIR', status: noticeStatus, checklist: { identity: answers.identidad_verificada === true, beneficial_owner: result.beneficiario_controlador_estado === 'EXISTE', pep_review: !['NO_EVALUADO', 'INFORMACION_INSUFICIENTE'].includes(result.pep_estado), payment_review: result.restriccion_efectivo?.status !== 'REQUIERE_INFORMACION' }, snapshot: result as Prisma.InputJsonObject };
-        if (existing) await tx.complianceObligation.update({ where: { id: existing.id }, data: obligationData });
-        else await tx.complianceObligation.create({ data: { review_id: current.id, type: 'AVISO_ORDINARIO', ...obligationData } });
-        await tx.complianceEvent.create({ data: { review_id: current.id, event_type: 'ACTIVIDAD_VULNERABLE_EVALUADA', actor_id: actorId, summary: result.requiere_aviso ? 'La evaluación determinó una obligación de Aviso sujeta a revisión.' : 'Se evaluó la actividad vulnerable y su umbral.', detail: { clasificacion: result.clasificacion, version_normativa: result.version_normativa, operaciones_acumuladas: result.operaciones_acumuladas }, correlation_id: correlationId } });
-      }
-      await tx.auditLog.create({ data: { user_id: actorId, accion: 'EVALUATE_COMPLIANCE_REVIEW', entidad: 'ComplianceReview', entidad_id: review.id, valores_nuevos: { clasificacion: result.clasificacion, rule_version: current.rule_version_snapshot }, correlation_id: correlationId } });
-      return withCanonicalAct(review);
-    });
+  static async evaluate(user: User, userId: unknown, id: string, body: any, correlationId?: string) : Promise<any> {
+    throw new ComplianceError('El flujo anterior es de consulta histórica. Usa la evaluación canónica y los registros versionados de cumplimiento.', 'H5_LEGACY_WRITER_RETIRED', 410);
   }
 
   static async decide(user: User, userId: unknown, id: string, body: any, correlationId?: string) {
@@ -232,16 +168,8 @@ export class ComplianceReviewService {
     });
   }
 
-  static async reevaluate(user: User, userId: unknown, id: string, body: any, correlationId?: string) {
-    const current = await scopedReview(user, id, { ruleSet: true });
-    const operationDate = body.fecha_operacion || current.fecha_operacion || new Date();
-    let ruleId = body.rule_set_id;
-    if (!ruleId) {
-      const rule = await prisma.complianceRuleSet.findFirst({ where: { tipo: current.tipo, estatus: { in: allowedRuleStatuses }, vigencia_desde: { lte: new Date(operationDate) }, OR: [{ vigencia_hasta: null }, { vigencia_hasta: { gte: new Date(operationDate) } }] }, orderBy: { vigencia_desde: 'desc' } });
-      if (!rule) throw new ComplianceError('No existe una versión aplicable para reevaluar.', 'COMPLIANCE_RULE_INVALID', 409);
-      ruleId = rule.id;
-    }
-    return this.create(user, userId, { expediente_id: current.expediente_id, tipo: current.tipo, rule_set_id: ruleId, fecha_operacion: operationDate, cuestionario: body.conservar_respuestas ? current.cuestionario_json : {}, supersedes_review_id: current.id }, correlationId);
+  static async reevaluate(user: User, userId: unknown, id: string, body: any, correlationId?: string) : Promise<any> {
+    throw new ComplianceError('El flujo anterior es de consulta histórica. Usa la evaluación canónica y los registros versionados de cumplimiento.', 'H5_LEGACY_WRITER_RETIRED', 410);
   }
 
   static async addEvidence(user: User, userId: unknown, id: string, body: any, correlationId?: string) {
@@ -258,26 +186,8 @@ export class ComplianceReviewService {
     });
   }
 
-  static async addPayment(user: User, userId: unknown, id: string, body: any, correlationId?: string) {
-    const actorId = await actor(userId);
-    const review = await scopedReview(user, id, {});
-    if (review.estatus === 'CONFIRMADO') throw new ComplianceError('La evaluación cerrada es inmutable; crea una reevaluación.', 'COMPLIANCE_REVIEW_LOCKED', 409);
-    const amount = Number(body.amount_mxn);
-    const date = new Date(body.payment_date);
-    const methods = ['EFECTIVO_MXN', 'EFECTIVO_DIVISA', 'METALES_PRECIOSOS', 'TRANSFERENCIA', 'CHEQUE', 'CREDITO', 'OTRO'];
-    if (!Number.isFinite(amount) || amount < 0) throw new ComplianceError('El importe del pago no es válido.', 'COMPLIANCE_PAYMENT_INVALID');
-    if (Number.isNaN(date.getTime())) throw new ComplianceError('La fecha del pago no es válida.', 'COMPLIANCE_PAYMENT_DATE_INVALID');
-    if (!methods.includes(String(body.method))) throw new ComplianceError('La forma de pago no es válida.', 'COMPLIANCE_PAYMENT_METHOD_INVALID');
-    if (body.evidence_document_id) {
-      const document = await prisma.documento.findFirst({ where: { id: String(body.evidence_document_id), OR: [{ expediente_id: review.expediente_id }, { expedienteVinculos: { some: { expediente_id: review.expediente_id, estatus: 'ACTIVO' } } }] }, select: { id: true } });
-      if (!document) throw new ComplianceError('La evidencia de pago no pertenece al expediente.', 'COMPLIANCE_PAYMENT_EVIDENCE_INVALID', 404);
-    }
-    return prisma.$transaction(async (tx) => {
-      const payment = await tx.compliancePayment.create({ data: { review_id: review.id, amount_mxn: amount, method: String(body.method), payment_date: date, instrument: String(body.instrument || '').trim() || null, institution: String(body.institution || '').trim() || null, reference: String(body.reference || '').trim() || null, masked_account: String(body.masked_account || '').replace(/[^*\d]/g, '').slice(-8) || null, evidence_document_id: body.evidence_document_id || null, source: String(body.source || 'CONFIRMACION_HUMANA'), created_by_id: actorId } });
-      await tx.complianceEvent.create({ data: { review_id: review.id, event_type: 'FORMA_PAGO_REGISTRADA', actor_id: actorId, summary: 'Se registró una forma de pago para revisión UIF.', detail: { payment_id: payment.id, method: payment.method, amount_mxn: payment.amount_mxn }, correlation_id: correlationId } });
-      await tx.auditLog.create({ data: { user_id: actorId, accion: 'ADD_COMPLIANCE_PAYMENT', entidad: 'ComplianceReview', entidad_id: review.id, valores_nuevos: { payment_id: payment.id, method: payment.method }, correlation_id: correlationId } });
-      return payment;
-    });
+  static async addPayment(user: User, userId: unknown, id: string, body: any, correlationId?: string) : Promise<any> {
+    throw new ComplianceError('El flujo anterior es de consulta histórica. Usa la evaluación canónica y los registros versionados de cumplimiento.', 'H5_LEGACY_WRITER_RETIRED', 410);
   }
 
   static async saveBeneficialOwner(user: User, userId: unknown, id: string, body: any, correlationId?: string) {

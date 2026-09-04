@@ -43,6 +43,17 @@ model Organization {
   bcOwnershipStructures      PersonaMoralOwnershipStructure[]
   bcSnapshots                ComplianceBcStructureSnapshot[]
   bcFormatMappings           ComplianceBcFormatMapping[]
+  questionnaireAssessments   ComplianceQuestionnaireAssessment[]
+  questionnaireRevisions     ComplianceQuestionnaireAssessmentRevision[]
+  riskMethodologies          ComplianceRiskMethodology[]
+  riskMethodologyRevisions   ComplianceRiskMethodologyRevision[]
+  operationPayments          ComplianceOperationPayment[]
+  operationPaymentRevisions  ComplianceOperationPaymentRevision[]
+  operationPaymentActs       ComplianceOperationPaymentAct[]
+  operationPaymentParties    ComplianceOperationPaymentParty[]
+  operationPaymentEvidence   ComplianceOperationPaymentEvidence[]
+  operationPaymentVerifications ComplianceOperationPaymentVerification[]
+  operationPaymentVerificationRules ComplianceOperationPaymentVerificationRule[]
 
   @@index([status])
   @@map("organizations")
@@ -82,6 +93,18 @@ model OrganizationMembership {
   bcFormatMappingsCreated           ComplianceBcFormatMapping[]           @relation("BcFormatCreatorMembership")
   bcFormatMappingsUpdated           ComplianceBcFormatMapping[]           @relation("BcFormatUpdaterMembership")
   bcSocietyTargetsCreated           ExpedienteSocietyTarget[]             @relation("BcSocietyTargetCreatorMembership")
+  questionnaireAssessmentsCreated   ComplianceQuestionnaireAssessment[]   @relation("QuestionnaireAssessmentCreatorMembership")
+  questionnaireRevisionsCreated     ComplianceQuestionnaireAssessmentRevision[] @relation("QuestionnaireRevisionCreatorMembership")
+  questionnaireRevisionsFinalized   ComplianceQuestionnaireAssessmentRevision[] @relation("QuestionnaireRevisionFinalizerMembership")
+  riskMethodologiesCreated          ComplianceRiskMethodology[]           @relation("RiskMethodologyCreatorMembership")
+  riskMethodologyRevisionsCreated   ComplianceRiskMethodologyRevision[]   @relation("RiskMethodologyRevisionCreatorMembership")
+  riskMethodologyRevisionsVerified  ComplianceRiskMethodologyRevision[]   @relation("RiskMethodologyRevisionVerifierMembership")
+  riskMethodologyRevisionsActivated ComplianceRiskMethodologyRevision[]   @relation("RiskMethodologyRevisionActivatorMembership")
+  operationPaymentsCreated          ComplianceOperationPayment[]          @relation("OperationPaymentCreatorMembership")
+  operationPaymentRevisionsCreated  ComplianceOperationPaymentRevision[]  @relation("OperationPaymentRevisionCreatorMembership")
+  operationPaymentRevisionsConfirmed ComplianceOperationPaymentRevision[] @relation("OperationPaymentRevisionConfirmerMembership")
+  operationPaymentVerificationsCreated ComplianceOperationPaymentVerification[] @relation("OperationPaymentVerificationCreatorMembership")
+  operationPaymentVerificationsConfirmed ComplianceOperationPaymentVerification[] @relation("OperationPaymentVerificationConfirmerMembership")
 
   @@unique([organization_id, user_id])
   @@index([user_id, status])
@@ -1009,6 +1032,7 @@ model CatalogoArtefacto {
   carpeta_id         String?                        @db.Uuid
   nombre             String
   descripcion        String?
+  purpose            CatalogoArtefactoPurpose?
   activo             Boolean                        @default(true)
   creado_por_id      String                         @db.Uuid
   actualizado_por_id String                         @db.Uuid
@@ -1029,12 +1053,16 @@ model CatalogoArtefactoVersion {
   organization_id       String                           @db.Uuid
   artefacto_id          String                           @db.Uuid
   version               Int
-  nombre_original       String
-  storage_key           String
-  mime_type             String
-  size_bytes            Int
-  checksum_sha256       String
+  nombre_original       String?
+  storage_key           String?
+  mime_type             String?
+  size_bytes            Int?
+  checksum_sha256       String?
   origen                String
+  content_kind          CatalogoArtefactoContentKind @default(FILE)
+  definition_json       Json?
+  definition_checksum   String?                      @db.VarChar(64)
+  schema_version        Int?
   activa                Boolean                          @default(true)
   creado_por_id         String                           @db.Uuid
   created_at            DateTime                         @default(now())
@@ -1042,9 +1070,13 @@ model CatalogoArtefactoVersion {
   pendientesExp006      ExpedienteArtefactoPendiente[]   @relation("Exp006PendingMasterVersion")
   presupuestoDocumentos ExpedientePresupuestoDocumento[]
   solicitudesPagoExp008 ExpedienteSolicitudPago[]
+  questionnaireAssessments ComplianceQuestionnaireAssessment[] @relation("QuestionnairePinnedDefinition")
+  questionnaireRevisions   ComplianceQuestionnaireAssessmentRevision[] @relation("QuestionnaireRevisionDefinition")
+  methodologyRevisions     ComplianceRiskMethodologyRevision[] @relation("MethodologyDefinitionCompatibility")
 
   @@unique([artefacto_id, version], map: "uq_catalogo_artefacto_version")
   @@unique([organization_id, storage_key], map: "uq_catalogo_storage_key_org")
+  @@unique([id, organization_id], map: "catalogo_artefacto_version_id_tenant_key")
   @@index([organization_id, artefacto_id], map: "idx_catalogo_versiones_tenant_artefacto")
   @@map("catalogo_artefacto_versiones")
 }
@@ -1186,6 +1218,8 @@ model Expediente {
   complianceStates           ExpedienteComplianceState[]
   complianceRequirements     ComplianceRequirement[]
   complianceAlerts           ComplianceAlert[]
+  questionnaireAssessments   ComplianceQuestionnaireAssessment[]
+  operationPayments          ComplianceOperationPayment[]
 
   @@unique([id, organization_id], map: "uq_expedientes_id_org")
   @@index([abogado_id], map: "idx_expedientes_abogado_fk")
@@ -1334,8 +1368,10 @@ model ExpedienteActo {
   artefactosPendientes    ExpedienteArtefactoPendiente[]  @relation("Exp006PendingAct")
   bcSnapshots             ComplianceBcStructureSnapshot[]
   societyTargets          ExpedienteSocietyTarget[]
+  operationPaymentActs    ComplianceOperationPaymentAct[]
 
   @@unique([id, organization_id], map: "uq_expediente_actos_id_org_b4")
+  @@unique([id, organization_id, expediente_id], map: "h5_expediente_actos_lineage_key")
   @@unique([organization_id, expediente_id, idempotency_key], map: "uq_expediente_actos_idempotency")
   @@unique([organization_id, expediente_id, removal_idempotency_key], map: "uq_expediente_actos_removal_idempotency")
   @@index([organization_id, expediente_id, estatus], map: "idx_expediente_actos_tenant_expediente_status")
@@ -1787,6 +1823,7 @@ model Documento {
   bcControlEvidence            PersonaMoralControlFact[]
   bcAiProposals                ComplianceBcAiProposal[]
   bcFormatMappings             ComplianceBcFormatMapping[]
+  operationPaymentVerifications ComplianceOperationPaymentVerification[]
 
   @@unique([id, organization_id], map: "h2_documentos_id_tenant_key")
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
@@ -2030,6 +2067,9 @@ model Compareciente {
   personaMoral                      PersonaMoral?
   bcOwnershipNodes                  PersonaMoralOwnershipNode[]
   bcResults                         ComplianceBcResult[]
+  questionnaireAssessments         ComplianceQuestionnaireAssessment[] @relation("QuestionnaireTargetCompareciente")
+  operationPaymentParties          ComplianceOperationPaymentParty[]
+  h5RuleResults                     ComplianceRuleResult[] @relation("H5RuleResultSubject")
 
   @@unique([id, organization_id], map: "h2_comparecientes_id_tenant_key")
   @@index([creado_por_id], map: "idx_comparecientes_creado_por_fk")
@@ -2392,9 +2432,14 @@ model ExpedienteCompareciente {
   validado_por                      User?                      @relation("ExpedienteComparecienteValidador", fields: [validado_por_id], references: [id])
   representacionesComoRepresentante ExpedienteRepresentacion[] @relation("ExpedienteRepresentanteVinculo")
   representacionesComoRepresentado  ExpedienteRepresentacion[] @relation("ExpedienteRepresentadoVinculo")
+  es_proveedor_recursos              Boolean                     @default(false)
+  provider_migration_status          String?                     @db.VarChar(40)
+  provider_migrated_relation_id      String?                     @db.Uuid
+  operationPaymentParties            ComplianceOperationPaymentParty[]
 
   @@unique([organization_id, expediente_id, idempotency_key], map: "uq_exp_comparecientes_idempotency")
   @@unique([organization_id, expediente_id, unlink_idempotency_key], map: "uq_exp_comparecientes_unlink_idempotency")
+  @@unique([id, organization_id, expediente_id, compareciente_id], map: "h5_expediente_compareciente_lineage_key")
   @@index([organization_id, expediente_id, expediente_acto_id, estatus], map: "idx_exp_comparecientes_tenant_act_status")
   @@index([expediente_acto_id], map: "idx_exp_comparecientes_acto_fk")
   @@index([caracter_id], map: "idx_exp_comparecientes_caracter_fk")
@@ -3649,6 +3694,8 @@ model ComplianceReview {
   legalRequirements         ComplianceRequirement[]
   legalAlerts               ComplianceAlert[]
   bcSnapshots               ComplianceBcStructureSnapshot[]
+  questionnaireAssessments  ComplianceQuestionnaireAssessment[]
+  operationPaymentRevisions ComplianceOperationPaymentRevision[]
 
   @@unique([organization_id, expediente_id, idempotency_key], map: "compliance_reviews_tenant_case_idempotency_key")
   @@unique([id, organization_id, expediente_id], map: "h2_compliance_reviews_lineage_key")
@@ -3712,7 +3759,9 @@ model ComplianceEvidence {
   documento                  Documento                           @relation(fields: [documento_id], references: [id], onUpdate: NoAction)
   review                     ComplianceReview                    @relation(fields: [review_id], references: [id], onUpdate: NoAction)
   requirement                ComplianceRequirement?              @relation(fields: [requirement_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  operationPaymentLinks      ComplianceOperationPaymentEvidence[]
 
+  @@unique([id, organization_id], map: "h5_compliance_evidence_id_tenant_key")
   @@index([documento_id])
   @@index([agregado_por_id], map: "idx_compliance_evidence_agregado_fk")
   @@index([retired_by_id], map: "idx_compliance_evidence_retired_by_fk")
@@ -4072,6 +4121,9 @@ model CompliancePayment {
   created_by_id        String    @db.Uuid
   created_at           DateTime  @default(now())
   retired_at           DateTime?
+  h5_migration_status  String?   @db.VarChar(40)
+  h5_canonical_payment_id String? @db.Uuid
+  canonicalPayment     ComplianceOperationPayment? @relation(fields: [h5_canonical_payment_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_legacy_payment_canonical_fkey")
 
   @@index([review_id, payment_date])
   @@index([created_by_id], map: "idx_uif_payments_created_by_fk")
@@ -4127,6 +4179,103 @@ enum ComplianceRuleFamily {
   CUM_MAT_005
   CUM_MAT_006
   CUM_MAT_007
+}
+
+enum ComplianceLegalRuleKind {
+  ACTIVITY
+  PAYMENT_RESTRICTION
+  PROVIDER_IDENTIFICATION
+}
+
+enum ComplianceRuleOutcomePurpose {
+  ACTIVITY_APPLICABILITY
+  NOTICE_OBLIGATION
+  PAYMENT_RESTRICTION
+  PROVIDER_IDENTIFICATION
+}
+
+enum ComplianceRuleContextKind {
+  ACT
+  PAYMENT
+  PAYMENT_PARTY
+}
+
+enum ComplianceQuestionnaireScope {
+  GENERAL
+  PERSONAL
+}
+
+enum ComplianceQuestionnaireRevisionStatus {
+  DRAFT
+  FINALIZED
+}
+
+enum ComplianceQuestionnaireCompleteness {
+  INCOMPLETE
+  COMPLETE
+}
+
+enum ComplianceQuestionnaireEvaluationStatus {
+  PENDING
+  EVALUATED
+  NOT_CONFIGURED
+  CONFIGURATION_ERROR
+}
+
+enum ComplianceMethodologyScope {
+  GENERAL
+  PERSONAL
+}
+
+enum ComplianceMethodologyRevisionStatus {
+  DRAFT
+  VERIFIED
+  ACTIVE
+  RETIRED
+}
+
+enum CompliancePaymentRevisionStatus {
+  DRAFT
+  CONFIRMED
+}
+
+enum CompliancePaymentScope {
+  GENERAL_INSTRUMENT
+  EXPLICIT_ACT_SET
+}
+
+enum CompliancePaymentPartyRole {
+  PAYER
+  PAYEE
+  PROVIDER_RESOURCE
+}
+
+enum CompliancePaymentFieldState {
+  VALUE
+  CONFIRMED_UNKNOWN
+}
+
+enum CompliancePaymentVerificationStatus {
+  MATCH
+  OBSERVATION
+  REVIEW_REQUIRED
+  NOT_CONFIGURED
+}
+
+enum ComplianceProposalFieldState {
+  PRESENT
+  ABSENT
+  UNCERTAIN
+}
+
+enum CatalogoArtefactoPurpose {
+  CUE_GENERAL
+  CUE_PERSONAL
+}
+
+enum CatalogoArtefactoContentKind {
+  FILE
+  STRUCTURED_QUESTIONNAIRE
 }
 
 enum ComplianceRuleRevisionStatus {
@@ -4233,6 +4382,7 @@ model ComplianceLegalRule {
   organization_id String                        @db.Uuid
   stable_key      String
   family          ComplianceRuleFamily
+  kind            ComplianceLegalRuleKind          @default(ACTIVITY)
   name            String
   description     String?
   created_by_id   String                        @db.Uuid
@@ -4320,6 +4470,11 @@ model ComplianceRuleResult {
   review_id            String                       @db.Uuid
   rule_revision_id     String                       @db.Uuid
   expediente_acto_id   String?                      @db.Uuid
+  outcome_purpose      ComplianceRuleOutcomePurpose @default(ACTIVITY_APPLICABILITY)
+  context_kind         ComplianceRuleContextKind    @default(ACT)
+  context_key          String                       @default("ACT") @db.VarChar(240)
+  payment_revision_id  String?                      @db.Uuid
+  subject_compareciente_id String?                  @db.Uuid
   applicability        ComplianceApplicabilityState
   vulnerable_activity  Boolean?
   notice_required      Boolean?
@@ -4334,6 +4489,9 @@ model ComplianceRuleResult {
   ruleRevision         ComplianceLegalRuleRevision  @relation(fields: [rule_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_rule_result_revision_fkey")
   requirements         ComplianceRequirement[]
   obligations          ComplianceObligation[]
+  paymentRevision      ComplianceOperationPaymentRevision? @relation(fields: [payment_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_rule_result_payment_revision_fkey")
+  subjectCompareciente Compareciente?                @relation("H5RuleResultSubject", fields: [subject_compareciente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_rule_result_subject_fkey")
+  paymentVerificationRules ComplianceOperationPaymentVerificationRule[]
 
   @@unique([id, organization_id], map: "compliance_rule_results_id_tenant_key")
   @@unique([id, organization_id, review_id, rule_revision_id], map: "compliance_rule_results_lineage_key")
@@ -4395,6 +4553,8 @@ model ComplianceRequirement {
   alerts                    ComplianceAlert[]
   evidence                  ComplianceEvidence[]
   screeningSnapshots        ScreeningOperationSnapshot[]
+  questionnaireAssessments  ComplianceQuestionnaireAssessment[]
+  operationPaymentRevisions ComplianceOperationPaymentRevision[]
 
   @@unique([organization_id, review_id, provider, requirement_key], map: "compliance_requirements_tenant_review_provider_key")
   @@unique([id, organization_id], map: "compliance_requirements_id_tenant_key")
@@ -4463,20 +4623,354 @@ model ComplianceAiProposal {
   content            Json
   source_document_id String?   @db.Uuid
   source_page        Int?
+  expediente_id      String?   @db.Uuid
+  payment_id         String?   @db.Uuid
+  base_payment_revision_id String? @db.Uuid
+  source_document_version String? @db.VarChar(128)
+  source_document_checksum String? @db.VarChar(128)
+  source_documents   Json?
+  source_pages       Json?
+  field_provenance   Json?
+  base_fingerprint   String?   @db.VarChar(64)
+  proposal_fingerprint String? @db.VarChar(64)
   confidence         Decimal?  @db.Decimal(7, 6)
   model              String
   prompt_version     String
+  h5_operation_id    String?   @db.VarChar(160)
   requested_by_id    String    @db.Uuid
   status             String    @default("PROPUESTA_REQUIERE_CONFIRMACION")
   decided_by_id      String?   @db.Uuid
   decided_at         DateTime?
   created_at         DateTime  @default(now())
+  payment            ComplianceOperationPayment? @relation(fields: [payment_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_ai_payment_fkey")
+  basePaymentRevision ComplianceOperationPaymentRevision? @relation(fields: [base_payment_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_ai_payment_revision_fkey")
 
   @@index([review_id, created_at])
   @@index([decided_by_id], map: "idx_uif_ai_proposals_decider_fk")
   @@index([requested_by_id], map: "idx_uif_ai_proposals_requester_fk")
   @@index([source_document_id], map: "idx_uif_ai_proposals_source_doc_fk")
+  @@unique([organization_id, h5_operation_id], map: "h5_ai_proposals_tenant_operation_key")
   @@map("compliance_ai_proposals")
+}
+
+model ComplianceQuestionnaireAssessment {
+  id                    String                           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id       String                           @db.Uuid
+  expediente_id         String                           @db.Uuid
+  review_id             String                           @db.Uuid
+  requirement_id        String                           @db.Uuid
+  scope                 ComplianceQuestionnaireScope
+  identity_key          String                           @db.VarChar(220)
+  target_compareciente_id String?                        @db.Uuid
+  definition_version_id String                           @db.Uuid
+  current_revision_id   String?                          @db.Uuid
+  trigger_snapshot      Json
+  created_by_id         String                           @db.Uuid
+  created_at            DateTime                         @default(now())
+  updated_at            DateTime                         @default(now()) @updatedAt
+  organization          Organization                     @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h5_questionnaire_assessment_org_fkey")
+  expediente            Expediente                       @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_questionnaire_assessment_case_fkey")
+  review                ComplianceReview                 @relation(fields: [review_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_questionnaire_assessment_review_fkey")
+  requirement           ComplianceRequirement            @relation(fields: [requirement_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_questionnaire_assessment_requirement_fkey")
+  targetCompareciente   Compareciente?                   @relation("QuestionnaireTargetCompareciente", fields: [target_compareciente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_questionnaire_assessment_target_fkey")
+  definitionVersion     CatalogoArtefactoVersion          @relation("QuestionnairePinnedDefinition", fields: [definition_version_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_questionnaire_assessment_definition_fkey")
+  createdBy             OrganizationMembership           @relation("QuestionnaireAssessmentCreatorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_questionnaire_assessment_creator_fkey")
+  revisions             ComplianceQuestionnaireAssessmentRevision[] @relation("QuestionnaireRevisionParent")
+  currentRevision       ComplianceQuestionnaireAssessmentRevision? @relation("QuestionnaireCurrentRevision", fields: [current_revision_id, organization_id, id], references: [id, organization_id, assessment_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_questionnaire_assessment_current_fkey")
+
+  @@unique([organization_id, review_id, identity_key], map: "h5_questionnaire_assessment_identity_key")
+  @@unique([current_revision_id, organization_id, id], map: "h5_questionnaire_assessment_current_key")
+  @@unique([id, organization_id], map: "h5_questionnaire_assessment_id_tenant_key")
+  @@index([organization_id, expediente_id, review_id], map: "idx_h5_questionnaire_assessment_review")
+  @@map("compliance_questionnaire_assessments")
+}
+
+model ComplianceQuestionnaireAssessmentRevision {
+  id                    String                                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id       String                                    @db.Uuid
+  assessment_id         String                                    @db.Uuid
+  revision_number       Int
+  status                ComplianceQuestionnaireRevisionStatus     @default(DRAFT)
+  answers               Json
+  definition_version_id String                                    @db.Uuid
+  definition_checksum   String                                    @db.VarChar(64)
+  completeness          ComplianceQuestionnaireCompleteness       @default(INCOMPLETE)
+  missing_question_ids  Json
+  methodology_revision_id String?                                 @db.Uuid
+  evaluation_status     ComplianceQuestionnaireEvaluationStatus   @default(PENDING)
+  evaluation_snapshot   Json?
+  semantic_fingerprint  String                                    @db.VarChar(64)
+  base_revision_id      String?                                   @db.Uuid
+  idempotency_key       String                                    @db.VarChar(160)
+  created_by_id         String                                    @db.Uuid
+  finalized_by_id       String?                                   @db.Uuid
+  finalized_at          DateTime?
+  created_at            DateTime                                  @default(now())
+  organization          Organization                              @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h5_questionnaire_revision_org_fkey")
+  assessment            ComplianceQuestionnaireAssessment         @relation("QuestionnaireRevisionParent", fields: [assessment_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_questionnaire_revision_assessment_fkey")
+  currentFor            ComplianceQuestionnaireAssessment?        @relation("QuestionnaireCurrentRevision")
+  definitionVersion     CatalogoArtefactoVersion                   @relation("QuestionnaireRevisionDefinition", fields: [definition_version_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_questionnaire_revision_definition_fkey")
+  methodologyRevision   ComplianceRiskMethodologyRevision?        @relation(fields: [methodology_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_questionnaire_revision_methodology_fkey")
+  createdBy             OrganizationMembership                    @relation("QuestionnaireRevisionCreatorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_questionnaire_revision_creator_fkey")
+  finalizedBy           OrganizationMembership?                   @relation("QuestionnaireRevisionFinalizerMembership", fields: [organization_id, finalized_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_questionnaire_revision_finalizer_fkey")
+  baseRevision          ComplianceQuestionnaireAssessmentRevision? @relation("QuestionnaireRevisionLineage", fields: [base_revision_id, organization_id, assessment_id], references: [id, organization_id, assessment_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_questionnaire_revision_base_fkey")
+  supersedingRevisions  ComplianceQuestionnaireAssessmentRevision[] @relation("QuestionnaireRevisionLineage")
+
+  @@unique([organization_id, assessment_id, revision_number], map: "h5_questionnaire_revision_number_key")
+  @@unique([organization_id, assessment_id, idempotency_key], map: "h5_questionnaire_revision_idempotency_key")
+  @@unique([id, organization_id], map: "h5_questionnaire_revision_id_tenant_key")
+  @@unique([id, organization_id, assessment_id], map: "h5_questionnaire_revision_lineage_key")
+  @@index([organization_id, assessment_id, status], map: "idx_h5_questionnaire_revision_status")
+  @@map("compliance_questionnaire_assessment_revisions")
+}
+
+model ComplianceRiskMethodology {
+  id                  String                              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id     String                              @db.Uuid
+  stable_key          String                              @db.VarChar(160)
+  scope               ComplianceMethodologyScope
+  name                String                              @db.VarChar(240)
+  current_revision_id String?                             @db.Uuid
+  created_by_id       String                              @db.Uuid
+  created_at          DateTime                            @default(now())
+  updated_at          DateTime                            @default(now()) @updatedAt
+  organization        Organization                        @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h5_risk_methodology_org_fkey")
+  createdBy           OrganizationMembership              @relation("RiskMethodologyCreatorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_risk_methodology_creator_fkey")
+  revisions           ComplianceRiskMethodologyRevision[] @relation("RiskMethodologyRevisionParent")
+  currentRevision     ComplianceRiskMethodologyRevision?  @relation("RiskMethodologyCurrentRevision", fields: [current_revision_id, organization_id, id], references: [id, organization_id, methodology_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_risk_methodology_current_fkey")
+
+  @@unique([organization_id, stable_key], map: "h5_risk_methodology_stable_key")
+  @@unique([current_revision_id, organization_id, id], map: "h5_risk_methodology_current_key")
+  @@unique([id, organization_id], map: "h5_risk_methodology_id_tenant_key")
+  @@map("compliance_risk_methodologies")
+}
+
+model ComplianceRiskMethodologyRevision {
+  id                    String                              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id       String                              @db.Uuid
+  methodology_id        String                              @db.Uuid
+  revision_number       Int
+  status                ComplianceMethodologyRevisionStatus @default(DRAFT)
+  compatible_definition_version_id String                   @db.Uuid
+  taxonomy              Json
+  factor_dsl            Json
+  output_mapping        Json
+  checksum              String                              @db.VarChar(64)
+  effective_from        DateTime?
+  effective_to          DateTime?
+  provenance            Json
+  supersedes_revision_id String?                            @db.Uuid
+  created_by_id         String                              @db.Uuid
+  verified_by_id        String?                             @db.Uuid
+  activated_by_id       String?                             @db.Uuid
+  created_at            DateTime                            @default(now())
+  verified_at           DateTime?
+  activated_at          DateTime?
+  retired_at            DateTime?
+  organization          Organization                        @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h5_risk_methodology_revision_org_fkey")
+  methodology           ComplianceRiskMethodology           @relation("RiskMethodologyRevisionParent", fields: [methodology_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_risk_methodology_revision_parent_fkey")
+  currentFor            ComplianceRiskMethodology?          @relation("RiskMethodologyCurrentRevision")
+  compatibleDefinition CatalogoArtefactoVersion             @relation("MethodologyDefinitionCompatibility", fields: [compatible_definition_version_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_risk_methodology_definition_fkey")
+  createdBy             OrganizationMembership              @relation("RiskMethodologyRevisionCreatorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_risk_methodology_revision_creator_fkey")
+  verifiedBy            OrganizationMembership?             @relation("RiskMethodologyRevisionVerifierMembership", fields: [organization_id, verified_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_risk_methodology_revision_verifier_fkey")
+  activatedBy           OrganizationMembership?             @relation("RiskMethodologyRevisionActivatorMembership", fields: [organization_id, activated_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_risk_methodology_revision_activator_fkey")
+  supersedes            ComplianceRiskMethodologyRevision?  @relation("RiskMethodologyRevisionLineage", fields: [supersedes_revision_id, organization_id, methodology_id], references: [id, organization_id, methodology_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_risk_methodology_revision_supersedes_fkey")
+  supersededBy          ComplianceRiskMethodologyRevision[] @relation("RiskMethodologyRevisionLineage")
+  assessments           ComplianceQuestionnaireAssessmentRevision[]
+
+  @@unique([organization_id, methodology_id, revision_number], map: "h5_risk_methodology_revision_number_key")
+  @@unique([id, organization_id], map: "h5_risk_methodology_revision_id_tenant_key")
+  @@unique([id, organization_id, methodology_id], map: "h5_risk_methodology_revision_lineage_key")
+  @@index([organization_id, status, compatible_definition_version_id], map: "idx_h5_risk_methodology_revision_selection")
+  @@map("compliance_risk_methodology_revisions")
+}
+
+model ComplianceOperationPayment {
+  id                  String                               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id     String                               @db.Uuid
+  expediente_id       String                               @db.Uuid
+  current_revision_id String?                              @db.Uuid
+  legacy_payment_id   String?                              @db.Uuid
+  legacy_classification String?                            @db.VarChar(40)
+  created_by_id       String                               @db.Uuid
+  created_at          DateTime                             @default(now())
+  updated_at          DateTime                             @default(now()) @updatedAt
+  organization        Organization                         @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_org_fkey")
+  expediente          Expediente                           @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_case_fkey")
+  createdBy           OrganizationMembership               @relation("OperationPaymentCreatorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_creator_fkey")
+  revisions           ComplianceOperationPaymentRevision[] @relation("OperationPaymentRevisionParent")
+  currentRevision     ComplianceOperationPaymentRevision?  @relation("OperationPaymentCurrentRevision", fields: [current_revision_id, organization_id, id], references: [id, organization_id, payment_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_current_fkey")
+  aiProposals         ComplianceAiProposal[]
+  legacyRows          CompliancePayment[]
+
+  @@unique([id, organization_id], map: "h5_operation_payment_id_tenant_key")
+  @@unique([id, organization_id, expediente_id], map: "h5_operation_payment_case_key")
+  @@unique([current_revision_id, organization_id, id], map: "h5_operation_payment_current_key")
+  @@unique([organization_id, legacy_payment_id], map: "h5_operation_payment_legacy_key")
+  @@index([organization_id, expediente_id, created_at], map: "idx_h5_operation_payment_case")
+  @@map("compliance_operation_payments")
+}
+
+model ComplianceOperationPaymentRevision {
+  id                  String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id     String                          @db.Uuid
+  payment_id          String                          @db.Uuid
+  expediente_id       String                          @db.Uuid
+  review_id           String                          @db.Uuid
+  requirement_id      String?                         @db.Uuid
+  revision_number     Int
+  status              CompliancePaymentRevisionStatus @default(DRAFT)
+  scope               CompliancePaymentScope
+  amount_original     Decimal?                        @db.Decimal(20, 6)
+  currency_original   String?                         @db.VarChar(3)
+  payment_date        DateTime?
+  method_raw          String?
+  method_code         String?
+  method_label_snapshot String?
+  institution         String?
+  reference           String?
+  account_last4       String?                         @db.VarChar(4)
+  account_fingerprint String?                         @db.VarChar(64)
+  payer_raw           String?
+  payee_raw           String?
+  exchange_rate       Decimal?                        @db.Decimal(24, 12)
+  exchange_rate_date  DateTime?
+  exchange_rate_source String?
+  exchange_rate_criterion String?
+  equivalent_mxn      Decimal?                        @db.Decimal(20, 6)
+  declared_paid       Decimal?                        @db.Decimal(20, 6)
+  declared_pending    Decimal?                        @db.Decimal(20, 6)
+  field_states        Json
+  source              String                          @default("HUMAN_CONFIRMED")
+  semantic_fingerprint String                         @db.VarChar(64)
+  base_revision_id    String?                         @db.Uuid
+  idempotency_key     String                          @db.VarChar(160)
+  change_reason       String?
+  created_by_id       String                          @db.Uuid
+  confirmed_by_id     String?                         @db.Uuid
+  created_at          DateTime                        @default(now())
+  confirmed_at        DateTime?
+  organization        Organization                    @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_revision_org_fkey")
+  payment             ComplianceOperationPayment      @relation("OperationPaymentRevisionParent", fields: [payment_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_revision_payment_fkey")
+  currentFor          ComplianceOperationPayment?     @relation("OperationPaymentCurrentRevision")
+  review              ComplianceReview                @relation(fields: [review_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_revision_review_fkey")
+  requirement         ComplianceRequirement?          @relation(fields: [requirement_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_revision_requirement_fkey")
+  createdBy           OrganizationMembership          @relation("OperationPaymentRevisionCreatorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_revision_creator_fkey")
+  confirmedBy         OrganizationMembership?         @relation("OperationPaymentRevisionConfirmerMembership", fields: [organization_id, confirmed_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_revision_confirmer_fkey")
+  baseRevision        ComplianceOperationPaymentRevision? @relation("OperationPaymentRevisionLineage", fields: [base_revision_id, organization_id, payment_id], references: [id, organization_id, payment_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_revision_base_fkey")
+  supersedingRevisions ComplianceOperationPaymentRevision[] @relation("OperationPaymentRevisionLineage")
+  acts                ComplianceOperationPaymentAct[]
+  parties             ComplianceOperationPaymentParty[]
+  evidence            ComplianceOperationPaymentEvidence[]
+  verifications       ComplianceOperationPaymentVerification[]
+  legalResults        ComplianceRuleResult[]
+  aiProposals         ComplianceAiProposal[]
+
+  @@unique([organization_id, payment_id, revision_number], map: "h5_operation_payment_revision_number_key")
+  @@unique([organization_id, payment_id, idempotency_key], map: "h5_operation_payment_revision_idempotency_key")
+  @@unique([id, organization_id], map: "h5_operation_payment_revision_id_tenant_key")
+  @@unique([id, organization_id, expediente_id], map: "h5_operation_payment_revision_case_key")
+  @@unique([id, organization_id, payment_id], map: "h5_operation_payment_revision_lineage_key")
+  @@index([organization_id, expediente_id, review_id], map: "idx_h5_operation_payment_revision_review")
+  @@map("compliance_operation_payment_revisions")
+}
+
+model ComplianceOperationPaymentAct {
+  id                  String                             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id     String                             @db.Uuid
+  payment_revision_id String                             @db.Uuid
+  expediente_id       String                             @db.Uuid
+  expediente_acto_id  String                             @db.Uuid
+  created_at          DateTime                           @default(now())
+  organization        Organization                       @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_act_org_fkey")
+  paymentRevision     ComplianceOperationPaymentRevision @relation(fields: [payment_revision_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_act_revision_fkey")
+  expedienteActo      ExpedienteActo                     @relation(fields: [expediente_acto_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_act_case_act_fkey")
+
+  @@unique([organization_id, payment_revision_id, expediente_acto_id], map: "h5_operation_payment_act_key")
+  @@unique([id, organization_id], map: "h5_operation_payment_act_id_tenant_key")
+  @@map("compliance_operation_payment_acts")
+}
+
+model ComplianceOperationPaymentParty {
+  id                       String                             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id          String                             @db.Uuid
+  payment_revision_id      String                             @db.Uuid
+  expediente_id            String                             @db.Uuid
+  expediente_compareciente_id String                          @db.Uuid
+  compareciente_id          String                             @db.Uuid
+  role                     CompliancePaymentPartyRole
+  created_at               DateTime                           @default(now())
+  organization             Organization                       @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_party_org_fkey")
+  paymentRevision          ComplianceOperationPaymentRevision @relation(fields: [payment_revision_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_party_revision_fkey")
+  expedienteCompareciente  ExpedienteCompareciente            @relation(fields: [expediente_compareciente_id, organization_id, expediente_id, compareciente_id], references: [id, organization_id, expediente_id, compareciente_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_party_case_party_fkey")
+  compareciente            Compareciente                      @relation(fields: [compareciente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_party_person_fkey")
+
+  @@unique([organization_id, payment_revision_id, role, expediente_compareciente_id], map: "h5_operation_payment_party_key")
+  @@unique([id, organization_id], map: "h5_operation_payment_party_id_tenant_key")
+  @@map("compliance_operation_payment_parties")
+}
+
+model ComplianceOperationPaymentEvidence {
+  id                  String                             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id     String                             @db.Uuid
+  payment_revision_id String                             @db.Uuid
+  evidence_id         String                             @db.Uuid
+  relation_kind       String                             @default("RECEIPT") @db.VarChar(40)
+  created_at          DateTime                           @default(now())
+  organization        Organization                       @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_evidence_org_fkey")
+  paymentRevision     ComplianceOperationPaymentRevision @relation(fields: [payment_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_evidence_revision_fkey")
+  evidence            ComplianceEvidence                 @relation(fields: [evidence_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_operation_payment_evidence_evidence_fkey")
+
+  @@unique([organization_id, payment_revision_id, evidence_id], map: "h5_operation_payment_evidence_key")
+  @@unique([id, organization_id], map: "h5_operation_payment_evidence_id_tenant_key")
+  @@map("compliance_operation_payment_evidence")
+}
+
+model ComplianceOperationPaymentVerification {
+  id                         String                             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id            String                             @db.Uuid
+  payment_revision_id        String                             @db.Uuid
+  project_document_id        String                             @db.Uuid
+  project_document_version   String                             @db.VarChar(128)
+  project_document_checksum  String                             @db.VarChar(128)
+  consideration_amount       Decimal?                           @db.Decimal(20, 6)
+  consideration_currency     String?                            @db.VarChar(3)
+  instrument_paid            Decimal?                           @db.Decimal(20, 6)
+  instrument_pending         Decimal?                           @db.Decimal(20, 6)
+  comparison_snapshot        Json
+  status                     CompliancePaymentVerificationStatus
+  semantic_fingerprint       String                             @db.VarChar(64)
+  idempotency_key            String                             @db.VarChar(160)
+  created_by_id              String                             @db.Uuid
+  confirmed_by_id            String?                            @db.Uuid
+  created_at                 DateTime                           @default(now())
+  confirmed_at               DateTime?
+  organization               Organization                       @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h5_payment_verification_org_fkey")
+  paymentRevision            ComplianceOperationPaymentRevision @relation(fields: [payment_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_payment_verification_revision_fkey")
+  projectDocument            Documento                          @relation(fields: [project_document_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_payment_verification_document_fkey")
+  createdBy                  OrganizationMembership             @relation("OperationPaymentVerificationCreatorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_payment_verification_creator_fkey")
+  confirmedBy                OrganizationMembership?            @relation("OperationPaymentVerificationConfirmerMembership", fields: [organization_id, confirmed_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_payment_verification_confirmer_fkey")
+  rules                      ComplianceOperationPaymentVerificationRule[]
+
+  @@unique([organization_id, payment_revision_id, idempotency_key], map: "h5_payment_verification_idempotency_key")
+  @@unique([organization_id, payment_revision_id, semantic_fingerprint], map: "h5_payment_verification_fingerprint_key")
+  @@unique([id, organization_id], map: "h5_payment_verification_id_tenant_key")
+  @@map("compliance_operation_payment_verifications")
+}
+
+model ComplianceOperationPaymentVerificationRule {
+  id                  String                                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id     String                                 @db.Uuid
+  verification_id     String                                 @db.Uuid
+  rule_result_id       String                                 @db.Uuid
+  created_at           DateTime                               @default(now())
+  organization        Organization                           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h5_payment_verification_rule_org_fkey")
+  verification        ComplianceOperationPaymentVerification @relation(fields: [verification_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_payment_verification_rule_verification_fkey")
+  ruleResult          ComplianceRuleResult                   @relation(fields: [rule_result_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_payment_verification_rule_result_fkey")
+
+  @@unique([organization_id, verification_id, rule_result_id], map: "h5_payment_verification_rule_key")
+  @@unique([id, organization_id], map: "h5_payment_verification_rule_id_tenant_key")
+  @@map("compliance_operation_payment_verification_rules")
 }
 
 model CargaTemporalDocumento {

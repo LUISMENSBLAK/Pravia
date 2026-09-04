@@ -644,6 +644,7 @@ export const templatesAndFormatsService = {
   async signedUrl(actor: Actor, versionId: string) {
     const version = await prisma.catalogoArtefactoVersion.findFirst({ where: { id: versionId, organization_id: actor.organizationId, activa: true, artefacto: { activo: true } }, select: { id: true, storage_key: true, nombre_original: true, mime_type: true, version: true } });
     if (!version) throw new CatalogConfigurationError(404, 'ARTIFACT_VERSION_NOT_FOUND', 'Versión no encontrada.');
+    if (!version.storage_key || !version.nombre_original || !version.mime_type) throw new CatalogConfigurationError(404, 'ARTIFACT_FILE_VERSION_NOT_FOUND', 'La versión de archivo no está disponible.');
     return { url: await getSignedUrl(version.storage_key, 600), expires_in: 600, file_name: version.nombre_original, mime_type: version.mime_type, version: version.version };
   },
 };

@@ -51,6 +51,39 @@ const categoryFolders: Record<string, string> = {
 };
 
 export class ComplianceDocumentService {
+  /** Shared H2 registration for an internal, unsigned record generated from an
+   * already finalized source. The caller uploads through canonical Storage and
+   * owns compensation; this method owns the Documento/evidence lineage. */
+  static async registerInternalRecordTx(tx: Prisma.TransactionClient, user: User, input: {
+    reviewId: string; requirementId: string; expedienteId: string; targetComparecienteId: string | null;
+    sourceRevisionId: string; storageKey: string; buffer: Buffer; fileName: string;
+    provenance: Prisma.InputJsonValue;
+  }) {
+    const digest = checksum(input.buffer);
+    const document = await tx.documento.create({ data: {
+      organization_id: user.organizationId, expediente_id: input.expedienteId,
+      nombre_original: sanitizeComplianceZipName(input.fileName), nombre_interno: input.storageKey,
+      tipo: 'CUM_CUE_INTERNO', categoria: 'UIF', storage_key: input.storageKey,
+      mime_type: 'application/pdf', size_bytes: input.buffer.length, checksum_sha256: digest,
+      estatus: 'VIGENTE', subido_por_id: user.id, datos_extraidos: input.provenance,
+    } });
+    await tx.expedienteDocumento.create({ data: {
+      organization_id: user.organizationId, expediente_id: input.expedienteId, documento_id: document.id,
+      tipo_vinculo: 'CUMPLIMIENTO_INTERNO', creado_por_id: user.id, origen: 'EXPEDIENTE',
+      source_entity_type: 'COMPLIANCE_QUESTIONNAIRE_REVISION', source_entity_id: input.sourceRevisionId,
+      source_context: 'CUM_CUE_INTERNAL_RECORD', source_key: `EXPEDIENTE:CUE:${input.sourceRevisionId}:${document.id}`,
+      document_version: digest, provenance: input.provenance,
+    } });
+    const evidence = await tx.complianceEvidence.create({ data: {
+      organization_id: user.organizationId, expediente_id: input.expedienteId, review_id: input.reviewId,
+      requirement_id: input.requirementId, target_compareciente_id: input.targetComparecienteId,
+      documento_id: document.id, tipo_evidencia: 'CUM_CUE_INTERNO', agregado_por_id: user.id,
+      document_version: digest, document_checksum_snapshot: digest, storage_key_snapshot: input.storageKey,
+      source: 'FORMAT_GENERATED', document_state: 'GENERATED', validation_status: 'PENDING_HUMAN', linked_by_system: true,
+    } });
+    return { document, evidence };
+  }
+
   static async materializeForRuleResultTx(tx: Prisma.TransactionClient, user: User, input: {
     expedienteId: string;
     reviewId: string;

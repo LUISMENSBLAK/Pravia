@@ -39,6 +39,11 @@ export const TENANT_SCOPED_MODELS = new Set([
   'PersonaMoralControlFact', 'PersonaMoralStructureReconciliation', 'ComplianceBcStructureSnapshot',
   'ComplianceBcEvaluation', 'ComplianceBcResult', 'ComplianceBcAiProposal', 'ComplianceBcFormatMapping',
   'ExpedienteSocietyTarget',
+  'ComplianceQuestionnaireAssessment', 'ComplianceQuestionnaireAssessmentRevision',
+  'ComplianceRiskMethodology', 'ComplianceRiskMethodologyRevision',
+  'ComplianceOperationPayment', 'ComplianceOperationPaymentRevision', 'ComplianceOperationPaymentAct',
+  'ComplianceOperationPaymentParty', 'ComplianceOperationPaymentEvidence',
+  'ComplianceOperationPaymentVerification', 'ComplianceOperationPaymentVerificationRule',
   'TimingPolicyRevision', 'TimingInterval',
 ]);
 

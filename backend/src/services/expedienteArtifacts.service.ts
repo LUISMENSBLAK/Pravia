@@ -97,7 +97,7 @@ export class ExpedienteArtifactsService {
       const sources = await this.partySources(this.prisma, actor, pending);
       if (sources.revision !== input.source_revision) throw new ExpedienteArtifactsError(409, 'EXP006_GENERATION_SOURCES_STALE', 'Las fuentes del compareciente cambiaron. Revisa nuevamente antes de generar.');
       const master = await this.prisma.catalogoArtefactoVersion.findFirst({ where: { id: pending.artefacto_version_id, organization_id: actor.organizationId, activa: true }, include: { artefacto: true } });
-      if (!master || master.artefacto_id !== pending.artefacto_id) throw new ExpedienteArtifactsError(409, 'EXP006_MASTER_VERSION_UNAVAILABLE', 'La versión maestra ya no está disponible. Revisa el pendiente.');
+      if (!master || master.artefacto_id !== pending.artefacto_id || master.content_kind !== 'FILE' || !master.storage_key || !master.mime_type || !master.nombre_original) throw new ExpedienteArtifactsError(409, 'EXP006_MASTER_VERSION_UNAVAILABLE', 'La versión maestra de archivo ya no está disponible. Revisa el pendiente.');
       const masterBuffer = await downloadFile(master.storage_key);
       const masterText = await this.readText(masterBuffer, master.mime_type, master.nombre_original);
       const generation = await generateOperationalArtifactWithOpenAI({ artifactName: master.artefacto.nombre, masterText, structuredData: sources.structuredData, currentPartyDocuments: sources.documents });
