@@ -13,6 +13,7 @@ import { ComplianceH6Service } from "../services/complianceH6.service";
 import { ComplianceH6Error } from "../domain/complianceH6";
 import { ComplianceH7Service } from "../services/complianceH7.service";
 import { complianceH8Service, parseH8PanelQuery } from "../services/complianceH8.service";
+import { complianceH9Service } from "../services/complianceH9.service";
 
 const actor = (req: Request) => req.user?.id;
 const correlation = (req: Request) => (req as any).correlationId;
@@ -42,6 +43,16 @@ const sendError = (res: Response, error: any, fallback: string) => {
 };
 
 export class ComplianceController {
+  static async h9Workspace(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await complianceH9Service.workspace(req.user!, req.params.expedienteId) }); }
+    catch (error) { return sendError(res, error, "H9_WORKSPACE_FAILED"); }
+  }
+
+  static async h9Run(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, data: await complianceH9Service.run(req.user!, req.params.expedienteId, req.body, correlation(req)) }); }
+    catch (error) { return sendError(res, error, "H9_RUN_FAILED"); }
+  }
+
   static async h8Panel(req: Request, res: Response) {
     try {
       return res.json({ success: true, data: await complianceH8Service.panel(req.user!, parseH8PanelQuery(req.query as Record<string, unknown>)) });

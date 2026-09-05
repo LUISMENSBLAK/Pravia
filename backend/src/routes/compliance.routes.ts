@@ -13,6 +13,17 @@ const signedUpload = multer({
   limits: { fileSize: 25 * 1024 * 1024, files: 1 },
 });
 router.get(
+  "/expedientes/:expedienteId/revision-asistida",
+  requirePermission("compliance.read"),
+  ComplianceController.h9Workspace,
+);
+router.post(
+  "/expedientes/:expedienteId/revision-asistida",
+  requirePermission("compliance.review"),
+  requirePermission("ia.execute"),
+  ComplianceController.h9Run,
+);
+router.get(
   "/panel",
   requirePermission("compliance.read"),
   ComplianceController.h8Panel,

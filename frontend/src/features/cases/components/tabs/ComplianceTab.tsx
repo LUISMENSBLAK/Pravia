@@ -11,6 +11,7 @@ import { expedienteReturnParams } from '../../expedienteNavigation';
 import styles from '../../Expedientes.module.css';
 import { H6NoticeWorkspace } from './H6NoticeWorkspace';
 import { H7ClosureWorkspace } from './H7ClosureWorkspace';
+import { H9AssistedReviewWorkspace } from './H9AssistedReviewWorkspace';
 
 const evidenceStateLabel: Record<string, string> = {
   CANONICAL: 'Documento canónico', GENERATED: 'Generado · pendiente de firma', SIGNED_UPLOADED: 'Firmado cargado',
@@ -131,5 +132,6 @@ export function ComplianceTab({ expediente }: { expediente: ExpedienteDetail }) 
       {showMissing && documental && <div ref={missingRef} tabIndex={-1} className={styles.complianceMissingPanel} aria-live="polite"><h3>Faltantes de Cumplimiento</h3>{documental.missing.length ? <ul>{documental.missing.map((item) => <li key={item.id}><div><strong>{item.label}</strong>{item.target_name && <span>{item.target_name}</span>}<p>{item.missing_reason}</p></div>{requirementAction(item)}</li>)}</ul> : <p>No hay faltantes documentales en la evaluación actual.</p>}</div>}
     </section>
     <H6NoticeWorkspace expedienteId={expediente.id} canWrite={canWrite} />
+    <H9AssistedReviewWorkspace expedienteId={expediente.id} />
   </div>;
 }

@@ -61,6 +61,7 @@ model Organization {
   complianceNoticePresentations ComplianceNoticePresentation[]
   complianceNoticeAcknowledgements ComplianceNoticeAcknowledgement[]
   complianceRequirementExceptions ComplianceRequirementException[]
+  complianceAssistedReviews ComplianceAssistedReview[]
 
   @@index([status])
   @@map("organizations")
@@ -118,6 +119,7 @@ model OrganizationMembership {
   complianceOfficialProductsCreated ComplianceOfficialProduct[] @relation("H6OfficialProductActor")
   complianceNoticePresentationsCreated ComplianceNoticePresentation[] @relation("H6NoticePresentationActor")
   complianceNoticeAcknowledgementsCreated ComplianceNoticeAcknowledgement[] @relation("H6NoticeAcknowledgementActor")
+  complianceAssistedReviewsExecuted ComplianceAssistedReview[] @relation("H9AssistedReviewActor")
 
   @@unique([organization_id, user_id])
   @@index([user_id, status])
@@ -1237,6 +1239,7 @@ model Expediente {
   complianceExceptions       ComplianceRequirementException[]
   questionnaireAssessments   ComplianceQuestionnaireAssessment[]
   operationPayments          ComplianceOperationPayment[]
+  complianceAssistedReviews  ComplianceAssistedReview[]
 
   @@unique([id, organization_id], map: "uq_expedientes_id_org")
   @@index([abogado_id], map: "idx_expedientes_abogado_fk")
@@ -3719,6 +3722,7 @@ model ComplianceReview {
   operationPaymentRevisions ComplianceOperationPaymentRevision[]
   h6ObligationTriggers      ComplianceObligationTrigger[]
   complianceExceptions      ComplianceRequirementException[]
+  assistedReviews           ComplianceAssistedReview[]
 
   @@unique([organization_id, expediente_id, idempotency_key], map: "compliance_reviews_tenant_case_idempotency_key")
   @@unique([id, organization_id], map: "h6_compliance_review_tenant_key")
@@ -3730,6 +3734,43 @@ model ComplianceReview {
   @@index([revisado_por_id], map: "idx_compliance_reviews_revisor_fk")
   @@index([rule_set_id], map: "idx_compliance_reviews_rule_fk")
   @@map("compliance_reviews")
+}
+
+model ComplianceAssistedReview {
+  id                         String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id            String                 @db.Uuid
+  expediente_id              String                 @db.Uuid
+  compliance_review_id       String                 @db.Uuid
+  executed_by_id             String                 @db.Uuid
+  idempotency_key            String                 @db.VarChar(160)
+  dataset_snapshot           Json
+  dataset_fingerprint        String                 @db.VarChar(64)
+  source_manifest            Json
+  canonical_document_id      String?                @db.Uuid
+  canonical_document_version String?                @db.VarChar(128)
+  canonical_document_checksum String?               @db.VarChar(64)
+  canonical_document_role    String?                @db.VarChar(40)
+  provider                   String                 @db.VarChar(40)
+  model                      String                 @db.VarChar(120)
+  prompt_version             String                 @db.VarChar(40)
+  output_schema_version      String                 @db.VarChar(40)
+  result_json                Json
+  result_checksum            String                 @db.VarChar(64)
+  correct_count              Int
+  observation_count          Int
+  critical_count             Int
+  created_at                 DateTime               @default(now()) @db.Timestamptz(6)
+  organization               Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h9_assisted_review_org_fkey")
+  expediente                 Expediente              @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h9_assisted_review_case_fkey")
+  complianceReview           ComplianceReview        @relation(fields: [compliance_review_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, onUpdate: NoAction, map: "h9_assisted_review_context_fkey")
+  executedBy                 OrganizationMembership @relation("H9AssistedReviewActor", fields: [organization_id, executed_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h9_assisted_review_actor_fkey")
+
+  @@unique([organization_id, expediente_id, idempotency_key], map: "h9_assisted_review_idempotency_key")
+  @@unique([id, organization_id], map: "h9_assisted_review_tenant_key")
+  @@index([organization_id, expediente_id, created_at], map: "idx_h9_assisted_review_history")
+  @@index([compliance_review_id, organization_id, expediente_id], map: "idx_h9_assisted_review_context")
+  @@index([organization_id, executed_by_id], map: "idx_fk_compliance_assisted_reviews_4089c644")
+  @@map("compliance_assisted_reviews")
 }
 
 model ComplianceDecision {

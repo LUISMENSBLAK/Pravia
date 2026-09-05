@@ -81,6 +81,24 @@ export type H7ClosureWorkspace = {
   }>;
 };
 
+export type H9Finding = {
+  check_key: string; category: string; status: 'CORRECT' | 'OBSERVATION' | 'CRITICAL'; message: string;
+  source_refs: string[]; affected_block: string; action_target: string; confidence: 'HIGH' | 'MEDIUM' | 'LOW'; provenance: string;
+};
+export type H9ReviewItem = {
+  id: string; created_at: string; executed_by: { id: string; name: string }; freshness: 'ACTUAL' | 'DESACTUALIZADA';
+  changes: Array<{ source_ref: string; change: string; detail: string }>;
+  correct_count: number; observation_count: number; critical_count: number;
+  result: { verification_checks: H9Finding[]; correct_count: number; observations: H9Finding[]; critical_inconsistencies: H9Finding[] };
+  provider: string; model: string; prompt_version: string; output_schema_version: string;
+  canonical_document: null | { id: string; version: string | null; checksum: string | null; role: string | null };
+};
+export type H9Workspace = {
+  readiness: { status: 'READY' | 'NOT_READY'; causes: string[] };
+  latest: H9ReviewItem | null;
+  history: H9ReviewItem[];
+};
+
 const query = (values: Record<string, string | number | undefined>) => {
   const params = new URLSearchParams();
   Object.entries(values).forEach(([key, value]) => {
@@ -91,6 +109,10 @@ const query = (values: Record<string, string | number | undefined>) => {
 };
 
 export const complianceService = {
+  h9Workspace: async (expedienteId: string, signal?: AbortSignal) =>
+    apiRequest<{ success: boolean; data: H9Workspace }>(`/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/revision-asistida`, { signal }).then((response) => response.data),
+  h9Run: async (expedienteId: string, idempotencyKey: string) =>
+    apiRequest<{ success: boolean; data: unknown }>(`/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/revision-asistida`, { method: 'POST', body: JSON.stringify({ idempotency_key: idempotencyKey }) }).then((response) => response.data),
   h8Panel: async (filters: Record<string, string | number | undefined>, signal?: AbortSignal) =>
     apiRequest<{ success: boolean; data: H8Panel }>(`/cumplimiento/panel?${query(filters)}`, { signal }).then((response) => response.data),
   freeScreening: async (body: { identity: Record<string, unknown>; idempotency_key: string }) =>

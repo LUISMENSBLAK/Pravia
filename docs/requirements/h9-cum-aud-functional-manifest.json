@@ -1,0 +1,84 @@
+{
+  "algorithm": "sha256",
+  "serialization": "JSON.stringify(sorted [{path,sha256}])",
+  "functional_file_count": 19,
+  "functional_hash": "30365c1bc05e504cb8586fce48a603e3a6776e4d74c308dcf407874098456ade",
+  "files": [
+    {
+      "path": "backend/prisma/migrations/20260905030000_create_h9_assisted_compliance_review/migration.sql",
+      "sha256": "e935d06bb1c129391c5cd24b0cc2d24ed76a3dacb9c9c381123af13c9fbd5d27"
+    },
+    {
+      "path": "backend/prisma/schema.prisma",
+      "sha256": "bfc1b1f5392326c5f93074da0eff8407a7de395ee6e98d8eb0914729f8847975"
+    },
+    {
+      "path": "backend/src/config/tenantPrisma.ts",
+      "sha256": "8b55ac38af55dbe8f0181e14ef1ea0cd7453423bf8084ed0cdd95895eacc9ffd"
+    },
+    {
+      "path": "backend/src/controllers/compliance.controller.ts",
+      "sha256": "7de8aadd8fc33596cbd388e8b78f693cb9d91f6f4d2e8f1c78ca9568af699c77"
+    },
+    {
+      "path": "backend/src/domain/complianceH9.contract.test.ts",
+      "sha256": "697f7e9cd2f7143e3da75c6531c11556648b68bbb748343ff5bad994655dd134"
+    },
+    {
+      "path": "backend/src/domain/complianceH9.test.ts",
+      "sha256": "b2ef40e4bc1162c98b807cb94dbd3f536eee1bbf0fa30759da6b96d43c2bb87a"
+    },
+    {
+      "path": "backend/src/domain/complianceH9.ts",
+      "sha256": "4ac41761478df365bc868498c13fb323705f3835d7bb56dca6ffcfbc81122043"
+    },
+    {
+      "path": "backend/src/integration/complianceH9.postgresql.integration.test.ts",
+      "sha256": "3eab398ce145d6a75f2a216edea2f87a0a6dcf76cbb7f726566f5ef5b49048a4"
+    },
+    {
+      "path": "backend/src/routes/compliance.routes.ts",
+      "sha256": "733ad3c66b077d84ed19027bd9b433260ef84da2b45e459ae0753ceb7c09a38e"
+    },
+    {
+      "path": "backend/src/services/complianceH9.ai.ts",
+      "sha256": "ca7b85b341130a073dd508a4d5397df6064d2d056678aed053e74d8ee1e5856a"
+    },
+    {
+      "path": "backend/src/services/complianceH9.service.test.ts",
+      "sha256": "cb583bc4b8fff9ce615d905727fad5a94341806a16a96d02882f8b1688f8657d"
+    },
+    {
+      "path": "backend/src/services/complianceH9.service.ts",
+      "sha256": "ec294b764bb813e4e72469aa7c5de3bb1cc652bd17651c992c1e4f6a0f862ed9"
+    },
+    {
+      "path": "backend/src/services/expedienteActivity.service.ts",
+      "sha256": "5ab6274296b161ad5a7bbbbc5970a55bc801cd1157022fe33e69bd7da9f7c541"
+    },
+    {
+      "path": "docs/requirements/h9-cum-aud-assisted-review-traceability.md",
+      "sha256": "630fb15389e66d1de599b871bcea0bb3608c4cdc1ce913fb4b1e02fa4223fb17"
+    },
+    {
+      "path": "frontend/src/features/cases/components/tabs/ComplianceTab.tsx",
+      "sha256": "d06beb300aba960b30cd4edbee6e59ebbd4b939239bce2d6795cd40b7ffaeac2"
+    },
+    {
+      "path": "frontend/src/features/cases/components/tabs/H9AssistedReviewWorkspace.module.css",
+      "sha256": "17986d64c812f0cd257b06875a44873f37e64261386aaf7e53115801396f7f49"
+    },
+    {
+      "path": "frontend/src/features/cases/components/tabs/H9AssistedReviewWorkspace.tsx",
+      "sha256": "9d31a2b805c4ba8de276852eacdda5f2cfb2fc7ea4d7aa95b9932afdeb4346e2"
+    },
+    {
+      "path": "frontend/src/features/compliance/compliance.service.ts",
+      "sha256": "d7620a9de10b4db99b50d8ae967f5fcc5e5d2bc12855d351009a925af0e306ad"
+    },
+    {
+      "path": "frontend/src/tests/ComplianceH9.test.tsx",
+      "sha256": "e9e3eb6efe34252fbf43c84870d66ffd5c3270334c28fe451eae5ed5f76b1de3"
+    }
+  ]
+}
