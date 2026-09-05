@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 2,
+  "algorithm": "sha256(path + NUL + raw_bytes + NUL), paths sorted lexicographically",
+  "preRemediation": {
+    "fileCount": 31,
+    "functionalHash": "4836978d20a1030cd5c795d026c06094e2478e6aea60ae5e12e598f38cbc4a92"
+  },
+  "fileCount": 35,
+  "functionalHash": "184ae5ac446cb36a8bece07808e78023abecce922a8d6a6bd93961837ab72e98",
+  "files": [
+    {
+      "path": "backend/package-lock.json",
+      "sha256": "cf98623fad8ac8fe062e96f1de20356e127bd8ce7290a09565f8adfc4899afff"
+    },
+    {
+      "path": "backend/package.json",
+      "sha256": "d855126c4c6c526ef15dc3cbba0d3b3a03fbe0e42d10f56f3868c009e62fa6b4"
+    },
+    {
+      "path": "backend/prisma/migrations/20260905010000_create_h6_signature_notices/migration.sql",
+      "sha256": "5f6f91381020c5f113d8aa5bcadbcf9b4d0f2041593468b8e85f6b161a9bc6da"
+    },
+    {
+      "path": "backend/prisma/schema.prisma",
+      "sha256": "23cb8aa51e1c14afd4d890a701717c8b7e9ed6166b8df1f7472f37621303b4b3"
+    },
+    {
+      "path": "backend/scripts/h6-db-fingerprint.ts",
+      "sha256": "938181b9aa8f39947b5153d941afadbaa65592f5f6c2215ac59b57b40dd388b4"
+    },
+    {
+      "path": "backend/src/config/tenantPrisma.ts",
+      "sha256": "a684fd91309cc694846876ce492e405cce8f97fa259efd67694bbd256971b408"
+    },
+    {
+      "path": "backend/src/controllers/compliance.controller.ts",
+      "sha256": "f4fcf0f0e47c63ea3c2926571cd7654eb2a645ec105be68f231671f7a0da523f"
+    },
+    {
+      "path": "backend/src/controllers/expedientes.controller.ts",
+      "sha256": "c98a76e1212cd9feb0e4fdc2f2615fe556d6382f50bd5adab5deee44b5edde4d"
+    },
+    {
+      "path": "backend/src/controllers/proyectos.controller.ts",
+      "sha256": "bbbde2c91b367d2dfe4666f79c8cbc86f387c4dc7cff58ca695db06a8b352059"
+    },
+    {
+      "path": "backend/src/domain/complianceH6.contract.test.ts",
+      "sha256": "f1200862eba7ec919eb80af5e1b810972153591168a8d93da66125729e0c1797"
+    },
+    {
+      "path": "backend/src/domain/complianceH6.test.ts",
+      "sha256": "2dc281572893a6c734e189d82edc5bf8ac79576d8c090f0b544dadd400833ed8"
+    },
+    {
+      "path": "backend/src/domain/complianceH6.ts",
+      "sha256": "af0eb3a46df37d9efaaa1a2b282a5d7cfd706fe3686fba048aa11a53ead00937"
+    },
+    {
+      "path": "backend/src/domain/complianceLegalEngine.ts",
+      "sha256": "e73da830458ee99542f07b2ffe2aede874bd67134eefde2e4c5a929ba3cc91d3"
+    },
+    {
+      "path": "backend/src/domain/expedienteWorkflow.ts",
+      "sha256": "4e333b2e098e95fb068f8dbce9dc1b0ec4b8710007206a7937353fed370b412e"
+    },
+    {
+      "path": "backend/src/events/complianceH6EventHandlers.ts",
+      "sha256": "1e87ca1c237df49114ede37dbb635337ffc2bd89c5d583c0b4a2f0e5129bb08b"
+    },
+    {
+      "path": "backend/src/index.ts",
+      "sha256": "ab94451b20f19d30a5abb71a884cdef131a050adf77daaa2e7bed694ff2a56b4"
+    },
+    {
+      "path": "backend/src/integration/complianceH6.postgresql.integration.test.ts",
+      "sha256": "561acc8214b76141fbe91d6350e27356c959e412e76c728bf47234298c97b180"
+    },
+    {
+      "path": "backend/src/routes/compliance.routes.ts",
+      "sha256": "46fa36f9cdd0976ed06c36a0bd0ca63a79edd61b6f7f1a616a97eccd6a1ff2b6"
+    },
+    {
+      "path": "backend/src/services/complianceDocument.service.ts",
+      "sha256": "a42311e490c0dae42bd7e7e7ebc1549d66f270856a6284f25ef616df22331bab"
+    },
+    {
+      "path": "backend/src/services/complianceH5.service.ts",
+      "sha256": "2369fe6543b757df9ca12631412aa4dbf2ca52cff23e8ca9bd462379e9de37da"
+    },
+    {
+      "path": "backend/src/services/complianceH6.remediation.test.ts",
+      "sha256": "940621825741a582ddb8dece82576df9b273d0945196d3aaac25bf3eeb4e396b"
+    },
+    {
+      "path": "backend/src/services/complianceH6.service.ts",
+      "sha256": "8dca094df35e7a25f95ea6f30be02030c731afc00640c11cd364a66ac2965a45"
+    },
+    {
+      "path": "backend/src/services/complianceLegalEngine.service.ts",
+      "sha256": "359ccf2cc5c9d81b1924be9f66e3096783e5d75589b1603375ee9f98969d178b"
+    },
+    {
+      "path": "backend/src/services/expedienteWorkflow.service.ts",
+      "sha256": "e4f998b1320d048a28abdc4bbde1740e49cc65de111bd18e6fc343975f5efdd5"
+    },
+    {
+      "path": "docs/requirements/h6-cum-fir-avi-traceability.md",
+      "sha256": "ae0c1321039de0e722d53748faea3dc64bb67cd3f23183e010a753eb8a0cc1db"
+    },
+    {
+      "path": "frontend/src/features/cases/Expedientes.module.css",
+      "sha256": "7b76e72d9d70f1baeef8076a17cc01062111a042c82861003e56b954e58e4162"
+    },
+    {
+      "path": "frontend/src/features/cases/components/tabs/ComplianceTab.tsx",
+      "sha256": "aa6d51d25a6563972973c18377d5046d3273fee9b94c18969f99be82356f8e7a"
+    },
+    {
+      "path": "frontend/src/features/cases/components/tabs/H6NoticeWorkspace.tsx",
+      "sha256": "647422b0f893bb00de7d6c17022da7bb10d6f577f159af52c25ecfaac2755af1"
+    },
+    {
+      "path": "frontend/src/features/cases/components/tabs/WorkflowTab.tsx",
+      "sha256": "0996d30f5913da86bea238881bb69ac4ef65d80f0f3b39a6efcad9cd696c5ff9"
+    },
+    {
+      "path": "frontend/src/features/cases/expedientes.service.ts",
+      "sha256": "e14654cfeb7db4a929614c0001e2c66e5ceb77b32a3d42dacb7211a1424120aa"
+    },
+    {
+      "path": "frontend/src/features/compliance/compliance.service.ts",
+      "sha256": "1a7a293964e41d17012ad42b11580c5b7e725cbe5750ff1f0ce9c4694b5d9a3e"
+    },
+    {
+      "path": "frontend/src/features/compliance/complianceLabels.ts",
+      "sha256": "529df88cdc6e4796ff4f556872f0a9838ef8284af4508a76e4c40ecb72e62c52"
+    },
+    {
+      "path": "frontend/src/tests/ComplianceH6.test.tsx",
+      "sha256": "6877103ebdcbd8789419f4b7641cd68ec3285aa1bd0992f4c58cbb019ffb65c4"
+    },
+    {
+      "path": "frontend/src/tests/ExpedienteDocuments.test.tsx",
+      "sha256": "37463c502d6a2f11b0fdfde6e640911beacd5d7e8c97bf76d19c667e7d7c43c9"
+    },
+    {
+      "path": "frontend/src/tests/Expedientes.test.tsx",
+      "sha256": "45ca4ea3784242521449474364301ab8fd5b667c15941b6dd2b46ffd5b261ce9"
+    }
+  ]
+}

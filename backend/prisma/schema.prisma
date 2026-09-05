@@ -54,6 +54,12 @@ model Organization {
   operationPaymentEvidence   ComplianceOperationPaymentEvidence[]
   operationPaymentVerifications ComplianceOperationPaymentVerification[]
   operationPaymentVerificationRules ComplianceOperationPaymentVerificationRule[]
+  complianceOfficialActivations ComplianceOfficialDefinitionActivation[]
+  complianceObligationTriggers ComplianceObligationTrigger[]
+  complianceNoticeFicheRevisions ComplianceNoticeFicheRevision[]
+  complianceOfficialProducts ComplianceOfficialProduct[]
+  complianceNoticePresentations ComplianceNoticePresentation[]
+  complianceNoticeAcknowledgements ComplianceNoticeAcknowledgement[]
 
   @@index([status])
   @@map("organizations")
@@ -105,6 +111,11 @@ model OrganizationMembership {
   operationPaymentRevisionsConfirmed ComplianceOperationPaymentRevision[] @relation("OperationPaymentRevisionConfirmerMembership")
   operationPaymentVerificationsCreated ComplianceOperationPaymentVerification[] @relation("OperationPaymentVerificationCreatorMembership")
   operationPaymentVerificationsConfirmed ComplianceOperationPaymentVerification[] @relation("OperationPaymentVerificationConfirmerMembership")
+  complianceOfficialActivationsCreated ComplianceOfficialDefinitionActivation[] @relation("H6OfficialActivationActor")
+  complianceFicheRevisionsCreated ComplianceNoticeFicheRevision[] @relation("H6FicheRevisionActor")
+  complianceOfficialProductsCreated ComplianceOfficialProduct[] @relation("H6OfficialProductActor")
+  complianceNoticePresentationsCreated ComplianceNoticePresentation[] @relation("H6NoticePresentationActor")
+  complianceNoticeAcknowledgementsCreated ComplianceNoticeAcknowledgement[] @relation("H6NoticeAcknowledgementActor")
 
   @@unique([organization_id, user_id])
   @@index([user_id, status])
@@ -150,6 +161,9 @@ model User {
   complianceReviewsReviewed              ComplianceReview[]               @relation("ComplianceReviewReviewer")
   complianceRulesApproved                ComplianceRuleSet[]              @relation("ComplianceRuleApprover")
   complianceRulesCreated                 ComplianceRuleSet[]              @relation("ComplianceRuleCreator")
+  complianceOfficialDefinitionsCreated  ComplianceOfficialDefinition[]   @relation("H6OfficialDefinitionCreator")
+  complianceOfficialRevisionsCreated    ComplianceOfficialDefinitionRevision[] @relation("H6OfficialRevisionCreator")
+  complianceOfficialRevisionsVerified   ComplianceOfficialDefinitionRevision[] @relation("H6OfficialRevisionVerifier")
   comprobantesAnulados                   ComprobanteFinanciero[]          @relation("ComprobanteAnulador")
   comprobantesRegistrados                ComprobanteFinanciero[]          @relation("ComprobanteRegistrador")
   comunicacionVinculosCreados            ComunicacionDocumento[]          @relation("ComunicacionDocCreador")
@@ -1369,6 +1383,7 @@ model ExpedienteActo {
   bcSnapshots             ComplianceBcStructureSnapshot[]
   societyTargets          ExpedienteSocietyTarget[]
   operationPaymentActs    ComplianceOperationPaymentAct[]
+  h6ObligationTriggers    ComplianceObligationTrigger[]
 
   @@unique([id, organization_id], map: "uq_expediente_actos_id_org_b4")
   @@unique([id, organization_id, expediente_id], map: "h5_expediente_actos_lineage_key")
@@ -1824,6 +1839,8 @@ model Documento {
   bcAiProposals                ComplianceBcAiProposal[]
   bcFormatMappings             ComplianceBcFormatMapping[]
   operationPaymentVerifications ComplianceOperationPaymentVerification[]
+  complianceOfficialProducts    ComplianceOfficialProduct[]
+  complianceNoticeAcknowledgements ComplianceNoticeAcknowledgement[]
 
   @@unique([id, organization_id], map: "h2_documentos_id_tenant_key")
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
@@ -1854,6 +1871,7 @@ model ExpedienteDocumento {
   source_key          String                            @db.VarChar(320)
   document_version    String?                           @db.VarChar(128)
   provenance          Json?
+  document_role       ExpedienteDocumentoRole?
   creado_por          User                              @relation("ExpedienteDocCreador", fields: [creado_por_id], references: [id])
   documento           Documento                         @relation(fields: [documento_id], references: [id])
   expediente          Expediente                        @relation(fields: [expediente_id], references: [id])
@@ -3696,8 +3714,10 @@ model ComplianceReview {
   bcSnapshots               ComplianceBcStructureSnapshot[]
   questionnaireAssessments  ComplianceQuestionnaireAssessment[]
   operationPaymentRevisions ComplianceOperationPaymentRevision[]
+  h6ObligationTriggers      ComplianceObligationTrigger[]
 
   @@unique([organization_id, expediente_id, idempotency_key], map: "compliance_reviews_tenant_case_idempotency_key")
+  @@unique([id, organization_id], map: "h6_compliance_review_tenant_key")
   @@unique([id, organization_id, expediente_id], map: "h2_compliance_reviews_lineage_key")
   @@index([estatus, created_at])
   @@index([expediente_id, tipo], map: "compliance_reviews_expediente_tipo_idx")
@@ -3760,6 +3780,7 @@ model ComplianceEvidence {
   review                     ComplianceReview                    @relation(fields: [review_id], references: [id], onUpdate: NoAction)
   requirement                ComplianceRequirement?              @relation(fields: [requirement_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
   operationPaymentLinks      ComplianceOperationPaymentEvidence[]
+  noticeAcknowledgements     ComplianceNoticeAcknowledgement[]
 
   @@unique([id, organization_id], map: "h5_compliance_evidence_id_tenant_key")
   @@index([documento_id])
@@ -4158,17 +4179,246 @@ model ComplianceObligation {
   obligation_key        String?
   idempotency_key       String?
   legal_deadline_source String?
+  expediente_id         String?                      @db.Uuid
+  legal_obligation_key  String?                      @db.VarChar(160)
+  channel_code          String?                      @db.VarChar(80)
+  obligation_type_code  String?                      @db.VarChar(80)
+  canonical_scope_kind  ComplianceObligationScopeKind?
+  canonical_scope_key   String?                      @db.VarChar(320)
+  stable_identity_hash  String?                      @db.VarChar(64)
+  avi_state             ComplianceAviState           @default(PENDIENTE)
+  freshness             ComplianceFreshness          @default(CURRENT)
+  review_needed         Boolean                      @default(false)
+  h6_migration_status   String?                      @db.VarChar(48)
   ruleResult            ComplianceRuleResult?        @relation(fields: [rule_result_id, organization_id, review_id, rule_revision_id], references: [id, organization_id, review_id, rule_revision_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_obligation_lineage_fkey")
   ruleRevision          ComplianceLegalRuleRevision? @relation(fields: [rule_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_obligation_revision_fkey")
+  triggers              ComplianceObligationTrigger[]
+  ficheRevisions        ComplianceNoticeFicheRevision[]
+  officialProducts      ComplianceOfficialProduct[]
+  presentations         ComplianceNoticePresentation[]
+  projectedRequirements ComplianceRequirement[]
 
-  @@unique([review_id, type])
+  @@unique([id, organization_id], map: "h6_compliance_obligation_tenant_key")
   @@unique([organization_id, rule_result_id, obligation_key], map: "compliance_obligations_canonical_key")
+  @@unique([organization_id, expediente_id, stable_identity_hash], map: "h6_compliance_obligation_stable_identity_key")
   @@index([review_id, status])
   @@index([due_at, status])
   @@index([external_confirmed_by], map: "idx_uif_obligations_external_confirmer_fk")
   @@index([external_receipt_id], map: "idx_uif_obligations_external_receipt_fk")
   @@index([responsible_id], map: "idx_uif_obligations_responsible_fk")
   @@map("compliance_obligations")
+}
+
+model ComplianceOfficialDefinition {
+  id                    String                                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stable_definition_key String                                 @db.VarChar(160)
+  institution_code      String                                 @db.VarChar(120)
+  channel_code          String                                 @db.VarChar(80)
+  product_family        String                                 @db.VarChar(120)
+  product_type          String                                 @db.VarChar(120)
+  created_by_id         String                                 @db.Uuid
+  created_at            DateTime                               @default(now())
+  createdBy             User                                   @relation("H6OfficialDefinitionCreator", fields: [created_by_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  revisions             ComplianceOfficialDefinitionRevision[]
+  activations           ComplianceOfficialDefinitionActivation[]
+
+  @@unique([stable_definition_key, channel_code, product_type], map: "h6_official_definition_identity_key")
+  @@map("compliance_official_definitions")
+}
+
+model ComplianceOfficialDefinitionRevision {
+  id                    String                                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  definition_id         String                                @db.Uuid
+  revision_number       Int
+  status                ComplianceOfficialRevisionStatus     @default(DRAFT)
+  effective_from        DateTime?
+  effective_to          DateTime?
+  effective_date_basis  ComplianceOfficialEffectiveDateBasis
+  schema_json           Json
+  mappings_json         Json
+  requiredness_json     Json
+  catalogs_json         Json
+  transformations_json  Json
+  validations_json      Json
+  layout_key            String                                @db.VarChar(120)
+  product_type          String                                @db.VarChar(120)
+  adapter_version       String                                @db.VarChar(80)
+  checksum              String                                @db.VarChar(64)
+  provenance            Json
+  created_by_id         String                                @db.Uuid
+  verified_by_id        String?                               @db.Uuid
+  created_at            DateTime                              @default(now())
+  verified_at           DateTime?
+  retired_at            DateTime?
+  definition            ComplianceOfficialDefinition         @relation(fields: [definition_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  createdBy             User                                  @relation("H6OfficialRevisionCreator", fields: [created_by_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  verifiedBy            User?                                 @relation("H6OfficialRevisionVerifier", fields: [verified_by_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  activations           ComplianceOfficialDefinitionActivation[]
+  ficheRevisions        ComplianceNoticeFicheRevision[]
+  products              ComplianceOfficialProduct[]
+
+  @@unique([definition_id, revision_number], map: "h6_official_definition_revision_number_key")
+  @@unique([id, definition_id], map: "h6_official_definition_revision_parent_key")
+  @@index([definition_id, status, effective_from, effective_to], map: "idx_h6_official_revision_selection")
+  @@map("compliance_official_definition_revisions")
+}
+
+model ComplianceOfficialDefinitionActivation {
+  id                    String                               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id       String                               @db.Uuid
+  definition_id         String                               @db.Uuid
+  revision_id           String                               @db.Uuid
+  active                Boolean                              @default(true)
+  activated_by_id       String                               @db.Uuid
+  activated_at          DateTime                             @default(now())
+  retired_at            DateTime?
+  organization          Organization                         @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h6_official_activation_org_fkey")
+  definition            ComplianceOfficialDefinition        @relation(fields: [definition_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h6_official_activation_definition_fkey")
+  revision              ComplianceOfficialDefinitionRevision @relation(fields: [revision_id, definition_id], references: [id, definition_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_official_activation_revision_fkey")
+  activatedBy           OrganizationMembership               @relation("H6OfficialActivationActor", fields: [organization_id, activated_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_official_activation_actor_fkey")
+
+  @@unique([organization_id, definition_id, revision_id], map: "h6_official_activation_revision_key")
+  @@unique([id, organization_id], map: "h6_official_activation_tenant_key")
+  @@index([organization_id, active, definition_id], map: "idx_h6_official_activation_selection")
+  @@map("compliance_official_definition_activations")
+}
+
+model ComplianceObligationTrigger {
+  id                    String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id       String                       @db.Uuid
+  obligation_id         String                       @db.Uuid
+  review_id             String                       @db.Uuid
+  rule_result_id        String                       @db.Uuid
+  rule_revision_id      String                       @db.Uuid
+  expediente_acto_id    String?                      @db.Uuid
+  trigger_identity_hash String                       @db.VarChar(64)
+  applicability         ComplianceApplicabilityState
+  source_snapshot       Json
+  created_at            DateTime                     @default(now())
+  organization          Organization                 @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h6_obligation_trigger_org_fkey")
+  obligation            ComplianceObligation         @relation(fields: [obligation_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_obligation_trigger_obligation_fkey")
+  review                ComplianceReview             @relation(fields: [review_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_obligation_trigger_review_fkey")
+  ruleResult            ComplianceRuleResult         @relation(fields: [rule_result_id, organization_id, review_id, rule_revision_id], references: [id, organization_id, review_id, rule_revision_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_obligation_trigger_result_fkey")
+  ruleRevision          ComplianceLegalRuleRevision  @relation(fields: [rule_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_obligation_trigger_revision_fkey")
+  expedienteActo        ExpedienteActo?               @relation(fields: [expediente_acto_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_obligation_trigger_act_fkey")
+
+  @@unique([organization_id, obligation_id, trigger_identity_hash], map: "h6_obligation_trigger_identity_key")
+  @@unique([id, organization_id], map: "h6_obligation_trigger_tenant_key")
+  @@index([organization_id, review_id, rule_result_id], map: "idx_h6_obligation_trigger_lineage")
+  @@map("compliance_obligation_triggers")
+}
+
+model ComplianceNoticeFicheRevision {
+  id                    String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id       String                        @db.Uuid
+  obligation_id         String                        @db.Uuid
+  official_revision_id  String                        @db.Uuid
+  revision_number       Int
+  status                ComplianceNoticeFicheStatus   @default(DRAFT)
+  version               Int                           @default(1)
+  base_revision_id      String?                       @db.Uuid
+  local_values          Json
+  source_manifest       Json
+  validation_snapshot   Json?
+  source_fingerprint    String                        @db.VarChar(64)
+  created_by_id         String                        @db.Uuid
+  created_at            DateTime                      @default(now())
+  validated_at          DateTime?
+  organization          Organization                  @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h6_notice_fiche_org_fkey")
+  obligation            ComplianceObligation          @relation(fields: [obligation_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_notice_fiche_obligation_fkey")
+  officialRevision      ComplianceOfficialDefinitionRevision @relation(fields: [official_revision_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h6_notice_fiche_official_revision_fkey")
+  createdBy             OrganizationMembership        @relation("H6FicheRevisionActor", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_notice_fiche_actor_fkey")
+  products              ComplianceOfficialProduct[]
+  presentations         ComplianceNoticePresentation[]
+
+  @@unique([organization_id, obligation_id, revision_number], map: "h6_notice_fiche_revision_number_key")
+  @@unique([id, organization_id], map: "h6_notice_fiche_tenant_key")
+  @@index([organization_id, obligation_id, status, created_at], map: "idx_h6_notice_fiche_current")
+  @@map("compliance_notice_fiche_revisions")
+}
+
+model ComplianceOfficialProduct {
+  id                    String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id       String                         @db.Uuid
+  obligation_id         String                         @db.Uuid
+  fiche_revision_id     String                         @db.Uuid
+  official_revision_id  String                         @db.Uuid
+  documento_id          String                         @db.Uuid
+  adapter_key           String                         @db.VarChar(120)
+  adapter_version       String                         @db.VarChar(80)
+  checksum              String                         @db.VarChar(64)
+  source_fingerprint    String                         @db.VarChar(64)
+  idempotency_key       String                         @db.VarChar(160)
+  created_by_id         String                         @db.Uuid
+  created_at            DateTime                       @default(now())
+  organization          Organization                   @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h6_official_product_org_fkey")
+  obligation            ComplianceObligation           @relation(fields: [obligation_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_official_product_obligation_fkey")
+  ficheRevision         ComplianceNoticeFicheRevision  @relation(fields: [fiche_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction)
+  officialRevision      ComplianceOfficialDefinitionRevision @relation(fields: [official_revision_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  documento             Documento                      @relation(fields: [documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction)
+  createdBy             OrganizationMembership         @relation("H6OfficialProductActor", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_official_product_actor_fkey")
+  presentations         ComplianceNoticePresentation[]
+
+  @@unique([organization_id, obligation_id, idempotency_key], map: "h6_official_product_idempotency_key")
+  @@unique([id, organization_id], map: "h6_official_product_tenant_key")
+  @@index([organization_id, obligation_id, created_at], map: "idx_h6_official_product_history")
+  @@map("compliance_official_products")
+}
+
+model ComplianceNoticePresentation {
+  id                    String                           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id       String                           @db.Uuid
+  obligation_id         String                           @db.Uuid
+  fiche_revision_id     String?                          @db.Uuid
+  product_id            String?                          @db.Uuid
+  previous_presentation_id String?                       @db.Uuid
+  kind                  ComplianceNoticePresentationKind
+  presented_at          DateTime
+  external_folio        String?                          @db.VarChar(200)
+  channel_snapshot      String                           @db.VarChar(80)
+  idempotency_key       String                           @db.VarChar(160)
+  metadata              Json?
+  created_by_id         String                           @db.Uuid
+  created_at            DateTime                         @default(now())
+  organization          Organization                     @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h6_notice_presentation_org_fkey")
+  obligation            ComplianceObligation             @relation(fields: [obligation_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_notice_presentation_obligation_fkey")
+  ficheRevision         ComplianceNoticeFicheRevision?   @relation(fields: [fiche_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction)
+  product               ComplianceOfficialProduct?       @relation(fields: [product_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction)
+  previousPresentation  ComplianceNoticePresentation?    @relation("H6NoticePresentationLineage", fields: [previous_presentation_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_notice_presentation_previous_fkey")
+  subsequentPresentations ComplianceNoticePresentation[] @relation("H6NoticePresentationLineage")
+  createdBy             OrganizationMembership           @relation("H6NoticePresentationActor", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_notice_presentation_actor_fkey")
+  acknowledgements      ComplianceNoticeAcknowledgement[]
+
+  @@unique([organization_id, obligation_id, idempotency_key], map: "h6_notice_presentation_idempotency_key")
+  @@unique([id, organization_id], map: "h6_notice_presentation_tenant_key")
+  @@index([organization_id, obligation_id, presented_at], map: "idx_h6_notice_presentation_history")
+  @@index([previous_presentation_id, organization_id], map: "idx_h6_notice_presentation_previous")
+  @@map("compliance_notice_presentations")
+}
+
+model ComplianceNoticeAcknowledgement {
+  id                    String                         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id       String                         @db.Uuid
+  presentation_id       String                         @db.Uuid
+  documento_id          String                         @db.Uuid
+  evidence_id           String?                        @db.Uuid
+  acknowledgement_type  String                         @db.VarChar(80)
+  received_at           DateTime
+  checksum              String                         @db.VarChar(64)
+  idempotency_key       String                         @db.VarChar(160)
+  created_by_id         String                         @db.Uuid
+  created_at            DateTime                       @default(now())
+  organization          Organization                   @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h6_notice_ack_org_fkey")
+  presentation          ComplianceNoticePresentation   @relation(fields: [presentation_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction)
+  documento             Documento                      @relation(fields: [documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction)
+  evidence              ComplianceEvidence?             @relation(fields: [evidence_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_notice_ack_evidence_fkey")
+  createdBy             OrganizationMembership         @relation("H6NoticeAcknowledgementActor", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_notice_ack_actor_fkey")
+
+  @@unique([organization_id, presentation_id, idempotency_key], map: "h6_notice_ack_idempotency_key")
+  @@unique([id, organization_id], map: "h6_notice_ack_tenant_key")
+  @@index([organization_id, presentation_id, received_at], map: "idx_h6_notice_ack_history")
+  @@index([evidence_id, organization_id], map: "idx_h6_notice_ack_evidence")
+  @@map("compliance_notice_acknowledgements")
 }
 
 enum ComplianceRuleFamily {
@@ -4271,6 +4521,7 @@ enum ComplianceProposalFieldState {
 enum CatalogoArtefactoPurpose {
   CUE_GENERAL
   CUE_PERSONAL
+  FIR_SIGNATURE_RELEVANT
 }
 
 enum CatalogoArtefactoContentKind {
@@ -4311,6 +4562,63 @@ enum ComplianceRequirementProvider {
   PAG
   FIR
   AVI
+}
+
+enum ComplianceRequirementPhase {
+  PRE_FIRMA
+  POST_FIRMA
+  CONTINUA
+}
+
+enum ComplianceRequirementTrigger {
+  CURRENT_FACTS
+  EXPEDIENTE_FIRMADO
+}
+
+enum ComplianceObligationScopeKind {
+  EXPEDIENTE
+  ACT_SET
+  SUBJECT
+  INSTRUMENT
+}
+
+enum ComplianceAviState {
+  NO_APLICA
+  PENDIENTE
+  INFORMACION_INCOMPLETA
+  VALIDADO
+  LISTO_PARA_PRESENTAR
+  PRESENTADO
+  ACUSE_CARGADO
+  CUMPLIDO
+}
+
+enum ComplianceFreshness {
+  CURRENT
+  STALE
+}
+
+enum ComplianceOfficialRevisionStatus {
+  DRAFT
+  VERIFIED
+  RETIRED
+}
+
+enum ComplianceOfficialEffectiveDateBasis {
+  LEGAL_DATE
+  GENERATION_DATE
+  PRESENTATION_DATE
+}
+
+enum ComplianceNoticeFicheStatus {
+  DRAFT
+  VALIDATED
+}
+
+enum ComplianceNoticePresentationKind {
+  NORMAL
+  COMPLEMENTARIA
+  CORRECCION
 }
 
 enum ComplianceRequirementStatus {
@@ -4431,6 +4739,7 @@ model ComplianceLegalRuleRevision {
   results                ComplianceRuleResult[]
   obligations            ComplianceObligation[]
   alerts                 ComplianceAlert[]
+  h6ObligationTriggers   ComplianceObligationTrigger[]
 
   @@unique([organization_id, rule_id, version], map: "compliance_rule_revisions_tenant_rule_version")
   @@unique([id, organization_id], map: "compliance_rule_revisions_id_tenant_key")
@@ -4492,6 +4801,7 @@ model ComplianceRuleResult {
   paymentRevision      ComplianceOperationPaymentRevision? @relation(fields: [payment_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_rule_result_payment_revision_fkey")
   subjectCompareciente Compareciente?                @relation("H5RuleResultSubject", fields: [subject_compareciente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h5_rule_result_subject_fkey")
   paymentVerificationRules ComplianceOperationPaymentVerificationRule[]
+  h6ObligationTriggers      ComplianceObligationTrigger[]
 
   @@unique([id, organization_id], map: "compliance_rule_results_id_tenant_key")
   @@unique([id, organization_id, review_id, rule_revision_id], map: "compliance_rule_results_lineage_key")
@@ -4543,6 +4853,9 @@ model ComplianceRequirement {
   missing_action            ComplianceMissingActionType?
   action_target             Json?
   is_documental             Boolean                       @default(false)
+  phase                     ComplianceRequirementPhase    @default(CONTINUA)
+  trigger                   ComplianceRequirementTrigger  @default(CURRENT_FACTS)
+  obligation_id             String?                       @db.Uuid
   created_at                DateTime                      @default(now())
   updated_at                DateTime                      @default(now()) @updatedAt
   organization              Organization                  @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "compliance_requirement_org_fkey")
@@ -4555,9 +4868,11 @@ model ComplianceRequirement {
   screeningSnapshots        ScreeningOperationSnapshot[]
   questionnaireAssessments  ComplianceQuestionnaireAssessment[]
   operationPaymentRevisions ComplianceOperationPaymentRevision[]
+  obligation                ComplianceObligation?         @relation(fields: [obligation_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_compliance_requirement_obligation_fkey")
 
   @@unique([organization_id, review_id, provider, requirement_key], map: "compliance_requirements_tenant_review_provider_key")
   @@unique([id, organization_id], map: "compliance_requirements_id_tenant_key")
+  @@unique([organization_id, obligation_id, provider], map: "h6_compliance_requirement_stable_projection_key")
   @@index([organization_id, expediente_id, status, deadline], map: "idx_compliance_requirements_case_status")
   @@map("compliance_requirements")
 }
@@ -5232,6 +5547,11 @@ enum ExpedienteDocumentoOrigen {
   ISR
   FINANZAS
   EXPEDIENTE
+}
+
+enum ExpedienteDocumentoRole {
+  PROJECT_DRAFT
+  DEFINITIVE_DEED
 }
 
 enum TipoPersona {

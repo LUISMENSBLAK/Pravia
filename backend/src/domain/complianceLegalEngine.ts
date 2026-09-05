@@ -22,8 +22,13 @@ export type LegalRuleOutcome = {
     requirement_label?: string;
     obligation?: {
       key: string;
+      legal_obligation_key?: string;
       type: string;
       channel: string;
+      scope_kind?: 'EXPEDIENTE' | 'ACT_SET' | 'SUBJECT' | 'INSTRUMENT';
+      scope_act_ids?: string[];
+      subject_compareciente_id?: string;
+      instrument_id?: string;
       deadline?: { kind: 'DAYS_AFTER_LEGAL_DATE'; days: number } | { kind: 'FIXED_DATE'; date: string };
     };
     document_requirements?: ComplianceDocumentRequirementDefinition[];
@@ -41,6 +46,8 @@ export type ComplianceDocumentRequirementDefinition = {
   requires_human_validation?: boolean;
   action: 'GO_TO_COMPARECIENTE' | 'GO_TO_QUESTIONNAIRE' | 'GO_TO_BENEFICIAL_OWNER' | 'UPLOAD_SIGNED' | 'UPLOAD_DOCUMENT' | 'GO_TO_PAYMENT_EVIDENCE' | 'GO_TO_NOTICE';
   action_target?: Record<string, unknown>;
+  phase?: 'PRE_FIRMA' | 'POST_FIRMA' | 'CONTINUA';
+  trigger?: 'CURRENT_FACTS' | 'EXPEDIENTE_FIRMADO';
 };
 
 export type LegalRuleRevisionInput = {
@@ -71,6 +78,7 @@ export type RuleEvaluation = {
   noticeChannel: string | null;
   requirementLabel: string;
   obligation: LegalRuleOutcome['when_true']['obligation'] | null;
+  configuredObligation: LegalRuleOutcome['when_true']['obligation'] | null;
   documentRequirements: ComplianceDocumentRequirementDefinition[];
   legalBasis: string;
 };
@@ -160,6 +168,7 @@ export function evaluateLegalRule(revision: LegalRuleRevisionInput, context: unk
     noticeChannel: applicable ? outcome.notice_channel || null : null,
     requirementLabel: outcome.requirement_label || `Revisar ${revision.stable_key}`,
     obligation: applicable ? outcome.obligation || null : null,
+    configuredObligation: outcome.obligation || null,
     documentRequirements: applicable && Boolean(outcome.vulnerable_activity) ? outcome.document_requirements || [] : [],
     legalBasis: revision.legal_basis,
   };

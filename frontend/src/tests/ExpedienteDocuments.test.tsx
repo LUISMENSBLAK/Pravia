@@ -10,6 +10,7 @@ const api = vi.hoisted(() => ({
   appendixSignedUrl: vi.fn(),
   uploadDocument: vi.fn(),
   transition: vi.fn(),
+  signaturePreflight: vi.fn(),
 }));
 
 vi.mock('../features/cases/expedientes.service', () => ({ expedientesService: api }));
@@ -57,6 +58,7 @@ describe('EXP-004 apéndice documental', () => {
     api.appendixSignedUrl.mockResolvedValue({ url: 'https://signed.example.test/file', expires_in: 600, file_name: 'Identificación vigente.pdf', mime_type: 'application/pdf' });
     api.uploadDocument.mockResolvedValue({});
     api.transition.mockResolvedValue({});
+    api.signaturePreflight.mockResolvedValue({ preflight: { ready: true, ready_label: 'Listo para firma', count: 0, hash: 'preflight-hash', missing: [] } });
     vi.spyOn(window, 'open').mockImplementation(() => null);
   });
 

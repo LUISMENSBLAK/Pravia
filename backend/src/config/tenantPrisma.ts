@@ -44,6 +44,9 @@ export const TENANT_SCOPED_MODELS = new Set([
   'ComplianceOperationPayment', 'ComplianceOperationPaymentRevision', 'ComplianceOperationPaymentAct',
   'ComplianceOperationPaymentParty', 'ComplianceOperationPaymentEvidence',
   'ComplianceOperationPaymentVerification', 'ComplianceOperationPaymentVerificationRule',
+  'ComplianceOfficialDefinitionActivation', 'ComplianceObligationTrigger',
+  'ComplianceNoticeFicheRevision', 'ComplianceOfficialProduct', 'ComplianceNoticePresentation',
+  'ComplianceNoticeAcknowledgement',
   'TimingPolicyRevision', 'TimingInterval',
 ]);
 

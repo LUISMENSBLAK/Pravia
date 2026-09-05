@@ -9,6 +9,7 @@ import type { ExpedienteDetail } from '../../expedientes.types';
 import { dateTime } from '../../expedienteFormatters';
 import { expedienteReturnParams } from '../../expedienteNavigation';
 import styles from '../../Expedientes.module.css';
+import { H6NoticeWorkspace } from './H6NoticeWorkspace';
 
 const evidenceStateLabel: Record<string, string> = {
   CANONICAL: 'Documento canónico', GENERATED: 'Generado · pendiente de firma', SIGNED_UPLOADED: 'Firmado cargado',
@@ -96,6 +97,7 @@ export function ComplianceTab({ expediente }: { expediente: ExpedienteDetail }) 
   };
 
   return <div className={styles.complianceWorkspace}>
+    <H6NoticeWorkspace expedienteId={expediente.id} canWrite={canWrite} />
     <section className={styles.sectionCard} aria-labelledby="beneficial-controller-title">
       <header><div><h2 id="beneficial-controller-title">Beneficiario controlador</h2><p>Estructura congelada por evaluación y conclusiones separadas por régimen jurídico.</p></div></header>
       {beneficialControllerStatus==='loading'&&<p className={styles.sectionEmpty} role="status"><LoaderCircle className={styles.spin}/>Consultando estructuras…</p>}

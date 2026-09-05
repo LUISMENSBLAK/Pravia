@@ -28,6 +28,7 @@ import { buildExpedienteReadiness } from '../services/expedienteReadiness.servic
 import { calculateFinanceAggregates, legacyFinanceAllocations, type EconomicNature } from '../domain/financeCore';
 import { ExpedienteDocumentAppendixError } from '../services/expedienteDocumentAppendix.service';
 import { ExpedienteArtifactsService } from '../services/expedienteArtifacts.service';
+import { ComplianceH6Service } from '../services/complianceH6.service';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
 const expedienteReadService = new ExpedienteReadService(prisma);
@@ -447,7 +448,7 @@ export const convertCotizacionToExpediente = async (req: Request, res: Response)
 export const transitionEstatus = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { expected_version, nuevo_estatus, nueva_etapa_clave, notas, datos_firma, fecha_efectiva, document_revision } = req.body;
+    const { expected_version, nuevo_estatus, nueva_etapa_clave, notas, datos_firma, fecha_efectiva, document_revision, mode, preflight_hash, idempotency_key } = req.body;
     const actor_user_id = req.user?.id;
 
     if (!actor_user_id) {
@@ -458,8 +459,13 @@ export const transitionEstatus = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Campos requeridos: expected_version y un nuevo estado o etapa' });
     }
 
-    const current = await prisma.expediente.findUnique({
-      where: { id },
+    if (nuevo_estatus === 'FIRMADO' && String(mode || 'CONFIRM').toUpperCase() === 'PREVIEW') {
+      const preflight = await ComplianceH6Service.firPreflight(req.user!, id);
+      return res.json({ success: true, mode: 'PREVIEW', preflight });
+    }
+
+    const current = await prisma.expediente.findFirst({
+      where: { id, organization_id: req.user!.organizationId, ...expedienteAccessWhere(req.user!) },
       select: {
         estatus: true,
         flujoVersion: { select: { etapas_json: true } },
@@ -519,6 +525,8 @@ export const transitionEstatus = async (req: Request, res: Response) => {
       datosFirma: signatureData,
       fechaEfectiva: effectiveDate,
       documentRevision: typeof document_revision === 'string' ? document_revision : undefined,
+      preflightHash: typeof preflight_hash === 'string' ? preflight_hash : undefined,
+      idempotencyKey: typeof idempotency_key === 'string' ? idempotency_key : undefined,
     });
 
     res.json(expedienteActualizado);
@@ -530,7 +538,7 @@ export const transitionEstatus = async (req: Request, res: Response) => {
         : error.message?.includes('no válido')
           ? 401
           : 400;
-    res.status(statusCode).json({ error: error.message, code: error.code || 'EXPEDIENTE_TRANSITION_FAILED' });
+    res.status(statusCode).json({ error: error.message, code: error.code || 'EXPEDIENTE_TRANSITION_FAILED', ...(error.detail ? { preflight: error.detail } : {}) });
   }
 };
 

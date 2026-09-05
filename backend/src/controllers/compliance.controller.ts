@@ -9,13 +9,15 @@ import {
   ScreeningError,
 } from "../services/complianceScreening.service";
 import { ComplianceH5Service } from "../services/complianceH5.service";
+import { ComplianceH6Service } from "../services/complianceH6.service";
+import { ComplianceH6Error } from "../domain/complianceH6";
 
 const actor = (req: Request) => req.user?.id;
 const correlation = (req: Request) => (req as any).correlationId;
 
 const sendError = (res: Response, error: any, fallback: string) => {
   const controlled =
-    error instanceof ComplianceError || error instanceof ScreeningError;
+    error instanceof ComplianceError || error instanceof ScreeningError || error instanceof ComplianceH6Error;
   const status = controlled ? error.status : error.code === "P2002" ? 409 : 500;
   const message =
     error.code === "P2002"
@@ -33,10 +35,96 @@ const sendError = (res: Response, error: any, fallback: string) => {
         : error.code === "P2002"
           ? "COMPLIANCE_CONFLICT"
           : fallback,
+      ...(error instanceof ComplianceH6Error && error.detail !== undefined ? { detail: error.detail } : {}),
     });
 };
 
 export class ComplianceController {
+  static async h6Workspace(req: Request, res: Response) {
+    try {
+      return res.json({ success: true, data: await ComplianceH6Service.readWorkspace(req.user!, req.params.expedienteId) });
+    } catch (error) { return sendError(res, error, "H6_WORKSPACE_FAILED"); }
+  }
+
+  static async h6EnsureFiche(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, data: await ComplianceH6Service.ensureFicheDraft(req.user!, req.params.obligationId) }); }
+    catch (error) { return sendError(res, error, "H6_FICHE_ENSURE_FAILED"); }
+  }
+
+  static async h6SaveFiche(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await ComplianceH6Service.saveFicheDraft(req.user!, req.params.obligationId, req.params.ficheId, req.body) }); }
+    catch (error) { return sendError(res, error, "H6_FICHE_SAVE_FAILED"); }
+  }
+
+  static async h6FinalizeFiche(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await ComplianceH6Service.finalizeFiche(req.user!, req.params.obligationId, req.params.ficheId, req.body) }); }
+    catch (error) { return sendError(res, error, "H6_FICHE_FINALIZE_FAILED"); }
+  }
+
+  static async h6GenerateProduct(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, data: await ComplianceH6Service.generateOfficialProduct(req.user!, req.params.obligationId, req.body) }); }
+    catch (error) { return sendError(res, error, "H6_PRODUCT_GENERATE_FAILED"); }
+  }
+
+  static async h6RegisterPresentation(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, data: await ComplianceH6Service.registerPresentation(req.user!, req.params.obligationId, req.body) }); }
+    catch (error) { return sendError(res, error, "H6_PRESENTATION_FAILED"); }
+  }
+
+  static async h6RegisterAcknowledgement(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, data: await ComplianceH6Service.registerAcknowledgement(req.user!, req.params.presentationId, req.body) }); }
+    catch (error) { return sendError(res, error, "H6_ACKNOWLEDGEMENT_FAILED"); }
+  }
+
+  static async h6RefreshObligation(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await ComplianceH6Service.refreshObligationState(req.user!, req.params.obligationId) }); }
+    catch (error) { return sendError(res, error, "H6_OBLIGATION_REFRESH_FAILED"); }
+  }
+
+  static async h6SignaturePackage(req: Request, res: Response) {
+    try {
+      const result = await ComplianceH6Service.signaturePackage(req.user!, req.params.expedienteId);
+      res.setHeader("Content-Type", result.mime_type);
+      res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(result.file_name)}`);
+      res.setHeader("Cache-Control", "private, no-store");
+      return res.send(result.buffer);
+    } catch (error) { return sendError(res, error, "H6_SIGNATURE_PACKAGE_FAILED"); }
+  }
+
+  static async h6GeneratePending(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await ComplianceH6Service.generatePendingSignatureFormats(req.user!, req.params.expedienteId) }); }
+    catch (error) { return sendError(res, error, "H6_GENERATE_PENDING_FAILED"); }
+  }
+
+  static async h6CreateOfficialDefinition(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, data: await ComplianceH6Service.createOfficialDefinition(req.user!, req.body) }); }
+    catch (error) { return sendError(res, error, "H6_OFFICIAL_DEFINITION_FAILED"); }
+  }
+
+  static async h6CreateOfficialRevision(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, data: await ComplianceH6Service.createOfficialRevision(req.user!, req.params.definitionId, req.body) }); }
+    catch (error) { return sendError(res, error, "H6_OFFICIAL_REVISION_FAILED"); }
+  }
+
+  static async h6VerifyOfficialRevision(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await ComplianceH6Service.verifyOfficialRevision(req.user!, req.params.definitionId, req.params.revisionId) }); }
+    catch (error) { return sendError(res, error, "H6_OFFICIAL_VERIFY_FAILED"); }
+  }
+
+  static async h6ActivateOfficialRevision(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await ComplianceH6Service.activateOfficialRevision(req.user!, req.params.definitionId, req.params.revisionId) }); }
+    catch (error) { return sendError(res, error, "H6_OFFICIAL_ACTIVATE_FAILED"); }
+  }
+
+  static async h6RetireOfficialRevision(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await ComplianceH6Service.retireOfficialRevision(req.user!, req.params.definitionId, req.params.revisionId) }); }
+    catch (error) { return sendError(res, error, "H6_OFFICIAL_RETIRE_FAILED"); }
+  }
+
+  static async h6PrepareAcknowledgementProposal(req: Request, res: Response) {
+    try { return res.status(201).json({ success: true, data: await ComplianceH6Service.prepareAcknowledgementProposal(req.user!, req.params.presentationId, req.body) }); }
+    catch (error) { return sendError(res, error, "H6_ACK_PROPOSAL_FAILED"); }
+  }
   static async h5Workspace(req: Request, res: Response) {
     try {
       return res.json({
@@ -833,21 +921,15 @@ export class ComplianceController {
   }
 
   static async confirmExternalNotice(req: Request, res: Response) {
-    try {
-      return res.json({
-        success: true,
-        obligation: await ComplianceReviewService.confirmExternalNotice(
-          req.user!,
-          actor(req),
-          req.params.id,
-          req.params.obligationId,
-          req.body,
-          correlation(req),
-        ),
-      });
-    } catch (error) {
-      return sendError(res, error, "COMPLIANCE_NOTICE_CONFIRM_FAILED");
-    }
+    return sendError(
+      res,
+      new ComplianceH6Error(
+        "H6_LEGACY_NOTICE_WRITER_RETIRED",
+        "Esta acción histórica es de solo lectura. Registra la presentación y sus acuses en Avisos / Declaraciones.",
+        410,
+      ),
+      "COMPLIANCE_NOTICE_CONFIRM_FAILED",
+    );
   }
 
   static async retireEvidence(req: Request, res: Response) {

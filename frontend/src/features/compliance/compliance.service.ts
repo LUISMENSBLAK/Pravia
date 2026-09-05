@@ -46,6 +46,25 @@ export type BeneficialControllerSummary = {
   legacy_promoted: boolean;
 };
 
+export type H6NoticeWorkspace = {
+  post_sign_materialization: "EN_PROCESO" | "CURRENT";
+  acknowledgement_documents: Array<{ id: string; nombre_original: string; tipo: string; fecha_carga: string }>;
+  obligations: Array<{
+    id: string; legal_obligation_key: string | null; channel_code: string | null; obligation_type_code: string | null;
+    avi_state: string; freshness: "CURRENT" | "STALE"; review_needed: boolean; due_at: string | null;
+    ficheRevisions: Array<{ id: string; status: "DRAFT" | "VALIDATED"; version: number; revision_number: number; local_values: Record<string, unknown>; source_manifest: Array<Record<string, unknown>>; officialRevision?: { schema_json: { fields: Array<{ key: string; label?: string; authority: "MASTER_SOURCE" | "NOTICE_LOCAL_FIELD"; required?: boolean; path?: string; type?: string; input_type?: string; max_length?: number }> } } }>;
+    officialProducts: Array<{ id: string; documento_id: string; checksum: string; created_at: string }>;
+    presentations: Array<{
+      id: string; kind: "NORMAL" | "COMPLEMENTARIA" | "CORRECCION"; presented_at: string; external_folio: string | null;
+      previous_presentation_id: string | null;
+      product: { id: string; checksum: string; adapter_version: string; created_at: string } | null;
+      ficheRevision: { revision_number: number } | null;
+      acknowledgements: Array<{ id: string; acknowledgement_type: string; received_at: string }>;
+    }>;
+    projectedRequirements: Array<{ id: string; label: string; status: string }>;
+  }>;
+};
+
 const query = (values: Record<string, string | number | undefined>) => {
   const params = new URLSearchParams();
   Object.entries(values).forEach(([key, value]) => {
@@ -56,6 +75,22 @@ const query = (values: Record<string, string | number | undefined>) => {
 };
 
 export const complianceService = {
+  h6Workspace: async (expedienteId: string, signal?: AbortSignal) =>
+    apiRequest<{ success: boolean; data: H6NoticeWorkspace }>(`/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/avisos`, { signal }).then((response) => response.data),
+  h6EnsureFiche: async (obligationId: string) => apiRequest<{ success: boolean; data: any }>(`/cumplimiento/avisos/${encodeURIComponent(obligationId)}/fichas`, { method: "POST", body: "{}" }).then((response) => response.data),
+  h6SaveFiche: async (obligationId: string, ficheId: string, body: any) => apiRequest<{ success: boolean; data: any }>(`/cumplimiento/avisos/${encodeURIComponent(obligationId)}/fichas/${encodeURIComponent(ficheId)}`, { method: "PUT", body: JSON.stringify(body) }).then((response) => response.data),
+  h6FinalizeFiche: async (obligationId: string, ficheId: string, body: any) => apiRequest<{ success: boolean; data: any }>(`/cumplimiento/avisos/${encodeURIComponent(obligationId)}/fichas/${encodeURIComponent(ficheId)}/validar`, { method: "POST", body: JSON.stringify(body) }).then((response) => response.data),
+  h6GenerateProduct: async (obligationId: string, body: any) => apiRequest<{ success: boolean; data: any }>(`/cumplimiento/avisos/${encodeURIComponent(obligationId)}/productos`, { method: "POST", body: JSON.stringify(body) }).then((response) => response.data),
+  h6RegisterPresentation: async (obligationId: string, body: any) => apiRequest<{ success: boolean; data: any }>(`/cumplimiento/avisos/${encodeURIComponent(obligationId)}/presentaciones`, { method: "POST", body: JSON.stringify(body) }).then((response) => response.data),
+  h6RegisterAcknowledgement: async (presentationId: string, body: any) => apiRequest<{ success: boolean; data: any }>(`/cumplimiento/avisos/presentaciones/${encodeURIComponent(presentationId)}/acuses`, { method: "POST", body: JSON.stringify(body) }).then((response) => response.data),
+  h6PrepareAcknowledgementProposal: async (presentationId: string, body: any) => apiRequest<{ success: boolean; data: any }>(`/cumplimiento/avisos/presentaciones/${encodeURIComponent(presentationId)}/acuses/propuestas`, { method: "POST", body: JSON.stringify(body) }).then((response) => response.data),
+  h6GeneratePending: async (expedienteId: string) => apiRequest<{ success: boolean; data: any }>(`/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/generar-formatos-pendientes`, { method: "POST", body: "{}" }).then((response) => response.data),
+  h6SignaturePackage: async (expedienteId: string) => {
+    const token = tokenStore.get();
+    const response = await fetch(apiUrl(`/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/paquete-firma`), { credentials: "include", headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
+    if (!response.ok) throw new Error("No fue posible preparar el paquete de firma.");
+    return { blob: await response.blob(), disposition: response.headers.get("content-disposition") || "" };
+  },
   h5Workspace: async (reviewId: string, signal?: AbortSignal) =>
     apiRequest<{ success: boolean; data: any }>(
       `/cumplimiento/revisiones/${encodeURIComponent(reviewId)}/h5`,

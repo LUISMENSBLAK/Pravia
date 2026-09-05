@@ -34,6 +34,7 @@ import { resolveRuntimeConfig, validateRuntimeConfig } from './config/runtime';
 import { validateJwtSecret } from './auth/authTokens';
 import './events/screeningEventHandlers';
 import './events/beneficialControllerEventHandlers';
+import './events/complianceH6EventHandlers';
 import { DomainEventOutboxService } from './services/domainEventOutbox.service';
 
 const startupErrors = validateRuntimeConfig(resolveRuntimeConfig());

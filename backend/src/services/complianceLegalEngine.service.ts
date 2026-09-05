@@ -18,6 +18,7 @@ import { ensureOperationScreeningForPartyTx } from './operationScreening.service
 import { BeneficialControllerService } from './beneficialController.service';
 import { bcConfirmedContext } from '../domain/beneficialController';
 import { ComplianceH5Service } from './complianceH5.service';
+import { ComplianceH6Service } from './complianceH6.service';
 
 type User = NonNullable<Request['user']>;
 const ENGINE_VERSION = 'H1-CUM-MAT-1';
@@ -93,6 +94,8 @@ function validateOutcome(value: unknown): asserts value is LegalRuleOutcome {
       if (requirement.requires_signed_document && requirement.action !== 'UPLOAD_SIGNED') {
         throw new ComplianceError('Un requisito firmado debe dirigir a Cargar firmado.', 'LEGAL_RULE_DOCUMENT_REQUIREMENT_SIGNED_ACTION_INVALID');
       }
+      if (requirement.phase !== undefined && !['PRE_FIRMA', 'POST_FIRMA', 'CONTINUA'].includes(requirement.phase)) throw new ComplianceError('La fase del requisito no es válida.', 'LEGAL_RULE_DOCUMENT_REQUIREMENT_PHASE_INVALID');
+      if (requirement.trigger !== undefined && !['CURRENT_FACTS', 'EXPEDIENTE_FIRMADO'].includes(requirement.trigger)) throw new ComplianceError('El disparador del requisito no es válido.', 'LEGAL_RULE_DOCUMENT_REQUIREMENT_TRIGGER_INVALID');
     }
   }
 }
@@ -226,16 +229,17 @@ export class ComplianceLegalEngineService {
         return this.readCanonicalEvaluation(tx, existing.id);
       }
 
-      let previousReviewId: string | null = null;
-      if (bcPlan.targets.length) {
-        await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', `h4:review:${user.organizationId}:${expediente.id}`);
-        const current = await tx.expedienteComplianceState.findFirst({ where: { organization_id: user.organizationId, expediente_id: expediente.id } });
-        previousReviewId = current?.current_review_id || null;
-        const duplicate = await tx.complianceReview.findFirst({ where: { organization_id: user.organizationId, expediente_id: expediente.id,
-          is_canonical_legal_engine: true, input_snapshot: { path: ['request_hash'], equals: requestHash } }, orderBy: { created_at: 'asc' } });
-        if (duplicate) {
-          if (duplicate.id !== previousReviewId) {
-            if (!current) throw new ComplianceError('La evaluación idéntica no tiene un estado canónico reutilizable.', 'BC_HISTORICAL_IDENTITY_CONFLICT', 409);
+      const reviewLockKey = bcPlan.targets.length
+        ? `h4:review:${user.organizationId}:${expediente.id}`
+        : `h1:review:${user.organizationId}:${expediente.id}`;
+      await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', reviewLockKey);
+      const current = await tx.expedienteComplianceState.findFirst({ where: { organization_id: user.organizationId, expediente_id: expediente.id } });
+      const previousReviewId: string | null = current?.current_review_id || null;
+      const duplicate = await tx.complianceReview.findFirst({ where: { organization_id: user.organizationId, expediente_id: expediente.id,
+        is_canonical_legal_engine: true, input_snapshot: { path: ['request_hash'], equals: requestHash } }, orderBy: { created_at: 'asc' } });
+      if (duplicate) {
+        if (duplicate.id !== previousReviewId) {
+          if (!current) throw new ComplianceError('La evaluación idéntica no tiene un estado canónico reutilizable.', 'H1_HISTORICAL_IDENTITY_CONFLICT', 409);
             const requirements = await tx.complianceRequirement.findMany({ where: {
               organization_id: user.organizationId, state_id: current.id, review_id: duplicate.id,
             }, select: { status: true, deadline: true } });
@@ -247,12 +251,13 @@ export class ComplianceLegalEngineService {
               pending_count: statuses.filter(status => !['CUMPLIDO', 'NO_APLICA'].includes(status)).length,
               next_deadline: nextDeadline, version: { increment: 1 }, updated_by_id: user.id,
             } });
-            await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id,
-              accion: 'BC_IDENTICAL_REVIEW_REUSED', entidad: 'ComplianceReview', entidad_id: duplicate.id,
-              detalles: json({ replaced_current_review_id: previousReviewId, request_hash: requestHash }) } });
-          }
-          return this.readCanonicalEvaluation(tx, duplicate.id);
+             const reuseAudit = { organization_id: user.organizationId, user_id: user.id,
+               entidad: 'ComplianceReview', entidad_id: duplicate.id,
+               detalles: json({ replaced_current_review_id: previousReviewId, request_hash: requestHash }) };
+             if (bcPlan.targets.length) await tx.auditLog.create({ data: { ...reuseAudit, accion: 'BC_IDENTICAL_REVIEW_REUSED' } });
+             else await tx.auditLog.create({ data: { ...reuseAudit, accion: 'H1_IDENTICAL_REVIEW_REUSED' } });
         }
+        return this.readCanonicalEvaluation(tx, duplicate.id);
       }
       const alertLead = await tx.complianceAlertLeadRevision.findFirst({ where: { superseded_at: null }, orderBy: { revision: 'desc' }, select: { id: true, lead_days: true } });
       const identities = revisions.length ? await tx.complianceLegalRule.findMany({ where: { id: { in: revisions.map((item) => item.rule_id) } } }) : [];
@@ -314,7 +319,12 @@ export class ComplianceLegalEngineService {
           const level = deadlineInfo.deadline.getTime() < now.getTime() ? 'CRITICA' : alertWindow.opens_at && alertWindow.opens_at.getTime() <= now.getTime() ? 'ADVERTENCIA' : 'INFORMATIVA';
           await tx.complianceAlert.create({ data: { organization_id: user.organizationId, expediente_id: expediente.id, state_id: state.id, review_id: review.id, requirement_id: requirement.id, rule_revision_id: item.revision.id, alert_key: `DEADLINE:${key}`, level, message: level === 'CRITICA' ? 'Una obligación jurídica aplicable se encuentra vencida y requiere atención.' : 'Existe una obligación jurídica aplicable con plazo determinado por la regla vigente.', deadline: deadlineInfo.deadline, responsible_id: expediente.abogado_id || null, ...alertWindow } });
         }
-        if (item.result.obligation) await tx.complianceObligation.create({ data: { review_id: review.id, type: `${item.result.obligation.type}:${item.result.stableKey}:${item.act.id}`, legal_basis: item.result.legalBasis, rule_version: String(item.result.version), rule_status: 'ACTIVE', origin_date: legalDate.date!, due_at: deadlineInfo.deadline, channel: item.result.obligation.channel, status: 'POR_DETERMINAR', checklist: json({}), snapshot: json(item.result), rule_result_id: result.id, rule_revision_id: item.revision.id, obligation_key: item.result.obligation.key, idempotency_key: `${review.id}:${item.revision.id}:${item.act.id}:${item.result.obligation.key}`, legal_deadline_source: deadlineInfo.source } });
+        if (item.result.configuredObligation) await ComplianceH6Service.materializeObligationTx(tx, user, {
+          expedienteId: expediente.id, reviewId: review.id, stateId: state.id, ruleResultId: result.id,
+          ruleRevisionId: item.revision.id, expedienteActoId: item.act.id,
+          result: { ...item.result, obligation: item.result.configuredObligation }, legalDate: legalDate.date!,
+          deadline: item.result.obligation ? deadlineInfo.deadline : null, deadlineSource: item.result.obligation ? deadlineInfo.source : null,
+        });
         if (item.result.vulnerableActivity === true) {
           const relevantParties = expediente.comparecientes.filter((party) => !party.expediente_acto_id || party.expediente_acto_id === item.act.id);
           for (const party of relevantParties) {

@@ -13,6 +13,91 @@ const signedUpload = multer({
   limits: { fileSize: 25 * 1024 * 1024, files: 1 },
 });
 router.get(
+  "/expedientes/:expedienteId/avisos",
+  requirePermission("compliance.read"),
+  ComplianceController.h6Workspace,
+);
+router.get(
+  "/expedientes/:expedienteId/paquete-firma",
+  requirePermission("expedientes.read"),
+  requirePermission("documentos.read"),
+  ComplianceController.h6SignaturePackage,
+);
+router.post(
+  "/expedientes/:expedienteId/generar-formatos-pendientes",
+  requirePermission("compliance.write"),
+  requirePermission("documentos.write"),
+  requirePermission("ia.execute"),
+  ComplianceController.h6GeneratePending,
+);
+router.post(
+  "/avisos/:obligationId/fichas",
+  requirePermission("compliance.write"),
+  ComplianceController.h6EnsureFiche,
+);
+router.put(
+  "/avisos/:obligationId/fichas/:ficheId",
+  requirePermission("compliance.write"),
+  ComplianceController.h6SaveFiche,
+);
+router.post(
+  "/avisos/:obligationId/fichas/:ficheId/validar",
+  requirePermission("compliance.review"),
+  ComplianceController.h6FinalizeFiche,
+);
+router.post(
+  "/avisos/:obligationId/productos",
+  requirePermission("compliance.write"),
+  requirePermission("documentos.write"),
+  ComplianceController.h6GenerateProduct,
+);
+router.post(
+  "/avisos/:obligationId/presentaciones",
+  requirePermission("compliance.notice.confirm"),
+  ComplianceController.h6RegisterPresentation,
+);
+router.post(
+  "/avisos/presentaciones/:presentationId/acuses",
+  requirePermission("compliance.notice.confirm"),
+  ComplianceController.h6RegisterAcknowledgement,
+);
+router.post(
+  "/avisos/presentaciones/:presentationId/acuses/propuestas",
+  requirePermission("ia.execute"),
+  requirePermission("compliance.write"),
+  ComplianceController.h6PrepareAcknowledgementProposal,
+);
+router.post(
+  "/avisos/:obligationId/reconciliar",
+  requirePermission("compliance.write"),
+  ComplianceController.h6RefreshObligation,
+);
+router.post(
+  "/definiciones-oficiales",
+  requirePermission("compliance.rules.manage"),
+  ComplianceController.h6CreateOfficialDefinition,
+);
+router.post(
+  "/definiciones-oficiales/:definitionId/revisiones",
+  requirePermission("compliance.rules.manage"),
+  ComplianceController.h6CreateOfficialRevision,
+);
+router.post(
+  "/definiciones-oficiales/:definitionId/revisiones/:revisionId/verificar",
+  requirePermission("compliance.rules.manage"),
+  ComplianceController.h6VerifyOfficialRevision,
+);
+router.post(
+  "/definiciones-oficiales/:definitionId/revisiones/:revisionId/activar",
+  requirePermission("compliance.rules.manage"),
+  ComplianceController.h6ActivateOfficialRevision,
+);
+router.post(
+  "/definiciones-oficiales/:definitionId/revisiones/:revisionId/retirar",
+  requirePermission("compliance.rules.manage"),
+  ComplianceController.h6RetireOfficialRevision,
+);
+router.get(
   "/screening/comparecientes/:comparecienteId",
   requirePermission("comparecientes.read"),
   requirePermission("compliance.sensitive.read"),

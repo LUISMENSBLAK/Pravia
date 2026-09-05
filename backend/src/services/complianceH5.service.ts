@@ -466,6 +466,16 @@ async function evaluateH5PaymentRulesTx(
 }
 
 export class ComplianceH5Service {
+  /** Narrow canonical seam for downstream consumers; it never reads legacy CompliancePayment. */
+  static async currentPaymentSourcesTx(db: Db, organizationId: string, expedienteId: string) {
+    const rows = await db.complianceOperationPayment.findMany({
+      where: { organization_id: organizationId, expediente_id: expedienteId, current_revision_id: { not: null } },
+      include: { currentRevision: { include: { acts: true, parties: true, evidence: true, verifications: { orderBy: { created_at: "desc" }, take: 1 } } } },
+      orderBy: { created_at: "asc" },
+    });
+    return rows.map((row) => row.currentRevision).filter((revision): revision is NonNullable<typeof revision> => Boolean(revision));
+  }
+
   static async materializeSourceRequirementsTx(tx: Prisma.TransactionClient, user: User, input: {
     reviewId: string; expedienteId: string; stateId: string;
     results: Array<{ id: string; actId: string; revisionId: string; checksum: string; vulnerable: boolean; documents: Array<{ category: string; action: string; target_scope: string }> }>;

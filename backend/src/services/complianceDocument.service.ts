@@ -113,6 +113,7 @@ export class ComplianceDocumentService {
             document_category: definition.category, expected_document_type: definition.expected_document_type || null,
             target_compareciente_id: targetComparecienteId, requires_signed_document: Boolean(definition.requires_signed_document),
             requires_human_validation: definition.requires_human_validation !== false || Boolean(definition.requires_signed_document),
+            phase: definition.phase || 'CONTINUA', trigger: definition.trigger || 'CURRENT_FACTS',
             missing_action: definition.action, action_target: json(definition.action_target || {}), is_documental: true,
           },
           update: {},

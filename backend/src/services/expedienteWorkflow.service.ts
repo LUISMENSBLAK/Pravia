@@ -10,6 +10,8 @@ import {
 import { requireActorContext, TenantContextError } from '../auth/actorContext';
 import { ExpedienteDocumentAppendixService } from './expedienteDocumentAppendix.service';
 import { ExpedienteSeguimientoService } from './expedienteSeguimiento.service';
+import { ComplianceH6Service } from './complianceH6.service';
+import { createHash } from 'node:crypto';
 
 export interface TransicionPayload {
   expedienteId: string;
@@ -27,7 +29,15 @@ export interface TransicionPayload {
   };
   entrega?: DeliveryInput;
   documentRevision?: string;
+  preflightHash?: string;
+  idempotencyKey?: string;
 }
+
+const deterministicUuid = (value: string) => {
+  const hex = createHash('sha256').update(value).digest('hex').slice(0, 32).split('');
+  hex[12] = '4'; hex[16] = '8';
+  return `${hex.slice(0, 8).join('')}-${hex.slice(8, 12).join('')}-${hex.slice(12, 16).join('')}-${hex.slice(16, 20).join('')}-${hex.slice(20).join('')}`;
+};
 
 export interface ReabrirPayload {
   expedienteId: string;
@@ -54,6 +64,13 @@ export class ExpedienteWorkflowService {
     if (payload.actorUserId !== actorContext.userId) {
       throw new TenantContextError('La operación intentó actuar con una identidad distinta de la sesión activa.');
     }
+    if (payload.nuevoEstatus === 'FIRMADO' && payload.idempotencyKey) {
+      const prior = await this.prisma.expedienteActividad.findFirst({ where: { organization_id: actorContext.organizationId, expediente_id: payload.expedienteId, idempotency_key: `H6:FIR:${payload.idempotencyKey}` } });
+      if (prior) {
+        const expediente = await this.prisma.expediente.findFirst({ where: { id: payload.expedienteId, organization_id: actorContext.organizationId, estatus: 'FIRMADO' } });
+        if (expediente) return { expediente, correlationId, idempotent: true };
+      }
+    }
 
     // 1. Obtener y verificar usuario autenticado en BD
     const actorUser = await this.prisma.user.findUnique({
@@ -66,8 +83,8 @@ export class ExpedienteWorkflowService {
     return await this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp004-sign:${payload.expedienteId}`}))`);
       // 2. Cargar Expediente
-      const exp = await tx.expediente.findUnique({
-        where: { id: payload.expedienteId },
+      const exp = await tx.expediente.findFirst({
+        where: { id: payload.expedienteId, organization_id: actorContext.organizationId },
         include: {
           requisitos_docs: true,
           comparecientes: { include: { compareciente: true } },
@@ -169,6 +186,9 @@ export class ExpedienteWorkflowService {
       }
 
       if (payload.nuevoEstatus === 'FIRMADO') {
+        const preflight = await ComplianceH6Service.firPreflightTx(tx, actorContext.organizationId, exp.id, payload.versionActual);
+        if (!preflight.ready) throw new ExpedienteWorkflowError('Hay elementos de prefirma pendientes.', 'H6_FIR_NOT_READY', 409, preflight);
+        if (!payload.preflightHash || payload.preflightHash !== preflight.hash) throw new ExpedienteWorkflowError('La preparación de firma cambió. Revisa el nuevo preflight.', 'H6_FIR_PREFLIGHT_CHANGED', 409, preflight);
         const appendix = new ExpedienteDocumentAppendixService(this.prisma);
         await appendix.freeze(tx, {
           id: actorContext.userId,
@@ -253,6 +273,7 @@ export class ExpedienteWorkflowService {
       const updateResult = await tx.expediente.updateMany({
         where: {
           id: exp.id,
+          organization_id: actorContext.organizationId,
           version: payload.versionActual
         },
         data: {
@@ -321,7 +342,8 @@ export class ExpedienteWorkflowService {
           usuario_id: actorUser.id,
           tipo: 'CAMBIO_ESTATUS',
           titulo: `Transición a ${expActualizado.estatus}`,
-          descripcion: payload.observaciones || `Transición ejecutada por ${actorUser.nombre} ${actorUser.apellido}`
+          descripcion: payload.observaciones || `Transición ejecutada por ${actorUser.nombre} ${actorUser.apellido}`,
+          idempotency_key: payload.nuevoEstatus === 'FIRMADO' && payload.idempotencyKey ? `H6:FIR:${payload.idempotencyKey}` : null,
         }
       });
 
@@ -376,12 +398,12 @@ export class ExpedienteWorkflowService {
           });
         } else if (payload.nuevoEstatus === 'FIRMADO') {
           await this.registrarEventoOutbox(tx, {
-            eventId: crypto.randomUUID(),
+            eventId: payload.idempotencyKey ? deterministicUuid(`H6:FIR:${actorContext.organizationId}:${exp.id}:${payload.idempotencyKey}`) : crypto.randomUUID(),
             eventType: 'ExpedienteFirmado',
             aggregateId: exp.id,
             actorUserId: actorUser.id,
             correlationId,
-            payload: { fechaRealFirma: expActualizado.fecha_real_firma }
+            payload: { expediente_id: exp.id, fechaRealFirma: expActualizado.fecha_real_firma, signature_idempotency_key: payload.idempotencyKey || null }
           });
         }
       }

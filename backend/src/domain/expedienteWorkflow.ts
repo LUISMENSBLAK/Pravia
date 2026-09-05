@@ -1,7 +1,7 @@
 import { ExpedienteEstatus } from '@prisma/client';
 
 export class ExpedienteWorkflowError extends Error {
-  constructor(message: string, readonly code: string, readonly status = 400) {
+  constructor(message: string, readonly code: string, readonly status = 400, readonly detail?: unknown) {
     super(message);
   }
 }
@@ -53,4 +53,3 @@ export function assertExpedienteTransition(current: ExpedienteEstatus, next?: Ex
     );
   }
 }
-

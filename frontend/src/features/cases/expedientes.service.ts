@@ -56,8 +56,11 @@ export const expedientesService = {
       method: 'POST', body: JSON.stringify({ cotizacion_id: cotizacionId, ...(workflow ? { expectedVersion: workflow.version, effectiveAt: workflow.effectiveAt, idempotencyKey: workflow.idempotencyKey, confirm: true } : {}) }),
     });
   },
-  transition(id: string, input: { expected_version: number; nuevo_estatus: string; nueva_etapa_clave?: string; notas?: string; fecha_efectiva?: string; datos_firma?: { fecha_firma: string; lugar: string }; document_revision?: string }) {
+  transition(id: string, input: { expected_version: number; nuevo_estatus: string; nueva_etapa_clave?: string; notas?: string; fecha_efectiva?: string; datos_firma?: { fecha_firma: string; lugar: string }; document_revision?: string; mode?: 'PREVIEW' | 'CONFIRM'; preflight_hash?: string; idempotency_key?: string }) {
     return apiRequest<ExpedienteDetail>(`/expedientes/${encodeURIComponent(id)}/transicion-estatus`, { method: 'POST', body: JSON.stringify(input) });
+  },
+  signaturePreflight(id: string, expectedVersion: number) {
+    return apiRequest<{ success: boolean; mode: 'PREVIEW'; preflight: { ready: boolean; ready_label: string; count: number; hash: string; missing: Array<{ id: string; label: string; source: string; action: string; status: string }> } }>(`/expedientes/${encodeURIComponent(id)}/transicion-estatus`, { method: 'POST', body: JSON.stringify({ expected_version: expectedVersion, nuevo_estatus: 'FIRMADO', mode: 'PREVIEW' }) });
   },
   project(id: string, signal?: AbortSignal) { return apiRequest<ProjectState>(`/expedientes/${encodeURIComponent(id)}/proyecto`, { signal }); },
   documentAppendix(id: string, signal?: AbortSignal) { return apiRequest<ExpedienteDocumentAppendix>(`/expedientes/${encodeURIComponent(id)}/documentos/apendice`, { signal }); },

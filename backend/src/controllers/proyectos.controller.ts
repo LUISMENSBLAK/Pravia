@@ -15,6 +15,7 @@ import { getOpenAIEscalationModelName } from '../services/openaiDocument.service
 import { recordAIFailure, recordAIUsages } from '../services/aiUsage.service';
 import prisma from '../config/prisma';
 import { projectRepository } from '../services/projectRepository.service';
+import { ComplianceH6Service } from '../services/complianceH6.service';
 
 function assertPersistentProjectStorage() {
   if (getStorageInfo().primary !== 'cloud') {
@@ -248,6 +249,7 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
       });
       await tx.expedienteDocumento.create({
         data: {
+          organization_id: req.user!.organizationId,
           expediente_id: id,
           documento_id: document.id,
           tipo_vinculo: 'PROYECTO_ESCRITURA',
@@ -258,8 +260,10 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
           source_context: 'PROYECTO_ESCRITURA', source_key: `EXPEDIENTE:EXPEDIENTE:${id}:${document.id}:PROYECTO_ESCRITURA`,
           document_version: `PROYECTO_ESCRITURA:V${newVersionNum}`,
           provenance: { origin: 'EXPEDIENTE', project_version: newVersionNum },
+          document_role: 'PROJECT_DRAFT',
         }
       });
+      await ComplianceH6Service.markSourceChangedTx(tx, { organizationId: req.user!.organizationId, expedienteId: id, sourceType: 'PROJECT' });
       await tx.expedienteActividad.create({
         data: {
           organization_id: req.user!.organizationId,
@@ -321,8 +325,20 @@ export const updateProyectoVersion = async (req: Request, res: Response) => {
           });
           await tx.expedienteDocumento.updateMany({
             where: { expediente_id: id, documento_id: versionId, tipo_vinculo: 'PROYECTO_ESCRITURA' },
-            data: { estatus: 'ACTIVO', inactivado_at: null, inactivado_por_id: null, motivo_inactivacion: null },
+            data: { estatus: 'ACTIVO', inactivado_at: null, inactivado_por_id: null, motivo_inactivacion: null, document_role: currentMeta.es_version_final ? 'DEFINITIVE_DEED' : 'PROJECT_DRAFT' },
           });
+        }
+
+        if (accion === 'MARCAR_FINAL') {
+          await tx.expedienteDocumento.updateMany({
+            where: { organization_id: req.user!.organizationId, expediente_id: id, tipo_vinculo: 'PROYECTO_ESCRITURA', estatus: 'ACTIVO' },
+            data: { document_role: 'PROJECT_DRAFT' },
+          });
+          const selected = await tx.expedienteDocumento.updateMany({
+            where: { organization_id: req.user!.organizationId, expediente_id: id, documento_id: versionId, tipo_vinculo: 'PROYECTO_ESCRITURA', estatus: 'ACTIVO' },
+            data: { document_role: 'DEFINITIVE_DEED' },
+          });
+          if (!selected.count) throw Object.assign(new Error('Sólo una versión activa puede marcarse como escritura definitiva.'), { code: 'H6_DEFINITIVE_DEED_ACTIVE_REQUIRED' });
         }
 
         const nextMeta = {
@@ -348,6 +364,9 @@ export const updateProyectoVersion = async (req: Request, res: Response) => {
             descripcion: nota_version?.trim() || accion,
           }
         });
+        if (accion === 'RESTAURAR_VIGENTE' || accion === 'MARCAR_FINAL') {
+          await ComplianceH6Service.markSourceChangedTx(tx, { organizationId: req.user!.organizationId, expedienteId: id, sourceType: 'PROJECT' });
+        }
       });
 
       const [updated] = (await loadDatabaseProjectVersions(id)).filter(version => version.id === versionId);
@@ -1240,12 +1259,14 @@ export const generarProyectoConIA = async (req: Request, res: Response) => {
         } },
       } });
       await tx.expedienteDocumento.create({ data: {
-        expediente_id: id, documento_id: document.id, tipo_vinculo: 'PROYECTO_ESCRITURA', creado_por_id: userId, estatus: 'ACTIVO', observaciones: `Proyecto vigente V${nextVersionNum}`,
+        organization_id: req.user!.organizationId, expediente_id: id, documento_id: document.id, tipo_vinculo: 'PROYECTO_ESCRITURA', creado_por_id: userId, estatus: 'ACTIVO', observaciones: `Proyecto vigente V${nextVersionNum}`,
         origen: 'EXPEDIENTE', source_entity_type: 'EXPEDIENTE', source_entity_id: id,
         source_context: 'PROYECTO_ESCRITURA', source_key: `EXPEDIENTE:EXPEDIENTE:${id}:${document.id}:PROYECTO_ESCRITURA`,
         document_version: `PROYECTO_ESCRITURA:V${nextVersionNum}`,
         provenance: { origin: 'EXPEDIENTE', project_version: nextVersionNum, generated_from_cfg002: true },
+        document_role: 'PROJECT_DRAFT',
       } });
+      await ComplianceH6Service.markSourceChangedTx(tx, { organizationId: req.user!.organizationId, expedienteId: id, sourceType: 'PROJECT' });
       return document;
     });
     uploadedProjectKey = null;

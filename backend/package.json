@@ -13,6 +13,7 @@
     "db:backup": "ts-node scripts/db-backup.ts",
     "db:restore": "ts-node scripts/db-restore.ts",
     "db:init-empty": "ts-node scripts/db-init-empty.ts",
+    "h6:db-fingerprint": "ts-node scripts/h6-db-fingerprint.ts",
     "storage:verify": "ts-node scripts/verify-storage.ts",
     "check:secrets": "ts-node scripts/check-secrets.ts",
     "auth:set-password": "ts-node scripts/set-user-password.ts",
@@ -51,6 +52,7 @@
     "mammoth": "^1.12.0",
     "multer": "^2.2.0",
     "pdf-parse": "^2.4.5",
+    "pdf-lib": "^1.17.1",
     "pizzip": "^3.2.0",
     "uuid": "^14.0.1"
   },
