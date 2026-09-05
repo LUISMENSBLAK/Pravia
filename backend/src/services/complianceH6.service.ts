@@ -25,6 +25,7 @@ import {
 import { ComplianceH5Service } from './complianceH5.service';
 import { ExpedienteArtifactsError, ExpedienteArtifactsService } from './expedienteArtifacts.service';
 import { deriveComplianceState } from '../domain/complianceLegalEngine';
+import { recordComplianceActivityTx } from './complianceH7.service';
 
 type User = NonNullable<Request['user']>;
 type Db = Prisma.TransactionClient | typeof prisma;
@@ -582,6 +583,12 @@ export class ComplianceH6Service {
       await tx.complianceObligation.update({ where: { id: obligationId }, data: { avi_state: 'PRESENTADO', review_needed: false } });
       await this.refreshProjectionTx(tx, user, obligationId, 'PRESENTADO');
       await this.auditTx(tx, user, 'H6_REGISTER_NOTICE_PRESENTATION', 'ComplianceNoticePresentation', presentation.id, { obligation_id: obligationId, product_id: product.id, kind });
+      await recordComplianceActivityTx(tx, {
+        organizationId: user.organizationId, expedienteId: obligation.expediente_id!, actorUserId: user.id,
+        action: 'NOTICE_PRESENTED', entity: 'ComplianceNoticePresentation', entityId: presentation.id,
+        title: 'Aviso presentado', description: 'Se registró la presentación del aviso de cumplimiento.',
+        idempotencyKey: `h7:notice-presentation:${presentation.id}`, metadata: { obligation_id: obligationId, kind },
+      });
       return presentation;
     });
   }
@@ -621,6 +628,12 @@ export class ComplianceH6Service {
       await tx.complianceObligation.update({ where: { id: presentation.obligation_id }, data: { avi_state: fulfilled ? 'CUMPLIDO' : 'ACUSE_CARGADO' } });
       await this.refreshProjectionTx(tx, user, presentation.obligation_id, fulfilled ? 'CUMPLIDO' : 'ACUSE_CARGADO');
       await this.auditTx(tx, user, 'H6_REGISTER_NOTICE_ACKNOWLEDGEMENT', 'ComplianceNoticeAcknowledgement', ack.id, { presentation_id: presentation.id, documento_id: document.id, evidence_id: evidenceId });
+      await recordComplianceActivityTx(tx, {
+        organizationId: user.organizationId, expedienteId: presentation.obligation.expediente_id!, actorUserId: user.id,
+        action: 'ACKNOWLEDGEMENT_REGISTERED', entity: 'ComplianceNoticeAcknowledgement', entityId: ack.id,
+        title: 'Acuse de cumplimiento registrado', description: fulfilled ? 'Se registró y validó el acuse requerido.' : 'Se registró el acuse; su validación sigue pendiente.',
+        idempotencyKey: `h7:notice-ack:${ack.id}`, metadata: { presentation_id: presentation.id, fulfilled },
+      });
       return ack;
     });
   }

@@ -60,6 +60,7 @@ model Organization {
   complianceOfficialProducts ComplianceOfficialProduct[]
   complianceNoticePresentations ComplianceNoticePresentation[]
   complianceNoticeAcknowledgements ComplianceNoticeAcknowledgement[]
+  complianceRequirementExceptions ComplianceRequirementException[]
 
   @@index([status])
   @@map("organizations")
@@ -98,6 +99,7 @@ model OrganizationMembership {
   bcAiProposalsDecided              ComplianceBcAiProposal[]              @relation("BcAiProposalDeciderMembership")
   bcFormatMappingsCreated           ComplianceBcFormatMapping[]           @relation("BcFormatCreatorMembership")
   bcFormatMappingsUpdated           ComplianceBcFormatMapping[]           @relation("BcFormatUpdaterMembership")
+  complianceExceptionsAuthorized   ComplianceRequirementException[]       @relation("ComplianceExceptionAuthorizerMembership")
   bcSocietyTargetsCreated           ExpedienteSocietyTarget[]             @relation("BcSocietyTargetCreatorMembership")
   questionnaireAssessmentsCreated   ComplianceQuestionnaireAssessment[]   @relation("QuestionnaireAssessmentCreatorMembership")
   questionnaireRevisionsCreated     ComplianceQuestionnaireAssessmentRevision[] @relation("QuestionnaireRevisionCreatorMembership")
@@ -1232,6 +1234,7 @@ model Expediente {
   complianceStates           ExpedienteComplianceState[]
   complianceRequirements     ComplianceRequirement[]
   complianceAlerts           ComplianceAlert[]
+  complianceExceptions       ComplianceRequirementException[]
   questionnaireAssessments   ComplianceQuestionnaireAssessment[]
   operationPayments          ComplianceOperationPayment[]
 
@@ -3715,6 +3718,7 @@ model ComplianceReview {
   questionnaireAssessments  ComplianceQuestionnaireAssessment[]
   operationPaymentRevisions ComplianceOperationPaymentRevision[]
   h6ObligationTriggers      ComplianceObligationTrigger[]
+  complianceExceptions      ComplianceRequirementException[]
 
   @@unique([organization_id, expediente_id, idempotency_key], map: "compliance_reviews_tenant_case_idempotency_key")
   @@unique([id, organization_id], map: "h6_compliance_review_tenant_key")
@@ -4869,12 +4873,51 @@ model ComplianceRequirement {
   questionnaireAssessments  ComplianceQuestionnaireAssessment[]
   operationPaymentRevisions ComplianceOperationPaymentRevision[]
   obligation                ComplianceObligation?         @relation(fields: [obligation_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h6_compliance_requirement_obligation_fkey")
+  exceptions                ComplianceRequirementException[]
 
   @@unique([organization_id, review_id, provider, requirement_key], map: "compliance_requirements_tenant_review_provider_key")
   @@unique([id, organization_id], map: "compliance_requirements_id_tenant_key")
+  @@unique([id, organization_id, expediente_id, review_id], map: "h7_compliance_requirement_exact_lineage_key")
   @@unique([organization_id, obligation_id, provider], map: "h6_compliance_requirement_stable_projection_key")
   @@index([organization_id, expediente_id, status, deadline], map: "idx_compliance_requirements_case_status")
   @@map("compliance_requirements")
+}
+
+/// Resolución elevada, explícita y append-only de un requisito concreto.
+/// La excepción no elimina el requisito ni crea un estado general adicional.
+model ComplianceRequirementException {
+  id                       String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id          String                   @db.Uuid
+  expediente_id            String                   @db.Uuid
+  review_id                String                   @db.Uuid
+  requirement_id           String                   @db.Uuid
+  resolution               String                   @default("NO_APLICA_BY_AUTHORIZED_EXCEPTION") @db.VarChar(80)
+  reason                   String
+  authorization_permission String                   @db.VarChar(120)
+  authorized_by_id         String                   @db.Uuid
+  idempotency_key          String                   @db.VarChar(160)
+  payload_hash             String                   @db.VarChar(64)
+  supersedes_id            String?                  @db.Uuid
+  superseded_at            DateTime?
+  created_at               DateTime                 @default(now())
+  organization             Organization             @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "h7_compliance_exception_org_fkey")
+  expediente               Expediente               @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h7_compliance_exception_exp_fkey")
+  review                   ComplianceReview         @relation(fields: [review_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, onUpdate: NoAction, map: "h7_compliance_exception_review_fkey")
+  requirement              ComplianceRequirement    @relation(fields: [requirement_id, organization_id, expediente_id, review_id], references: [id, organization_id, expediente_id, review_id], onDelete: Restrict, onUpdate: NoAction, map: "h7_compliance_exception_requirement_fkey")
+  authorizedBy             OrganizationMembership   @relation("ComplianceExceptionAuthorizerMembership", fields: [organization_id, authorized_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "h7_compliance_exception_actor_fkey")
+  supersedes               ComplianceRequirementException? @relation("ComplianceExceptionLineage", fields: [supersedes_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "h7_compliance_exception_supersedes_fkey")
+  supersededBy             ComplianceRequirementException[] @relation("ComplianceExceptionLineage")
+
+  @@unique([organization_id, requirement_id, idempotency_key], map: "h7_compliance_exception_idempotency_key")
+  @@unique([id, organization_id], map: "h7_compliance_exception_id_tenant_key")
+  @@index([organization_id, requirement_id, superseded_at], map: "h7_compliance_exception_current_idx")
+  @@index([organization_id, expediente_id, created_at], map: "h7_compliance_exception_case_history_idx")
+  @@index([organization_id, review_id, created_at], map: "h7_compliance_exception_review_history_idx")
+  @@index([review_id, organization_id, expediente_id], map: "h7_compliance_exception_review_fk_idx")
+  @@index([requirement_id, organization_id, expediente_id, review_id], map: "h7_compliance_exception_requirement_fk_idx")
+  @@index([organization_id, authorized_by_id], map: "h7_compliance_exception_actor_fk_idx")
+  @@index([supersedes_id, organization_id], map: "h7_compliance_exception_supersedes_fk_idx")
+  @@map("compliance_requirement_exceptions")
 }
 
 model ComplianceAlert {

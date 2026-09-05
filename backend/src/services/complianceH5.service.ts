@@ -28,6 +28,7 @@ import { canAccessDocumento, comparecienteObjectWhere } from "./objectAccess.ser
 import { ensureOperationScreeningForPartyTx } from "./operationScreening.service";
 import { deleteFile, downloadFile, uploadFile } from "../storage/storage.service";
 import { ComplianceDocumentService } from "./complianceDocument.service";
+import { recordComplianceActivityTx } from "./complianceH7.service";
 import {
   extraerFinanzasDesdeDocumento,
   getOpenAIModelName,
@@ -1095,6 +1096,19 @@ export class ComplianceH5Service {
           session_id: user.sessionId,
         },
       });
+      if (finalize) await recordComplianceActivityTx(tx, {
+        organizationId: user.organizationId,
+        expedienteId: assessment.expediente_id,
+        actorUserId: user.id,
+        action: "QUESTIONNAIRE_FINALIZED",
+        entity: "ComplianceQuestionnaireAssessmentRevision",
+        entityId: revision.id,
+        title: "Cuestionario de cumplimiento finalizado",
+        description: "Se finalizó el cuestionario y se actualizó la evaluación de riesgo.",
+        idempotencyKey: `h7:questionnaire-finalized:${revision.id}`,
+        correlationId,
+        metadata: { review_id: assessment.review_id, assessment_id: assessment.id },
+      });
       return revision;
     });
   }
@@ -1859,6 +1873,19 @@ export class ComplianceH5Service {
           correlation_id: correlationId,
           session_id: user.sessionId,
         },
+      });
+      await recordComplianceActivityTx(tx, {
+        organizationId: user.organizationId,
+        expedienteId: revision.expediente_id,
+        actorUserId: user.id,
+        action: "RESOURCE_PROVIDER_CONFIRMED",
+        entity: "ExpedienteCompareciente",
+        entityId: relation.id,
+        title: "Proveedor de recursos confirmado",
+        description: "Se confirmó el rol adicional de proveedor de recursos para la operación.",
+        idempotencyKey: `h7:resource-provider:${relation.id}:${revision.id}`,
+        correlationId,
+        metadata: { review_id: revision.review_id, payment_revision_id: revision.id },
       });
       return relation;
     });

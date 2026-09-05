@@ -92,6 +92,10 @@ export class ExpedienteReadService {
             include: { compareciente: { include: { personaFisica: true, personaMoral: true } }, caracter: true },
           },
           complianceReviews: { where: { resultado_json: { not: Prisma.JsonNull } }, orderBy: { updated_at: 'desc' }, take: 1, select: { id: true, tipo: true, estatus: true, resultado_json: true, updated_at: true } },
+          complianceStates: { orderBy: { updated_at: 'desc' }, take: 1, select: {
+            state: true, pending_count: true,
+            currentReview: { select: { legalRuleResults: { where: { vulnerable_activity: true }, take: 1, select: { id: true } } } },
+          } },
           _count: { select: { requisitos_docs: true, tareas: true, tareas_externas: true } },
         },
       }),
@@ -112,6 +116,7 @@ export class ExpedienteReadService {
     const mapped = records.map((record) => {
       const principal = record.comparecientes[0];
       const review = record.complianceReviews[0];
+      const complianceState = record.complianceStates[0];
       const primaryAct = record.actos[0]?.tipo_acto || { id: '', nombre: 'Sin acto activo' };
       return {
         id: record.id,
@@ -138,6 +143,12 @@ export class ExpedienteReadService {
         cliente_principal: partyName(principal) || record.cliente_alias || 'Sin cliente',
         comparecientes_adicionales: Math.max(0, record.comparecientes.length - 1),
         riesgo: { label: complianceLabel(review?.resultado_json), requires_attention: complianceAttention(review?.resultado_json), review_id: review?.id || null },
+        vulnerable: user.permissions.includes('compliance.read')
+          ? { value: complianceState ? Boolean(complianceState.currentReview?.legalRuleResults.length) : null, label: complianceState ? (complianceState.currentReview?.legalRuleResults.length ? 'Sí' : 'No') : 'Sin evaluar' }
+          : { value: null, label: 'Restringido' },
+        cumplimiento: user.permissions.includes('compliance.read')
+          ? { state: complianceState?.state || null, label: complianceState?.state === 'CUMPLIMIENTO_COMPLETO' ? 'Completo' : complianceState?.state === 'VENCIDO' ? 'Vencido' : complianceState ? 'Pendiente' : 'Sin evaluar', pending_count: complianceState?.pending_count || 0 }
+          : { state: null, label: 'Restringido', pending_count: 0 },
       };
     });
     return {

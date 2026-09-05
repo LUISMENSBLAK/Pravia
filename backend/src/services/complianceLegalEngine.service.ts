@@ -5,6 +5,7 @@ import prisma from '../config/prisma';
 import { ComplianceError } from '../domain/compliance';
 import {
   calculateLegalDeadline,
+  complianceHumanLabels,
   deriveComplianceState,
   evaluateLegalRule,
   selectEffectiveRuleRevisions,
@@ -19,6 +20,7 @@ import { BeneficialControllerService } from './beneficialController.service';
 import { bcConfirmedContext } from '../domain/beneficialController';
 import { ComplianceH5Service } from './complianceH5.service';
 import { ComplianceH6Service } from './complianceH6.service';
+import { recordComplianceActivityTx } from './complianceH7.service';
 
 type User = NonNullable<Request['user']>;
 const ENGINE_VERSION = 'H1-CUM-MAT-1';
@@ -372,6 +374,14 @@ export class ComplianceLegalEngineService {
       const updatedState = await tx.expedienteComplianceState.update({ where: { id: state.id }, data: { state: generalState, pending_count: pendingCount, next_deadline: nextDeadline, updated_by_id: user.id } });
       await tx.complianceReview.update({ where: { id: review.id }, data: { resultado_json: json({ estado: updatedState.state, resultados: evaluations.length, pendientes: pendingCount }), canonical_state_snapshot: json({ state: updatedState.state, pending_count: pendingCount, next_deadline: nextDeadline?.toISOString() || null }) } });
       await tx.auditLog.create({ data: { user_id: user.id, accion: 'EVALUATE_COMPLIANCE_LEGAL_ENGINE', entidad: 'ComplianceReview', entidad_id: review.id, valores_nuevos: { engine_version: ENGINE_VERSION, estado: updatedState.state, reglas: revisions.length, resultados: evaluations.length }, correlation_id: correlationId } });
+      await recordComplianceActivityTx(tx, {
+        organizationId: user.organizationId, expedienteId: expediente.id, actorUserId: user.id,
+        action: 'LEGAL_COMPLIANCE_EVALUATED', entity: 'ComplianceReview', entityId: review.id,
+        title: 'Evaluación legal de cumplimiento actualizada',
+        description: `La evaluación determinista quedó en ${complianceHumanLabels[String(updatedState.state)] || 'revisión'} con ${pendingCount} pendiente${pendingCount === 1 ? '' : 's'}.`,
+        idempotencyKey: `h7:legal-evaluation:${review.id}`, correlationId,
+        metadata: { state: updatedState.state, pending_count: pendingCount, result_count: evaluations.length },
+      });
       return this.readCanonicalEvaluation(tx, review.id);
     });
   }

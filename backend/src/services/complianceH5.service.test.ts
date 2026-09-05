@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => {
     "catalogoArtefacto", "catalogoArtefactoVersion", "complianceRiskMethodology", "complianceRiskMethodologyRevision", "complianceRequirement",
     "complianceOperationPayment", "complianceOperationPaymentRevision", "complianceOperationPaymentAct", "complianceOperationPaymentParty",
     "complianceOperationPaymentEvidence", "complianceOperationPaymentVerification", "complianceOperationPaymentVerificationRule", "complianceLegalRuleRevision", "complianceRuleResult",
-    "expedienteActo", "expedienteCompareciente", "expedienteDocumento", "compliancePayment", "complianceEvidence", "documento", "complianceAiProposal", "complianceEvent", "auditLog"];
+    "expedienteActo", "expedienteCompareciente", "expedienteDocumento", "expedienteActividad", "compliancePayment", "complianceEvidence", "documento", "complianceAiProposal", "complianceEvent", "auditLog"];
   const db: any = { $executeRaw: vi.fn(), $executeRawUnsafe: vi.fn(), $queryRaw: vi.fn() };
   for (const name of names) db[name] = Object.fromEntries(["findFirst", "findMany", "count", "create", "createMany", "update", "updateMany", "upsert"].map((method) => [method, vi.fn()]));
   db.$transaction = vi.fn();
@@ -40,6 +40,7 @@ beforeEach(() => {
     if (typeof delegate !== "object") continue;
     delegate.findMany?.mockResolvedValue([]); delegate.findFirst?.mockResolvedValue(null);
     delegate.create?.mockImplementation(async ({ data }: any) => ({ id: "created-test", ...data }));
+    delegate.createMany?.mockResolvedValue({ count: 1 });
     delegate.upsert?.mockImplementation(async ({ create }: any) => ({ id: "upserted-test", ...create }));
     delegate.update?.mockImplementation(async ({ data }: any) => ({ id: "updated-test", ...data }));
     delegate.updateMany?.mockResolvedValue({ count: 1 });
@@ -376,6 +377,7 @@ describe("H5 service behavioral security and lifecycle", () => {
     const result = await ComplianceH5Service.saveQuestionnaire(actor, assessment.id, { idempotency_key: "request", base_fingerprint: "base-test", answers: { "test-answer": true } }, true);
     expect(result).toMatchObject({ status: "FINALIZED", methodology_revision_id: "method-test", evaluation_snapshot: { methodology_checksum: "method-checksum", output_code: "TEST_ONLY" } });
     expect(mocks.db.complianceRequirement.updateMany).toHaveBeenCalledWith({ where: expect.objectContaining({ id: { in: [requirement.id, "second-trigger"] }, provider: "CUE", review_id: review.id, target_compareciente_id: null }), data: { status: "CUMPLIDO" } });
+    expect(mocks.db.expedienteActividad.createMany).toHaveBeenCalledWith(expect.objectContaining({ data: [expect.objectContaining({ metadatos: expect.objectContaining({ action: "QUESTIONNAIRE_FINALIZED" }) })], skipDuplicates: true }));
   });
   it("retries exact finalized request without a second write", async () => {
     const final = { ...assessment, currentRevision: { ...assessment.currentRevision, status: "FINALIZED" } };

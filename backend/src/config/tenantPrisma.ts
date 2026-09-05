@@ -22,7 +22,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'ScreeningHumanResolution', 'ScreeningOperationSnapshot', 'ScreeningReport',
   'ComplianceObligation', 'ComplianceEvent', 'ComplianceAiProposal', 'CargaTemporalDocumento',
   'ComplianceLegalRule', 'ComplianceLegalRuleRevision', 'ExpedienteComplianceState', 'ComplianceRuleResult',
-  'ComplianceAlertLeadRevision', 'ComplianceRequirement', 'ComplianceAlert',
+  'ComplianceAlertLeadRevision', 'ComplianceRequirement', 'ComplianceRequirementException', 'ComplianceAlert',
   'StorageCompensationJob', 'ComparecienteDatoFuente', 'ComparecienteAlias', 'ComparecienteActividadEconomica',
   'ConfiguracionActo', 'ConfiguracionEtapa', 'ConfiguracionActividad', 'ConfiguracionDependencia',
   'ConfiguracionExcepcion', 'ConfiguracionExcepcionDependencia', 'CatalogoInstitucion', 'CatalogoCarpeta',

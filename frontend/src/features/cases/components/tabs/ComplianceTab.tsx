@@ -10,6 +10,7 @@ import { dateTime } from '../../expedienteFormatters';
 import { expedienteReturnParams } from '../../expedienteNavigation';
 import styles from '../../Expedientes.module.css';
 import { H6NoticeWorkspace } from './H6NoticeWorkspace';
+import { H7ClosureWorkspace } from './H7ClosureWorkspace';
 
 const evidenceStateLabel: Record<string, string> = {
   CANONICAL: 'Documento canónico', GENERATED: 'Generado · pendiente de firma', SIGNED_UPLOADED: 'Firmado cargado',
@@ -97,7 +98,7 @@ export function ComplianceTab({ expediente }: { expediente: ExpedienteDetail }) 
   };
 
   return <div className={styles.complianceWorkspace}>
-    <H6NoticeWorkspace expedienteId={expediente.id} canWrite={canWrite} />
+    <H7ClosureWorkspace expedienteId={expediente.id} />
     <section className={styles.sectionCard} aria-labelledby="beneficial-controller-title">
       <header><div><h2 id="beneficial-controller-title">Beneficiario controlador</h2><p>Estructura congelada por evaluación y conclusiones separadas por régimen jurídico.</p></div></header>
       {beneficialControllerStatus==='loading'&&<p className={styles.sectionEmpty} role="status"><LoaderCircle className={styles.spin}/>Consultando estructuras…</p>}
@@ -129,5 +130,6 @@ export function ComplianceTab({ expediente }: { expediente: ExpedienteDetail }) 
       {status === 'ready' && documental && documental.groups.map((group) => <section key={group.category} className={styles.complianceDocumentGroup}><div className={styles.complianceDocumentGroupTitle}><FileArchive /><div><h3>{group.label}</h3><span>{group.requirements.length} {group.requirements.length === 1 ? 'requisito' : 'requisitos'}</span></div></div><div className={styles.complianceDocumentGrid}>{group.requirements.map((requirement) => <article key={requirement.id} className={styles.complianceDocumentCard}><div className={styles.complianceDocumentCardTitle}><span className={requirement.status === 'CUMPLIDO' ? styles.complianceOk : styles.complianceAlert}>{requirement.status === 'CUMPLIDO' ? <FileCheck2 /> : <FileWarning />}</span><div><h4>{requirement.label}</h4>{requirement.target_name && <p>{requirement.target_name}</p>}</div><strong>{humanComplianceLabel(requirement.status, 'Pendiente')}</strong></div>{requirement.evidence.length ? <ul className={styles.complianceEvidenceList}>{requirement.evidence.map((evidence) => <li key={evidence.id}><div><b>{evidence.document.nombre_original}</b><span>{evidenceStateLabel[evidence.document_state] || evidence.document_state} · {evidenceStateLabel[evidence.validation_status] || evidence.validation_status}</span><small>Versión estable {evidence.document_version.slice(0, 12)}</small></div>{canReview && evidence.validation_status !== 'VALIDATED' && <button type="button" onClick={() => void validateEvidence(evidence.id)} disabled={busy === evidence.id}>{busy === evidence.id ? 'Validando…' : 'Validar evidencia'}</button>}</li>)}</ul> : <p className={styles.complianceMissingReason}>{requirement.missing_reason}</p>}{requirement.status !== 'CUMPLIDO' && <div className={styles.complianceDocumentFooter}>{requirementAction(requirement)}</div>}</article>)}</div></section>)}
       {showMissing && documental && <div ref={missingRef} tabIndex={-1} className={styles.complianceMissingPanel} aria-live="polite"><h3>Faltantes de Cumplimiento</h3>{documental.missing.length ? <ul>{documental.missing.map((item) => <li key={item.id}><div><strong>{item.label}</strong>{item.target_name && <span>{item.target_name}</span>}<p>{item.missing_reason}</p></div>{requirementAction(item)}</li>)}</ul> : <p>No hay faltantes documentales en la evaluación actual.</p>}</div>}
     </section>
+    <H6NoticeWorkspace expedienteId={expediente.id} canWrite={canWrite} />
   </div>;
 }

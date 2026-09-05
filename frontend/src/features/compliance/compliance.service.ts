@@ -65,6 +65,21 @@ export type H6NoticeWorkspace = {
   }>;
 };
 
+export type H7ClosureWorkspace = {
+  state: 'NO_APLICA' | 'PENDIENTE' | 'EN_PROCESO' | 'LISTO' | 'CUMPLIMIENTO_COMPLETO' | 'VENCIDO' | null;
+  state_label: string;
+  pending_count: number;
+  actionable_missing_count: number;
+  operational_status: string;
+  providers: string[];
+  requirements: Array<{
+    id: string; provider: string; key: string; label: string; status: string;
+    deadline: string | null; blocks_completion: boolean; missing_action: string | null;
+    action_target: Record<string, unknown> | null;
+    resolution: null | { type: 'NO_APLICA_BY_AUTHORIZED_EXCEPTION'; label: string; reason: string; authorized_at: string };
+  }>;
+};
+
 const query = (values: Record<string, string | number | undefined>) => {
   const params = new URLSearchParams();
   Object.entries(values).forEach(([key, value]) => {
@@ -75,6 +90,15 @@ const query = (values: Record<string, string | number | undefined>) => {
 };
 
 export const complianceService = {
+  h7Workspace: async (expedienteId: string, signal?: AbortSignal) =>
+    apiRequest<{ success: boolean; data: H7ClosureWorkspace }>(
+      `/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/cierre`, { signal },
+    ).then((response) => response.data),
+  h7AuthorizeException: async (expedienteId: string, requirementId: string, body: { reason: string; idempotency_key: string }) =>
+    apiRequest<{ success: boolean; data: unknown }>(
+      `/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/requisitos/${encodeURIComponent(requirementId)}/excepciones`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ).then((response) => response.data),
   h6Workspace: async (expedienteId: string, signal?: AbortSignal) =>
     apiRequest<{ success: boolean; data: H6NoticeWorkspace }>(`/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/avisos`, { signal }).then((response) => response.data),
   h6EnsureFiche: async (obligationId: string) => apiRequest<{ success: boolean; data: any }>(`/cumplimiento/avisos/${encodeURIComponent(obligationId)}/fichas`, { method: "POST", body: "{}" }).then((response) => response.data),

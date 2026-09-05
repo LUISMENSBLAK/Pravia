@@ -15,6 +15,7 @@ import { renderScreeningQueryReportPdf } from '../domain/screeningReportPdf';
 import { deleteFile, uploadFile } from './supabase.service';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { comparecienteObjectWhere } from './objectAccess.service';
+import { recordComplianceActivityTx } from './complianceH7.service';
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -401,11 +402,21 @@ export class ComplianceScreeningService {
     await this.assertCompareciente(actor, comparecienteId);
     if (!['NO_CORRESPONDE', 'REVISION_ADICIONAL', 'COINCIDENCIA_CONFIRMADA'].includes(decision)) throw new ScreeningError(400, 'SCREENING_DECISION_INVALID', 'Selecciona una resolución válida.');
     if (!rationale.trim()) throw new ScreeningError(400, 'SCREENING_RATIONALE_REQUIRED', 'Documenta el motivo de la resolución.');
-    const candidate = await this.db.screeningCandidate.findFirst({ where: { id: candidateId, organization_id: actor.organizationId, query_id: queryId, query: { compareciente_id: comparecienteId, query_kind: 'MASTER' } } });
+    const candidate = await this.db.screeningCandidate.findFirst({ where: { id: candidateId, organization_id: actor.organizationId, query_id: queryId, query: { compareciente_id: comparecienteId, query_kind: 'MASTER' } }, include: { query: { select: { review_id: true } } } });
     if (!candidate) throw new ScreeningError(404, 'SCREENING_CANDIDATE_NOT_FOUND', 'La posible coincidencia no está disponible.');
     const resolution = await this.db.$transaction(async (tx) => {
       const created = await tx.screeningHumanResolution.create({ data: { organization_id: actor.organizationId, candidate_id: candidate.id, decision: decision as any, rationale: rationale.trim(), resolved_by_id: actor.id } });
       await tx.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: 'SCREENING_CANDIDATE_RESOLVED', entidad: 'ScreeningCandidate', entidad_id: candidate.id, valores_nuevos: json({ resolution_id: created.id, decision }), correlation_id: correlationId } });
+      if (candidate.query?.review_id) {
+        const review = await tx.complianceReview.findFirst({ where: { id: candidate.query.review_id, organization_id: actor.organizationId, expediente: { archived_at: null, ...expedienteAccessWhere(actor) } }, select: { expediente_id: true } });
+        if (review) await recordComplianceActivityTx(tx, {
+          organizationId: actor.organizationId, expedienteId: review.expediente_id, actorUserId: actor.id,
+          action: 'SCREENING_MATCH_RESOLVED', entity: 'ScreeningHumanResolution', entityId: created.id,
+          title: 'Coincidencia de listas resuelta', description: decision === 'COINCIDENCIA_CONFIRMADA' ? 'Se confirmó una coincidencia nominal.' : decision === 'NO_CORRESPONDE' ? 'Se descartó una posible coincidencia nominal.' : 'La coincidencia requiere revisión adicional.',
+          idempotencyKey: `h7:screening-resolution:${created.id}`, correlationId,
+          metadata: { query_id: queryId, candidate_id: candidate.id, decision },
+        });
+      }
       return created;
     });
     await this.refreshRequirements(actor.organizationId, queryId, actor.id);

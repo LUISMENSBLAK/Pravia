@@ -9,9 +9,9 @@ type ActivityQuery = { category?: unknown; search?: unknown; from?: unknown; to?
 type Db = PrismaClient | Prisma.TransactionClient;
 
 const categories = new Set<CategoryFilter>(['TODO', 'OPERACION', 'DOCUMENTOS', 'FINANZAS', 'SISTEMA']);
-const relatedSections = new Set(['resumen', 'actos', 'comparecientes', 'predios', 'documentos', 'seguimiento', 'plantillas', 'presupuesto', 'finanzas', 'isr', 'actividad']);
-const relevantSources = new Set(['EXP-001', 'EXP-002', 'EXP-003', 'EXP-004', 'EXP-005', 'EXP-006', 'EXP-007', 'EXP-008', 'EXP-009', 'PRD-001']);
-const relevantAuditTitle = /(expediente|acto|comparec|inmueble|predio|document|presupuesto|finanz|ingreso|pago|comprobante|firma|postfirma|entrega|isr|ficha general)/i;
+const relatedSections = new Set(['resumen', 'actos', 'comparecientes', 'predios', 'documentos', 'seguimiento', 'plantillas', 'presupuesto', 'finanzas', 'isr', 'cumplimiento', 'actividad']);
+const relevantSources = new Set(['EXP-001', 'EXP-002', 'EXP-003', 'EXP-004', 'EXP-005', 'EXP-006', 'EXP-007', 'EXP-008', 'EXP-009', 'PRD-001', 'H7-CUM-CIE']);
+const relevantAuditTitle = /(expediente|acto|comparec|inmueble|predio|document|presupuesto|finanz|ingreso|pago|comprobante|firma|postfirma|entrega|isr|cumplimiento|cuestionario|acuse|presentaci[oó]n|coincidencia|proveedor de recursos|ficha general)/i;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const clean = (value: unknown, max: number) => String(value || '').trim().slice(0, max);
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;

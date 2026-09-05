@@ -113,6 +113,8 @@ export type ExpedienteListItem = {
   abogado?: PersonOption | null; notaria?: NotaryOption | null;
   etapaActual?: { id: string; clave_snapshot: string; nombre_snapshot: string; orden_snapshot: number; fecha_inicio: string } | null;
   riesgo: { label: string; requires_attention: boolean; review_id?: string | null };
+  vulnerable?: { value: boolean | null; label: string };
+  cumplimiento?: { state: string | null; label: 'Completo' | 'Pendiente' | 'Vencido' | 'Sin evaluar' | 'Restringido'; pending_count: number };
 };
 export type ExpedienteListResult = {
   data: ExpedienteListItem[]; metrics: ExpedienteMetric[];
@@ -164,7 +166,7 @@ export type ExpedienteActivityItem = {
   manual_note: boolean;
   previous_values: Record<string, unknown> | null;
   new_values: Record<string, unknown> | null;
-  related_section: 'resumen' | 'actos' | 'comparecientes' | 'predios' | 'documentos' | 'seguimiento' | 'plantillas' | 'presupuesto' | 'finanzas' | 'isr' | 'actividad';
+  related_section: 'resumen' | 'actos' | 'comparecientes' | 'predios' | 'documentos' | 'seguimiento' | 'plantillas' | 'presupuesto' | 'finanzas' | 'isr' | 'cumplimiento' | 'actividad';
   related_entity: string | null;
   related_entity_id: string | null;
 };
