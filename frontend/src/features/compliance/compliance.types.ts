@@ -13,6 +13,35 @@ export type ComplianceCatalogs = { reglas: any[]; expedientes: any[]; usuarios: 
 export type ComplianceWorkspace = { parties: any[]; beneficialOwners: any[]; pepReviews: any[]; screenings: any[]; payments: any[]; obligations: any[]; events: any[]; aiProposals: any[]; sensitiveRedacted: boolean; state?: any; ruleResults?: any[]; requirements?: any[]; alerts?: any[] };
 export type ComplianceDetail = { revision: ComplianceReview; historial: ComplianceReview[]; workspace?: ComplianceWorkspace };
 
+export type H8PanelFilter = 'TODOS' | 'INCOMPLETOS' | 'AVISOS_PENDIENTES' | 'POR_VENCER' | 'VENCIDOS' | 'PRESENTADOS' | 'COMPLETOS';
+export type H8PanelRow = {
+  id: string;
+  expediente_id: string;
+  expediente: string;
+  escritura: string | null;
+  compareciente_principal: { id: string; nombre: string } | null;
+  abogado: { id: string; nombre: string } | null;
+  notaria: { id: string; nombre: string; numero_notaria: string | null } | null;
+  actos: Array<{ id: string; nombre: string }>;
+  cumplimiento: { code: string; pending_count: number };
+  aviso: { code: string; label: string; count: number; pending: number };
+  urgency: 'VENCIDO' | 'VENCE_HOY' | 'URGENTE' | 'POR_VENCER' | 'PENDIENTE' | 'COMPLETO';
+  next_deadline: string | null;
+  operational_status: string;
+  vulnerable: boolean;
+};
+export type H8Panel = {
+  rows: H8PanelRow[];
+  metrics: { pendientes: number; avisos_pendientes: number; por_vencer: number; vencidos: number };
+  meta: { page: number; page_size: number; total: number; total_pages: number };
+  filters: {
+    lawyers: Array<{ id: string; nombre: string }>;
+    acts: Array<{ id: string; nombre: string }>;
+    notaries: Array<{ id: string; nombre: string; numero_notaria: string | null }>;
+    show_notaria: boolean;
+  };
+};
+
 export type ComplianceDocumentEvidence = {
   id: string;
   source: 'COMPARECIENTE' | 'EXPEDIENTE' | 'FORMAT_GENERATED' | 'MANUAL_SIGNED_UPLOAD' | 'FUTURE_MODULE';

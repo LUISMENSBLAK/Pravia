@@ -1,0 +1,23 @@
+{
+  "algorithm": "sha256",
+  "serialization": "JSON.stringify(sorted [{path,sha256}]) over UTF-8; file digests over raw bytes; manifest excluded",
+  "functional_file_count": 15,
+  "functional_hash": "c17e7e9270b02b0b0b97a74468daa487e170e51f9e525c42010606dfb85c0f99",
+  "files": [
+    { "path": "backend/src/controllers/compliance.controller.ts", "sha256": "6f745f9c6bd46b7a0362803e6750fbf5e89090553ced6596c12d77318362e169" },
+    { "path": "backend/src/integration/complianceH8.postgresql.integration.test.ts", "sha256": "af28bb4ef8e4829c5f40b639aa2a9fec7301eefae29d56d59c78ea3e6c1caabc" },
+    { "path": "backend/src/routes/compliance.routes.ts", "sha256": "e209e6e645d839134ce420a1f2252a2284165944d9d9682a5e17732a6a8a17f2" },
+    { "path": "backend/src/services/complianceH8.service.test.ts", "sha256": "a554b951c3913d3c50722b02ee8db42887fa7dc39a22271fce54d2046225ae32" },
+    { "path": "backend/src/services/complianceH8.service.ts", "sha256": "5550123066846cabfe4cb9586144de738ab2fc26cc1e31190f6c9251ee1b214b" },
+    { "path": "docs/requirements/h8-cum-001-central-panel-traceability.md", "sha256": "c25583f1f809988e4b5e0e33edc079ac6b901ea77c64288e1ac44150452b6b71" },
+    { "path": "frontend/src/app/App.tsx", "sha256": "fa7c594be7255c138abee54002a3823e9699fbaf641d4b7d8fcd2ddbf260d5e4" },
+    { "path": "frontend/src/components/layout/Sidebar.tsx", "sha256": "54605258fbd8c9e74b8b3f4efe6ae8b32c86be0e63f1976fc5d8385af4f9057a" },
+    { "path": "frontend/src/features/compliance/Compliance.module.css", "sha256": "f278229557a72243e26b7c34dfacec5c9959ff18c0629e118f7292398974a03c" },
+    { "path": "frontend/src/features/compliance/CompliancePage.tsx", "sha256": "2f6b5d746125c931422ffedfe02633043172b97e599a9b07c0fe50615b445c87" },
+    { "path": "frontend/src/features/compliance/compliance.service.ts", "sha256": "127b1b4c8da049f20b49de7908bc0a46788d3c8cb3c4d36d75087b8e5452920d" },
+    { "path": "frontend/src/features/compliance/compliance.types.ts", "sha256": "c4fd991f395ee1e8f1322a74867a4c25df15002321262c1c3dc2eb1e75dab5ab" },
+    { "path": "frontend/src/tests/Compliance.test.tsx", "sha256": "f4236e4477627641a082ca1270abf241a65b94d74159b4fac75a0c09cc682926" },
+    { "path": "frontend/src/tests/ComplianceH8.test.tsx", "sha256": "9d1de306d6e730a920bf2d84b1aa5136bbda73fddfc5b2d92316f8384d6429a8" },
+    { "path": "frontend/src/tests/Sidebar.test.tsx", "sha256": "aab2f2efdb47f98bf7ae83ee48d402d4852744d430ebabaf64bb01fddf858c59" }
+  ]
+}

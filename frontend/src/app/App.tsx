@@ -63,7 +63,8 @@ export function App() {
               <Route path="/agenda" element={<AgendaPage />} />
               <Route path="/finanzas" element={<FinancePage />} />
               <Route path="/reportes" element={<ReportsPage />} />
-              <Route path="/riesgos" element={<CompliancePage />} />
+              <Route path="/cumplimiento" element={<CompliancePage />} />
+              <Route path="/riesgos" element={<Navigate to="/cumplimiento" replace />} />
               <Route path="/riesgos/revisiones/:id" element={<ComplianceReviewPage />} />
               <Route path="/calculo-isr" element={<ISRDirectoryPage />} />
               <Route path="/calculo-isr/:id" element={<ISRWorkspacePage />} />

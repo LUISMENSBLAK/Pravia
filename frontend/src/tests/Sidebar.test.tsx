@@ -11,7 +11,7 @@ describe('Sidebar', () => {
       </MemoryRouter>,
     );
 
-    const labels = ['Mi Día', 'Prospectos', 'Cotizaciones', 'Expedientes', 'Notarías', 'Comparecientes', 'Finanzas', 'Agenda', 'Reportes', 'Riesgos / UIF'];
+    const labels = ['Mi Día', 'Prospectos', 'Cotizaciones', 'Expedientes', 'Notarías', 'Comparecientes', 'Finanzas', 'Agenda', 'Reportes', 'Cumplimiento'];
     labels.forEach((label) => expect(screen.getByRole('link', { name: label })).toBeInTheDocument());
     expect(screen.queryByText('Inteligencia')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Mi Día' })).toHaveAttribute('aria-current', 'page');

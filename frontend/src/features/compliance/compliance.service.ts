@@ -7,6 +7,7 @@ import type {
   ComplianceList,
   ComplianceReview,
   ComplianceScreeningOperation,
+  H8Panel,
 } from "./compliance.types";
 
 export type BeneficialControllerEvaluation = {
@@ -90,6 +91,10 @@ const query = (values: Record<string, string | number | undefined>) => {
 };
 
 export const complianceService = {
+  h8Panel: async (filters: Record<string, string | number | undefined>, signal?: AbortSignal) =>
+    apiRequest<{ success: boolean; data: H8Panel }>(`/cumplimiento/panel?${query(filters)}`, { signal }).then((response) => response.data),
+  freeScreening: async (body: { identity: Record<string, unknown>; idempotency_key: string }) =>
+    apiRequest<{ success: boolean; data: any }>("/cumplimiento/screening/free", { method: "POST", body: JSON.stringify(body) }).then((response) => response.data),
   h7Workspace: async (expedienteId: string, signal?: AbortSignal) =>
     apiRequest<{ success: boolean; data: H7ClosureWorkspace }>(
       `/cumplimiento/expedientes/${encodeURIComponent(expedienteId)}/cierre`, { signal },

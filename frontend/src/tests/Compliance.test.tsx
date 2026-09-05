@@ -50,6 +50,16 @@ const catalogs = {
   usuarios: [{ id: "u1", nombre: "Andrea", apellido: "Ruiz" }],
   documentos: [],
 };
+const panel = {
+  rows: [{ id: "state-1", expediente_id: "fixture-exp-141", expediente: "EXP-2026-0141", escritura: null,
+    compareciente_principal: { id: "person-1", nombre: "María Fernanda López" }, abogado: { id: "u1", nombre: "Andrea Ruiz" },
+    notaria: { id: "not-12", nombre: "Notaría 12", numero_notaria: "12" }, actos: [{ id: "act-1", nombre: "Compraventa" }],
+    cumplimiento: { code: "PENDIENTE", pending_count: 2 }, aviso: { code: "PENDIENTE", label: "Aviso pendiente", count: 1, pending: 1 },
+    urgency: "PENDIENTE", next_deadline: null, operational_status: "ENTREGADO", vulnerable: true }],
+  metrics: { pendientes: 1, avisos_pendientes: 1, por_vencer: 0, vencidos: 0 },
+  meta: { page: 1, page_size: 25, total: 1, total_pages: 1 },
+  filters: { lawyers: [{ id: "u1", nombre: "Andrea Ruiz" }], acts: [{ id: "act-1", nombre: "Compraventa" }], notaries: [{ id: "not-12", nombre: "Notaría 12", numero_notaria: "12" }], show_notaria: false },
+};
 
 function mockApi(
   options: {
@@ -74,6 +84,10 @@ function mockApi(
         });
       if (url.includes("/cumplimiento/catalogos"))
         return json({ success: true, ...catalogs });
+      if (url.includes("/cumplimiento/panel?")) {
+        if (options.fail) return json({ error: "No disponible" }, 500);
+        return json({ success: true, data: options.empty ? { ...panel, rows: [], meta: { ...panel.meta, total: 0 } } : panel });
+      }
       if (/\/cumplimiento\/revisiones\/fixture-uif$/.test(url)) {
         if (options.fail) return json({ error: "No disponible" }, 500);
         const detail = options.redacted
@@ -116,49 +130,36 @@ const renderAt = (path: string) =>
     </MemoryRouter>,
   );
 
-describe("Riesgos / UIF canónico", () => {
+describe("Cumplimiento canónico", () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it("muestra los cuatro KPI y filtros jurídicos del directorio", async () => {
+  it("muestra los cuatro KPI y siete filtros del panel central", async () => {
     mockApi();
-    renderAt("/riesgos?actividad=TRANSMISION_DERECHOS_REALES_INMUEBLES");
+    renderAt("/cumplimiento?filter=AVISOS_PENDIENTES");
     expect(
-      await screen.findByRole("heading", { name: "Riesgos / UIF" }),
+      await screen.findByRole("heading", { name: "CUMPLIMIENTO" }),
     ).toBeInTheDocument();
     await screen.findAllByText("EXP-2026-0141");
     for (const label of [
-      "Expedientes evaluados",
-      "Requieren revisión",
-      "Avisos por presentar",
-      "Obligaciones vencidas",
+      "Pendientes", "Avisos pendientes", "Por vencer", "Vencidos",
     ])
-      expect(screen.getByText(label)).toBeInTheDocument();
-    expect(screen.getByLabelText("Actividad vulnerable")).toHaveValue(
-      "TRANSMISION_DERECHOS_REALES_INMUEBLES",
-    );
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    for (const label of ["Todos", "Incompletos", "Presentados", "Completos"]) expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     await waitFor(() =>
       expect(
         vi
           .mocked(fetch)
           .mock.calls.some(([url]) =>
-            String(url).includes("actividad=TRANSMISION"),
+            String(url).includes("filter=AVISOS_PENDIENTES"),
           ),
       ).toBe(true),
     );
   });
 
-  it("presenta tarjetas y cambia a lista sin mezclar ISR", async () => {
+  it("enlaza el Cumplimiento del expediente desde una única fila", async () => {
     mockApi();
-    const user = userEvent.setup();
-    renderAt("/riesgos");
-    expect(
-      (await screen.findAllByText("EXP-2026-0141")).length,
-    ).toBeGreaterThan(0);
-    await user.click(screen.getByRole("button", { name: "Lista" }));
-    expect(
-      screen.getByRole("columnheader", { name: "Actividad vulnerable" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Cálculo ISR")).not.toBeInTheDocument();
+    renderAt("/cumplimiento");
+    expect(await screen.findByRole("listitem")).toHaveAttribute("href", "/expedientes/fixture-exp-141#cumplimiento");
   });
 
   it("abre un workspace único con las diez secciones trazables", async () => {
@@ -245,15 +246,15 @@ describe("Riesgos / UIF canónico", () => {
 
   it("muestra empty y error sin filtrar detalles técnicos", async () => {
     mockApi({ empty: true });
-    const first = renderAt("/riesgos");
+    const first = renderAt("/cumplimiento?filter=VENCIDOS");
     expect(
-      await screen.findByText("No hay evaluaciones con estos filtros"),
+      await screen.findByText("No hay resultados con estos filtros"),
     ).toBeInTheDocument();
     first.unmount();
     mockApi({ fail: true });
-    renderAt("/riesgos");
+    renderAt("/cumplimiento");
     expect(
-      await screen.findByText("No pudimos cargar Riesgos / UIF."),
+      await screen.findByText("No pudimos cargar Cumplimiento."),
     ).toBeInTheDocument();
     expect(
       screen.queryByText(/Prisma|stack|endpoint/i),
