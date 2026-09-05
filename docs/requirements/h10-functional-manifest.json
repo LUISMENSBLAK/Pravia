@@ -1,0 +1,36 @@
+{
+  "algorithm": "sha256(canonical-json(sorted[{path,sha256}]))",
+  "parent": "7810bef86e8a7012cd432013d132c94c5c1692ed",
+  "functionalFileCount": 7,
+  "functionalHash": "49fe6e1c3ba2e76a74effbae8629210f9d2f3f6da7bbc1281a0aee449a872b8c",
+  "files": [
+    {
+      "path": "backend/prisma/migrations/20260905040000_add_h10_compliance_fk_indexes/migration.sql",
+      "sha256": "7a8530ee255780d7ab6eaf906f95a6b4b414466bf8b2a0e640872607686e8d23"
+    },
+    {
+      "path": "backend/prisma/schema.prisma",
+      "sha256": "1ecd3c0d358469dc7297024f8c96153a1446564685468da03f9dbca9b5d90981"
+    },
+    {
+      "path": "backend/scripts/h10-db-fingerprint.ts",
+      "sha256": "01ad8ced9dc2f0c6ea31ba9d742145bf441f2024d5a20c4ce807efdb0b2d8f40"
+    },
+    {
+      "path": "backend/src/domain/complianceH10.certification.test.ts",
+      "sha256": "0b76b1ce2b0ad68eb70d8cec80ad35c97d5ec232ec2db2916a0dd81fcb31ae88"
+    },
+    {
+      "path": "backend/src/integration/complianceH10.postgresql.integration.test.ts",
+      "sha256": "f77c86217e44b73193349d8b3a37dcbbcc216bdb17240de15ad0573281f11bfd"
+    },
+    {
+      "path": "backend/src/integration/h10-representative-upgrade-fixtures.sql",
+      "sha256": "896ca27e209d2dda5901291f2c1e4a5ff3b50822b84b3b23c8e4f2de4f322da0"
+    },
+    {
+      "path": "docs/requirements/h10-compliance-v05-global-certification.md",
+      "sha256": "4e33093b50fa8f6f7562f4dacecd607516482a24748b4ed5075e38423c2ea308"
+    }
+  ]
+}

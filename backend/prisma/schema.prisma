@@ -4251,6 +4251,8 @@ model ComplianceObligation {
   @@index([external_confirmed_by], map: "idx_uif_obligations_external_confirmer_fk")
   @@index([external_receipt_id], map: "idx_uif_obligations_external_receipt_fk")
   @@index([responsible_id], map: "idx_uif_obligations_responsible_fk")
+  @@index([rule_result_id, organization_id, review_id, rule_revision_id], map: "idx_fk_compliance_obligations_27ebd2fd")
+  @@index([rule_revision_id, organization_id], map: "idx_fk_compliance_obligations_7cdf816d")
   @@map("compliance_obligations")
 }
 
@@ -4748,6 +4750,7 @@ model ComplianceLegalRule {
   @@unique([organization_id, stable_key], map: "compliance_legal_rules_tenant_stable_key")
   @@unique([id, organization_id], map: "compliance_legal_rules_id_tenant_key")
   @@index([organization_id, family], map: "idx_compliance_legal_rules_tenant_family")
+  @@index([organization_id, created_by_id], map: "idx_fk_compliance_legal_rules_a2237f3c")
   @@map("compliance_legal_rules")
 }
 
@@ -4790,6 +4793,10 @@ model ComplianceLegalRuleRevision {
   @@unique([id, organization_id], map: "compliance_rule_revisions_id_tenant_key")
   @@index([organization_id, status, effective_from, effective_to], map: "idx_compliance_rule_revisions_effective")
   @@index([organization_id, rule_id, status], map: "idx_compliance_rule_revisions_rule_status")
+  @@index([organization_id, verified_by_id], map: "idx_fk_compliance_legal_rule_revisions_30815683")
+  @@index([organization_id, created_by_id], map: "idx_fk_compliance_legal_rule_revisions_40041716")
+  @@index([supersedes_revision_id, organization_id], map: "idx_fk_compliance_legal_rule_revisions_b61092f8")
+  @@index([organization_id, activated_by_id], map: "idx_fk_compliance_legal_rule_revisions_d84b615d")
   @@map("compliance_legal_rule_revisions")
 }
 
@@ -4815,6 +4822,8 @@ model ExpedienteComplianceState {
   @@unique([id, organization_id], map: "expediente_compliance_states_id_tenant_key")
   @@unique([organization_id, expediente_id], map: "expediente_compliance_states_tenant_case_key")
   @@index([organization_id, state, next_deadline], map: "idx_exp_compliance_state_alerting")
+  @@index([current_review_id], map: "idx_fk_expediente_compliance_states_70cd5500")
+  @@index([organization_id, updated_by_id], map: "idx_fk_expediente_compliance_states_85c74ece")
   @@map("expediente_compliance_states")
 }
 
@@ -4873,6 +4882,7 @@ model ComplianceAlertLeadRevision {
   @@unique([organization_id, idempotency_key], map: "compliance_alert_lead_tenant_idempotency_key")
   @@unique([id, organization_id], map: "compliance_alert_lead_id_tenant_key")
   @@index([organization_id, published_at, superseded_at], map: "idx_compliance_alert_lead_current")
+  @@index([organization_id, created_by_id], map: "idx_fk_compliance_alert_lead_revisions_b0295d69")
   @@map("compliance_alert_lead_revisions")
 }
 
@@ -4921,6 +4931,8 @@ model ComplianceRequirement {
   @@unique([id, organization_id, expediente_id, review_id], map: "h7_compliance_requirement_exact_lineage_key")
   @@unique([organization_id, obligation_id, provider], map: "h6_compliance_requirement_stable_projection_key")
   @@index([organization_id, expediente_id, status, deadline], map: "idx_compliance_requirements_case_status")
+  @@index([state_id, organization_id], map: "idx_fk_compliance_requirements_27b63538")
+  @@index([rule_result_id, organization_id], map: "idx_fk_compliance_requirements_aa6b5d11")
   @@map("compliance_requirements")
 }
 
@@ -4995,6 +5007,12 @@ model ComplianceAlert {
   @@unique([organization_id, review_id, alert_key], map: "compliance_alerts_tenant_review_key")
   @@unique([id, organization_id], map: "compliance_alerts_id_tenant_key")
   @@index([organization_id, expediente_id, status, level, deadline], map: "idx_compliance_alerts_case_status")
+  @@index([state_id, organization_id], map: "idx_fk_compliance_alerts_6618ff71")
+  @@index([lead_revision_id, organization_id], map: "idx_fk_compliance_alerts_7c4aa18c")
+  @@index([rule_revision_id, organization_id], map: "idx_fk_compliance_alerts_865f3a6b")
+  @@index([requirement_id, organization_id], map: "idx_fk_compliance_alerts_94d15180")
+  @@index([organization_id, resolved_by_id], map: "idx_fk_compliance_alerts_9db01836")
+  @@index([organization_id, responsible_id], map: "idx_fk_compliance_alerts_e51c7f9b")
   @@map("compliance_alerts")
 }
 
@@ -5306,6 +5324,7 @@ model ComplianceOperationPaymentParty {
 
   @@unique([organization_id, payment_revision_id, role, expediente_compareciente_id], map: "h5_operation_payment_party_key")
   @@unique([id, organization_id], map: "h5_operation_payment_party_id_tenant_key")
+  @@index([expediente_compareciente_id, organization_id, expediente_id, compareciente_id], map: "idx_fk_compliance_operation_payment_parties_a2a7c291")
   @@map("compliance_operation_payment_parties")
 }
 
