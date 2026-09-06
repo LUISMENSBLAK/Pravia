@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "phase": "G1-MID-BASE",
+  "parent": "e344c9c53777471acfe7d3f7b1ce40a7ecc94cd1",
+  "functionalFileCount": 9,
+  "functionalHash": "1412d1182f08f6e3966d42e48d2b98bc5030f043694dace909283ebf4b3b9ec5",
+  "files": [
+    {
+      "path": "backend/src/controllers/miDia.controller.ts",
+      "sha256": "b21ca6a5d989bbb35de555c004c6493eea7302eeee5c0810cf931364a574f322"
+    },
+    {
+      "path": "backend/src/domain/midBaseSources.test.ts",
+      "sha256": "6c8752f461a8cbe4ee0ab61b6309382481590b542fef603114fb638564173364"
+    },
+    {
+      "path": "backend/src/domain/midBaseSources.ts",
+      "sha256": "5d667b209ffac32c4720b4f861e046494da6c52b880b703fadf1bff14531c628"
+    },
+    {
+      "path": "backend/src/integration/midBaseSources.g1.postgresql.integration.test.ts",
+      "sha256": "7e6cfd1da46eb3ffb867b2bf22a3d18fe4116f4af1842c7a3f879058adc30225"
+    },
+    {
+      "path": "backend/src/routes/miDia.routes.ts",
+      "sha256": "3492897f65d27f6d46caf9767b45885a7cd4b06b07ac0861e56ffb030733dd44"
+    },
+    {
+      "path": "backend/src/services/midBaseSource.contract.test.ts",
+      "sha256": "aec094154088545be84cd8bbb2037debc163de4a9a0ff3bcbc2f5dba9c8414c9"
+    },
+    {
+      "path": "backend/src/services/midBaseSource.service.test.ts",
+      "sha256": "6400ebb741ca584e1fb1b9625b400865d5f4373acd2fd3002539ad2b87a55c02"
+    },
+    {
+      "path": "backend/src/services/midBaseSource.service.ts",
+      "sha256": "f43daee542297cd49d8ddf343babd9566144c137db277700f80dfbd1f6766c87"
+    },
+    {
+      "path": "docs/requirements/g1-mid-base-traceability.md",
+      "sha256": "cb039426cf542f9aa2feb4ce046938320046bd8a780b287a88d55f671433173e"
+    }
+  ]
+}

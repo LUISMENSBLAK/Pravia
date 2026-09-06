@@ -2,6 +2,9 @@ import { Request, Response } from 'express';
 import prisma from '../config/prisma';
 import { calculateFinancialPosition } from '../domain/financialLedger';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { MidBaseSourceError, MidBaseSourceService } from '../services/midBaseSource.service';
+
+const midBaseSourceService = new MidBaseSourceService(prisma);
 
 const asNumber = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : 0;
 const startOfDay = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -20,6 +23,21 @@ function budget(exp: any) {
 }
 
 export class MiDiaController {
+  static async sources(req: Request, res: Response) {
+    try {
+      if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
+      const limit = req.query.limit === undefined ? undefined : Number(req.query.limit);
+      if (limit !== undefined && (!Number.isInteger(limit) || limit < 1 || limit > 250)) {
+        return res.status(400).json({ code: 'MID_BASE_LIMIT_INVALID', error: 'El límite debe ser un entero entre 1 y 250.' });
+      }
+      return res.json({ success: true, data: await midBaseSourceService.read(req.user, { limit }) });
+    } catch (error) {
+      if (error instanceof MidBaseSourceError) return res.status(error.status).json({ code: error.code, error: error.message });
+      console.error('MID-BASE source read error', error);
+      return res.status(500).json({ code: 'MID_BASE_INTERNAL_ERROR', error: 'No fue posible consultar las fuentes de Mi Día.' });
+    }
+  }
+
   static async dashboard(req: Request, res: Response) {
     try {
       const now = new Date();
