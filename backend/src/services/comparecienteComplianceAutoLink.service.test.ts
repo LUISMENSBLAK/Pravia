@@ -38,7 +38,7 @@ function fixture(inputs: RequirementInput[]) {
       document = {
         id: 'document-1', organization_id: organizationId, storage_key: data.storage_key,
         size_bytes: data.size_bytes, fecha_carga: new Date('2026-09-01T00:00:00.000Z'), mime_type: data.mime_type,
-        checksum_sha256: null, tipo: data.tipo, estatus: data.estatus,
+        checksum_sha256: data.checksum_sha256, tipo: data.tipo, estatus: data.estatus,
       };
       return document;
     }) },
@@ -110,6 +110,7 @@ describe('H2 post-upload Compareciente evidence synchronization', () => {
     expect(state.evidence[0]).toMatchObject({
       requirement_id: 'q1', target_compareciente_id: comparecienteId, source: 'COMPARECIENTE',
       document_state: 'CANONICAL', validation_status: 'AUTO_LINKED',
+      document_checksum_snapshot: '29d1283686193dc1461a7deac4f53d9bc5402a28b95d854f69e94986756fd0a9',
     });
     expect(state.evidence[0]).not.toHaveProperty('validated_by_id');
     expect(state.evidence[0]).not.toHaveProperty('validated_at');

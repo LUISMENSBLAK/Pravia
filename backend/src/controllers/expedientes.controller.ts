@@ -13,7 +13,7 @@ import { QuoteContractError } from '../domain/cotizacionContract';
 import {
   EXPEDIENTE_STATUS_LABELS,
   ExpedienteWorkflowError,
-  getAllowedExpedienteTransitions,
+  resolveFrozenWorkflowTransitions,
 } from '../domain/expedienteWorkflow';
 import {
   FinancialLedgerError,
@@ -265,18 +265,8 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         estado_general_relacionado: String(stage.estado || stage.estado_general_relacionado || ''),
       }))
       .sort((a, b) => a.orden - b.orden);
-    const allowedStatuses = getAllowedExpedienteTransitions(expediente.estatus);
-    const transitions = allowedStatuses.map((status) => ({
-      status,
-      label: EXPEDIENTE_STATUS_LABELS[status],
-      stage: workflowStages.find((stage) => stage.estado_general_relacionado === status && stage.orden > currentStageOrder) || null,
-      requires_signature_data: status === 'FIRMA_PROGRAMADA',
-      requires_effective_date: status === 'FIRMADO' || status === 'ENTREGADO',
-      requires_notes: status === 'ENTREGADO' || status === 'CANCELADO' || status === 'SUSPENDIDO',
-    }));
-    const nextStage = workflowStages.find(
-      (stage) => stage.estado_general_relacionado === expediente.estatus && stage.orden > currentStageOrder,
-    ) || null;
+    const nextStage = workflowStages.find((stage) => stage.orden > currentStageOrder) || null;
+    const transitions = resolveFrozenWorkflowTransitions(expediente.estatus, currentStageOrder, workflowStages);
 
     const canReadFinance = req.user?.permissions.includes('finanzas.read');
     const financialSummary = canReadFinance ? calculateFinanceAggregates({

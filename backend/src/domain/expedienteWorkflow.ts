@@ -38,6 +38,56 @@ const ALLOWED_TRANSITIONS: Record<ExpedienteEstatus, ExpedienteEstatus[]> = {
 
 export const getAllowedExpedienteTransitions = (status: ExpedienteEstatus) => [...ALLOWED_TRANSITIONS[status]];
 
+export interface FrozenWorkflowStageTransition {
+  clave: string;
+  nombre: string;
+  orden: number;
+  estado_general_relacionado: string;
+  [key: string]: unknown;
+}
+
+export interface ExpedienteTransitionOption {
+  status: ExpedienteEstatus;
+  label: string;
+  stage: FrozenWorkflowStageTransition | null;
+  requires_signature_data: boolean;
+  requires_effective_date: boolean;
+  requires_notes: boolean;
+}
+
+export function resolveFrozenWorkflowTransitions(
+  currentStatus: ExpedienteEstatus,
+  currentStageOrder: number,
+  workflowStages: FrozenWorkflowStageTransition[],
+): ExpedienteTransitionOption[] {
+  const allowedStatuses = getAllowedExpedienteTransitions(currentStatus);
+  const statusTransitions = allowedStatuses.map((status) => ({
+    status,
+    label: EXPEDIENTE_STATUS_LABELS[status],
+    stage: workflowStages.find((stage) => stage.estado_general_relacionado === status && stage.orden > currentStageOrder) || null,
+    requires_signature_data: status === 'FIRMA_PROGRAMADA',
+    requires_effective_date: status === 'FIRMADO' || status === 'ENTREGADO',
+    requires_notes: status === 'ENTREGADO' || status === 'CANCELADO' || status === 'SUSPENDIDO',
+  }));
+  const nextStage = workflowStages.find((stage) => stage.orden > currentStageOrder) || null;
+  const nextStageStatus = nextStage?.estado_general_relacionado as ExpedienteEstatus | undefined;
+  const sequentialTransition = nextStage && nextStageStatus
+    && (nextStageStatus === currentStatus || allowedStatuses.includes(nextStageStatus))
+    ? {
+        status: nextStageStatus,
+        label: nextStageStatus === currentStatus ? `Continuar: ${nextStage.nombre}` : EXPEDIENTE_STATUS_LABELS[nextStageStatus],
+        stage: nextStage,
+        requires_signature_data: nextStageStatus === 'FIRMA_PROGRAMADA',
+        requires_effective_date: nextStageStatus === 'FIRMADO' || nextStageStatus === 'ENTREGADO',
+        requires_notes: nextStageStatus === 'ENTREGADO' || nextStageStatus === 'CANCELADO' || nextStageStatus === 'SUSPENDIDO',
+      }
+    : null;
+
+  return sequentialTransition
+    ? [sequentialTransition, ...statusTransitions.filter((item) => item.status !== sequentialTransition.status)]
+    : statusTransitions;
+}
+
 export function assertExpedienteTransition(current: ExpedienteEstatus, next?: ExpedienteEstatus) {
   if (!next || current === next) {
     throw new ExpedienteWorkflowError('Selecciona un estado distinto al actual.', 'EXPEDIENTE_STATUS_UNCHANGED');

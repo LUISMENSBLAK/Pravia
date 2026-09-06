@@ -95,6 +95,17 @@ describe('frontera tenant canónica', () => {
     expect(catalogNext.mock.calls[0][0].args.where).toEqual({ activo: true });
   });
 
+  it('conserva el identificador único de usuario en el nivel superior al aplicar el tenant', async () => {
+    for (const action of ['findUnique', 'findUniqueOrThrow', 'update', 'delete']) {
+      const next = vi.fn(async (params) => params);
+      await invoke('User', action, { where: { id: 'valid-user-a' }, ...(action === 'update' ? { data: { activo: true } } : {}) }, next);
+      expect(next.mock.calls[0][0].args.where, action).toEqual({
+        id: 'valid-user-a',
+        organizationMemberships: { some: { organization_id: ORG_A } },
+      });
+    }
+  });
+
   it('expone actos canónicos globales y actos privados del tenant sin filtrar identidades de otra organización', async () => {
     const next = vi.fn(async (params) => params);
     await invoke('TipoActo', 'findMany', { where: { activo: true } }, next);

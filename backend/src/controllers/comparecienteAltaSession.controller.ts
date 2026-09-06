@@ -15,14 +15,14 @@ export class ComparecienteAltaSessionController {
     try {
       const usuario_id = req.user?.id;
       if (!usuario_id) return res.status(401).json({ success: false, ok: false, error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
-      const { tipo_persona, idempotency_key, origen_expediente_id, correlation_id } = req.body;
+      const { tipo_persona, idempotency_key, origen_expediente_id } = req.body;
 
       const sesion = await ComparecienteAltaSessionService.iniciarOSentarseSesion({
         usuario_id,
         tipo_persona,
         idempotency_key,
         origen_expediente_id,
-        correlation_id
+        correlation_id: req.correlationId
       });
 
       return res.status(201).json({

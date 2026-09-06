@@ -78,12 +78,13 @@ export const tenantIsolationMiddleware: Prisma.Middleware = async (params, next)
     if (!actor?.organizationId) throw new TenantContextError();
     params.args ||= {};
     const requestedWhere = params.args.where || {};
-    params.args.where = {
-      AND: [
-        requestedWhere,
-        { organizationMemberships: { some: { organization_id: actor.organizationId } } },
-      ],
-    };
+    const tenantMembership = { some: { organization_id: actor.organizationId } };
+    // Prisma requires at least one unique field at the top level of every
+    // UserWhereUniqueInput. Keep the requested id/email there while enforcing
+    // the active tenant through the membership relation.
+    params.args.where = ['findUnique', 'findUniqueOrThrow', 'update', 'delete'].includes(params.action)
+      ? { ...requestedWhere, organizationMemberships: tenantMembership }
+      : { AND: [requestedWhere, { organizationMemberships: tenantMembership }] };
     return next(params);
   }
   if (params.model === 'User' && ['create', 'createMany', 'upsert'].includes(params.action)) {

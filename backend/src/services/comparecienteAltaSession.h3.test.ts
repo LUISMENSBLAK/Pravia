@@ -27,7 +27,10 @@ const fixture = vi.hoisted(() => {
     $executeRaw: vi.fn().mockResolvedValue(undefined),
     $executeRawUnsafe: vi.fn().mockResolvedValue(undefined),
     $transaction: vi.fn(async (callback: any) => callback(db)),
-    user: { findUnique: vi.fn().mockResolvedValue({ id: ids.user, activo: true }) },
+    user: {
+      findFirst: vi.fn().mockResolvedValue({ id: ids.user, activo: true }),
+      findUnique: vi.fn().mockResolvedValue({ id: ids.user, activo: true }),
+    },
     comparecienteAltaSession: {
       findUnique: vi.fn().mockImplementation(() => Promise.resolve({ ...session, cargasTemporales: [] })),
       findFirst: vi.fn().mockImplementation(() => Promise.resolve({ ...session, cargasTemporales: [] })),
@@ -79,6 +82,15 @@ import { ComparecienteAltaSessionService } from './comparecienteAltaSession.serv
 
 describe('H3-F-001 · alta asistida canónica', () => {
   beforeEach(() => { fixture.reset(); vi.clearAllMocks(); });
+
+  it('inicia la sesión con una consulta compatible con el scoping tenant-aware', async () => {
+    await ComparecienteAltaSessionService.iniciarOSentarseSesion({
+      usuario_id: ids.user,
+      idempotency_key: 'uat-tenant-scope',
+    });
+
+    expect(fixture.db.user.findFirst).toHaveBeenCalledWith({ where: { id: ids.user } });
+  });
 
   it('confirma la sesión, persiste un evento/Query H3 y el retry no duplica nada ni usa red', async () => {
     const params = {

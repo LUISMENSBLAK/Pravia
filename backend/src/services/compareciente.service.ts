@@ -1077,6 +1077,7 @@ export class ComparecienteService {
 
     const fechaEmision = validateOptionalDate(params.fechaEmision, 'La fecha de emisión');
     const fechaVencimiento = validateOptionalDate(params.fechaVencimiento, 'La fecha de vencimiento');
+    const fileChecksum = crypto.createHash('sha256').update(buffer).digest('hex');
     const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(-180) || 'documento';
     const actorContext = requireActorContext();
     const storageKey = `organizations/${actorContext.organizationId}/documentos/comparecientes/${comparecienteId}/${Date.now()}_${crypto.randomUUID()}_${safeFileName}`;
@@ -1093,6 +1094,7 @@ export class ComparecienteService {
             categoria: 'OTROS',
             mime_type: mimeType,
             size_bytes: buffer.length,
+            checksum_sha256: fileChecksum,
             storage_key: storageKey,
             fecha_emision: fechaEmision,
             fecha_vigencia: fechaVencimiento,

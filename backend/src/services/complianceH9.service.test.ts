@@ -58,6 +58,16 @@ describe('H9 assisted compliance service', () => {
     const db = createDb(); db.expediente.findFirst.mockResolvedValue(null);
     await expect(new ComplianceH9Service(db, ai).workspace(actor, exp)).rejects.toMatchObject({ code: 'H9_CASE_ACCESS_DENIED', status: 403 });
   });
+  it('uses only physical ExpedienteActo fields when building the canonical dataset', async () => {
+    const db = createDb();
+    await new ComplianceH9Service(db, ai).workspace(actor, exp);
+    const select = db.expediente.findFirst.mock.calls[0][0].select.actos.select;
+    expect(select).toMatchObject({ id: true, updated_at: true });
+    expect(select).not.toHaveProperty('version');
+    const paymentPartySelect = db.complianceOperationPayment.findMany.mock.calls[0][0].select.currentRevision.select.parties.select;
+    expect(paymentPartySelect).toMatchObject({ role: true, expediente_compareciente_id: true, compareciente_id: true });
+    expect(paymentPartySelect).not.toHaveProperty('display_name_snapshot');
+  });
   it('does not persist a clean result when the AI seam fails', async () => {
     const db = createDb(); const failedAi = vi.fn().mockRejectedValue(new Error('network'));
     await expect(new ComplianceH9Service(db, failedAi).run(actor, exp, { idempotency_key: 'manual-run-003' })).rejects.toMatchObject({ code: 'H9_AI_FAILED' });

@@ -20,6 +20,11 @@ import { requireActorContext } from '../auth/actorContext';
 import { enqueueComparecienteCreatedTx } from './complianceScreening.service';
 
 const EXPIRATION_HOURS = parseInt(process.env.COMPARECIENTE_ALTA_EXPIRATION_HOURS || '24', 10);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeCorrelationId(value?: string | null): string {
+  return value && UUID_PATTERN.test(value) ? value : crypto.randomUUID();
+}
 
 /**
  * Normaliza cualquier variante de sexo al valor exacto del enum Sexo de Prisma.
@@ -58,7 +63,10 @@ export class ComparecienteAltaSessionService {
   }) {
     const { usuario_id, tipo_persona, idempotency_key, origen_expediente_id, correlation_id } = params;
 
-    const userExists = await prisma.user.findUnique({ where: { id: usuario_id } });
+    // Use findFirst so the canonical tenant-scoping middleware can append the
+    // organization-membership predicate without producing an invalid
+    // UserWhereUniqueInput.
+    const userExists = await prisma.user.findFirst({ where: { id: usuario_id } });
     if (!userExists?.activo) throw new Error('La sesión no corresponde a un usuario activo.');
     const finalUsuarioId = usuario_id;
 
@@ -103,7 +111,7 @@ export class ComparecienteAltaSessionService {
         estatus: 'BORRADOR',
         origen_expediente_id: origen_expediente_id || null,
         idempotency_key: idempotency_key || null,
-        correlation_id: correlation_id || `corr_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
+        correlation_id: normalizeCorrelationId(correlation_id),
         borrador_json: {
           tipo_persona: tipo_persona || 'FISICA',
           nacionalidad: 'Mexicana',
@@ -607,7 +615,7 @@ export class ComparecienteAltaSessionService {
     let finalUsuarioId = sesion.usuario_id;
 
     if (usuarioId) {
-      const u = await prisma.user.findUnique({ where: { id: usuarioId } });
+      const u = await prisma.user.findFirst({ where: { id: usuarioId } });
       if (u) finalUsuarioId = u.id;
     }
 
@@ -703,6 +711,7 @@ export class ComparecienteAltaSessionService {
       });
       if (!currentSession) throw new Error('Sesión de alta no encontrada');
       const currentDraft = (currentSession.borrador_json as any) || {};
+      const finalCorrelationId = normalizeCorrelationId(currentSession.correlation_id);
       if (currentSession.estatus === 'COMPLETADO' && currentDraft._resultado_compareciente_id) {
         const existing = await tx.compareciente.findFirst({ where: { id: String(currentDraft._resultado_compareciente_id), organization_id: organizationId, archived_at: null } });
         if (!existing) throw new Error('La confirmación previa no conserva un Compareciente resoluble.');
@@ -981,7 +990,7 @@ export class ComparecienteAltaSessionService {
             user_id: finalUsuarioId, accion: 'CARGAR_DOCUMENTO_COMPARECIENTE', entidad: 'Documento', entidad_id: docMaestro.id,
             valores_nuevos: { nombre: tempDoc.nombre_original, categoria },
             detalles: { modulo: 'COMPARECIENTES', compareciente_id: compareciente.id, origen: 'ALTA_SESSION' },
-            correlation_id: currentSession.correlation_id,
+            correlation_id: finalCorrelationId,
           } });
           documentosDefinitivos.set(tempDoc.id, docMaestro.id);
 
@@ -1035,7 +1044,7 @@ export class ComparecienteAltaSessionService {
               estado: sourceState as any,
               confirmado_por_id: sourceState === 'CONFIRMADO' || sourceState === 'EDITADO_MANUALMENTE' ? finalUsuarioId : null,
               confirmado_at: sourceState === 'CONFIRMADO' || sourceState === 'EDITADO_MANUALMENTE' ? new Date() : null,
-              correlation_id: currentSession.correlation_id,
+              correlation_id: finalCorrelationId,
             },
           });
         }
@@ -1053,7 +1062,7 @@ export class ComparecienteAltaSessionService {
               estado: 'EDITADO_MANUALMENTE',
               confirmado_por_id: finalUsuarioId,
               confirmado_at: new Date(),
-              correlation_id: currentSession.correlation_id,
+              correlation_id: finalCorrelationId,
             },
           });
         }
@@ -1072,12 +1081,12 @@ export class ComparecienteAltaSessionService {
         user_id: finalUsuarioId, accion: esFisica ? 'CREAR_PERSONA_FISICA' : 'CREAR_PERSONA_MORAL', entidad: 'Compareciente', entidad_id: compareciente.id,
         valores_nuevos: { tipo_persona: tipo_persona || 'FISICA', nombre_busqueda: nombreCompleto, documentos_integrados: docsIntegradosCount },
         detalles: { modulo: 'COMPARECIENTES', origen: 'WORKSPACE_UNICO', campos_confirmados: Object.keys(datosFormulario) },
-        correlation_id: currentSession.correlation_id,
+        correlation_id: finalCorrelationId,
       } });
       await enqueueComparecienteCreatedTx(tx, {
         organizationId, comparecienteId: compareciente.id, actorUserId: finalUsuarioId,
         tipoPersona: esFisica ? 'FISICA' : 'MORAL', identityLabel: nombreCompleto,
-        correlationId: currentSession.correlation_id || crypto.randomUUID(),
+        correlationId: finalCorrelationId,
       });
 
       return {
