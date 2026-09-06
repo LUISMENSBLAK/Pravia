@@ -28,8 +28,8 @@ This 45-item matrix was frozen before H10 product or test edits. H10 certifies t
 | H10-INT-018 | Generated, signed-uploaded, validated, presented, acknowledged and fulfilled remain distinct | H6 contracts and H10 state-transition negatives |
 | H10-INT-019 | Delivered cases keep compliance open while operational alerts remain stopped | H7 tests; H10 journey 5 |
 | H10-INT-020 | H1-H9 AI only extracts, compares, proposes or reviews within human/deterministic boundaries | H9 contracts; H10 AI-boundary assertions |
-| H10-DB-001 | H1-H9 checkpoint and migration chains are linear and complete | Git parent walk; DB migration ledger 55/55 |
-| H10-DB-002 | Fresh bootstrap reaches the canonical H10 schema without intervention | DB A `db:init-empty`, 55 migrations |
+| H10-DB-001 | H1-H9 checkpoint and migration chains are linear and complete | Git parent walk; DB migration ledger 59/59, including the provider-neutral release compatibility migrations |
+| H10-DB-002 | Fresh bootstrap reaches the canonical H10 schema without intervention | DB A `db:init-empty`, 59 migrations |
 | H10-DB-003 | Incremental representative upgrade preserves legacy rows | DB B pre-H1 -> H5 fixture -> H10 |
 | H10-DB-004 | Direct H8-to-H9/H10 upgrade succeeds | DB C H8 -> H9 -> H10 |
 | H10-DB-005 | A/B/C logical schemas have the same normalized fingerprint | `h10-global-logical-schema-v1`, SHA-256 below |
@@ -60,7 +60,7 @@ Frozen invariant count: **45**. Certified: **45/45**.
 
 - Contract source was re-read for CUM-001, CUM-MAT, CUM-EST-001, CUM-DOC-001, CUM-FIR-001, CUM-CUE-001, CUM-BC-001, CUM-PAG-001, CUM-LST-001, CUM-AVI-001, CUM-AUD-001, CUM-CIE-001, prevalence and expediente integration: 12/12 PASS.
 - Linear checkpoints: H1 `42ee2cf`, H2 `3379b8b`, H3 `81d2f43`, H4 `4e2c0bd`, H5 `6bf9cfb`, H6 `b7d72bc`, H7 `297870b`, H8 `4c4c93c`, H9 `7810bef`: PASS.
-- Database A: fresh canonical bootstrap, 55/55 migrations represented, PASS.
+- Database A: fresh canonical bootstrap, 59/59 migrations represented, PASS.
 - Database B: pre-H1 bootstrap (46), H1-H5 upgrade, representative fixture, H6-H10 upgrade, PASS. Four H6 cutover classes, one document, one evidence row and one operation payment survived; checksum snapshot remained equal to the document checksum.
 - Database C: H8 bootstrap (53), direct H9 and H10 upgrade, PASS.
 - A/B/C normalized fingerprint: `60917aa17ecd859ce401d71a3ccc59d5de5dd6a6d57ff02f00f200660d180d58`; counts `columns=2777`, `constraints=879`, `indexes=1057`, `enums=588`, `functions=97`, `triggers=346`; parity MATCH.
@@ -72,7 +72,7 @@ Frozen invariant count: **45**. Certified: **45/45**.
 
 ## H10 defect and correction
 
-The representative pre-H1 upgrade exposed one global schema-parity defect: 18 H1-owned foreign-key columns and one H5 payment-party foreign-key column lacked a covering index on historical upgrade paths. Historical H1-H9 migrations were left byte-identical. The new migration `20260905040000_add_h10_compliance_fk_indexes` and matching Prisma `@@index` declarations add the 19 indexes idempotently. All A/B/C gates and global regressions passed after the correction.
+The representative pre-H1 upgrade exposed one global schema-parity defect: 18 H1-owned foreign-key columns and one H5 payment-party foreign-key column lacked a covering index on historical upgrade paths. Historical H1-H9 migrations were left byte-identical. Migration `20260905040000_add_h10_compliance_fk_indexes` and matching Prisma `@@index` declarations add the 19 indexes idempotently. The production rebaseline dry-run later exposed 42 additional tenant-aware physical foreign keys that exist only on that stronger historical path; `20260905041000_index_rebaseline_legacy_foreign_keys` adds deterministic covering indexes only for missing physical FK coverage and is a no-op on the fresh Prisma bootstrap. All database gates and global regressions passed after the corrections.
 
 ## Approved exclusions preserved
 

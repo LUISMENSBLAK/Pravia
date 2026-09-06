@@ -41,6 +41,33 @@ migrations=(
   20260817045000_create_multitenancy_foundation
   20260817050000_create_assistant_conversations
   20260817060000_add_missing_operational_fk_indexes
+  20260824010000_phase_a_cfg_catalogs
+  20260826010000_expand_expediente_actos
+  20260826020000_expand_expediente_comparecientes
+  20260828010000_create_property_master
+  20260828020000_create_exp004_document_snapshot
+  20260828030000_create_exp005_operational_follow_up
+  20260828040000_create_exp006_operational_artifacts
+  20260829010000_create_exp007_case_budget
+  20260829020000_create_exp008_case_finance
+  20260829030000_expand_exp009_case_activity
+  20260831010000_harden_isr001_contract
+  20260831020000_create_pro001_source_prerequisites
+  20260831030000_create_cot001_source_prerequisites
+  20260831040000_create_g0c_configurable_timing_policies
+  20260831050000_create_h1_compliance_legal_engine
+  20260901010000_create_h2_compliance_document_evidence
+  20260901020000_create_h3_compliance_screening
+  20260902010000_create_h4_beneficial_controller
+  20260903005000_prepare_h5_pgcrypto_compatibility
+  20260903010000_create_h5_questionnaires_payments_provider
+  20260905005000_prepare_legacy_index_compatibility
+  20260905010000_create_h6_signature_notices
+  20260905011000_cleanup_pgcrypto_compatibility
+  20260905020000_create_h7_compliance_closure
+  20260905030000_create_h9_assisted_compliance_review
+  20260905040000_add_h10_compliance_fk_indexes
+  20260905041000_index_rebaseline_legacy_foreign_keys
 )
 
 for migration in "${migrations[@]}"; do
@@ -69,4 +96,4 @@ if [[ "$baseline_hash" != "51526bb12228a0c5f4fd02f9baec77ae696f601c2c6f5ff70c2fa
 fi
 
 echo "Paquete canónico preparado localmente: $output_dir"
-echo "Migraciones incluidas: ${#migrations[@]} (9 aplicadas + 9 pendientes)."
+echo "Migraciones incluidas: ${#migrations[@]} (18 aplicadas + 27 pendientes)."

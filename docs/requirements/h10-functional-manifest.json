@@ -1,12 +1,16 @@
 {
   "algorithm": "sha256(canonical-json(sorted[{path,sha256}]))",
   "parent": "7810bef86e8a7012cd432013d132c94c5c1692ed",
-  "functionalFileCount": 7,
-  "functionalHash": "49fe6e1c3ba2e76a74effbae8629210f9d2f3f6da7bbc1281a0aee449a872b8c",
+  "functionalFileCount": 8,
+  "functionalHash": "e1f1afb09709618e7498846ede5bb6f5bbe11ec316fff6be7e1abe868ec5fc0f",
   "files": [
     {
       "path": "backend/prisma/migrations/20260905040000_add_h10_compliance_fk_indexes/migration.sql",
       "sha256": "7a8530ee255780d7ab6eaf906f95a6b4b414466bf8b2a0e640872607686e8d23"
+    },
+    {
+      "path": "backend/prisma/migrations/20260905041000_index_rebaseline_legacy_foreign_keys/migration.sql",
+      "sha256": "8e92e92b15460e7fbafcf261419dd3c55f6d716b5102bb68f4051adc94568b82"
     },
     {
       "path": "backend/prisma/schema.prisma",
@@ -22,7 +26,7 @@
     },
     {
       "path": "backend/src/integration/complianceH10.postgresql.integration.test.ts",
-      "sha256": "f77c86217e44b73193349d8b3a37dcbbcc216bdb17240de15ad0573281f11bfd"
+      "sha256": "a90ca89935195fa801e6fcc97037e56e314ff3ef24bfe9f77472acc1d9c7427c"
     },
     {
       "path": "backend/src/integration/h10-representative-upgrade-fixtures.sql",
@@ -30,7 +34,7 @@
     },
     {
       "path": "docs/requirements/h10-compliance-v05-global-certification.md",
-      "sha256": "4e33093b50fa8f6f7562f4dacecd607516482a24748b4ed5075e38423c2ea308"
+      "sha256": "09d4f41ef4fd20fb1189a276657b686d75119b26b65cc471ff4307d310d7f38a"
     }
   ]
 }

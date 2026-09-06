@@ -48,7 +48,7 @@ async function fingerprint() {
 describe(`H10 global PostgreSQL certification DB ${target.target}`, () => {
   afterAll(async () => db.$disconnect());
 
-  it('has the exact 55-migration chain through the single H10 correction', async () => {
+  it('has the exact 59-migration chain through the release compatibility migrations and H10 corrections', async () => {
     const rows = await db.$queryRawUnsafe<Array<{ total: bigint; h1_h9: bigint; h10: bigint }>>(`
       SELECT count(*)::bigint total,
         count(*) FILTER (WHERE migration_name IN (
@@ -58,7 +58,7 @@ describe(`H10 global PostgreSQL certification DB ${target.target}`, () => {
           '20260905020000_create_h7_compliance_closure','20260905030000_create_h9_assisted_compliance_review'))::bigint h1_h9,
         count(*) FILTER (WHERE migration_name='20260905040000_add_h10_compliance_fk_indexes')::bigint h10
       FROM pravia_os._prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`);
-    expect({ total: Number(rows[0].total), h1_h9: Number(rows[0].h1_h9), h10: Number(rows[0].h10) }).toEqual({ total: 55, h1_h9: 8, h10: 1 });
+    expect({ total: Number(rows[0].total), h1_h9: Number(rows[0].h1_h9), h10: Number(rows[0].h10) }).toEqual({ total: 59, h1_h9: 8, h10: 1 });
   });
 
   it('matches the independently rebuilt canonical global schema fingerprint', async () => {
