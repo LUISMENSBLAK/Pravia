@@ -3,6 +3,7 @@ import type { Request } from 'express';
 import {
   Prisma,
   PrismaClient,
+  ProspectoEtapaContractual,
   TimingCalendarSemantics,
   TimingCalculationStatus,
   TimingPolicyDomain,
@@ -201,11 +202,11 @@ async function closeInterval(tx: Tx, organizationId: string, type: TimingPolicyT
 
 export async function applyProspectTimingTransition(tx: Tx, organizationId: string, previousStage: string | null, nextStage: string, fact: ProspectSource) {
   const source = { prospecto_id: fact.prospectoId };
-  if (previousStage === 'RECABANDO_INFORMACION') await closeInterval(tx, organizationId, TimingPolicyType.PROSPECT_INFO_COLLECTION, source, fact.effectiveAt, fact.transitionId);
-  if (fact.action === 'REGISTRAR_ENVIO') await closeInterval(tx, organizationId, TimingPolicyType.PROSPECT_READY_TO_REQUEST, source, fact.effectiveAt, fact.transitionId);
+  if (previousStage === 'EN_INTEGRACION' || previousStage === 'RECABANDO_INFORMACION') await closeInterval(tx, organizationId, TimingPolicyType.PROSPECT_INFO_COLLECTION, source, fact.effectiveAt, fact.transitionId);
+  if (previousStage === 'LISTO_PARA_COTIZAR' || fact.action === 'REGISTRAR_ENVIO') await closeInterval(tx, organizationId, TimingPolicyType.PROSPECT_READY_TO_REQUEST, source, fact.effectiveAt, fact.transitionId);
   if (fact.action === 'REGISTRAR_RECEPCION') await closeInterval(tx, organizationId, TimingPolicyType.PROSPECT_NOTARY_WAIT, source, fact.effectiveAt, fact.transitionId);
-  if (nextStage === 'RECABANDO_INFORMACION') await openInterval(tx, organizationId, TimingPolicyType.PROSPECT_INFO_COLLECTION, { ...source, opened_transition_id: fact.transitionId, opened_at: fact.effectiveAt, provenance: { source: 'PRO-001', businessFact: fact.action } });
-  if (nextStage === 'LISTO_PARA_SOLICITAR') await openInterval(tx, organizationId, TimingPolicyType.PROSPECT_READY_TO_REQUEST, { ...source, opened_transition_id: fact.transitionId, opened_at: fact.effectiveAt, provenance: { source: 'PRO-001', businessFact: fact.action } });
+  if (nextStage === 'EN_INTEGRACION') await openInterval(tx, organizationId, TimingPolicyType.PROSPECT_INFO_COLLECTION, { ...source, opened_transition_id: fact.transitionId, opened_at: fact.effectiveAt, provenance: { source: 'CORRECCION_001', businessFact: fact.action } });
+  if (nextStage === 'LISTO_PARA_COTIZAR') await openInterval(tx, organizationId, TimingPolicyType.PROSPECT_READY_TO_REQUEST, { ...source, opened_transition_id: fact.transitionId, opened_at: fact.effectiveAt, provenance: { source: 'CORRECCION_001', businessFact: fact.action } });
   if (fact.action === 'REGISTRAR_ENVIO') await openInterval(tx, organizationId, TimingPolicyType.PROSPECT_NOTARY_WAIT, { ...source, opened_transition_id: fact.transitionId, opened_at: fact.effectiveAt, provenance: { source: 'PRO-001', businessFact: fact.action } });
 }
 
@@ -245,8 +246,8 @@ export const timingSourceService = {
       if (!source) throw new TimingPolicyError(404, 'TIMING_SOURCE_NOT_FOUND', 'No se encontró la fuente o no tienes acceso.');
       const interval = await prisma.timingInterval.findFirst({ where: { organization_id: actor.organizationId, policy_type: definition.type, prospecto_id: source.id } });
       if (!interval) {
-        const eventWhere = definition.type === TimingPolicyType.PROSPECT_INFO_COLLECTION ? { etapa_nueva: 'RECABANDO_INFORMACION' as const }
-          : definition.type === TimingPolicyType.PROSPECT_READY_TO_REQUEST ? { etapa_nueva: 'LISTO_PARA_SOLICITAR' as const }
+        const eventWhere = definition.type === TimingPolicyType.PROSPECT_INFO_COLLECTION ? { etapa_nueva: { in: [ProspectoEtapaContractual.EN_INTEGRACION, ProspectoEtapaContractual.RECABANDO_INFORMACION] } }
+          : definition.type === TimingPolicyType.PROSPECT_READY_TO_REQUEST ? { etapa_nueva: { in: [ProspectoEtapaContractual.LISTO_PARA_COTIZAR, ProspectoEtapaContractual.LISTO_PARA_SOLICITAR] } }
             : { accion: 'REGISTRAR_ENVIO' };
         const historical = await prisma.prospectoTransicion.findFirst({ where: { organization_id: actor.organizationId, prospecto_id: source.id, ...eventWhere }, select: { id: true } });
         return { sourceId, policyType: definition.type, openedAt: null, closedAt: null, policyRevision: null, dueAt: null, overdue: null,

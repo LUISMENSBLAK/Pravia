@@ -27,7 +27,7 @@ const catalogs: ProspectCatalogs = {
   ],
 };
 const prospect = (overrides: Partial<Prospect> = {}): Prospect => ({
-  id: 'prospect-1', nombre: 'CONSTRUCTORA HORIZONTE', telefono: '3111002000', email: 'contacto@horizonte.mx', tipo_acto: 'Compraventa',
+  id: 'prospect-1', folio: 'PRO-0001-2026', etapa_contractual: 'NUEVO', version_operativa: 1, user_id: 'user-1', nombre: 'CONSTRUCTORA HORIZONTE', telefono: '3111002000', email: 'contacto@horizonte.mx', tipo_acto: 'Compraventa',
   servicio_catalogo_codigo: 'COMPRAVENTA', servicio_catalogo: catalogs.services[0], etapa_operativa_codigo: 'PROSPECTO_RECIBIDO', etapa_operativa: catalogs.stages[0],
   fuente: 'Referido', ciudad: 'Tepic', tiempo_estimado: 'Este mes', prioridad: 'ALTA', estado: 'NUEVO', tiene_predial: false, tiene_antecedente: true,
   created_at: '2026-08-01T10:00:00.000Z', updated_at: '2026-08-11T10:00:00.000Z', atendido_por: { nombre: 'Andrea Ruiz' }, cotizacion: null, documentos: [],
@@ -52,26 +52,37 @@ const mockApi = (seed: Prospect[] = [prospect()], permissions?: string[], defaul
       return response({ preferences: { default_view: selected, density: 'COMFORTABLE', timezone: 'America/Mexico_City', date_format: 'DD/MM/YYYY', theme: 'LIGHT', notifications_enabled: true, assistant_suggestions_enabled: true } });
     }
     if (url.pathname.endsWith('/prospectos/catalogos')) return response(catalogs);
-    if (url.pathname.endsWith('/prospectos/prospect-1/operacion')) return response({
-      stage:null,stageLabel:'Etapa por confirmar',stageEnteredAt:null,knowledge:'UNKNOWN_LEGACY',version:0,folio:null,
-      wait:{type:null,knowledge:'UNKNOWN_LEGACY',label:'Espera por confirmar'},stages:[],actions:[],notaria:null,notaries:[],
-      responsibles:[],source:null,sourceHistory:[],events:[],quote:null,canReadSource:true,
-    });
+    const operationMatch = url.pathname.match(/\/prospectos\/([^/]+)\/operacion$/);
+    if (operationMatch) {
+      const item = prospects.find((candidate) => candidate.id === operationMatch[1]) ?? prospects[0];
+      const stage = item?.etapa_contractual ?? null;
+      const action = stage === 'NUEVO' ? { code: 'COMENZAR_INTEGRACION', label: 'Comenzar integración' }
+        : stage === 'EN_INTEGRACION' ? { code: 'MARCAR_LISTO_PARA_COTIZAR', label: 'Marcar listo para cotizar' }
+          : stage === 'LISTO_PARA_COTIZAR' ? { code: 'CONVERTIR', label: 'Convertir en cotización' } : null;
+      return response({
+        stage, stageLabel: stage === 'NUEVO' ? 'Nuevo' : stage === 'EN_INTEGRACION' ? 'En integración' : stage === 'LISTO_PARA_COTIZAR' ? 'Listo para cotizar' : stage === 'CONVERTIDO_EN_COTIZACION' ? 'Convertido en cotización' : 'Etapa histórica',
+        stageEnteredAt:'2026-08-01T10:00:00.000Z',knowledge:stage ? 'KNOWN' : 'UNKNOWN_LEGACY',version:item?.version_operativa ?? 0,folio:item?.folio ?? null,
+        wait:{type:null,knowledge:'NOT_APPLICABLE',label:'Sin espera externa'},
+        stages:[{code:'NUEVO',label:'Nuevo'},{code:'EN_INTEGRACION',label:'En integración'},{code:'LISTO_PARA_COTIZAR',label:'Listo para cotizar'},{code:'CONVERTIDO_EN_COTIZACION',label:'Cotización'}],
+        actions:action ? [action] : [],notaria:null,notaries:[],responsibles:[{id:'user-1',nombre:'Andrea Ruiz'}],source:null,sourceHistory:[],events:[],quote:item?.cotizacion ?? null,canReadSource:true,
+      });
+    }
     if (url.pathname.endsWith('/documentos') && init?.method === 'POST') return failUploads ? response({ error: 'Upload failed' }, 500) : response({ id: `doc-${Date.now()}`, nombre_original: 'archivo.pdf', tipo: 'PREDIAL' }, 201);
     if (/\/documentos\/[^/]+\/url$/.test(url.pathname)) return response({ url: 'https://signed.example/document' });
     if (url.pathname.endsWith('/prospectos/prospect-1/seguimientos')) return response({ id: 'follow-2', tipo: 'Nota', contenido: 'Se recibió información', proxima_accion: 'Revisar alcance', created_at: '2026-08-12T10:00:00.000Z', usuario: { nombre: 'Andrea Ruiz' } }, 201);
-    if (url.pathname.endsWith('/prospectos/prospect-1/documentos')) return response([]);
-    if (url.pathname.endsWith('/prospectos/prospect-1') && init?.method === 'PUT') {
-      const updated = { ...prospects[0], ...JSON.parse(String(init.body)) };
-      prospects[0] = updated;
+    if (/\/prospectos\/[^/]+\/documentos$/.test(url.pathname)) return response([]);
+    const detailMatch = url.pathname.match(/\/prospectos\/([^/]+)$/);
+    if (detailMatch && init?.method === 'PUT') {
+      const index = prospects.findIndex((candidate) => candidate.id === detailMatch[1]);
+      const updated = { ...prospects[index], ...JSON.parse(String(init.body)) };
+      prospects[index] = updated;
       return response(updated);
     }
-    if (url.pathname.endsWith('/prospectos/prospect-1')) return response(prospects[0]);
+    if (detailMatch) return response(prospects.find((candidate) => candidate.id === detailMatch[1]) ?? {}, prospects.some((candidate) => candidate.id === detailMatch[1]) ? 200 : 404);
     if (url.pathname.endsWith('/prospectos') && init?.method === 'POST') {
       createCount += 1;
       const body = JSON.parse(String(init.body));
-      const service = catalogs.services.find((item) => item.code === body.servicio_catalogo_codigo);
-      const created = prospect({ id: `created-${createCount}`, ...body, tipo_acto: service?.label, servicio_catalogo: service, etapa_operativa: catalogs.stages[0], etapa_operativa_codigo: catalogs.stages[0].code });
+      const created = prospect({ id: `created-${createCount}`, folio: `PRO-${String(createCount + 1).padStart(4, '0')}-2026`, etapa_contractual: 'NUEVO', version_operativa: 1, telefono: null, email: null, tipo_acto: null, servicio_catalogo: null, servicio_catalogo_codigo: null, etapa_operativa: null, etapa_operativa_codigo: null, ...body });
       prospects = [created, ...prospects];
       return response(created, 201);
     }
@@ -81,9 +92,9 @@ const mockApi = (seed: Prospect[] = [prospect()], permissions?: string[], defaul
       if (pipeline) {
         const contractStages = {
           new: ['NUEVO'],
-          progress: ['RECABANDO_INFORMACION', 'LISTO_PARA_SOLICITAR', 'SOLICITUD_ENVIADA_NOTARIA', 'EN_ESPERA_COTIZACION'],
-          quote: ['COTIZACION_RECIBIDA'],
-          converted: ['CONVERTIDO_COTIZACION'],
+          progress: ['EN_INTEGRACION', 'RECABANDO_INFORMACION', 'LISTO_PARA_SOLICITAR', 'SOLICITUD_ENVIADA_NOTARIA', 'EN_ESPERA_COTIZACION'],
+          quote: ['LISTO_PARA_COTIZAR', 'COTIZACION_RECIBIDA'],
+          converted: ['CONVERTIDO_EN_COTIZACION', 'CONVERTIDO_COTIZACION', 'SUSPENDIDO', 'CANCELADO'],
         }[pipeline] ?? [];
         const legacyStates = PIPELINE_STAGES.find((item) => item.id === pipeline)?.substatuses ?? [];
         filtered = filtered.filter((item) => item.etapa_contractual
@@ -196,38 +207,31 @@ describe('Prospectos', () => {
     expect(screen.queryAllByRole('button', { name: 'Abrir prospecto PROSPECTO 15', hidden: true }).length).toBeLessThanOrEqual(2);
   });
 
-  it('nuevo prospecto usa campos definitivos, catálogo y uppercase real', async () => {
+  it('nuevo prospecto solicita sólo el mínimo, asigna datos automáticos y abre la ficha', async () => {
     const { fetchMock } = mockApi([]); const user = userEvent.setup();
     render(<MemoryRouter initialEntries={['/prospectos']}><App /></MemoryRouter>);
     await screen.findByText('Aún no hay prospectos.');
     await user.click(screen.getByRole('button', { name: 'Nuevo prospecto' }));
-    expect(screen.queryByLabelText('Origen')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Ciudad')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Tiempo estimado')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('Necesidad inicial')).not.toBeInTheDocument();
-    expect(screen.getByLabelText('Observaciones')).toBeInTheDocument();
-    expect(screen.getByLabelText('Cuenta con predial')).toBeInTheDocument();
-    expect(screen.getByLabelText('Cuenta con antecedente')).toBeInTheDocument();
+    expect(screen.getAllByRole('textbox')).toHaveLength(2);
+    expect(screen.getByText(/folio, la fecha y la etapa Nuevo se asignan automáticamente/i)).toBeInTheDocument();
     await user.type(screen.getByLabelText(/Nombre o razón social/), 'Francisco Javier Tapia López');
-    const serviceInput = screen.getByRole('combobox', { name: /Servicio \/ acto de interés/ });
-    await user.click(serviceInput); await user.type(serviceInput, 'compra'); await user.click(screen.getByRole('option', { name: 'Compraventa' }));
-    await user.click(screen.getByLabelText('Cuenta con predial'));
     await user.click(screen.getByRole('button', { name: 'Crear prospecto' }));
     await waitFor(() => {
       const createCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/prospectos') && init?.method === 'POST');
-      expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({ nombre: 'FRANCISCO JAVIER TAPIA LÓPEZ', servicio_catalogo_codigo: 'COMPRAVENTA', tiene_predial: true });
+      expect(JSON.parse(String(createCall?.[1]?.body))).toEqual({ nombre: 'FRANCISCO JAVIER TAPIA LÓPEZ' });
     });
+    expect(await screen.findByRole('heading', { name: 'FRANCISCO JAVIER TAPIA LÓPEZ' })).toBeInTheDocument();
+    expect(screen.getByText('PRO-0002-2026')).toBeInTheDocument();
   });
 
-  it('crea una sola vez y reporta upload parcial sin borrar el prospecto', async () => {
-    const { getCreateCount } = mockApi([], undefined, 'CARDS', true); const user = userEvent.setup();
+  it('crea una sola vez aunque el usuario haga doble click', async () => {
+    const { getCreateCount } = mockApi([]); const user = userEvent.setup();
     render(<MemoryRouter initialEntries={['/prospectos']}><App /></MemoryRouter>);
     await screen.findByText('Aún no hay prospectos.'); await user.click(screen.getByRole('button', { name: 'Nuevo prospecto' }));
     await user.type(screen.getByLabelText(/Nombre o razón social/), 'josé ñuñez');
-    const serviceInput = screen.getByRole('combobox', { name: /Servicio \/ acto de interés/ }); await user.click(serviceInput); await user.type(serviceInput, 'don'); await user.click(screen.getByRole('option', { name: 'Donación' }));
-    await user.upload(screen.getByLabelText('Adjuntar predial'), new File(['predial'], 'predial.pdf', { type: 'application/pdf' }));
-    await user.click(screen.getByRole('button', { name: 'Crear prospecto' }));
-    expect(await screen.findByText(/Prospecto creado\. 1 documento no pudo cargarse/)).toBeInTheDocument();
+    const create = screen.getByRole('button', { name: 'Crear prospecto' });
+    await Promise.all([user.click(create), user.click(create)]);
+    expect(await screen.findByRole('heading', { name: 'JOSÉ ÑUÑEZ' })).toBeInTheDocument();
     expect(getCreateCount()).toBe(1);
   });
 
@@ -235,10 +239,10 @@ describe('Prospectos', () => {
     mockApi([prospect({ estado: 'INFO_PENDIENTE' })]); const user = userEvent.setup();
     render(<MemoryRouter initialEntries={['/prospectos/prospect-1']}><App /></MemoryRouter>);
     expect(await screen.findByRole('heading', { name: 'CONSTRUCTORA HORIZONTE' })).toBeInTheDocument();
-    expect(screen.getAllByText('Prospecto recibido').length).toBeGreaterThan(0);
-    expect(screen.getByText('Subestado').nextElementSibling).toHaveTextContent('Información pendiente');
-    expect(screen.queryByText('Pipeline')).not.toBeInTheDocument();
-    expect(screen.getByText('Antecedente').nextElementSibling).toHaveTextContent('Sí');
+    expect(screen.getAllByText('Nuevo').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /Comenzar integración/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Datos del asunto' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Cliente / solicitante' })).toBeInTheDocument();
     expect(screen.queryByText('Ciudad')).not.toBeInTheDocument();
     expect(screen.queryByText('Origen')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Registrar seguimiento' }));
@@ -247,20 +251,21 @@ describe('Prospectos', () => {
     expect(await screen.findByText('Seguimiento registrado.')).toBeInTheDocument();
   });
 
-  it('edición usa catálogo, etapa documental, uppercase y no revive campos eliminados', async () => {
+  it('edita directamente por bloques, sin modal genérico', async () => {
     const { fetchMock } = mockApi(); const user = userEvent.setup();
     render(<MemoryRouter initialEntries={['/prospectos/prospect-1']}><App /></MemoryRouter>);
     await screen.findByRole('heading', { name: 'CONSTRUCTORA HORIZONTE' });
-    await user.click(screen.getByRole('button', { name: 'Editar' }));
+    expect(screen.queryByRole('button', { name: /^Editar$/ })).not.toBeInTheDocument();
+    const clientSection = screen.getByRole('heading', { name: 'Cliente / solicitante' }).closest('section')!;
+    await user.click(within(clientSection).getByRole('button', { name: 'Editar bloque' }));
     expect(screen.queryByLabelText('Origen')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Ciudad')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Tiempo estimado')).not.toBeInTheDocument();
     const name = screen.getByLabelText(/Nombre o razón social/); await user.clear(name); await user.type(name, 'josé ñuñez');
-    const stage = screen.getByRole('combobox', { name: /Etapa documental/ }); await user.click(stage); await user.clear(stage); await user.type(stage, 'recibidos'); await user.click(screen.getByRole('option', { name: 'Antecedentes recibidos' }));
-    await user.click(screen.getByRole('button', { name: 'Guardar cambios' }));
+    await user.click(within(clientSection).getByRole('button', { name: 'Guardar' }));
     await waitFor(() => {
       const updateCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/prospectos/prospect-1') && init?.method === 'PUT');
-      expect(JSON.parse(String(updateCall?.[1]?.body))).toMatchObject({ nombre: 'JOSÉ ÑUÑEZ', etapa_operativa_codigo: 'ANTECEDENTES_RECIBIDOS' });
+      expect(JSON.parse(String(updateCall?.[1]?.body))).toMatchObject({ nombre: 'JOSÉ ÑUÑEZ', expectedVersion: 1 });
     });
   });
 
@@ -268,10 +273,10 @@ describe('Prospectos', () => {
     const { fetchMock } = mockApi(); const user = userEvent.setup();
     render(<MemoryRouter initialEntries={['/prospectos/prospect-1']}><App /></MemoryRouter>);
     await screen.findByRole('heading', { name: 'CONSTRUCTORA HORIZONTE' });
-    await user.upload(screen.getByLabelText('Adjuntar predial'), new File(['predial'], 'predial.pdf', { type: 'application/pdf' }));
+    await user.upload(screen.getByLabelText('Agregar documentos'), new File(['documento'], 'documento.pdf', { type: 'application/pdf' }));
     await user.click(screen.getByRole('button', { name: 'Subir seleccionados' }));
     expect(await screen.findByText('Documentación vinculada al prospecto.')).toBeInTheDocument();
-    expect(screen.getByText('Predial', { selector: 'dt' }).nextElementSibling).toHaveTextContent('Sí');
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).endsWith('/documentos') && init?.method === 'POST')).toBe(true);
   });
 
   it('preserva y visualiza servicio legacy y etapa null sin inventar datos', async () => {

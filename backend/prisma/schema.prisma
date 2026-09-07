@@ -370,6 +370,9 @@ model Prospecto {
   documentos_disponibles   String?
   tiene_antecedente        Boolean?
   tiene_predial            Boolean?
+  honorarios_estimados     Decimal?                   @db.Decimal(14, 2)
+  impuestos_derechos_estimados Decimal?               @db.Decimal(14, 2)
+  total_estimado           Decimal?                   @db.Decimal(14, 2)
   puede_compartir_docs     Boolean?
   tiempo_estimado          String?
   estado                   ProspectoEstado            @default(NUEVO)
@@ -417,6 +420,11 @@ model Prospecto {
 
 enum ProspectoEtapaContractual {
   NUEVO
+  EN_INTEGRACION
+  LISTO_PARA_COTIZAR
+  CONVERTIDO_EN_COTIZACION
+  SUSPENDIDO
+  CANCELADO
   RECABANDO_INFORMACION
   LISTO_PARA_SOLICITAR
   SOLICITUD_ENVIADA_NOTARIA

@@ -80,7 +80,7 @@ describe('Prospectos endpoints de catálogo y escritura', () => {
     await getProspectos(req, res);
     const where = db.prospecto.findMany.mock.calls[0][0].where;
     expect(where.AND).toContainEqual({ OR: [
-      { etapa_contractual: { in: ['COTIZACION_RECIBIDA'] } },
+      { etapa_contractual: { in: ['LISTO_PARA_COTIZAR', 'COTIZACION_RECIBIDA'] } },
       { etapa_contractual: null, estado: { in: ['COTIZACION_SOLICITADA', 'COTIZACION_ENVIADA'] } },
     ] });
   });
@@ -98,7 +98,7 @@ describe('Prospectos endpoints de catálogo y escritura', () => {
     await getProspectos(req, res);
     expect(res.json.mock.calls[0][0].meta.metrics).toEqual({ withQuote: 1, accepted: 1, active: 3 });
     expect(db.prospecto.count.mock.calls[2][0].where).toEqual(expect.objectContaining({ AND: expect.arrayContaining([
-      expect.objectContaining({ OR: expect.arrayContaining([{ etapa_contractual: 'CONVERTIDO_COTIZACION' }]) }),
+      expect.objectContaining({ OR: expect.arrayContaining([{ etapa_contractual: { in: ['CONVERTIDO_EN_COTIZACION', 'CONVERTIDO_COTIZACION'] } }]) }),
     ]) }));
   });
 });

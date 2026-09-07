@@ -97,14 +97,14 @@ export async function recordQuoteTransitionInTransaction(tx: Prisma.TransactionC
 
 export async function initializeQuoteContractInTransaction(tx: Prisma.TransactionClient, actor: Actor, quote: {
   id: string; organization_id: string | null; etapa_contractual: Stage | null; version_operativa: number; transicion_actual_id: string | null;
-}, input: { effectiveAt: Date; idempotencyKey: string; sourceId: string; prospectId: string }) {
+}, input: { effectiveAt: Date; idempotencyKey: string; sourceId?: string | null; prospectId: string }) {
   if (quote.etapa_contractual || quote.transicion_actual_id || quote.version_operativa !== 0) failQuote(409, 'COT001_ALREADY_INITIALIZED', 'La cotización ya tiene una historia contractual.');
   return recordQuoteTransitionInTransaction(tx, {
     actor, quote, action: 'CREAR', next: Stage.BORRADOR, changesStage: true,
     effectiveAt: input.effectiveAt, recordedAt: input.effectiveAt,
     key: input.idempotencyKey,
-    hash: quoteHash({ quoteId: quote.id, sourceId: input.sourceId, prospectId: input.prospectId, actor: actor.id }),
-    evidence: { sourceId: input.sourceId, prospectId: input.prospectId },
+    hash: quoteHash({ quoteId: quote.id, sourceId: input.sourceId ?? null, prospectId: input.prospectId, actor: actor.id }),
+    evidence: { sourceId: input.sourceId ?? null, prospectId: input.prospectId, origin: input.sourceId ? 'LEGACY_NOTARY_SOURCE' : 'PROSPECT_DIRECT' },
   });
 }
 

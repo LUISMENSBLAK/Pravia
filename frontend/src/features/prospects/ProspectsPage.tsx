@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, ChevronLeft, ChevronRight, LayoutGrid, List, Plus, UsersRound } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageContainer } from '../../components/layout/PageContainer';
 import { settingsService } from '../settings/settings.service';
 import { useAuth } from '../auth/AuthProvider';
@@ -16,6 +16,7 @@ import { useProspects } from './useProspects';
 import styles from './ProspectsPage.module.css';
 
 export function ProspectsPage() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [params, setParams] = useSearchParams();
   const search = params.get('search') ?? '';
@@ -30,7 +31,6 @@ export function ProspectsPage() {
   const [toast, setToast] = useState('');
   const { prospects, lanes, laneTotals, laneLoading, loadMore, status, meta, catalogs, reload } = useProspects(search, priority, serviceCode, operationalStageCode, page, view);
   const canWrite = user?.permissions?.includes('prospectos.write') ?? false;
-  const canUpload = user?.permissions?.includes('documentos.write') ?? false;
   const persistViewPreference = import.meta.env.VITE_DISABLE_PREFERENCE_WRITES !== 'true';
 
   useEffect(() => {
@@ -83,7 +83,7 @@ export function ProspectsPage() {
           </nav>}
         </>}
       </>}
-      {drawerOpen && <NewProspectDrawer catalogs={catalogs} canUpload={canUpload} onClose={() => setDrawerOpen(false)} onCreated={(_created, message) => { setDrawerOpen(false); setToast(message); reload(); window.setTimeout(() => setToast(''), 5200); }} />}
+      {drawerOpen && <NewProspectDrawer onClose={() => setDrawerOpen(false)} onCreated={(created) => { setDrawerOpen(false); reload(); navigate(`/prospectos/${encodeURIComponent(created.id)}`); }} />}
       <div className={`${styles.toast} ${toast ? styles.toastVisible : ''}`} role="status" aria-live="polite">{toast}</div>
     </PageContainer>
   );

@@ -52,6 +52,9 @@ export type Prospect = {
   documentos_disponibles?: string | null;
   tiene_antecedente?: boolean | null;
   tiene_predial?: boolean | null;
+  honorarios_estimados?: number | string | null;
+  impuestos_derechos_estimados?: number | string | null;
+  total_estimado?: number | string | null;
   puede_compartir_docs?: boolean | null;
   tiempo_estimado?: string | null;
   ciudad?: string | null;
@@ -111,12 +114,15 @@ export type ProspectMutationInput = {
   necesidad?: string;
   tiene_predial: boolean;
   tiene_antecedente: boolean;
+  honorarios_estimados?: number | string | null;
+  impuestos_derechos_estimados?: number | string | null;
+  total_estimado?: number | string | null;
 };
 
-export type NewProspectInput = ProspectMutationInput;
-export type UpdateProspectInput = Partial<ProspectMutationInput> & { expectedVersion?: number; notaria_id?: string; responsable_id?: string };
+export type NewProspectInput = { nombre: string };
+export type UpdateProspectInput = Partial<ProspectMutationInput> & { expectedVersion?: number; responsable_id?: string };
 
-export type ProspectWorkflowAction = 'RECABAR' | 'MARCAR_LISTO' | 'REGISTRAR_ENVIO' | 'REGISTRAR_RECEPCION' | 'SUSTITUIR_FUENTE' | 'CONVERTIR';
+export type ProspectWorkflowAction = 'COMENZAR_INTEGRACION' | 'MARCAR_LISTO_PARA_COTIZAR' | 'CONVERTIR' | 'SUSPENDER' | 'CANCELAR';
 export type ProspectSource = {
   id: string; version: number; received_at: string; recorded_at: string; motivo: string;
   documento: ProspectDocument; notaria: { id: string; nombre: string };
@@ -135,8 +141,6 @@ export type ProspectWorkflow = {
   events: Array<{ id: string; previousLabel: string; nextLabel: string; viaLabel: string | null;
     effectiveAt: string; recordedAt: string; actor: string; actionLabel: string; provenanceLabel: string }>;
 };
-export type PreparedProspectRequest = { preparedOnly: true; deliveryConfirmedByProvider: false; version: number; attachmentIds: string[]; recipient: string; subject: string; content: string };
-
 export type FollowUpInput = {
   tipo: string;
   contenido: string;
@@ -164,17 +168,17 @@ export const pipelineStageForSubstatus = (substatus: ProspectSubstatus): Prospec
 export const pipelineStageForProspect = (prospect: Pick<Prospect, 'etapa_contractual' | 'estado'>): ProspectPipelineStage => {
   if (!prospect.etapa_contractual) return pipelineStageForSubstatus(prospect.estado);
   if (prospect.etapa_contractual === 'NUEVO') return 'new';
-  if (prospect.etapa_contractual === 'COTIZACION_RECIBIDA') return 'quote';
-  if (prospect.etapa_contractual === 'CONVERTIDO_COTIZACION') return 'converted';
+  if (['LISTO_PARA_COTIZAR', 'COTIZACION_RECIBIDA'].includes(prospect.etapa_contractual)) return 'quote';
+  if (['CONVERTIDO_EN_COTIZACION', 'CONVERTIDO_COTIZACION', 'SUSPENDIDO', 'CANCELADO'].includes(prospect.etapa_contractual)) return 'converted';
   return 'progress';
 };
 
 export const isConvertedProspect = (prospect: Pick<Prospect, 'etapa_contractual' | 'estado'>) => prospect.etapa_contractual
-  ? prospect.etapa_contractual === 'CONVERTIDO_COTIZACION'
+  ? ['CONVERTIDO_EN_COTIZACION', 'CONVERTIDO_COTIZACION'].includes(prospect.etapa_contractual)
   : prospect.estado === 'ACEPTADO';
 
 export const isActiveProspect = (prospect: Pick<Prospect, 'etapa_contractual' | 'estado'>) => prospect.etapa_contractual
-  ? prospect.etapa_contractual !== 'CONVERTIDO_COTIZACION'
+  ? !['CONVERTIDO_EN_COTIZACION', 'CONVERTIDO_COTIZACION', 'SUSPENDIDO', 'CANCELADO'].includes(prospect.etapa_contractual)
   : !['ACEPTADO', 'PERDIDO', 'CANCELADO', 'ARCHIVADO'].includes(prospect.estado);
 
 export const displayProspectName = (value: string) => value.trim().replace(/\s+/gu, ' ').toLocaleUpperCase('es-MX');

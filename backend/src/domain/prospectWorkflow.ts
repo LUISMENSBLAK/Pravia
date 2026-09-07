@@ -3,32 +3,23 @@ import { ProspectoEtapaContractual as Stage } from '@prisma/client';
 
 export const PROSPECT_CONTRACT_STAGES = Object.freeze([
   { code: Stage.NUEVO, label: 'Nuevo' },
-  { code: Stage.RECABANDO_INFORMACION, label: 'Recabando información/documentos' },
-  { code: Stage.LISTO_PARA_SOLICITAR, label: 'Listo para solicitar cotización' },
-  { code: Stage.SOLICITUD_ENVIADA_NOTARIA, label: 'Solicitud enviada a Notaría' },
-  { code: Stage.EN_ESPERA_COTIZACION, label: 'En espera de cotización' },
-  { code: Stage.COTIZACION_RECIBIDA, label: 'Cotización recibida' },
-  { code: Stage.CONVERTIDO_COTIZACION, label: 'Convertido en cotización' },
+  { code: Stage.EN_INTEGRACION, label: 'En integración' },
+  { code: Stage.LISTO_PARA_COTIZAR, label: 'Listo para cotizar' },
+  { code: Stage.CONVERTIDO_EN_COTIZACION, label: 'Convertido en cotización' },
 ]);
 export const PROSPECT_PIPELINE_STAGES = Object.freeze({
   new: [Stage.NUEVO],
-  progress: [
-    Stage.RECABANDO_INFORMACION,
-    Stage.LISTO_PARA_SOLICITAR,
-    Stage.SOLICITUD_ENVIADA_NOTARIA,
-    Stage.EN_ESPERA_COTIZACION,
-  ],
-  quote: [Stage.COTIZACION_RECIBIDA],
-  converted: [Stage.CONVERTIDO_COTIZACION],
+  progress: [Stage.EN_INTEGRACION, Stage.RECABANDO_INFORMACION, Stage.LISTO_PARA_SOLICITAR, Stage.SOLICITUD_ENVIADA_NOTARIA, Stage.EN_ESPERA_COTIZACION],
+  quote: [Stage.LISTO_PARA_COTIZAR, Stage.COTIZACION_RECIBIDA],
+  converted: [Stage.CONVERTIDO_EN_COTIZACION, Stage.CONVERTIDO_COTIZACION, Stage.SUSPENDIDO, Stage.CANCELADO],
 });
 export type ProspectPipelineStage = keyof typeof PROSPECT_PIPELINE_STAGES;
 export const PROSPECT_ACTIONS = {
-  RECABAR: 'Recabar información/documentos',
-  MARCAR_LISTO: 'Confirmar listo para solicitar',
-  REGISTRAR_ENVIO: 'Registrar envío realizado',
-  REGISTRAR_RECEPCION: 'Registrar cotización recibida',
-  SUSTITUIR_FUENTE: 'Sustituir fuente notarial',
-  CONVERTIR: 'Crear cotización',
+  COMENZAR_INTEGRACION: 'Comenzar integración',
+  MARCAR_LISTO_PARA_COTIZAR: 'Marcar listo para cotizar',
+  CONVERTIR: 'Convertir en cotización',
+  SUSPENDER: 'Suspender prospecto',
+  CANCELAR: 'Cancelar prospecto',
 } as const;
 export type ProspectAction = keyof typeof PROSPECT_ACTIONS;
 export class ProspectWorkflowError extends Error {
@@ -39,9 +30,12 @@ export const stageLabel = (stage: Stage | null) => PROSPECT_CONTRACT_STAGES.find
 export const prospectWait = (stage: Stage | null) => {
   if (!stage) return { type: null, knowledge: 'UNKNOWN_LEGACY' as const, label: 'Espera por confirmar' };
   const types: Partial<Record<Stage, [string, string]>> = {
-    RECABANDO_INFORMACION: ['CLIENTE_DOCUMENTOS', 'Información/documentos del cliente'],
-    LISTO_PARA_SOLICITAR: ['INTERNA_SOLICITUD', 'Preparación y envío de solicitud'],
-    EN_ESPERA_COTIZACION: ['NOTARIA', 'Respuesta de Notaría'],
+    EN_INTEGRACION: ['CLIENTE_DOCUMENTOS', 'Integración de información y documentos'],
+    LISTO_PARA_COTIZAR: ['OFFICE_QUOTE', 'Preparación interna de cotización'],
+    RECABANDO_INFORMACION: ['CLIENTE_DOCUMENTOS', 'Información pendiente del cliente (histórico)'],
+    LISTO_PARA_SOLICITAR: ['INTERNA_SOLICITUD', 'Preparación interna de solicitud (histórico)'],
+    SOLICITUD_ENVIADA_NOTARIA: ['NOTARIA', 'Espera de notaría (histórico)'],
+    EN_ESPERA_COTIZACION: ['NOTARIA', 'Espera de notaría (histórico)'],
   };
   const type = types[stage];
   return type ? { type: type[0], knowledge: 'KNOWN' as const, label: type[1] }
@@ -49,19 +43,18 @@ export const prospectWait = (stage: Stage | null) => {
 };
 export function allowedProspectActions(stage: Stage | null, linkedQuote: boolean): ProspectAction[] {
   if (linkedQuote) return [];
-  if (!stage) return ['RECABAR', 'MARCAR_LISTO']; // Explicit observation NOW, never inferred historical backfill.
-  if (stage === Stage.NUEVO) return ['RECABAR', 'MARCAR_LISTO'];
-  if (stage === Stage.RECABANDO_INFORMACION) return ['MARCAR_LISTO'];
-  if (stage === Stage.LISTO_PARA_SOLICITAR) return ['REGISTRAR_ENVIO'];
-  if (stage === Stage.EN_ESPERA_COTIZACION) return ['REGISTRAR_RECEPCION'];
-  if (stage === Stage.COTIZACION_RECIBIDA) return ['SUSTITUIR_FUENTE', 'CONVERTIR'];
+  if (stage === Stage.NUEVO) return ['COMENZAR_INTEGRACION', 'SUSPENDER', 'CANCELAR'];
+  if (stage === Stage.EN_INTEGRACION) return ['MARCAR_LISTO_PARA_COTIZAR', 'SUSPENDER', 'CANCELAR'];
+  if (stage === Stage.LISTO_PARA_COTIZAR) return ['CONVERTIR', 'SUSPENDER', 'CANCELAR'];
   return [];
 }
 export function nextProspectStage(stage: Stage | null, action: ProspectAction, linkedQuote = false): Stage {
   if (!allowedProspectActions(stage, linkedQuote).includes(action)) failProspect(409, 'PRO001_TRANSITION_DENIED', 'Esta acción ya no corresponde a la etapa actual. Actualiza la ficha.');
-  return ({ RECABAR: Stage.RECABANDO_INFORMACION, MARCAR_LISTO: Stage.LISTO_PARA_SOLICITAR,
-    REGISTRAR_ENVIO: Stage.EN_ESPERA_COTIZACION, REGISTRAR_RECEPCION: Stage.COTIZACION_RECIBIDA,
-    SUSTITUIR_FUENTE: Stage.COTIZACION_RECIBIDA, CONVERTIR: Stage.CONVERTIDO_COTIZACION })[action];
+  return ({ COMENZAR_INTEGRACION: Stage.EN_INTEGRACION,
+    MARCAR_LISTO_PARA_COTIZAR: Stage.LISTO_PARA_COTIZAR,
+    CONVERTIR: Stage.CONVERTIDO_EN_COTIZACION,
+    SUSPENDER: Stage.SUSPENDIDO,
+    CANCELAR: Stage.CANCELADO })[action];
 }
 export function assertProspectVersion(expected: unknown, current: number) {
   if (!Number.isInteger(expected) || Number(expected) < 0) failProspect(400, 'PRO001_VERSION_REQUIRED', 'Actualiza la ficha antes de continuar.');

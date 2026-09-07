@@ -7,7 +7,7 @@ import {
   deleteProspecto,
   addSeguimiento,
   getProspectCatalogs,
-  getProspectWorkflow, getProspectTransition, prepareProspectRequest, actProspectWorkflow
+  getProspectWorkflow, getProspectTransition, actProspectWorkflow
 } from '../controllers/prospectos.controller';
 import { getProspectoDocumentos, unlinkProspectoDocumento } from '../controllers/documentos.controller';
 import { requireProspectoObjectAccess } from '../middleware/objectAccess.middleware';
@@ -23,7 +23,6 @@ router.get('/catalogos', getProspectCatalogs);
 router.get('/:id', getProspectoById);
 router.get('/:id/operacion', getProspectWorkflow);
 router.get('/:id/transiciones/:transitionId', getProspectTransition);
-router.post('/:id/solicitud/preparar', prepareProspectRequest);
 router.post('/:id/transiciones', actProspectWorkflow);
 router.put('/:id', updateProspecto);
 router.delete('/:id', deleteProspecto);

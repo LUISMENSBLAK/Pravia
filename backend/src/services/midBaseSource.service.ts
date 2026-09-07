@@ -33,8 +33,8 @@ const requireRead = (actor: Actor) => {
 };
 
 const prospectPolicy = (stage: ProspectoEtapaContractual | null) => {
-  if (stage === 'RECABANDO_INFORMACION') return TimingPolicyType.PROSPECT_INFO_COLLECTION;
-  if (stage === 'LISTO_PARA_SOLICITAR') return TimingPolicyType.PROSPECT_READY_TO_REQUEST;
+  if (stage === 'EN_INTEGRACION' || stage === 'RECABANDO_INFORMACION') return TimingPolicyType.PROSPECT_INFO_COLLECTION;
+  if (stage === 'LISTO_PARA_COTIZAR' || stage === 'LISTO_PARA_SOLICITAR') return TimingPolicyType.PROSPECT_READY_TO_REQUEST;
   if (stage === 'SOLICITUD_ENVIADA_NOTARIA' || stage === 'EN_ESPERA_COTIZACION') return TimingPolicyType.PROSPECT_NOTARY_WAIT;
   return null;
 };
@@ -44,12 +44,14 @@ const waitingParty = (stage: ProspectoEtapaContractual | null) => {
   if (wait.knowledge === 'UNKNOWN_LEGACY') return 'UNKNOWN' as const;
   if (wait.type === 'CLIENTE_DOCUMENTOS') return 'CLIENT' as const;
   if (wait.type === 'INTERNA_SOLICITUD') return 'OFFICE' as const;
+  if (wait.type === 'OFFICE_QUOTE') return 'OFFICE' as const;
   if (wait.type === 'NOTARIA') return 'NOTARY' as const;
   return 'NONE' as const;
 };
 
 const notaryFact = (stage: ProspectoEtapaContractual | null, hasSource: boolean): ProspectMidBaseSource['notaryFact'] => {
   if (!stage) return 'UNKNOWN_LEGACY';
+  if (['NUEVO', 'EN_INTEGRACION', 'LISTO_PARA_COTIZAR', 'CONVERTIDO_EN_COTIZACION', 'SUSPENDIDO', 'CANCELADO'].includes(stage)) return 'NOT_APPLICABLE';
   if (hasSource || stage === 'COTIZACION_RECIBIDA' || stage === 'CONVERTIDO_COTIZACION') return 'QUOTE_RECEIVED';
   if (stage === 'LISTO_PARA_SOLICITAR') return 'REQUEST_PENDING';
   if (stage === 'SOLICITUD_ENVIADA_NOTARIA') return 'REQUEST_SENT';
@@ -156,7 +158,7 @@ export class MidBaseSourceService {
       sources.push({
         sourceKind: 'PROSPECT', sourceId: `prospect:${row.id}`, organizationId: row.organization_id!, objectType: 'Prospecto', objectId: row.id,
         status: row.etapa_contractual ?? 'UNKNOWN_LEGACY', stage: row.etapa_contractual, stageLabel: stageLabel(row.etapa_contractual),
-        active: row.etapa_contractual !== 'CONVERTIDO_COTIZACION', responsibility: { userId: row.user_id, role: null },
+        active: !['CONVERTIDO_EN_COTIZACION', 'CONVERTIDO_COTIZACION', 'SUSPENDIDO', 'CANCELADO'].includes(row.etapa_contractual ?? ''), responsibility: { userId: row.user_id, role: null },
         waitingOn: waitingParty(row.etapa_contractual), effectiveAt: transition?.effective_at ?? null,
         stageDateKnowledge: transition ? 'KNOWN' : 'UNKNOWN_LEGACY', notaryFact: notaryFact(row.etapa_contractual, row.fuentes_notariales.length > 0),
         provenance: transition ? { source: 'PRO-001', transitionId: transition.id, action: transition.accion, value: transition.procedencia } : { source: 'PRO-001', reason: 'LEGACY_WITHOUT_CANONICAL_TRANSITION' },

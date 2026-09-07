@@ -2,13 +2,13 @@ import { randomUUID } from 'crypto';
 import type { Request } from 'express';
 import { Prisma, PrismaClient, ProspectoEtapaContractual as Stage } from '@prisma/client';
 import { prospectoObjectWhere } from './objectAccess.service';
-import { fileExists } from '../storage/storage.service';
 import { normalizeProspectName, prospectServiceByCode, prospectStageByCode } from '../domain/prospectCatalog';
 import { allowedProspectActions, assertProspectFields, assertProspectReplay, assertProspectVersion, failProspect,
   nextProspectStage, PROSPECT_ACTIONS, PROSPECT_CONTRACT_STAGES, ProspectAction, prospectEffectiveAt,
   prospectHash, prospectJson, prospectKey, prospectWait, stageLabel } from '../domain/prospectWorkflow';
 import { initializeQuoteContractInTransaction } from './cotizacionWorkflow.service';
 import { applyProspectTimingTransition } from './timingPolicy.service';
+import { getQuotationTemplate } from './quotationTemplate.service';
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -25,11 +25,12 @@ const permission = (actor: Actor, name: string) => {
   if (!(actor.permissions as string[]).includes(name)) failProspect(403, 'PERMISSION_DENIED', 'No tienes permiso para realizar esta acción.');
 };
 const newDataFields = ['nombre', 'telefono', 'email', 'necesidad', 'prioridad', 'servicio_catalogo_codigo', 'tiene_predial', 'tiene_antecedente'];
-const actionFields = ['action', 'expectedVersion', 'idempotencyKey', 'confirm', 'effectiveAt', 'channel', 'recipient', 'evidence', 'content', 'attachmentIds', 'documentId', 'reason'];
+const updateDataFields = [...newDataFields, 'honorarios_estimados', 'impuestos_derechos_estimados', 'total_estimado'];
+const actionFields = ['action', 'expectedVersion', 'idempotencyKey', 'confirm', 'reason'];
 
 /** Single PRO-001 authority. Notes, uploads and technical audit never implicitly advance stages. */
 export class ProspectWorkflowService {
-  constructor(private readonly prisma: PrismaClient, private readonly exists = fileExists) {}
+  constructor(private readonly prisma: PrismaClient) {}
 
   private async lock(tx: Prisma.TransactionClient, key: string) {
     await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:pro001:${key}`}))`);
@@ -38,21 +39,6 @@ export class ProspectWorkflowService {
     permission(actor, 'prospectos.read');
     const row = await db.prospecto.findFirst({ where: { id, archived_at: null, ...prospectoObjectWhere(actor) }, include: detailInclude });
     if (!row) return failProspect(404, 'PRO001_NOT_FOUND', 'No se encontró el prospecto o no tienes acceso.');
-    return row;
-  }
-  private async notary(db: Db, actor: Actor, id: string | null) {
-    permission(actor, 'notarias.read');
-    if (!id) return failProspect(400, 'PRO001_NOTARY_REQUIRED', 'Selecciona una notaría en los datos del prospecto.');
-    const row = await db.notaria.findFirst({ where: { id, organization_id: actor.organizationId, activa: true, archived_at: null } });
-    if (!row) return failProspect(404, 'PRO001_NOTARY_DENIED', 'La notaría seleccionada no está disponible.');
-    return row;
-  }
-  private async document(db: Db, actor: Actor, prospectId: string, id: string, canonicalSource = false) {
-    permission(actor, 'documentos.read');
-    const row = await db.documento.findFirst({ where: { id, organization_id: actor.organizationId, estatus: { not: 'RECHAZADO' },
-      OR: [{ prospecto_id: prospectId }, { prospectoVinculos: { some: { prospecto_id: prospectId, organization_id: actor.organizationId, estatus: 'ACTIVO' } } },
-        ...(canonicalSource ? [{ fuentesNotarialesProspecto: { some: { prospecto_id: prospectId, organization_id: actor.organizationId } } }] : [])] } });
-    if (!row || !row.storage_key?.trim() || !(await this.exists(row.storage_key))) return failProspect(409, 'PRO001_DOCUMENT_UNAVAILABLE', 'El archivo seleccionado no está disponible o no pertenece a este prospecto.');
     return row;
   }
   private async audit(tx: Prisma.TransactionClient, actor: Actor, id: string, action: string, before: unknown, after: unknown, eventId?: string) {
@@ -66,7 +52,7 @@ export class ProspectWorkflowService {
     const event = await tx.prospectoTransicion.create({ data: {
       organization_id: actor.organizationId, prospecto_id: p.id, actor_id: actor.id,
       etapa_anterior: p.etapa_contractual, etapa_nueva: input.next,
-      hito_intermedio: input.action === 'REGISTRAR_ENVIO' ? Stage.SOLICITUD_ENVIADA_NOTARIA : null,
+      hito_intermedio: null,
       effective_at: input.effectiveAt, recorded_at: input.recordedAt, accion: input.action,
       procedencia: input.action === 'CREAR' ? 'CREACION_CANONICA' : 'CONFIRMACION_HUMANA',
       evidencia: prospectJson(input.evidence), version: p.version_operativa + 1, idempotency_key: input.key, payload_hash: input.hash,
@@ -117,6 +103,22 @@ export class ProspectWorkflowService {
       if (!service) failProspect(400, 'INVALID_PROSPECT_SERVICE', 'Selecciona un servicio válido.');
       data.servicio_catalogo_codigo = service!.code; data.tipo_acto = service!.label;
     }
+    const economicKeys = ['honorarios_estimados', 'impuestos_derechos_estimados', 'total_estimado'] as const;
+    if (economicKeys.some((key) => raw[key] !== undefined)) {
+      const values = economicKeys.map((key) => raw[key]);
+      const blank = values.every((value) => value === null || value === '');
+      if (blank) economicKeys.forEach((key) => { data[key] = null; });
+      else {
+        if (values.some((value) => value === null || value === '' || !Number.isFinite(Number(value)) || Number(value) < 0)) {
+          failProspect(400, 'PROSPECT_ECONOMIC_VALUES_INVALID', 'Completa honorarios, impuestos y total con importes válidos.');
+        }
+        const [fees, taxes, total] = values.map((value) => new Prisma.Decimal(String(value)));
+        if (!fees.plus(taxes).equals(total)) failProspect(400, 'PROSPECT_ECONOMIC_TOTAL_INVALID', 'El total debe coincidir con honorarios más impuestos y derechos.');
+        data.honorarios_estimados = fees;
+        data.impuestos_derechos_estimados = taxes;
+        data.total_estimado = total;
+      }
+    }
     return data;
   }
   async create(actor: Actor, raw: Record<string, unknown>, idempotencyKey: unknown) {
@@ -141,7 +143,7 @@ export class ProspectWorkflowService {
   }
   async update(actor: Actor, id: string, raw: Record<string, unknown>) {
     permission(actor, 'prospectos.write');
-    assertProspectFields(raw, [...newDataFields, 'expectedVersion', 'notaria_id', 'responsable_id', 'etapa_operativa_codigo']);
+    assertProspectFields(raw, [...updateDataFields, 'expectedVersion', 'responsable_id', 'etapa_operativa_codigo']);
     const data = this.cleanData(raw);
     if (raw.etapa_operativa_codigo) {
       const stage = prospectStageByCode(raw.etapa_operativa_codigo);
@@ -152,10 +154,6 @@ export class ProspectWorkflowService {
       await this.lock(tx, `${actor.organizationId}:${id}`);
       const p = await this.prospect(tx, actor, id);
       assertProspectVersion(raw.expectedVersion, p.version_operativa);
-      if (raw.notaria_id !== undefined && raw.notaria_id !== p.notaria_id) {
-        if (['EN_ESPERA_COTIZACION', 'COTIZACION_RECIBIDA', 'CONVERTIDO_COTIZACION'].includes(p.etapa_contractual ?? '')) failProspect(409, 'PRO001_NOTARY_FROZEN', 'La notaría ya forma parte de un envío confirmado y no puede cambiarse desde esta ficha.');
-        const notary = await this.notary(tx, actor, String(raw.notaria_id)); data.notaria_id = notary.id;
-      }
       if (raw.responsable_id !== undefined && raw.responsable_id !== p.user_id) {
         if (!['DIRECCION', 'ADMINISTRACION'].includes(actor.rol)) failProspect(403, 'PRO001_ASSIGNMENT_DENIED', 'No tienes permiso para reasignar este prospecto.');
         const member = await tx.organizationMembership.findFirst({ where: { organization_id: actor.organizationId,
@@ -174,7 +172,7 @@ export class ProspectWorkflowService {
     const [events, sources, notaries, responsibles] = await Promise.all([
       this.prisma.prospectoTransicion.findMany({ where: { organization_id: actor.organizationId, prospecto_id: id }, orderBy: { version: 'asc' }, include: { actor: { select: { user: { select: { nombre: true, apellido: true } } } } } }),
       canDocs ? this.prisma.prospectoFuenteNotarial.findMany({ where: { organization_id: actor.organizationId, prospecto_id: id }, orderBy: { version: 'desc' }, include: { documento: { select: docSelect }, notaria: { select: { id: true, nombre: true } } } }) : [],
-      actor.permissions.includes('notarias.read') ? this.prisma.notaria.findMany({ where: { organization_id: actor.organizationId, activa: true, archived_at: null }, select: { id: true, nombre: true }, orderBy: { nombre: 'asc' } }) : [],
+      Promise.resolve([]),
       ['DIRECCION','ADMINISTRACION'].includes(actor.rol) ? this.prisma.organizationMembership.findMany({ where: { organization_id: actor.organizationId, status: 'ACTIVE', user: { activo: true } }, select: { user: { select: { id: true, nombre: true, apellido: true } } } }) : [],
     ]);
     const actions = actor.permissions.includes('prospectos.write') ? allowedProspectActions(p.etapa_contractual, Boolean(p.cotizacion)).filter((a) => a !== 'CONVERTIR' || actor.permissions.includes('cotizaciones.write')) : [];
@@ -182,34 +180,21 @@ export class ProspectWorkflowService {
       knowledge: p.transicion_actual ? 'KNOWN' : 'UNKNOWN_LEGACY', version: p.version_operativa, folio: p.folio,
       wait: prospectWait(p.etapa_contractual), stages: PROSPECT_CONTRACT_STAGES,
       actions: actions.map((code) => ({ code, label: PROSPECT_ACTIONS[code] })),
-      notaria: actor.permissions.includes('notarias.read') ? p.notaria : null, notaries, responsibles: responsibles.map((m) => m.user),
+      notaria: p.etapa_contractual && !PROSPECT_CONTRACT_STAGES.some((stage) => stage.code === p.etapa_contractual) ? p.notaria : null,
+      notaries, responsibles: responsibles.map((m) => m.user),
       source: sources[0] ?? null, sourceHistory: sources, canReadSource: canDocs, quote: p.cotizacion,
       events: events.map((e) => ({ id: e.id, previous: e.etapa_anterior, next: e.etapa_nueva, via: e.hito_intermedio,
         previousLabel: stageLabel(e.etapa_anterior), nextLabel: stageLabel(e.etapa_nueva), viaLabel: e.hito_intermedio ? stageLabel(e.hito_intermedio) : null,
         effectiveAt: e.effective_at, recordedAt: e.recorded_at, actor: [e.actor.user.nombre,e.actor.user.apellido].filter(Boolean).join(' '),
-        actionLabel: e.accion === 'CREAR' ? 'Prospecto creado' : PROSPECT_ACTIONS[e.accion as ProspectAction],
+        actionLabel: e.accion === 'CREAR' ? 'Prospecto creado' : PROSPECT_ACTIONS[e.accion as ProspectAction] ?? 'Hito histórico',
         provenanceLabel: e.procedencia === 'CREACION_CANONICA' ? 'Creación registrada' : 'Confirmado por una persona' })),
       legacy: { substate: p.estado, documentaryStage: p.etapa_operativa_codigo },
     };
   }
-  async prepare(actor: Actor, id: string, raw: Record<string, unknown>) {
+  async prepare(actor: Actor, id: string, _raw: Record<string, unknown>): Promise<{ subject: string; content: string }> {
     permission(actor, 'prospectos.write');
-    assertProspectFields(raw, ['expectedVersion', 'attachmentIds']);
-    const p = await this.prospect(this.prisma, actor, id);
-    assertProspectVersion(raw.expectedVersion, p.version_operativa);
-    if (p.etapa_contractual !== Stage.LISTO_PARA_SOLICITAR) failProspect(409, 'PRO001_NOT_READY', 'Confirma primero que la información está lista para solicitar cotización.');
-    const notary = await this.notary(this.prisma, actor, p.notaria_id);
-    const ids = this.attachmentIds(raw.attachmentIds);
-    const docs = await Promise.all(ids.map((docId) => this.document(this.prisma, actor, id, docId)));
-    return { preparedOnly: true, deliveryConfirmedByProvider: false, version: p.version_operativa, attachmentIds: ids,
-      recipient: notary.correo_general || '', subject: `Solicitud de cotización — ${p.tipo_acto || 'Acto por precisar'}`,
-      content: `Buen día, ${notary.nombre}.\n\nSolicitamos cotización para ${p.tipo_acto || 'el acto por precisar'}.\nSolicitante: ${p.nombre}.\nContacto: ${p.email || p.telefono || 'Por precisar'}.\n\n${p.necesidad || ''}\n\nDocumentos seleccionados:\n${docs.length ? docs.map((d) => `- ${d.nombre_original}`).join('\n') : 'Sin adjuntos seleccionados.'}\n\nQuedamos atentos.\nPRAVIA`,
-    };
-  }
-  private attachmentIds(value: unknown): string[] {
-    if (value === undefined) return [];
-    if (!Array.isArray(value) || value.length > 50 || value.some((v) => typeof v !== 'string')) failProspect(400, 'PRO001_ATTACHMENTS_INVALID', 'Revisa los documentos seleccionados.');
-    return [...new Set(value as string[])].sort();
+    await this.prospect(this.prisma, actor, id);
+    return failProspect(409, 'LEGACY_NOTARY_FLOW_RETIRED', 'La solicitud a una notaría externa ya no forma parte del flujo operativo de Prospectos.');
   }
   async act(actor: Actor, id: string, raw: Record<string, unknown>) {
     permission(actor, 'prospectos.write');
@@ -224,64 +209,48 @@ export class ProspectWorkflowService {
       const p = await this.prospect(tx, actor, id);
       const replayWhere = { organization_id: actor.organizationId, prospecto_id: id, idempotency_key: key };
       const existingEvent = await tx.prospectoTransicion.findFirst({ where: replayWhere });
-      const existingSource = await tx.prospectoFuenteNotarial.findFirst({ where: replayWhere });
-      if (existingEvent || existingSource) {
-        assertProspectReplay((existingEvent || existingSource)!, hash, actor.id);
+      if (existingEvent) {
+        assertProspectReplay(existingEvent, hash, actor.id);
         return { idempotent: true, eventId: existingEvent?.id ?? null, quoteId: p.cotizacion?.id ?? null };
       }
       assertProspectVersion(raw.expectedVersion, p.version_operativa);
       const next = nextProspectStage(p.etapa_contractual, action, Boolean(p.cotizacion));
       const recordedAt = new Date();
-      const effectiveAt = prospectEffectiveAt(raw.effectiveAt, recordedAt, p.transicion_actual?.effective_at ?? null,
-        action === 'REGISTRAR_ENVIO' || action === 'REGISTRAR_RECEPCION');
+      const effectiveAt = prospectEffectiveAt(undefined, recordedAt, p.transicion_actual?.effective_at ?? null);
       let evidence: Record<string, unknown> = { reason: trim(raw.reason) || 'Confirmación explícita del actor' };
       let quoteId: string | null = null;
-      if (action === 'REGISTRAR_ENVIO') {
-        const notary = await this.notary(tx, actor, p.notaria_id);
-        if (!trim(raw.channel) || !trim(raw.recipient) || !trim(raw.evidence) || !trim(raw.content)) failProspect(400, 'PRO001_SEND_EVIDENCE_REQUIRED', 'Indica canal, destinatario, contenido revisado y evidencia del envío realizado.');
-        const ids = this.attachmentIds(raw.attachmentIds);
-        await Promise.all(ids.map((docId) => this.document(tx, actor, id, docId)));
-        evidence = { notaryId: notary.id, channel: trim(raw.channel, 100), recipient: trim(raw.recipient, 300),
-          evidence: trim(raw.evidence), content: trim(raw.content, 20000), attachmentIds: ids, deliveryConfirmedByProvider: false };
-      }
-      if (action === 'REGISTRAR_RECEPCION' || action === 'SUSTITUIR_FUENTE') {
-        permission(actor, 'documentos.write');
-        const notary = await this.notary(tx, actor, p.notaria_id);
-        const document = await this.document(tx, actor, id, String(raw.documentId || ''));
-        const previous = await tx.prospectoFuenteNotarial.findFirst({ where: { organization_id: actor.organizationId, prospecto_id: id }, orderBy: { version: 'desc' } });
-        if ((action === 'REGISTRAR_RECEPCION' && previous) || (action === 'SUSTITUIR_FUENTE' && !previous)) failProspect(409, 'PRO001_SOURCE_CHANGED', 'La fuente cambió. Actualiza la ficha.');
-        if (action === 'SUSTITUIR_FUENTE' && !trim(raw.reason)) failProspect(400, 'PRO001_REASON_REQUIRED', 'Indica el motivo de sustitución.');
-        const duplicate = await tx.prospectoFuenteNotarial.findFirst({ where: { organization_id: actor.organizationId, prospecto_id: id,
-          OR: [{ documento_id: document.id }, ...(document.checksum_sha256 ? [{ documento: { checksum_sha256: document.checksum_sha256 } }] : [])] } });
-        if (duplicate) failProspect(409, 'PRO001_SOURCE_DUPLICATE', 'Ese archivo ya forma parte de la historia de la fuente notarial.');
-        const source = await tx.prospectoFuenteNotarial.create({ data: { organization_id: actor.organizationId, prospecto_id: id,
-          documento_id: document.id, notaria_id: notary.id, actor_id: actor.id, version: (previous?.version ?? 0) + 1,
-          received_at: previous?.received_at ?? effectiveAt, recorded_at: recordedAt, origen: 'NOTARIA_CONFIRMADA_POR_USUARIO',
-          motivo: trim(raw.reason) || 'Recepción notarial confirmada', sustituye_id: previous?.id ?? null, idempotency_key: key, payload_hash: hash } });
-        evidence = { sourceId: source.id, documentId: document.id, notaryId: notary.id, firstReceivedAt: source.received_at };
-        if (action === 'SUSTITUIR_FUENTE') {
-          await tx.prospecto.update({ where: { id, organization_id: actor.organizationId }, data: { version_operativa: { increment: 1 } } });
-          await this.audit(tx, actor, id, action, { sourceId: previous!.id, receivedAt: previous!.received_at }, evidence);
-          return { idempotent: false, eventId: null, sourceId: source.id, quoteId: null };
-        }
-      }
       if (action === 'CONVERTIR') {
-        const source = await tx.prospectoFuenteNotarial.findFirst({ where: { organization_id: actor.organizationId, prospecto_id: id }, orderBy: { version: 'desc' } });
-        if (!source) return failProspect(409, 'PRO001_SOURCE_REQUIRED', 'Registra primero la cotización recibida de Notaría.');
-        await this.notary(tx, actor, source.notaria_id);
-        await this.document(tx, actor, id, source.documento_id, true);
+        if (p.etapa_contractual !== Stage.LISTO_PARA_COTIZAR) return failProspect(409, 'PRO001_NOT_READY_TO_QUOTE', 'Marca el prospecto como listo para cotizar antes de convertirlo.');
+        const quoteFolio = await this.folio(tx, 'COT', recordedAt);
+        const template = getQuotationTemplate({
+          folio: quoteFolio, cliente: p.nombre, acto: p.tipo_acto || 'Acto por definir',
+          descripcion: p.necesidad || 'Sin descripción adicional', responsable: p.atendido_por.nombre,
+          fecha: recordedAt, honorarios: p.honorarios_estimados?.toString() ?? null,
+          impuestos_derechos: p.impuestos_derechos_estimados?.toString() ?? null,
+          total: p.total_estimado?.toString() ?? null,
+        });
         const quote = await tx.cotizacion.create({ data: { organization_id: actor.organizationId, prospecto_id: id, user_id: p.user_id,
-          notaria_id: source.notaria_id, fuente_notarial_id: source.id, numero_cotizacion: await this.folio(tx, 'COT', recordedAt),
-          estado: 'BORRADOR', fecha_presupuesto_recibido: source.received_at } });
-        await tx.cotizacionDocumento.create({ data: { organization_id: actor.organizationId, cotizacion_id: quote.id,
-          documento_id: source.documento_id, tipo_vinculo: 'COTIZACION_NOTARIA', creado_por_id: actor.id, estatus: 'ACTIVO' } });
+          numero_cotizacion: quoteFolio, estado: 'BORRADOR', cuerpo_correo_cliente: template.body,
+          honorarios_pravia: p.honorarios_estimados, total_notaria: p.total_estimado, total_cliente: p.total_estimado } });
+        if (p.total_estimado && p.honorarios_estimados && p.impuestos_derechos_estimados) {
+          await tx.cotizacionVersion.create({ data: {
+            organization_id: actor.organizationId, cotizacion_id: quote.id, version: 1,
+            total_cliente: p.total_estimado, total_notaria: p.total_estimado,
+            honorarios_pravia: p.honorarios_estimados, creada_por_id: actor.id, aprobada: false,
+            notas: 'Preparación económica heredada del prospecto.',
+            desglose_notaria: { template: template.id, rubros: [
+              { categoria: 'HONORARIOS', concepto: 'Honorarios', monto: p.honorarios_estimados.toString() },
+              { categoria: 'IMPUESTOS', concepto: 'Impuestos y derechos', monto: p.impuestos_derechos_estimados.toString() },
+            ] },
+            desglose_pravia: { participacion_pravia: p.honorarios_estimados.toString() },
+          } });
+        }
         await initializeQuoteContractInTransaction(tx, actor, quote, {
           effectiveAt: recordedAt,
           idempotencyKey: `cot001:${key}`,
-          sourceId: source.id,
           prospectId: id,
         });
-        quoteId = quote.id; evidence = { quoteId, sourceId: source.id };
+        quoteId = quote.id; evidence = { quoteId, origin: 'PROSPECT_DIRECT', template: template.id };
       }
       const event = await this.event(tx, actor, p, { action, next, effectiveAt, recordedAt, key, hash, evidence });
       return { idempotent: false, eventId: event.id, quoteId };

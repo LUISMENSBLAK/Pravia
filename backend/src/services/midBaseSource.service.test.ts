@@ -106,6 +106,24 @@ describe('G1 MID-BASE · fuentes canónicas integradas', () => {
     expect(result.rows.find((row) => row.objectId === 'q-accepted')).toMatchObject({ commercialMilestoneAt: new Date('2026-09-03T10:00:00Z'), provenance: { source: 'COT-001' } });
   });
 
+  it('consume el workflow sustituto sin generar hechos activos de espera de Notaría', async () => {
+    const db = database();
+    db.prospecto.findMany.mockResolvedValue([
+      prospect('p-integration', 'EN_INTEGRACION', { id: 'pt-new-1', effective_at: new Date('2026-09-04T00:00:00Z'), accion: 'COMENZAR_INTEGRACION', procedencia: 'CONFIRMACION_HUMANA' }),
+      prospect('p-ready', 'LISTO_PARA_COTIZAR', { id: 'pt-new-2', effective_at: new Date('2026-09-04T01:00:00Z'), accion: 'MARCAR_LISTO_PARA_COTIZAR', procedencia: 'CONFIRMACION_HUMANA' }),
+    ]);
+    db.cotizacion.findMany.mockResolvedValue([]);
+    db.expediente.findMany.mockResolvedValue([]);
+    db.timingInterval.findMany.mockResolvedValue([
+      { id: 'i-new-1', organization_id: org, policy_type: 'PROSPECT_INFO_COLLECTION', calculation_status: 'NOT_CONFIGURED', policy_revision_id: null, prospecto_id: 'p-integration', payment_request_id: null, receipt_report_id: null, opened_at: new Date('2026-09-04T00:00:00Z'), closed_at: null, provenance: { source: 'CORRECCION_001' } },
+      { id: 'i-new-2', organization_id: org, policy_type: 'PROSPECT_READY_TO_REQUEST', calculation_status: 'NOT_CONFIGURED', policy_revision_id: null, prospecto_id: 'p-ready', payment_request_id: null, receipt_report_id: null, opened_at: new Date('2026-09-04T01:00:00Z'), closed_at: null, provenance: { source: 'CORRECCION_001' } },
+    ]);
+    const result = await new MidBaseSourceService(db as unknown as PrismaClient).read(actor(), { now: fixedNow });
+    expect(result.rows.find((row) => row.objectId === 'p-integration')).toMatchObject({ waitingOn: 'CLIENT', notaryFact: 'NOT_APPLICABLE' });
+    expect(result.rows.find((row) => row.objectId === 'p-ready')).toMatchObject({ waitingOn: 'OFFICE', notaryFact: 'NOT_APPLICABLE' });
+    expect(result.rows.some((row) => row.waitingOn === 'NOTARY')).toBe(false);
+  });
+
   it('clasifica como UNKNOWN_LEGACY una etapa histórica con transición pero sin intervalo G0-C', async () => {
     const db = representativeDb();
     db.timingInterval.findMany.mockReset().mockResolvedValueOnce([]).mockResolvedValueOnce([]);

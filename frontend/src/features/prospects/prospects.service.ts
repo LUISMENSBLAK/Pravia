@@ -1,5 +1,5 @@
 import { apiRequest } from '../../services/api/client';
-import type { ProspectWorkflow, PreparedProspectRequest } from './prospects.types';
+import type { ProspectWorkflow } from './prospects.types';
 import type { FollowUpInput, NewProspectInput, Prospect, ProspectCatalogs, ProspectDocument, ProspectFollowUp, ProspectListFilters, ProspectListResult, UpdateProspectInput } from './prospects.types';
 import { isActiveProspect, isConvertedProspect } from './prospects.types';
 
@@ -81,7 +81,7 @@ export const prospectsService = {
   async update(id: string, input: UpdateProspectInput): Promise<Prospect> {
     return apiRequest<Prospect>(`/prospectos/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) });
   },
-  async uploadDocument(id: string, file: File, type: 'PREDIAL' | 'ANTECEDENTE' | 'COTIZACION_NOTARIA'): Promise<ProspectDocument> {
+  async uploadDocument(id: string, file: File, type: 'INICIAL' | 'PREDIAL' | 'ANTECEDENTE'): Promise<ProspectDocument> {
     const body = new FormData();
     body.append('archivo', file);
     body.append('tipo', type);
@@ -95,9 +95,6 @@ export const prospectsService = {
   },
   workflow(id: string, signal?: AbortSignal) {
     return apiRequest<ProspectWorkflow>(`/prospectos/${encodeURIComponent(id)}/operacion`, { signal });
-  },
-  prepare(id: string, expectedVersion: number, attachmentIds: string[]) {
-    return apiRequest<PreparedProspectRequest>(`/prospectos/${encodeURIComponent(id)}/solicitud/preparar`, { method: 'POST', body: JSON.stringify({ expectedVersion, attachmentIds }) });
   },
   act(id: string, input: Record<string, unknown>) {
     return apiRequest<{ idempotent: boolean; quoteId: string | null }>(`/prospectos/${encodeURIComponent(id)}/transiciones`, { method: 'POST', body: JSON.stringify(input) });

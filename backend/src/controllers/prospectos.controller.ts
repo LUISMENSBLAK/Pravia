@@ -128,11 +128,11 @@ export const getProspectos = async (req: Request, res: Response) => {
     const [withQuote, converted, active, stateCounts, legacyServices, sources] = await Promise.all([
       prisma.prospecto.count({ where: { ...where, cotizacion: { isNot: null } } }),
       prisma.prospecto.count({ where: { AND: [where, { OR: [
-        { etapa_contractual: 'CONVERTIDO_COTIZACION' },
+        { etapa_contractual: { in: ['CONVERTIDO_EN_COTIZACION', 'CONVERTIDO_COTIZACION'] } },
         { etapa_contractual: null, estado: ProspectoEstado.ACEPTADO },
       ] }] } }),
       prisma.prospecto.count({ where: { AND: [where, { OR: [
-        { etapa_contractual: { not: null }, NOT: { etapa_contractual: 'CONVERTIDO_COTIZACION' } },
+        { etapa_contractual: { in: ['NUEVO', 'EN_INTEGRACION', 'LISTO_PARA_COTIZAR'] } },
         { etapa_contractual: null, estado: { notIn: [...closedStates] } },
       ] }] } }),
       prisma.prospecto.groupBy({ by: ['estado'], where, _count: { _all: true } }),
@@ -208,10 +208,6 @@ export const getProspectTransition = async (req: Request, res: Response) => {
     if (!event) return res.status(404).json({ error: 'No se encontró la transición.' });
     return res.json(event);
   } catch (error) { return prospectWorkflowError(res, error); }
-};
-export const prepareProspectRequest = async (req: Request, res: Response) => {
-  try { return res.json(await prospectWorkflow.prepare(req.user!, req.params.id, req.body ?? {})); }
-  catch (error) { return prospectWorkflowError(res, error); }
 };
 export const actProspectWorkflow = async (req: Request, res: Response) => {
   try { return res.json(await prospectWorkflow.act(req.user!, req.params.id, req.body ?? {})); }
