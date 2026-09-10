@@ -106,14 +106,14 @@ export function AgendaPage() {
     {status === 'loading' && <div className={styles.agendaLoading} aria-label="Cargando agenda"><span /><div><i /><i /><i /></div></div>}
     {status === 'error' && <section className={styles.agendaError} role="alert"><span><AlertTriangle /></span><h2>No pudimos cargar la agenda.</h2><p>Conservamos tus filtros. Intenta nuevamente.</p><button type="button" className={styles.secondaryButton} onClick={changed}>Reintentar</button></section>}
     {status === 'ready' && catalogs && <div className={styles.agendaLayout}>
-      <aside className={styles.leftRail}>
+      <aside className={styles.leftRail} aria-label="Panel lateral de Agenda">
         <MiniCalendar selected={date} onSelect={setDate} />
         <TeamFilters users={catalogs.usuarios} selected={selectedUsers} canManage={catalogs.permisos.gestionar_equipo} onChange={setSelectedUsers} />
         <section className={styles.tasksPanel}><header><ListTodo size={17} /><div><h2>Tareas por vencer</h2><p>Separadas de los eventos</p></div></header>
           {visibleTasks.length ? <ol>{visibleTasks.slice(0, 4).map((task) => <li key={task.id}><span>{task.estatus === 'COMPLETADA' ? <CheckCircle2 /> : <CircleDot />}</span><div><strong>{task.titulo}</strong><small>{task.expediente?.numero_pravia || 'Sin expediente'}{task.fecha_limite ? ` · ${new Intl.DateTimeFormat('es-MX', { day: 'numeric', month: 'short' }).format(new Date(task.fecha_limite))}` : ''}</small></div><em data-priority={task.prioridad}>{task.prioridad}</em></li>)}</ol> : <p className={styles.railEmpty}>No hay tareas dentro de tu alcance.</p>}
         </section>
       </aside>
-      <section className={styles.calendarCard}>
+      <section className={styles.calendarCard} aria-label="Calendario principal">
         <div className={styles.timezoneNote}><Clock3 size={13} />Zona horaria: {catalogs.timezone}</div>
         {view === 'week' && <WeekCalendar date={date} events={visibleEvents} timezone={catalogs.timezone} onOpen={openEvent} />}
         {view === 'day' && <DayCalendar date={date} events={visibleEvents} timezone={catalogs.timezone} canWrite={canWrite} onOpen={openEvent} onNew={() => setNewOpen(true)} />}

@@ -17,6 +17,18 @@ export type AssistantConversationContext = {
   subview?: string;
 };
 
+export type AssistantActionState = {
+  status: 'COLLECTING' | 'AWAITING_CONFIRMATION' | 'COMPLETED';
+  actionKey: string;
+  args: Record<string, unknown>;
+  invocationId: string;
+  missing?: string[];
+  confirmationId?: string;
+  expiresAt?: string;
+  confirmation?: { id: string; title: string; details: Array<{ label: string; value: string }>; confirmLabel?: string };
+  result?: { status: 'success'; message: string; refresh?: string };
+};
+
 export class AssistantConversationError extends Error {
   constructor(message: string, readonly code: string, readonly status = 400) {
     super(message);
@@ -72,6 +84,21 @@ function sanitizeContext(input: AssistantConversationContext | undefined) {
   };
 }
 
+function publicConversation<T extends { context?: unknown }>(record: T) {
+  const stored = record.context && typeof record.context === 'object' && !Array.isArray(record.context)
+    ? record.context as Record<string, unknown>
+    : {};
+  const state = stored.actionState && typeof stored.actionState === 'object' && !Array.isArray(stored.actionState)
+    ? stored.actionState as AssistantActionState
+    : undefined;
+  const { actionState: _privateActionState, ...context } = stored;
+  const pending_confirmation = state?.status === 'AWAITING_CONFIRMATION' && state.confirmation
+    && state.expiresAt && new Date(state.expiresAt) > new Date()
+    ? state.confirmation
+    : undefined;
+  return { ...record, context, pending_confirmation };
+}
+
 function titleFromMessage(message: string) {
   const normalized = message.replace(/\s+/g, ' ').trim();
   return normalized.length > 64 ? `${normalized.slice(0, 61).trimEnd()}…` : normalized || 'Nueva conversación';
@@ -123,18 +150,19 @@ export const assistantConversationService = {
 
   async list(user: AuthUser, rawStatus?: unknown) {
     const status = statusValue(rawStatus);
-    return prisma.assistantConversation.findMany({
+    const records = await prisma.assistantConversation.findMany({
       where: { organization_id: user.organizationId, owner_user_id: user.id, status },
       select: conversationSelect,
       orderBy: [{ last_message_at: 'desc' }, { created_at: 'desc' }],
       take: 60,
     });
+    return records.map((record) => publicConversation(record));
   },
 
   async get(user: AuthUser, id: string) {
     await ownedConversation(user, id);
     const now = new Date();
-    return prisma.assistantConversation.findFirstOrThrow({
+    const record = await prisma.assistantConversation.findFirstOrThrow({
       where: { id, organization_id: user.organizationId, owner_user_id: user.id },
       select: {
         ...conversationSelect,
@@ -150,13 +178,14 @@ export const assistantConversationService = {
         attachments: { where: { message_id: null, status: { not: 'ARCHIVED' }, OR: [{ source: 'OFFICIAL_DOCUMENT' }, { expires_at: null }, { expires_at: { gt: now } }] }, orderBy: { created_at: 'asc' }, select: attachmentSelect },
       },
     });
+    return publicConversation(record);
   },
 
   async rename(user: AuthUser, id: string, title: unknown) {
     await ownedConversation(user, id);
     const normalized = String(title || '').trim().replace(/\s+/g, ' ').slice(0, 100);
     if (!normalized) throw new AssistantConversationError('Escribe un nombre para la conversación.', 'ASSISTANT_TITLE_REQUIRED');
-    return prisma.assistantConversation.update({ where: { id }, data: { title: normalized }, select: conversationSelect });
+    return publicConversation(await prisma.assistantConversation.update({ where: { id }, data: { title: normalized }, select: conversationSelect }));
   },
 
   async transition(user: AuthUser, id: string, action: 'archive' | 'trash' | 'restore') {
@@ -168,7 +197,7 @@ export const assistantConversationService = {
         ? { status: 'TRASHED', trashed_at: now }
         : { status: 'ACTIVE', archived_at: null, trashed_at: null, restored_at: now };
     if (action === 'archive' && current.status === 'TRASHED') throw new AssistantConversationError('Restaura la conversación antes de archivarla.', 'ASSISTANT_RESTORE_REQUIRED', 409);
-    return prisma.assistantConversation.update({ where: { id }, data, select: conversationSelect });
+    return publicConversation(await prisma.assistantConversation.update({ where: { id }, data, select: conversationSelect }));
   },
 
   async ensureActive(user: AuthUser, conversationId: string | undefined, input: { message: string; context?: AssistantConversationContext }) {
@@ -197,11 +226,14 @@ export const assistantConversationService = {
           client_message_id: clientMessageId,
           context_snapshot: json(sanitizeContext(input.context)),
         } });
-        const conversation = await tx.assistantConversation.findUniqueOrThrow({ where: { id: conversationId }, select: { message_count: true, title: true } });
+        const conversation = await tx.assistantConversation.findUniqueOrThrow({ where: { id: conversationId }, select: { message_count: true, title: true, context: true } });
+        const currentContext = conversation.context && typeof conversation.context === 'object' && !Array.isArray(conversation.context)
+          ? conversation.context as Record<string, unknown>
+          : {};
         await tx.assistantConversation.update({ where: { id: conversationId }, data: {
           message_count: { increment: 1 }, last_message_at: created.created_at,
           ...(conversation.message_count === 0 && conversation.title === 'Nueva conversación' ? { title: titleFromMessage(input.content) } : {}),
-          context: json(sanitizeContext(input.context)),
+          context: json({ ...currentContext, ...sanitizeContext(input.context) }),
         } });
         return created;
       });
@@ -254,6 +286,30 @@ export const assistantConversationService = {
       summary: conversation.summary || undefined,
       messages: records.reverse().map((item) => ({ role: item.role === 'ASSISTANT' ? 'assistant' as const : 'user' as const, content: item.content })),
     };
+  },
+
+  async actionState(user: AuthUser, conversationId: string): Promise<AssistantActionState | undefined> {
+    const conversation = await ownedConversation(user, conversationId);
+    const context = conversation.context && typeof conversation.context === 'object' && !Array.isArray(conversation.context)
+      ? conversation.context as Record<string, unknown>
+      : {};
+    const state = context.actionState;
+    if (!state || typeof state !== 'object' || Array.isArray(state)) return undefined;
+    return state as AssistantActionState;
+  },
+
+  async setActionState(user: AuthUser, conversationId: string, state?: AssistantActionState) {
+    const conversation = await writableConversation(user, conversationId);
+    const context = conversation.context && typeof conversation.context === 'object' && !Array.isArray(conversation.context)
+      ? conversation.context as Record<string, unknown>
+      : {};
+    const next = { ...context };
+    if (state) next.actionState = state;
+    else delete next.actionState;
+    await prisma.assistantConversation.update({
+      where: { id: conversationId },
+      data: { context: json(next) },
+    });
   },
 
   async refreshExtractiveSummary(user: AuthUser, conversationId: string) {

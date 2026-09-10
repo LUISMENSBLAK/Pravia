@@ -80,6 +80,7 @@ export type AssistantConversationDetail = AssistantConversation & {
     attachments?: AssistantAttachment[];
   }>;
   attachments: AssistantAttachment[];
+  pending_confirmation?: AssistantConfirmation;
 };
 
 export type AssistantSuggestion = {
@@ -108,6 +109,7 @@ export type AssistantReply = {
   confirmation?: AssistantConfirmation;
   conversationId?: string;
   messageId?: string;
+  refresh?: string;
 };
 
 export type AssistantOpenOptions = {

@@ -12,10 +12,17 @@ export function AppShell() {
   const { user, logout, switchOrganization } = useAuth();
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSE_KEY) === 'true');
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [dataRevision, setDataRevision] = useState(0);
 
   useEffect(() => {
     localStorage.setItem(COLLAPSE_KEY, String(collapsed));
   }, [collapsed]);
+
+  useEffect(() => {
+    const refresh = () => setDataRevision((value) => value + 1);
+    window.addEventListener('pravia:data-changed', refresh);
+    return () => window.removeEventListener('pravia:data-changed', refresh);
+  }, []);
 
   if (!user) return null;
 
@@ -33,7 +40,7 @@ export function AppShell() {
       <Sidebar user={user} collapsed={collapsed} mobileOpen={mobileOpen} onToggle={() => setCollapsed((value) => !value)} onCloseMobile={() => setMobileOpen(false)} />
       <div className={styles.main}>
         <Topbar user={user} onOpenMobile={() => setMobileOpen(true)} onLogout={logout} onSwitchOrganization={switchOrganization} />
-        <main className={styles.workspace} id="main-content" tabIndex={-1}><Outlet /></main>
+        <main className={styles.workspace} id="main-content" tabIndex={-1}><Outlet key={dataRevision} /></main>
       </div>
       <AssistantLayer mobileSidebarOpen={mobileOpen} />
     </div>

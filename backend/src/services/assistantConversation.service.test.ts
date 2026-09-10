@@ -54,6 +54,17 @@ describe('conversaciones persistentes de PRAVIA IA', () => {
     }));
   });
 
+  it('no expone argumentos ni claves internas del estado de acción al listar historial', async () => {
+    mocks.db.assistantConversation.findMany.mockResolvedValue([{ ...conversation, context: {
+      route: '/agenda', actionState: { status: 'AWAITING_CONFIRMATION', actionKey: 'agenda.event.cancel', args: { motivo_cancelacion: 'dato privado' }, invocationId: 'secret-invocation', confirmationId: 'confirmation-1', expiresAt: new Date(Date.now() + 60_000).toISOString(), confirmation: { id: 'confirmation-1', title: 'Cancelar evento', details: [] } },
+    } }]);
+    const result = await assistantConversationService.list(user, 'ACTIVE');
+    expect(result[0].context).toEqual({ route: '/agenda' });
+    expect(result[0]).toMatchObject({ pending_confirmation: { id: 'confirmation-1', title: 'Cancelar evento' } });
+    expect(JSON.stringify(result[0])).not.toContain('secret-invocation');
+    expect(JSON.stringify(result[0])).not.toContain('dato privado');
+  });
+
   it('envía a papelera de forma lógica y conserva el registro para restauración', async () => {
     mocks.db.assistantConversation.findFirst.mockResolvedValue(conversation);
     mocks.db.assistantConversation.update.mockResolvedValue({ ...conversation, status: 'TRASHED' });

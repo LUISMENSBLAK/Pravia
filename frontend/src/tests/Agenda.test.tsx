@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../app/App';
 import { getAssistantActions, resolveAssistantContext } from '../features/assistant/assistantContext';
 import { eventStatusLabel, formatPeriod } from '../features/agenda/agenda.utils';
+import agendaStyles from '../features/agenda/Agenda.module.css';
 
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const session = { user: { id: 'user-1', name: 'Andrea Ruiz', role: 'ADMINISTRACION', permissions: ['agenda.read', 'agenda.write'] } };
@@ -47,6 +48,13 @@ function mockApi(options: { empty?: boolean; fail?: boolean; readOnly?: boolean;
 const renderAgenda = (path = '/agenda?date=2026-08-20') => render(<MemoryRouter initialEntries={[path]}><App /></MemoryRouter>);
 
 describe('Agenda', () => {
+  it('mantiene rail y calendario como hermanos directos del contenedor de layout', async () => {
+    mockApi(); renderAgenda();
+    const rail = await screen.findByLabelText('Panel lateral de Agenda');
+    const calendar = screen.getByLabelText('Calendario principal');
+    expect(rail.parentElement).toBe(calendar.parentElement);
+    expect(rail.parentElement).toHaveClass(agendaStyles.agendaLayout);
+  });
   beforeEach(() => { vi.restoreAllMocks(); vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }))); });
 
   it('formatea periodos y estados con lenguaje natural en español', () => {

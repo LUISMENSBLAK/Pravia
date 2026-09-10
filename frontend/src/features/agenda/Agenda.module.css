@@ -21,7 +21,7 @@
 button:not(:disabled) { cursor: pointer; }
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(46,113,198,.28); outline-offset: 2px; }
 
-.agendaLayout { display: grid; grid-template-columns: 176px minmax(640px, 1fr) 200px; gap: 12px; align-items: start; min-width: 0; }
+.agendaLayout { display: grid; grid-template-columns: 176px minmax(640px, 1fr) 200px; column-gap: var(--space-4); row-gap: var(--space-3); align-items: start; min-width: 0; }
 .leftRail { display: grid; gap: 12px; min-width: 0; }
 .miniCalendar, .teamFilters, .tasksPanel, .calendarCard, .upcoming { border: 1px solid #e0e5ec; border-radius: 12px; background: white; box-shadow: 0 5px 18px rgba(11,30,62,.035); }
 .miniCalendar { padding: 13px; }

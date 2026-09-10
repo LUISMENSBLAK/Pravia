@@ -22,5 +22,6 @@ router.post('/assistant/messages', requirePermission('ai.use'), AIController.mes
 router.get('/assistant/tools', requirePermission('ai.use'), AIController.tools);
 router.post('/assistant/tools/:tool', requirePermission('ai.use'), AIController.executeTool);
 router.post('/assistant/confirmations', requirePermission('ai.use'), AIController.confirmPreparedAction);
+router.post('/assistant/confirmations/cancel', requirePermission('ai.use'), AIController.cancelPreparedAction);
 router.get('/dashboard', requirePermission('ai.admin.read'), AIController.dashboard);
 export default router;

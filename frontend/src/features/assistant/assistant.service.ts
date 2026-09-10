@@ -30,7 +30,8 @@ export type SendAssistantInput = {
 export type AssistantService = {
   getSuggestions(context: AssistantContext, signal?: AbortSignal): Promise<AssistantSuggestion[]>;
   sendMessage(input: SendAssistantInput, signal?: AbortSignal): Promise<AssistantReply>;
-  confirmAction(confirmationId: string, context: AssistantContext, signal?: AbortSignal): Promise<AssistantReply>;
+  confirmAction(confirmationId: string, conversationId: string, context: AssistantContext, signal?: AbortSignal): Promise<AssistantReply>;
+  cancelAction?(confirmationId: string, conversationId: string, signal?: AbortSignal): Promise<AssistantReply>;
   dismissSuggestion(suggestionId: string, context: AssistantContext): Promise<void>;
   snoozeSuggestion(suggestionId: string, context: AssistantContext): Promise<void>;
   createConversation(context: AssistantContext): Promise<AssistantConversation>;
@@ -78,9 +79,15 @@ export const assistantService: AssistantService = {
     });
     return unwrap(payload);
   },
-  async confirmAction(confirmationId, context, signal) {
+  async confirmAction(confirmationId, conversationId, context, signal) {
     const payload = await apiRequest<AssistantReply | { data: AssistantReply }>(requirePath(apiConfig.assistantConfirmPath), {
-      method: 'POST', signal, body: JSON.stringify({ confirmationId, context }),
+      method: 'POST', signal, body: JSON.stringify({ confirmationId, conversationId, context }),
+    });
+    return unwrap(payload);
+  },
+  async cancelAction(confirmationId, conversationId, signal) {
+    const payload = await apiRequest<AssistantReply | { data: AssistantReply }>(`${requirePath(apiConfig.assistantConfirmPath)}/cancel`, {
+      method: 'POST', signal, body: JSON.stringify({ confirmationId, conversationId }),
     });
     return unwrap(payload);
   },

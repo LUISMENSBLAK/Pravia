@@ -1,13 +1,14 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma';
 import { getOpenAIAssistantModelName, getOpenAIEscalationModelName, getOpenAIModelName } from '../services/openaiDocument.service';
-import { ASSISTANT_TOOL_REGISTRY, AssistantToolError, assistantToolCatalog, canUseAssistantTool, executeAssistantTool, type AssistantToolName } from '../services/assistantTools.service';
+import { AssistantToolError, assistantToolCatalog, executeAssistantTool, type AssistantToolName } from '../services/assistantTools.service';
 import { AssistantChatError, sendAssistantMessage } from '../services/assistantChat.service';
 import { prepareAssistantAttachmentContext } from '../services/assistantAttachmentContext.service';
 import { AssistantConversationError, assistantConversationService } from '../services/assistantConversation.service';
 import { AssistantTranscriptionError, transcribeAssistantAudio } from '../services/assistantTranscription.service';
 import { recordAIFailure, recordAIUsages } from '../services/aiUsage.service';
 import { logAudit } from '../utils/auditLogger';
+import { AssistantActionError, assistantActionCatalog, cancelAssistantConfirmation, confirmAssistantAction } from '../services/assistantActions.service';
 
 const asNumber = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : 0;
 
@@ -55,6 +56,7 @@ export class AIController {
         assistantConversationService.history(req.user, conversation.id, userMessage.message.id),
         prepareAssistantAttachmentContext(req.user, conversation.id, req.body?.attachmentIds),
       ]);
+      const actionState = await assistantConversationService.actionState(req.user, conversation.id);
       const preferenceReader = (prisma as any).userPreference?.findUnique;
       const preference = typeof preferenceReader === 'function'
         ? await preferenceReader.call((prisma as any).userPreference, { where: { user_id: req.user.id }, select: { timezone: true } })
@@ -68,6 +70,9 @@ export class AIController {
           historySummary: history.summary,
           attachmentContext: attachmentData.context,
           timezone: preference?.timezone,
+          conversationId: conversation.id,
+          messageId: userMessage.message.id,
+          actionState: actionState?.status === 'COLLECTING' || actionState?.status === 'AWAITING_CONFIRMATION' ? actionState : undefined,
         },
         req.user,
         req.correlationId || crypto.randomUUID(),
@@ -236,37 +241,35 @@ export class AIController {
 
   static async tools(req: Request, res: Response) {
     if (!req.user) return res.status(401).json({ success: false, code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
-    return res.json({ success: true, tools: assistantToolCatalog(req.user) });
+    return res.json({ success: true, tools: assistantToolCatalog(req.user), actions: assistantActionCatalog(req.user) });
   }
 
   static async confirmPreparedAction(req: Request, res: Response) {
     try {
       if (!req.user) return res.status(401).json({ success: false, code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
-      const tool = String(req.body?.tool || '') as AssistantToolName;
-      const definition = ASSISTANT_TOOL_REGISTRY[tool];
-      if (!definition || definition.mode !== 'PREPARE_ONLY' || !canUseAssistantTool(req.user, tool)) {
-        return res.status(403).json({ success: false, code: 'AI_CONFIRMATION_DENIED', error: 'Esta confirmación no corresponde a una acción preparada disponible para tu función.' });
-      }
-      const preparedCorrelationId = String(req.body?.prepared_correlation_id || '').trim().slice(0, 120);
-      if (!preparedCorrelationId) return res.status(400).json({ success: false, code: 'AI_CONFIRMATION_REFERENCE_REQUIRED', error: 'No se encontró la referencia de la acción preparada.' });
-      await prisma.auditLog.create({ data: {
-        user_id: req.user.id,
-        accion: 'AI_TOOL_CONFIRMED',
-        entidad: 'User',
-        entidad_id: req.user.id,
-        correlation_id: req.correlationId,
-        session_id: req.user.sessionId,
-        detalles: {
-          tool,
-          prepared_correlation_id: preparedCorrelationId,
-          target_endpoint: String(req.body?.target_endpoint || '').slice(0, 160),
-          result_entity_type: String(req.body?.result_entity_type || '').slice(0, 60) || null,
-          result_entity_id: String(req.body?.result_entity_id || '').slice(0, 80) || null,
-        },
-      } });
-      return res.status(201).json({ success: true, correlation_id: req.correlationId });
-    } catch {
-      return res.status(500).json({ success: false, code: 'AI_CONFIRMATION_AUDIT_FAILED', error: 'La acción se registró, pero no fue posible completar su constancia de confirmación.' });
+      const conversationId = String(req.body?.conversationId || '').trim();
+      const confirmationId = String(req.body?.confirmationId || '').trim();
+      if (!conversationId || !confirmationId) return res.status(400).json({ success: false, code: 'AI_CONFIRMATION_REFERENCE_REQUIRED', error: 'No se encontró la acción preparada.' });
+      const reply = await confirmAssistantAction({ actor: req.user, conversationId, confirmationId, correlationId: req.correlationId || crypto.randomUUID() });
+      const message = await assistantConversationService.addAssistantMessage(req.user, conversationId, { content: reply.message, promptVersion: 'assistant-actions-v1' });
+      return res.json({ ...reply, conversationId, messageId: message.id });
+    } catch (error: any) {
+      const status = error instanceof AssistantActionError ? error.status : 500;
+      return res.status(status).json({ success: false, code: error?.code || 'AI_CONFIRMATION_FAILED', error: status >= 500 ? 'No pude completar la acción. No hice cambios adicionales.' : error.message });
+    }
+  }
+
+  static async cancelPreparedAction(req: Request, res: Response) {
+    try {
+      if (!req.user) return res.status(401).json({ success: false, code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
+      const conversationId = String(req.body?.conversationId || '').trim();
+      const confirmationId = String(req.body?.confirmationId || '').trim();
+      if (!conversationId || !confirmationId) return res.status(400).json({ success: false, code: 'AI_CONFIRMATION_REFERENCE_REQUIRED', error: 'No se encontró la acción preparada.' });
+      await cancelAssistantConfirmation(req.user, conversationId, confirmationId);
+      return res.json({ status: 'success', message: 'Cancelé la acción pendiente; no hice cambios.', conversationId });
+    } catch (error: any) {
+      const status = error instanceof AssistantActionError ? error.status : 500;
+      return res.status(status).json({ success: false, code: error?.code || 'AI_CONFIRMATION_CANCEL_FAILED', error: status >= 500 ? 'No fue posible cancelar la acción pendiente.' : error.message });
     }
   }
 

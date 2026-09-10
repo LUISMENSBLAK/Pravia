@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   auditCreate: vi.fn(), assistantMessageFind: vi.fn(), sendAssistantMessage: vi.fn(), preferenceFind: vi.fn(), recordAIUsages: vi.fn(), recordAIFailure: vi.fn(),
+  confirmAssistantAction: vi.fn(), cancelAssistantConfirmation: vi.fn(),
   conversation: {
-    ensureActive: vi.fn(), addUserMessage: vi.fn(), linkAttachmentsToMessage: vi.fn(), history: vi.fn(), addAssistantMessage: vi.fn(), refreshExtractiveSummary: vi.fn(),
+    ensureActive: vi.fn(), addUserMessage: vi.fn(), linkAttachmentsToMessage: vi.fn(), history: vi.fn(), actionState: vi.fn(), addAssistantMessage: vi.fn(), refreshExtractiveSummary: vi.fn(),
   },
   attachmentContext: vi.fn(),
 }));
@@ -23,6 +24,14 @@ vi.mock('../services/assistantConversation.service', () => ({
 }));
 vi.mock('../services/assistantAttachmentContext.service', () => ({ prepareAssistantAttachmentContext: mocks.attachmentContext }));
 vi.mock('../services/aiUsage.service', () => ({ recordAIUsages: mocks.recordAIUsages, recordAIFailure: mocks.recordAIFailure }));
+vi.mock('../services/assistantActions.service', () => ({
+  AssistantActionError: class AssistantActionError extends Error { constructor(message: string, readonly code: string, readonly status = 400) { super(message); } },
+  assistantActionCatalog: vi.fn(() => []),
+  prepareOrExecuteAssistantAction: vi.fn(),
+  cancelPendingAssistantAction: vi.fn(),
+  confirmAssistantAction: mocks.confirmAssistantAction,
+  cancelAssistantConfirmation: mocks.cancelAssistantConfirmation,
+}));
 
 import { AIController } from './ai.controller';
 
@@ -43,11 +52,14 @@ describe('confirmación humana de PRAVIA IA', () => {
     mocks.conversation.addUserMessage.mockReset().mockResolvedValue({ message: { id: 'message-user', created_at: new Date() }, duplicate: false });
     mocks.conversation.linkAttachmentsToMessage.mockReset().mockResolvedValue([]);
     mocks.conversation.history.mockReset().mockResolvedValue({ messages: [{ role: 'assistant', content: 'Respuesta persistida' }], summary: 'Resumen anterior' });
+    mocks.conversation.actionState.mockReset().mockResolvedValue(undefined);
     mocks.conversation.addAssistantMessage.mockReset().mockResolvedValue({ id: 'message-assistant' });
     mocks.conversation.refreshExtractiveSummary.mockReset().mockResolvedValue(undefined);
     mocks.attachmentContext.mockReset().mockResolvedValue({ usages: [], context: undefined });
     mocks.recordAIUsages.mockReset().mockResolvedValue(undefined);
     mocks.recordAIFailure.mockReset().mockResolvedValue(undefined);
+    mocks.confirmAssistantAction.mockReset().mockResolvedValue({ status: 'success', message: 'El evento quedó cancelado.', refresh: 'agenda' });
+    mocks.cancelAssistantConfirmation.mockReset().mockResolvedValue(undefined);
   });
 
   it('rechaza una consulta conversacional sin usuario autenticado', async () => {
@@ -83,7 +95,7 @@ describe('confirmación humana de PRAVIA IA', () => {
     expect(mocks.recordAIUsages).not.toHaveBeenCalled();
   });
 
-  it('registra la confirmación de una acción preparada sin volver a ejecutarla', async () => {
+  it('ejecuta la acción preparada mediante su confirmación persistida', async () => {
     const req: any = {
       user: {
         id: 'user-1', sessionId: 'session-1', rol: 'ABOGADO',
@@ -91,27 +103,24 @@ describe('confirmación humana de PRAVIA IA', () => {
       },
       correlationId: 'corr-confirm',
       body: {
-        tool: 'prepareTask', prepared_correlation_id: 'corr-prepared',
-        target_endpoint: '/agenda/tareas', result_entity_type: 'Tarea', result_entity_id: 'task-1',
+        conversationId: 'conversation-1', confirmationId: 'confirmation-1',
       },
     };
     const res = response();
     await AIController.confirmPreparedAction(req, res);
-    expect(res.status).toHaveBeenCalledWith(201);
-    expect(mocks.auditCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
-      accion: 'AI_TOOL_CONFIRMED', correlation_id: 'corr-confirm',
-      detalles: expect.objectContaining({ prepared_correlation_id: 'corr-prepared', result_entity_id: 'task-1' }),
-    }) }));
+    expect(mocks.confirmAssistantAction).toHaveBeenCalledWith(expect.objectContaining({ actor: req.user, conversationId: 'conversation-1', confirmationId: 'confirmation-1', correlationId: 'corr-confirm' }));
+    expect(mocks.conversation.addAssistantMessage).toHaveBeenCalledWith(req.user, 'conversation-1', expect.objectContaining({ content: 'El evento quedó cancelado.' }));
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ status: 'success', refresh: 'agenda', conversationId: 'conversation-1', messageId: 'message-assistant' }));
   });
 
-  it('rechaza confirmar una tool de solo lectura', async () => {
+  it('rechaza una confirmación sin referencias persistidas', async () => {
     const req: any = {
-      user: { id: 'user-1', sessionId: 'session-1', rol: 'ABOGADO', permissions: ['ai.use', 'ai.expedientes.read', 'expedientes.read'] },
-      body: { tool: 'getExpedienteSummary', prepared_correlation_id: 'corr-prepared' },
+      user: { id: 'user-1', sessionId: 'session-1', rol: 'ABOGADO', permissions: ['ai.use'] },
+      body: {},
     };
     const res = response();
     await AIController.confirmPreparedAction(req, res);
-    expect(res.status).toHaveBeenCalledWith(403);
-    expect(mocks.auditCreate).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(mocks.confirmAssistantAction).not.toHaveBeenCalled();
   });
 });

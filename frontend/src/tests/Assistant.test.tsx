@@ -271,7 +271,33 @@ describe('PRAVIA IA global', () => {
     expect(await screen.findByLabelText('Confirmación requerida')).toBeInTheDocument();
     expect(service.confirmAction).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Confirmar' }));
-    await waitFor(() => expect(service.confirmAction).toHaveBeenCalledWith('confirm-1', expect.objectContaining({ module: 'mi-dia' }), expect.any(AbortSignal)));
+    await waitFor(() => expect(service.confirmAction).toHaveBeenCalledWith('confirm-1', 'conversation-1', expect.objectContaining({ module: 'mi-dia' }), expect.any(AbortSignal)));
+  });
+
+  it('restaura una confirmación pendiente al reabrir la conversación persistida', async () => {
+    const pending = { id: 'confirm-persisted', title: 'Cancelar evento', details: [{ label: 'Motivo', value: 'Reprogramación' }] };
+    const service = makeService({
+      listConversations: vi.fn(async () => [conversation]),
+      getConversation: vi.fn(async () => ({ ...conversation, messages: [], attachments: [], pending_confirmation: pending })),
+    });
+    const user = userEvent.setup();
+    renderAssistant(service);
+    await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA' }));
+    expect(await screen.findByLabelText('Confirmación requerida')).toBeInTheDocument();
+    expect(screen.getByText('Cancelar evento')).toBeInTheDocument();
+    expect(service.confirmAction).not.toHaveBeenCalled();
+  });
+
+  it('refresca la superficie visible después de una escritura confirmada por backend', async () => {
+    const changed = vi.fn(); window.addEventListener('pravia:data-changed', changed);
+    const service = makeService({ sendMessage: vi.fn(async (): Promise<AssistantReply> => ({ status: 'success', message: 'Evento creado.', refresh: 'agenda' })) });
+    const user = userEvent.setup(); renderAssistant(service);
+    await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA' }));
+    await user.type(screen.getByLabelText('Pregúntame algo...'), 'Agenda una cita mañana a las 10.');
+    await user.click(screen.getByRole('button', { name: 'Enviar mensaje' }));
+    await screen.findByText('Evento creado.');
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ detail: { scope: 'agenda' } }));
+    window.removeEventListener('pravia:data-changed', changed);
   });
 
   it('desactiva el movimiento del búho cuando el sistema lo solicita', () => {

@@ -81,13 +81,14 @@ export function AssistantProvider({ children, service = assistantService }: Prop
     setStatus(nextStatus); if (reply.conversationId) setActiveConversationId(reply.conversationId);
     if (reply.message) setMessages((current) => [...current, { id: reply.messageId || messageId(), role: 'assistant', content: reply.message!, timestamp: now(),
       ...(reply.sources?.length ? { sources: reply.sources } : {}), ...(reply.confirmation ? { confirmation: reply.confirmation } : {}) }]);
+    if (reply.refresh) window.dispatchEvent(new CustomEvent('pravia:data-changed', { detail: { scope: reply.refresh } }));
     if (nextStatus === 'success') { if (successTimer.current) window.clearTimeout(successTimer.current); successTimer.current = window.setTimeout(() => setStatus('idle'), 2200); }
   }, []);
 
   const selectConversation = useCallback(async (id: string) => {
     setHistoryLoading(true); setErrorMessage(undefined);
     try { const detail = await service.getConversation(id); setActiveConversationId(detail.id); setMessages(mapConversationMessages(detail));
-      setPendingAttachments(detail.attachments || []); setHistoryOpen(false); setStatus('idle'); }
+      setPendingAttachments(detail.attachments || []); setConfirmation(detail.pending_confirmation ?? null); setHistoryOpen(false); setStatus(detail.pending_confirmation ? 'confirmation-required' : 'idle'); }
     catch { setErrorMessage('No pude abrir esa conversación.'); }
     finally { setHistoryLoading(false); }
   }, [service]);
@@ -176,13 +177,16 @@ export function AssistantProvider({ children, service = assistantService }: Prop
     catch { setStatus('error'); setErrorMessage('No pude transcribir la grabación.'); }
   }, [ensureConversation, service]);
 
-  const confirmAction = useCallback(async () => { if (!confirmation || status === 'processing') return; setStatus('processing'); setProcessLabel('Preparando acción…'); setErrorMessage(undefined);
+  const confirmAction = useCallback(async () => { if (!confirmation || !activeConversationId || status === 'processing') return; setStatus('processing'); setProcessLabel('Ejecutando acción…'); setErrorMessage(undefined);
     const controller = new AbortController(); activeRequest.current = controller;
-    try { applyReply(await service.confirmAction(confirmation.id, context, controller.signal)); }
+    try { applyReply(await service.confirmAction(confirmation.id, activeConversationId, context, controller.signal)); }
     catch (error) { if (error instanceof DOMException && error.name === 'AbortError') return; setStatus('error'); setErrorMessage('No pude completar esa acción.'); }
     finally { if (activeRequest.current === controller) activeRequest.current = null; }
-  }, [applyReply, confirmation, context, service, status]);
-  const cancelConfirmation = useCallback(() => { setConfirmation(null); setStatus('idle'); }, []);
+  }, [activeConversationId, applyReply, confirmation, context, service, status]);
+  const cancelConfirmation = useCallback(() => {
+    if (confirmation && activeConversationId && service.cancelAction) void service.cancelAction(confirmation.id, activeConversationId).catch(() => undefined);
+    setConfirmation(null); setStatus('idle');
+  }, [activeConversationId, confirmation, service]);
   const editConfirmation = useCallback(() => { setConfirmation(null); setStatus('idle'); setDraft('Necesito editar los datos de esta acción.'); }, []);
   const dismissSuggestion = useCallback((mode: 'dismiss' | 'snooze' = 'dismiss') => { if (!suggestion) return; const target = suggestion;
     suppressLocally(target.id, mode === 'snooze' ? Date.now() + 60 * 60 * 1000 : Number.MAX_SAFE_INTEGER); setSuggestion(null);

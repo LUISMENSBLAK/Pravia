@@ -50,4 +50,12 @@ describe('assistant service adapter', () => {
     expect(options.body).toBeInstanceOf(FormData);
     expect((options.headers as Headers).has('Content-Type')).toBe(false);
   });
+
+  it('confirma una acción contra el endpoint canónico con conversación explícita', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'success', message: 'Acción completada.' }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    await assistantService.confirmAction('confirmation-1', 'conversation-1', { route: '/agenda', module: 'agenda', label: 'Agenda' });
+    expect(fetchMock).toHaveBeenCalledWith('/api/ia/assistant/confirmations', expect.objectContaining({ method: 'POST' }));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual(expect.objectContaining({ confirmationId: 'confirmation-1', conversationId: 'conversation-1' }));
+  });
 });
