@@ -11,10 +11,9 @@ ALTER TABLE "catalogo_artefactos"
   ADD COLUMN "ruta_biblioteca" VARCHAR(700),
   ADD COLUMN "revision" INTEGER NOT NULL DEFAULT 1;
 
--- Composite identity used by every new tenant-owned relationship. The
--- primary key already guarantees id uniqueness; this additional key lets the
--- database reject cross-organization references atomically.
-CREATE UNIQUE INDEX "uq_catalogo_artefactos_id_org" ON "catalogo_artefactos"("id", "organization_id");
+-- Reuse the tenant composite identity created canonically by
+-- 20260824010000_phase_a_cfg_catalogs as uq_catalogo_artefactos_id_org.
+-- The new normative FK below depends on that existing UNIQUE constraint.
 
 ALTER TABLE "catalogo_artefacto_versiones"
   ADD COLUMN "version_biblioteca" VARCHAR(80);
