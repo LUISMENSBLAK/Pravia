@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from 'crypto';
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
-import mammoth from 'mammoth';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
-import { assertStrictPartySourceScope, exp006ResolutionRevision, resolveExp006, type Exp006Context, type Exp006Resolution } from '../domain/expedienteArtifacts';
+import { assertStrictPartySourceScope, exp006ResolutionRevision, resolveExp006, type Exp006Context, type Exp006Resolution, type Exp006UnresolvedDecision } from '../domain/expedienteArtifacts';
 import { deleteFile, downloadFile, getSignedUrl, uploadFile } from '../storage/storage.service';
 import { generateOperationalArtifactWithOpenAI, getOpenAIModelName, type AIUsageMetrics } from './openaiDocument.service';
 import { recordAIFailure, recordAIUsage, recordAIUsageInDb } from './aiUsage.service';
+import { extractDocxText } from './docxText';
 
 export type Exp006Actor = { id: string; organizationId: string; sessionId: string; rol: any; permissions: any[] };
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -36,13 +36,14 @@ export class ExpedienteArtifactsService {
   async read(actor: Exp006Actor, expedienteId: string) {
     const context = await this.buildContext(this.prisma, actor, expedienteId);
     const artifacts = await this.masterArtifacts(this.prisma, actor.organizationId);
-    const resolution = resolveExp006(artifacts as any, context);
+    const unresolved: Exp006UnresolvedDecision[] = [];
+    const resolution = resolveExp006(artifacts as any, context, unresolved);
     const persisted = await this.prisma.expedienteArtefactoPendiente.findMany({
       where: { organization_id: actor.organizationId, expediente_id: expedienteId }, orderBy: [{ en_alcance: 'desc' }, { created_at: 'asc' }],
     });
     return {
       data: persisted.map((row) => this.toResponse(row)),
-      preview: { revision: exp006ResolutionRevision(resolution), applicable: resolution.length, creates: resolution.filter((row) => !persisted.some((item) => item.identity_key === row.identityKey)).length },
+      preview: { revision: exp006ResolutionRevision(resolution), applicable: resolution.length, creates: resolution.filter((row) => !persisted.some((item) => item.identity_key === row.identityKey)).length, unresolved },
       source: 'CFG-002', master_rules_editable: false, auto_generated_documents: 0,
     };
   }
@@ -220,8 +221,11 @@ export class ExpedienteArtifactsService {
         await tx.expedienteArtefactoPendiente.create({ data: {
           organization_id: actor.organizationId, expediente_id: expedienteId, expediente_acto_id: item.expedienteActoId,
           artefacto_id: item.artifactId, regla_id: item.ruleId, artefacto_version_id: item.masterVersionId,
+          normativa_revision_id: item.normativeRevisionId,
           sujeto_tipo: item.subjectType, sujeto_id: item.subjectId, ordinal: item.ordinal, identity_key: item.identityKey,
-          obligatoria: item.mandatory, explicacion_snapshot: json(item.snapshot), source_revision: item.sourceRevision, created_by: actor.id,
+          obligatoria: item.mandatory, explicacion_snapshot: json(item.snapshot),
+          hechos_evaluados_snapshot: json(item.evaluatedFacts), condiciones_pendientes_snapshot: json(item.pendingConditions),
+          source_revision: item.sourceRevision, created_by: actor.id,
         } });
         created += 1;
         continue;
@@ -237,8 +241,10 @@ export class ExpedienteArtifactsService {
       } else if (existing.source_revision !== item.sourceRevision || !existing.en_alcance) {
         await tx.expedienteArtefactoPendiente.update({ where: { id: existing.id }, data: {
           expediente_acto_id: item.expedienteActoId, artefacto_version_id: item.masterVersionId,
+          normativa_revision_id: item.normativeRevisionId,
           sujeto_tipo: item.subjectType, sujeto_id: item.subjectId, ordinal: item.ordinal,
-          obligatoria: item.mandatory, explicacion_snapshot: json(item.snapshot), source_revision: item.sourceRevision,
+          obligatoria: item.mandatory, explicacion_snapshot: json(item.snapshot),
+          hechos_evaluados_snapshot: json(item.evaluatedFacts), condiciones_pendientes_snapshot: json(item.pendingConditions), source_revision: item.sourceRevision,
           en_alcance: true, estado: existing.current_document_id ? 'PENDIENTE_REVISION' : 'PENDIENTE',
           requiere_revision: false, motivo_revision: null, version: { increment: 1 },
         } });
@@ -262,22 +268,44 @@ export class ExpedienteArtifactsService {
 
   private async buildContext(db: Db, actor: Exp006Actor, expedienteId: string): Promise<Exp006Context> {
     const expediente = await this.assertExpediente(db, actor, expedienteId);
-    const [acts, parties, properties, currentTracking] = await Promise.all([
+    const [acts, parties, properties, currentTracking, complianceState] = await Promise.all([
       db.expedienteActo.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO' }, include: { tipo_acto: { select: { nombre: true } } } }),
-      db.expedienteCompareciente.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', archived_at: null, expediente_acto_id: { not: null } }, include: { compareciente: { select: { id: true, tipo_persona: true, nombre_busqueda: true } } } }),
+      db.expedienteCompareciente.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', archived_at: null, expediente_acto_id: { not: null } }, include: { compareciente: { select: { id: true, tipo_persona: true, nombre_busqueda: true, personaFisica: { select: { nacionalidad: true, calidad_migratoria: true, pep_estado: true } }, personaMoral: { select: { nacionalidad: true } } } } } }),
       db.expedientePredio.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO' }, include: { predio: { select: { id: true, apodo: true, ubicacion_texto: true } }, actos: { where: { estatus: 'ACTIVO' }, select: { expediente_acto_id: true } } } }),
       db.expedienteSeguimientoActividad.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, en_alcance: true, estado: { notIn: ['COMPLETADO', 'NO_APLICA'] } }, orderBy: [{ etapa_orden_snapshot: 'asc' }, { created_at: 'asc' }], select: { etapa_maestra_id: true } }),
+      db.expedienteComplianceState.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId }, select: { currentReview: { select: { estatus: true, revisado_at: true, resultado_json: true, canonical_state_snapshot: true } } } }),
     ]);
+    const complianceSnapshot = conditionObject(complianceState?.currentReview?.canonical_state_snapshot || complianceState?.currentReview?.resultado_json);
+    const reviewed = Boolean(complianceState?.currentReview?.revisado_at) && ['VALIDADO', 'APROBADO', 'COMPLETADO', 'FINALIZADO'].includes(String(complianceState?.currentReview?.estatus || '').toUpperCase());
+    const confirmedBoolean = (...keys: string[]) => {
+      const present = keys.filter((key) => Object.prototype.hasOwnProperty.call(complianceSnapshot, key));
+      return present.length ? present.some((key) => complianceSnapshot[key] === true) : undefined;
+    };
+    const riskConfirmed = confirmedBoolean('riesgo_confirmado');
     return {
       expedienteId, notariaId: expediente.notaria_id, institutionIds: institutionIdsFrom(expediente.datos_operacion), currentStageId: currentTracking?.etapa_maestra_id || null,
       acts: acts.map((item) => ({ id: item.id, typeId: item.tipo_acto_id, name: item.tipo_acto.nombre })),
-      parties: parties.map((item) => ({ relationId: item.id, partyId: item.compareciente_id, actId: item.expediente_acto_id!, personType: item.compareciente.tipo_persona, roleId: item.caracter_id, name: item.compareciente.nombre_busqueda })),
+      parties: parties.map((item) => ({ relationId: item.id, partyId: item.compareciente_id, actId: item.expediente_acto_id!, personType: item.compareciente.tipo_persona, roleId: item.caracter_id, name: item.compareciente.nombre_busqueda, nationality: item.compareciente.personaFisica?.nacionalidad || item.compareciente.personaMoral?.nacionalidad || null, migrationStatus: item.compareciente.personaFisica?.calidad_migratoria || null })),
       properties: properties.map((item) => ({ relationId: item.id, propertyId: item.predio_id, actIds: item.actos.map((act) => act.expediente_acto_id), name: item.predio.apodo || item.predio.ubicacion_texto || 'Inmueble' })),
+      complianceFacts: reviewed ? {
+        actividad_vulnerable_confirmada: confirmedBoolean('actividad_vulnerable', 'vulnerable_activity'),
+        beneficiario_controlador_confirmado: confirmedBoolean('bc_confirmado'),
+        riesgo_aplicable_confirmado: riskConfirmed,
+        pep_aplicable_confirmado: confirmedBoolean('pep_aplicable'),
+        perfil_transaccional_aplicable: confirmedBoolean('perfil_transaccional_aplicable'),
+        alto_riesgo_confirmado: riskConfirmed === undefined ? undefined : riskConfirmed === true && complianceSnapshot.nivel_riesgo === 'ALTO',
+        nivel_riesgo_confirmado: riskConfirmed === true && complianceSnapshot.nivel_riesgo ? String(complianceSnapshot.nivel_riesgo) : undefined,
+        regimen_simplificado_confirmado: confirmedBoolean('regimen_simplificado_confirmado'),
+        solicitante_material_aplicable_confirmado: confirmedBoolean('solicitante_material_aplicable_confirmado'),
+        fideicomiso_aplicable_confirmado: confirmedBoolean('fideicomiso_aplicable_confirmado'),
+        persona_moral_derecho_publico_confirmada: confirmedBoolean('persona_moral_derecho_publico_confirmada'),
+        organismo_internacional_confirmado: confirmedBoolean('organismo_internacional_confirmado'),
+      } : {},
     };
   }
 
   private masterArtifacts(db: Db, organizationId: string) {
-    return db.catalogoArtefacto.findMany({ where: { organization_id: organizationId, activo: true }, include: { actos: true, reglas: { where: { activa: true } }, versiones: { where: { activa: true }, orderBy: { version: 'desc' } } } });
+    return db.catalogoArtefacto.findMany({ where: { organization_id: organizationId, activo: true }, include: { actos: true, reglas: { where: { activa: true }, include: { normativaRevision: true } }, versiones: { where: { activa: true }, orderBy: { version: 'desc' } } } });
   }
 
   private async partySources(db: Db, actor: Exp006Actor, pending: any) {
@@ -309,7 +337,7 @@ export class ExpedienteArtifactsService {
   }
 
   private async readText(buffer: Buffer, mimeType: string, fileName: string) {
-    if (mimeType.includes('officedocument.wordprocessingml') || fileName.toLowerCase().endsWith('.docx')) return (await mammoth.extractRawText({ buffer })).value;
+    if (mimeType.includes('officedocument.wordprocessingml') || fileName.toLowerCase().endsWith('.docx')) return extractDocxText(buffer);
     if (mimeType.startsWith('text/')) return buffer.toString('utf8');
     return `[Archivo maestro ${fileName}; contenido binario no textual. Respetar estructura y requerir revisión humana.]`;
   }

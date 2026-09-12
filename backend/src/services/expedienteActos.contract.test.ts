@@ -25,7 +25,7 @@ const checks: Array<[string, () => boolean]> = [
   ['EXP-002-02 · backfill exacto e idempotente', () => migration.includes("md5('expediente-acto-inicial:'") && migration.includes('ON CONFLICT ("organization_id", "expediente_id", "idempotency_key") DO NOTHING')],
   ['EXP-002-03 · valida relaciones huérfanas', () => migration.includes('EXPEDIENTE_ACT_BACKFILL_ORPHAN')],
   ['EXP-002-04 · valida tenant mismatch', () => migration.includes('EXPEDIENTE_ACT_BACKFILL_TENANT_MISMATCH')],
-  ['EXP-002-05 · no duplica TipoActo', () => schema.includes('tipo_acto              TipoActo')],
+  ['EXP-002-05 · no duplica TipoActo', () => /tipo_acto\s+TipoActo/.test(schema)],
   ['EXP-002-06 · expediente contiene N actos', () => /actos\s+ExpedienteActo\[\]/.test(schema)],
   ['EXP-002-07 · permite repetir TipoActo', () => !schema.includes('@@unique([expediente_id, tipo_acto_id]') && !schema.includes('@@unique([organization_id, expediente_id, tipo_acto_id]')],
   ['EXP-002-08 · retry no duplica instancia', () => schema.includes('uq_expediente_actos_idempotency') && schema.includes('uq_expediente_actos_removal_idempotency')],

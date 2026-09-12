@@ -116,8 +116,8 @@ describe('H6 frozen contract integration', () => {
     expect(h6).toContain('generated: true, signed: false, presented: false');
     expect(h6).toContain("fulfillmentPolicy === 'VALIDATED_ACKNOWLEDGEMENT'");
     expect(h6).toContain('previous_presentation_id');
-    expect(schema).toContain('acknowledgements      ComplianceNoticeAcknowledgement[]');
-    expect(schema).toContain('noticeAcknowledgements     ComplianceNoticeAcknowledgement[]');
+    expect(schema).toMatch(/acknowledgements\s+ComplianceNoticeAcknowledgement\[\]/);
+    expect(schema).toMatch(/noticeAcknowledgements\s+ComplianceNoticeAcknowledgement\[\]/);
     expect(schema).toContain('h6_notice_ack_evidence_fkey');
     expect(migration).toContain('h6_notice_presentation_previous_fkey');
     expect(migration).toContain('h6_notice_ack_evidence_fkey');

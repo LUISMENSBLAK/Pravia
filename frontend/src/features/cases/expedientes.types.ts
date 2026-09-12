@@ -62,6 +62,7 @@ export type SeguimientoActivity = {
   estado_efectivo: SeguimientoEstado; estado_label: string; version: number; en_alcance: boolean; requiere_revision: boolean;
   motivo_revision?: string | null; responsable_id?: string | null; responsable?: PersonOption | null; aplica_por_defecto: boolean;
   resolucion_fuente: string; excepcion_operativa?: { duracion_estimada?: number; tipo_dias?: 'HABILES' | 'NATURALES'; margen_seguridad?: number; motivo?: string } | null; primera_fecha_inicio?: string | null; fecha_completada_actual?: string | null;
+  extraordinaria?: boolean; naturaleza_snapshot?: string; alcance_instancia?: 'EXPEDIENTE' | 'ACTO' | 'INMUEBLE'; alcance_referencia_id?: string | null; orden_operativo?: number; fecha_inicio_base?: string | null; fecha_objetivo_base?: string | null; fecha_inicio_proyectada?: string | null; fecha_objetivo_proyectada?: string | null;
   dependencias: Array<{ id: string; actividad_id: string; nombre: string; estado: SeguimientoEstado; bloqueante: boolean }>;
   bloqueada_por: Array<{ id: string; nombre: string; estado: SeguimientoEstado }>;
   tiempo: { estimado: number; tipo_dias: 'HABILES' | 'NATURALES'; margen: number; transcurrido: number; fecha_objetivo?: string | null; limite_margen?: string | null; atrasada: boolean; margen_consumido: boolean };
@@ -72,6 +73,7 @@ export type ExpedienteSeguimiento = {
   entrega: { completada: boolean; fecha?: string | null; alertas_operativas_activas: boolean };
   actos: Array<{ expediente_acto_id: string; tipo_acto_id?: string; nombre: string; estatus: string; etapas: Array<{ nombre: string; orden: number; actividades: SeguimientoActivity[] }> }>;
   responsables: PersonOption[];
+  proyeccion: { dias_restantes_ruta_critica: number; fecha_final_estimada?: string | null; semantica_paralelo: 'MAX'; altera_fecha_estimada_firma: false };
   signals: { prefirm: SeguimientoActivity[]; postfirm: SeguimientoActivity[] };
 };
 

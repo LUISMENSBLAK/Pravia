@@ -50,8 +50,8 @@ const cfg001: ContractCase[] = [
 const cfg002: ContractCase[] = [
   ['entra bajo Configuración/Catálogos', contains(settings, "group('CATÁLOGOS'", '/configuracion/plantillas-formatos')],
   ['separa Plantillas y Formatos', contains(schema, "PLANTILLA", "FORMATO")],
-  ['Notaría ofrece ambos tipos', contains(artifactsUi, "selection.ownerType === 'NOTARIA'", "chooseKind('PLANTILLA')", "chooseKind('FORMATO')")],
-  ['Banco ofrece sólo Formatos', contains(artifactsUi, 'Los bancos y fiduciarias sólo administran Formatos', 'No existe una sección de Plantillas')],
+  ['Notaría ofrece ambos tipos', contains(artifactsUi, 'selection!.ownerType === "NOTARIA"', "kind: \"PLANTILLA\"", "kind: \"FORMATO\"")],
+  ['Banco ofrece sólo Formatos', contains(artifactsUi, 'Las instituciones sólo contienen Formatos', 'Las Plantillas pertenecen exclusivamente a la Notaría')],
   ['DB impide Plantilla bancaria', contains(migration, '"tipo" = \'PLANTILLA\' AND "propietario_tipo" = \'NOTARIA\'')],
   ['reutiliza Notaría', contains(service, 'prisma.notaria.findMany', "assertOwner(actor, 'NOTARIA'")],
   ['reutiliza el mismo TipoActo', contains(schema, 'CatalogoArtefactoActo', 'tipo_acto_id')],

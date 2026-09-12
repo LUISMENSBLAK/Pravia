@@ -34,7 +34,7 @@ const checks: Array<[string, () => void]> = [
   ['11 misma persona distinto rol/acto', () => { expect(domain).toContain('party.relationId'); expect(domain).toContain('party.actId'); }],
   ['12 resolver por etapa', () => { expect(domain).toContain('rule.etapa_requerida_id'); expect(domain).toContain('context.currentStageId'); }],
   ['13 obligatorio', () => expect(domain).toContain('mandatory: rule.obligatoria')],
-  ['14 opcional', () => expect(schema).toContain('obligatoria          Boolean')],
+  ['14 opcional', () => expect(schema).toMatch(/obligatoria\s+Boolean\s+@default\(false\)/)],
   ['15 una vez por expediente', () => expect(domain).toContain("push('EXPEDIENTE', context.expedienteId, 1")],
   ['16 una vez por compareciente', () => expect(domain).toContain("push('COMPARECIENTE', party.relationId")],
   ['17 filtro compareciente', () => expect(domain).toContain("rule.multiplicidad === 'COMPARECIENTE'")],

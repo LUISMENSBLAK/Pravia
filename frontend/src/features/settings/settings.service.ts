@@ -1,6 +1,6 @@
 import { apiRequest } from '../../services/api/client';
 import type { ManagedUser, NotificationItem, SearchResult, Session, UserPreferences } from './settings.types';
-import type { ActListPayload, CatalogAct, CatalogArtifact, CatalogFolder, CatalogOwner, ExplorerPayload, SupportingCatalogs } from './catalogs/catalogs.types';
+import type { ActActivity, ActListPayload, ActivityConcept, CatalogAct, CatalogArtifact, CatalogFolder, CatalogOwner, ExplorerPayload, SupportingCatalogs, CatalogImportPreview } from './catalogs/catalogs.types';
 import type { PublishTimingPolicyInput, TimingPolicyDefinition, TimingPolicyRevision } from './timing/timing.types';
 
 const qs = (params: Record<string, string | number | undefined>) => {
@@ -64,7 +64,18 @@ export const settingsService = {
   setCatalogDependencies: (activityId: string, dependency_ids: string[]) => apiRequest(`/settings/catalogs/activities/${activityId}/dependencies`, { method: 'PUT', body: JSON.stringify({ dependency_ids, bloqueante: true }) }),
   createCatalogException: (activityId: string, data: Record<string, unknown>) => apiRequest(`/settings/catalogs/activities/${activityId}/exceptions`, { method: 'POST', body: JSON.stringify(data) }),
   updateCatalogException: (exceptionId: string, data: Record<string, unknown>) => apiRequest(`/settings/catalogs/exceptions/${exceptionId}`, { method: 'PATCH', body: JSON.stringify(data) }),
-  catalogArtifactRoot: () => apiRequest<{ data: { notarias: CatalogOwner[]; institutions: CatalogOwner[] } }>('/settings/catalogs/artifacts/root').then((payload) => payload.data),
+  catalogActivityConcepts: () => apiRequest<{ data: ActivityConcept[] }>('/settings/catalogs/v2/concepts').then((payload) => payload.data),
+  createCatalogActivityConcept: (data: Record<string, unknown>) => apiRequest<{ data: ActivityConcept }>('/settings/catalogs/v2/concepts', { method: 'POST', body: JSON.stringify(data) }).then((payload) => payload.data),
+  updateCatalogActivityConcept: (id: string, data: Record<string, unknown>) => apiRequest<{ data: ActivityConcept }>(`/settings/catalogs/v2/concepts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }).then((payload) => payload.data),
+  addCatalogConceptApplication: (stageId: string, data: Record<string, unknown>) => apiRequest(`/settings/catalogs/stages/${stageId}/activity-applications`, { method: 'POST', body: JSON.stringify(data) }),
+  inheritCatalogActivityAttribute: (activityId: string, attribute: string) => apiRequest(`/settings/catalogs/activities/${activityId}/inherit/${attribute}`, { method: 'POST' }),
+  duplicateCatalogAct: (id: string, nombre: string) => apiRequest(`/settings/catalogs/acts/${id}/duplicate`, { method: 'POST', body: JSON.stringify({ nombre }) }),
+  overrideInheritedCatalogActivity: (actId: string, activityId: string, data: Record<string, unknown>) => apiRequest<{ data: ActActivity }>(`/settings/catalogs/acts/${actId}/activities/${activityId}/override`, { method: 'POST', body: JSON.stringify(data) }).then((payload) => payload.data),
+  removeCatalogConceptFromAct: (actId: string, activityId: string) => apiRequest(`/settings/catalogs/acts/${actId}/activities/${activityId}`, { method: 'DELETE' }),
+  bootstrapCatalogV2: () => apiRequest('/settings/catalogs/v2/bootstrap', { method: 'POST' }),
+  upsertInstitutionResponseTime: (institutionId: string, data: Record<string, unknown>) => apiRequest(`/settings/catalogs/institutions/${institutionId}/response-times`, { method: 'PUT', body: JSON.stringify(data) }),
+  createActsCatalogInstitution: (data: Record<string, unknown>) => apiRequest('/settings/catalogs/v2/institutions', { method: 'POST', body: JSON.stringify(data) }),
+  catalogArtifactRoot: () => apiRequest<{ data: { notaria: CatalogOwner | null; institutions: CatalogOwner[]; legacy_notaries_hidden?: number } }>('/settings/catalogs/artifacts/root').then((payload) => payload.data),
   catalogSupporting: () => apiRequest<{ data: SupportingCatalogs }>('/settings/catalogs/supporting').then((payload) => payload.data),
   createCatalogInstitution: (data: Record<string, unknown>) => apiRequest<{ data: CatalogOwner }>('/settings/catalogs/institutions', { method: 'POST', body: JSON.stringify(data) }).then((payload) => payload.data),
   catalogExplorer: (ownerType: string, ownerId: string, type: string, folderId?: string | null) => apiRequest<{ data: ExplorerPayload }>(`/settings/catalogs/explorer?owner_type=${ownerType}&owner_id=${encodeURIComponent(ownerId)}&type=${encodeURIComponent(type)}${folderId ? `&folder_id=${encodeURIComponent(folderId)}` : ''}`).then((payload) => payload.data),
@@ -73,4 +84,7 @@ export const settingsService = {
   updateCatalogArtifact: (id: string, data: Record<string, unknown>) => apiRequest(`/settings/catalogs/artifacts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   addCatalogArtifactVersion: (id: string, file: File, version?: number) => { const body = new FormData(); body.append('metadata', JSON.stringify({ version })); body.append('file', file); return apiRequest(`/settings/catalogs/artifacts/${id}/versions`, { method: 'POST', body }); },
   catalogArtifactVersionUrl: (id: string) => apiRequest<{ data: { url: string } }>(`/settings/catalogs/artifact-versions/${id}/url`).then((payload) => payload.data),
+  bootstrapCatalogLibraryV4: () => apiRequest('/settings/catalogs/artifacts/library/bootstrap', { method: 'POST', headers: { 'Idempotency-Key': 'PRAVIA_CFG002_STANDARD:v2-LEGAL' } }),
+  previewCatalogImport: (files: File[]) => { const body = new FormData(); files.forEach((file) => body.append('files', file)); return apiRequest<{ data: CatalogImportPreview }>('/settings/catalogs/artifacts/import/preview', { method: 'POST', body }).then((payload) => payload.data); },
+  confirmCatalogImport: (metadata: Record<string, unknown>, files: File[]) => { const body = new FormData(); body.append('metadata', JSON.stringify(metadata)); files.forEach((file) => body.append('files', file)); return apiRequest('/settings/catalogs/artifacts/import/confirm', { method: 'POST', headers: { 'Idempotency-Key': globalThis.crypto?.randomUUID?.() || `cfg002-${Date.now()}` }, body }); },
 };

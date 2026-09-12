@@ -16,6 +16,7 @@ import { recordAIFailure, recordAIUsages } from '../services/aiUsage.service';
 import prisma from '../config/prisma';
 import { projectRepository } from '../services/projectRepository.service';
 import { ComplianceH6Service } from '../services/complianceH6.service';
+import { configurationCatalogV4Service } from '../services/configurationCatalogV4.service';
 
 function assertPersistentProjectStorage() {
   if (getStorageInfo().primary !== 'cloud') {
@@ -173,6 +174,16 @@ export const getProyectoEscritura = async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: 'Error al consultar proyecto de escritura', detail: error.message });
+  }
+};
+
+export const saveProyectoAsNotaryTemplate = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Usuario autenticado requerido.' });
+    const result = await configurationCatalogV4Service.saveProjectAsNotaryTemplate(req.user, req.params.id, req.params.versionId, req.body?.nombre);
+    return res.status(result.idempotent ? 200 : 201).json(result);
+  } catch (error: any) {
+    return res.status(Number(error?.status || 500)).json({ error: error?.message || 'No fue posible guardar el proyecto como plantilla.', code: error?.code || 'CFG002_PROJECT_TEMPLATE_FAILED' });
   }
 };
 

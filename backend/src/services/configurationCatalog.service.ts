@@ -4,22 +4,24 @@ import {
   CatalogoInstitucionTipo,
   CatalogoMultiplicidad,
   CatalogoPropietarioTipo,
+  ConfiguracionActividadNaturaleza,
+  ConfiguracionAlcanceInstancia,
+  ConfiguracionFuenteTiempo,
   ConfiguracionSelectorExcepcion,
   ConfiguracionTipoDias,
+  ConfiguracionUnidadTiempo,
   Prisma,
   Role,
 } from '@prisma/client';
 import prisma from '../config/prisma';
 import { deleteFile, getSignedUrl, uploadFile } from './supabase.service';
+import { inheritableActivityAttributes, resolveInheritedActivity, validateDeclarativeCondition } from './configurationCatalogV2.domain';
+import { CatalogConfigurationError } from './configurationCatalogError';
+
+export { CatalogConfigurationError } from './configurationCatalogError';
 
 type Actor = NonNullable<Express.Request['user']>;
 type Db = typeof prisma | Prisma.TransactionClient;
-
-export class CatalogConfigurationError extends Error {
-  constructor(public readonly status: number, public readonly code: string, message: string) {
-    super(message);
-  }
-}
 
 const requiredText = (value: unknown, label: string, max = 180) => {
   const clean = String(value || '').trim().slice(0, max);
@@ -58,6 +60,7 @@ export const redactPrivateArtifactData = (value: any): any => {
 };
 const audit = (db: Db, actor: Actor, action: string, entity: string, id: string, before?: unknown, after?: unknown) => db.auditLog.create({
   data: {
+    organization_id: actor.organizationId,
     user_id: actor.id,
     accion: action,
     entidad: entity,
@@ -196,7 +199,7 @@ const codeForAct = (name: string) => name.normalize('NFD').replace(/[\u0300-\u03
 async function uniqueActCode(db: Db, name: string) {
   const base = codeForAct(name).slice(0, 60);
   let candidate = `${base}_${randomUUID().slice(0, 8).toUpperCase()}`;
-  while (await db.tipoActo.findUnique({ where: { codigo_catalogo: candidate }, select: { id: true } })) candidate = `${base}_${randomUUID().slice(0, 8).toUpperCase()}`;
+  while (await db.tipoActo.findFirst({ where: { codigo_catalogo: candidate }, select: { id: true } })) candidate = `${base}_${randomUUID().slice(0, 8).toUpperCase()}`;
   return candidate;
 }
 
@@ -222,6 +225,7 @@ export const actsAndTimesService = {
     const acts = await prisma.tipoActo.findMany({
       where: {
         archived_at: null,
+        OR: [{ organization_id: actor.organizationId }, { organization_id: null }],
       },
       select: {
         id: true, organization_id: true, codigo_catalogo: true, nombre: true, descripcion: true, activo: true, created_at: true, updated_at: true,
@@ -239,21 +243,70 @@ export const actsAndTimesService = {
 
   async get(actor: Actor, actId: string) {
     const act = await prisma.tipoActo.findFirst({
-      where: { id: actId, archived_at: null },
+      where: { id: actId, archived_at: null, OR: [{ organization_id: actor.organizationId }, { organization_id: null }] },
       select: {
         id: true, organization_id: true, codigo_catalogo: true, nombre: true, descripcion: true, activo: true, created_at: true, updated_at: true,
         configuracionesOperativas: { where: { organization_id: actor.organizationId }, include: actInclude },
       },
     });
     if (!act) throw new CatalogConfigurationError(404, 'ACT_NOT_FOUND', 'Acto no encontrado.');
-    return effectiveAct(act);
+    const effective = effectiveAct(act);
+    const ownConfiguration = effective.configuration;
+    if (!ownConfiguration) return effective;
+    const chain: any[] = []; const visited = new Set<string>(); let current: any = ownConfiguration;
+    while (current) {
+      if (visited.has(current.id)) throw new CatalogConfigurationError(409, 'CFG_INHERITANCE_CYCLE', 'La herencia del acto contiene un ciclo.');
+      visited.add(current.id); chain.unshift(current);
+      current = current.hereda_configuracion_id ? await prisma.configuracionActo.findFirst({ where: { id: current.hereda_configuracion_id, organization_id: actor.organizationId }, include: actInclude }) : null;
+    }
+    const all = chain.flatMap((configuration) => configuration.etapas.flatMap((stage: any) => stage.actividades.map((activity: any) => ({ activity, stage, source_configuration_id: configuration.id }))));
+    const conceptIds = [...new Set(all.map((item) => item.activity.concepto_maestro_id).filter(Boolean))] as string[];
+    const concepts = conceptIds.length ? await prisma.configuracionConceptoActividad.findMany({ where: { id: { in: conceptIds }, organization_id: actor.organizationId } }) : [];
+    const byConcept = new Map(concepts.map((item) => [item.id, item]));
+    const exclusions = new Set(Array.isArray(ownConfiguration.exclusiones_conceptos) ? ownConfiguration.exclusiones_conceptos as string[] : []);
+    const effectiveByIdentity = new Map<string, any>();
+    for (const item of all) {
+      const resolved = {
+        ...resolveInheritedActivity(item.activity, item.activity.concepto_maestro_id ? byConcept.get(item.activity.concepto_maestro_id) || null : null),
+        etapa: { id: item.stage.id, nombre: item.stage.nombre, orden: item.stage.orden },
+        heredada_del_acto: item.source_configuration_id !== ownConfiguration.id,
+        source_configuration_id: item.source_configuration_id,
+      };
+      if (!exclusions.has(resolved.concepto_maestro?.codigo)) {
+        effectiveByIdentity.set(String(resolved.concepto_maestro_id || resolved.id), resolved);
+      }
+    }
+    const effectiveActivities = [...effectiveByIdentity.values()];
+    const stageByName = new Map<string, any>();
+    for (const configuration of chain) {
+      for (const stage of configuration.etapas) {
+        const key = normalized(stage.nombre);
+        const previous = stageByName.get(key);
+        stageByName.set(key, {
+          id: stage.id, nombre: stage.nombre, orden: stage.orden, activa: stage.activa,
+          inherited: configuration.id !== ownConfiguration.id,
+          actividades: previous?.actividades || [],
+        });
+      }
+    }
+    for (const activity of effectiveActivities) {
+      const key = normalized(activity.etapa.nombre);
+      const stage = stageByName.get(key) || { ...activity.etapa, activa: true, inherited: activity.heredada_del_acto, actividades: [] };
+      stage.actividades.push(activity);
+      stage.inherited = stage.inherited && activity.heredada_del_acto;
+      stageByName.set(key, stage);
+    }
+    const effectiveStages = [...stageByName.values()]
+      .map((stage) => ({ ...stage, actividades: stage.actividades.sort((a: any, b: any) => a.orden_operativo - b.orden_operativo || String(a.id).localeCompare(String(b.id))) }))
+      .sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre, 'es'));
+    return { ...effective, effective_activities: effectiveActivities, effective_stages: effectiveStages, inheritance_chain: chain.map((item) => item.id) };
   },
 
   async create(actor: Actor, input: any) {
     const nombre = requiredText(input.nombre, 'Nombre del acto');
     const descripcion = optionalText(input.descripcion);
     return prisma.$transaction(async (tx) => {
-      const duplicate = await tx.tipoActo.findFirst({ where: { nombre: { equals: nombre, mode: 'insensitive' }, archived_at: null }, select: { id: true } });
+      const duplicate = await tx.tipoActo.findFirst({ where: { nombre: { equals: nombre, mode: 'insensitive' }, archived_at: null, OR: [{ organization_id: actor.organizationId }, { organization_id: null }] }, select: { id: true } });
       if (duplicate) throw new CatalogConfigurationError(409, 'ACT_ALREADY_EXISTS', 'Ya existe un acto con ese nombre.');
       const act = await tx.tipoActo.create({ data: { organization_id: actor.organizationId, codigo_catalogo: await uniqueActCode(tx, nombre), nombre, descripcion, activo: true } });
       const configuration = await tx.configuracionActo.create({ data: { organization_id: actor.organizationId, tipo_acto_id: act.id, creado_por_id: actor.id, actualizado_por_id: actor.id, activa: booleanValue(input.activo, true), etapas: { create: ['Prefirma', 'Firma', 'Postfirma', 'Registro', 'Cierre'].map((stage, index) => ({ organization_id: actor.organizationId, nombre: stage, orden: index + 1 })) } }, include: actInclude });
@@ -263,7 +316,7 @@ export const actsAndTimesService = {
   },
 
   async ensureConfiguration(actor: Actor, actId: string) {
-    const act = await prisma.tipoActo.findFirst({ where: { id: actId, archived_at: null }, select: { id: true } });
+    const act = await prisma.tipoActo.findFirst({ where: { id: actId, archived_at: null, OR: [{ organization_id: actor.organizationId }, { organization_id: null }] }, select: { id: true } });
     if (!act) throw new CatalogConfigurationError(404, 'ACT_NOT_FOUND', 'Acto no encontrado.');
     const existing = await prisma.configuracionActo.findFirst({ where: { organization_id: actor.organizationId, tipo_acto_id: actId }, include: actInclude });
     if (existing) return existing;
@@ -282,7 +335,7 @@ export const actsAndTimesService = {
       const isTenantOwned = before.organization_id === actor.organizationId;
       if (isTenantOwned && input.nombre !== undefined) identity.nombre = requiredText(input.nombre, 'Nombre del acto');
       if (isTenantOwned && input.descripcion !== undefined) identity.descripcion = optionalText(input.descripcion);
-      if (Object.keys(identity).length) await tx.tipoActo.update({ where: { id: actId }, data: identity });
+      if (Object.keys(identity).length) await tx.tipoActo.updateMany({ where: { id: actId }, data: identity });
       const functionalChange = ['nombre', 'descripcion', 'activo', 'config_activa', 'requiere_revision'].some((key) => input[key] !== undefined);
       const configuration = await tx.configuracionActo.update({ where: { id: config.id }, data: {
         ...(!isTenantOwned && input.nombre !== undefined ? { nombre_personalizado: requiredText(input.nombre, 'Nombre del acto') } : {}),
@@ -340,11 +393,33 @@ export const actsAndTimesService = {
     const role = input.responsable_rol ? enumValue(Role, input.responsable_rol, 'Rol responsable') : null;
     if (role && userId) throw new CatalogConfigurationError(400, 'DEFAULT_RESPONSIBLE_AMBIGUOUS', 'Selecciona un rol o un usuario, no ambos.');
     return prisma.$transaction(async (tx) => {
+      const activityName = requiredText(input.nombre, 'Nombre de la actividad');
+      const concept = await tx.configuracionConceptoActividad.create({ data: {
+        organization_id: actor.organizationId,
+        codigo: `CUSTOM_${randomUUID().replace(/-/g, '').toUpperCase()}`,
+        nombre: activityName,
+        descripcion: optionalText(input.descripcion),
+        duracion_estimada: nonNegative(input.duracion_estimada, 'Duración estimada'),
+        tipo_dias: enumValue(ConfiguracionTipoDias, input.tipo_dias, 'Tipo de días'),
+        margen_seguridad: nonNegative(input.margen_seguridad ?? 0, 'Margen de seguridad'),
+        responsable_rol: role,
+        responsable_usuario_id: userId,
+        aplica_por_defecto: booleanValue(input.aplica_por_defecto, true),
+        naturaleza: enumValue(ConfiguracionActividadNaturaleza, input.naturaleza || 'INTERNA', 'Naturaleza'),
+        unidad_tiempo: enumValue(ConfiguracionUnidadTiempo, input.unidad_tiempo || 'DIAS', 'Unidad de tiempo'),
+        fuente_tiempo: enumValue(ConfiguracionFuenteTiempo, input.fuente_tiempo || 'GENERAL', 'Fuente del tiempo'),
+        condicion_json: validateDeclarativeCondition(input.condicion_json),
+      } });
       const activity = await tx.configuracionActividad.create({ data: {
-        organization_id: actor.organizationId, etapa_id: stageId, nombre: requiredText(input.nombre, 'Nombre de la actividad'), descripcion: optionalText(input.descripcion),
+        organization_id: actor.organizationId, etapa_id: stageId, concepto_maestro_id: concept.id, nombre: activityName, descripcion: optionalText(input.descripcion),
         duracion_estimada: nonNegative(input.duracion_estimada, 'Duración estimada'), tipo_dias: enumValue(ConfiguracionTipoDias, input.tipo_dias, 'Tipo de días'),
         margen_seguridad: nonNegative(input.margen_seguridad ?? 0, 'Margen de seguridad'), responsable_rol: role, responsable_usuario_id: userId,
-        aplica_por_defecto: booleanValue(input.aplica_por_defecto, true), activa: booleanValue(input.activa, true),
+        aplica_por_defecto: booleanValue(input.aplica_por_defecto, true), activa: booleanValue(input.activa, true), atributos_heredados: [],
+        naturaleza: enumValue(ConfiguracionActividadNaturaleza, input.naturaleza || 'INTERNA', 'Naturaleza'),
+        unidad_tiempo: enumValue(ConfiguracionUnidadTiempo, input.unidad_tiempo || 'DIAS', 'Unidad de tiempo'),
+        fuente_tiempo: enumValue(ConfiguracionFuenteTiempo, input.fuente_tiempo || 'GENERAL', 'Fuente del tiempo'),
+        alcance_instancia: enumValue(ConfiguracionAlcanceInstancia, input.alcance_instancia || 'ACTO', 'Alcance de instancia'), condicion_json: validateDeclarativeCondition(input.condicion_json),
+        grupo_paralelo: optionalText(input.grupo_paralelo, 80), orden_operativo: nonNegative(input.orden_operativo ?? 0, 'Orden operativo'),
       } });
       await touchConfiguration(tx, actor, stage.configuracion_id);
       await audit(tx, actor, 'CFG_ACTIVITY_CREATED', 'ConfiguracionActividad', activity.id, undefined, activity);
@@ -361,6 +436,8 @@ export const actsAndTimesService = {
     const effectiveRole = role !== undefined ? role : before.responsable_rol;
     const effectiveUserId = userId !== undefined ? userId : before.responsable_usuario_id;
     if (effectiveRole && effectiveUserId) throw new CatalogConfigurationError(400, 'DEFAULT_RESPONSIBLE_AMBIGUOUS', 'Selecciona un rol o un usuario, no ambos.');
+    const inherited = new Set(Array.isArray(before.atributos_heredados) ? before.atributos_heredados as string[] : []);
+    inheritableActivityAttributes.forEach((key) => { if (input[key] !== undefined) inherited.delete(key); });
     const data: Prisma.ConfiguracionActividadUpdateInput = {
       ...(input.nombre !== undefined ? { nombre: requiredText(input.nombre, 'Nombre de la actividad') } : {}),
       ...(input.descripcion !== undefined ? { descripcion: optionalText(input.descripcion) } : {}),
@@ -370,6 +447,14 @@ export const actsAndTimesService = {
       ...(role !== undefined ? { responsable_rol: role } : {}), ...(userId !== undefined ? { responsable_usuario_id: userId } : {}),
       ...(input.aplica_por_defecto !== undefined ? { aplica_por_defecto: Boolean(input.aplica_por_defecto) } : {}),
       ...(input.activa !== undefined ? { activa: Boolean(input.activa) } : {}),
+      ...(input.naturaleza !== undefined ? { naturaleza: enumValue(ConfiguracionActividadNaturaleza, input.naturaleza, 'Naturaleza') } : {}),
+      ...(input.unidad_tiempo !== undefined ? { unidad_tiempo: enumValue(ConfiguracionUnidadTiempo, input.unidad_tiempo, 'Unidad de tiempo') } : {}),
+      ...(input.fuente_tiempo !== undefined ? { fuente_tiempo: enumValue(ConfiguracionFuenteTiempo, input.fuente_tiempo, 'Fuente del tiempo') } : {}),
+      ...(input.alcance_instancia !== undefined ? { alcance_instancia: enumValue(ConfiguracionAlcanceInstancia, input.alcance_instancia, 'Alcance de instancia') } : {}),
+      ...(input.grupo_paralelo !== undefined ? { grupo_paralelo: optionalText(input.grupo_paralelo, 80) } : {}),
+      ...(input.orden_operativo !== undefined ? { orden_operativo: nonNegative(input.orden_operativo, 'Orden operativo') } : {}),
+      ...(input.condicion_json !== undefined ? { condicion_json: validateDeclarativeCondition(input.condicion_json) ?? Prisma.JsonNull } : {}),
+      atributos_heredados: [...inherited],
     };
     return prisma.$transaction(async (tx) => {
       const activity = await tx.configuracionActividad.update({ where: { id: activityId }, data });
@@ -384,9 +469,17 @@ export const actsAndTimesService = {
     if (!activity) throw new CatalogConfigurationError(404, 'ACTIVITY_NOT_FOUND', 'Actividad no encontrada.');
     const dependencyIds = idList(input.dependency_ids);
     if (dependencyIds.includes(activityId)) throw new CatalogConfigurationError(400, 'DEPENDENCY_SELF_REFERENCE', 'Una actividad no puede depender de sí misma.');
-    const candidates = dependencyIds.length ? await prisma.configuracionActividad.findMany({ where: { id: { in: dependencyIds }, organization_id: actor.organizationId, etapa: { configuracion_id: activity.etapa.configuracion_id } }, select: { id: true } }) : [];
+    const configurationIds = [activity.etapa.configuracion_id];
+    let inheritedConfiguration = await prisma.configuracionActo.findFirst({ where: { id: activity.etapa.configuracion_id, organization_id: actor.organizationId }, select: { hereda_configuracion_id: true } });
+    const visited = new Set(configurationIds);
+    while (inheritedConfiguration?.hereda_configuracion_id) {
+      if (visited.has(inheritedConfiguration.hereda_configuracion_id)) throw new CatalogConfigurationError(409, 'CFG_INHERITANCE_CYCLE', 'La herencia del acto contiene un ciclo.');
+      visited.add(inheritedConfiguration.hereda_configuracion_id); configurationIds.push(inheritedConfiguration.hereda_configuracion_id);
+      inheritedConfiguration = await prisma.configuracionActo.findFirst({ where: { id: inheritedConfiguration.hereda_configuracion_id, organization_id: actor.organizationId }, select: { hereda_configuracion_id: true } });
+    }
+    const candidates = dependencyIds.length ? await prisma.configuracionActividad.findMany({ where: { id: { in: dependencyIds }, organization_id: actor.organizationId, etapa: { configuracion_id: { in: configurationIds } } }, select: { id: true } }) : [];
     if (candidates.length !== dependencyIds.length) throw new CatalogConfigurationError(400, 'DEPENDENCY_OUTSIDE_CONFIGURATION', 'Todas las dependencias deben pertenecer al mismo acto y organización.');
-    const graphRows = await prisma.configuracionDependencia.findMany({ where: { organization_id: actor.organizationId, actividad: { etapa: { configuracion_id: activity.etapa.configuracion_id } }, actividad_id: { not: activityId } }, select: { actividad_id: true, depende_actividad_id: true } });
+    const graphRows = await prisma.configuracionDependencia.findMany({ where: { organization_id: actor.organizationId, actividad: { etapa: { configuracion_id: { in: configurationIds } } }, actividad_id: { not: activityId } }, select: { actividad_id: true, depende_actividad_id: true } });
     if (dependencyGraphHasCycle([...graphRows, ...dependencyIds.map((id) => ({ actividad_id: activityId, depende_actividad_id: id }))])) throw new CatalogConfigurationError(409, 'DEPENDENCY_CYCLE', 'La selección crea un ciclo de dependencias.');
     return prisma.$transaction(async (tx) => {
       await tx.configuracionDependencia.deleteMany({ where: { actividad_id: activityId } });
@@ -453,7 +546,8 @@ export const actsAndTimesService = {
 const artifactInclude = {
   versiones: { orderBy: { version: 'desc' as const } },
   actos: { orderBy: { created_at: 'asc' as const } },
-  reglas: { orderBy: { created_at: 'asc' as const } },
+  reglas: { include: { normativaRevision: true }, orderBy: { created_at: 'asc' as const } },
+  revisionesNormativas: { orderBy: { revision: 'desc' as const } },
 };
 
 async function validateFolder(actor: Actor, folderId: string | null, ownerType: CatalogoPropietarioTipo, ownerId: string, type: CatalogoArtefactoTipo) {
@@ -497,16 +591,16 @@ const ruleData = (actor: Actor, rule: any) => {
 export const templatesAndFormatsService = {
   async root(actor: Actor) {
     const [notarias, institutions] = await Promise.all([
-      prisma.notaria.findMany({ where: { organization_id: actor.organizationId, archived_at: null }, select: { id: true, nombre: true, numero_notaria: true, activa: true }, orderBy: { nombre: 'asc' } }),
+      prisma.notaria.findMany({ where: { organization_id: actor.organizationId, archived_at: null }, select: { id: true, nombre: true, numero_notaria: true, activa: true, predeterminada: true, created_at: true }, orderBy: [{ predeterminada: 'desc' }, { activa: 'desc' }, { created_at: 'asc' }] }),
       prisma.catalogoInstitucion.findMany({ where: { organization_id: actor.organizationId }, select: { id: true, nombre: true, tipo: true, activa: true }, orderBy: { nombre: 'asc' } }),
     ]);
-    return { notarias, institutions };
+    return { notaria: notarias[0] || null, institutions, legacy_notaries_hidden: Math.max(0, notarias.length - 1) };
   },
 
   async supportingCatalogs(actor: Actor) {
-    const [acts, notarias, institutions, stages, users, characters] = await Promise.all([
+    const [acts, notarias, institutions, stages, memberships, characters] = await Promise.all([
       prisma.tipoActo.findMany({
-        where: { activo: true, archived_at: null },
+        where: { activo: true, archived_at: null, OR: [{ organization_id: actor.organizationId }, { organization_id: null }] },
         select: {
           id: true, nombre: true, codigo_catalogo: true,
           configuracionesOperativas: {
@@ -517,10 +611,10 @@ export const templatesAndFormatsService = {
         },
         orderBy: { nombre: 'asc' },
       }),
-      prisma.notaria.findMany({ where: { organization_id: actor.organizationId, archived_at: null, activa: true }, select: { id: true, nombre: true, numero_notaria: true }, orderBy: { nombre: 'asc' } }),
-      prisma.catalogoInstitucion.findMany({ where: { organization_id: actor.organizationId, activa: true }, select: { id: true, nombre: true, tipo: true }, orderBy: { nombre: 'asc' } }),
+      prisma.notaria.findMany({ where: { organization_id: actor.organizationId, archived_at: null, activa: true }, select: { id: true, nombre: true, numero_notaria: true, predeterminada: true, created_at: true }, orderBy: [{ predeterminada: 'desc' }, { created_at: 'asc' }] }),
+      prisma.catalogoInstitucion.findMany({ where: { organization_id: actor.organizationId, activa: true }, select: { id: true, nombre: true, tipo: true, tipos_respuesta: { orderBy: { nombre: 'asc' } } }, orderBy: { nombre: 'asc' } }),
       prisma.configuracionEtapa.findMany({ where: { organization_id: actor.organizationId, activa: true }, select: { id: true, nombre: true, configuracion: { select: { tipo_acto_id: true } } }, orderBy: [{ configuracion_id: 'asc' }, { orden: 'asc' }] }),
-      prisma.user.findMany({ where: { activo: true }, select: { id: true, nombre: true, apellido: true } }),
+      prisma.organizationMembership.findMany({ where: { organization_id: actor.organizationId, status: 'ACTIVE', user: { activo: true } }, select: { user: { select: { id: true, nombre: true, apellido: true } } }, orderBy: { created_at: 'asc' } }),
       prisma.caracterCompareciente.findMany({ where: { activo: true }, select: { id: true, nombre: true }, orderBy: { nombre: 'asc' } }),
     ]);
     return {
@@ -528,7 +622,7 @@ export const templatesAndFormatsService = {
         ...act,
         nombre: configuracionesOperativas[0]?.nombre_personalizado || act.nombre,
       })),
-      notarias, institutions, stages, users, roles: Object.values(Role), characters,
+      notaria: notarias[0] || null, notarias, institutions, stages, users: memberships.map((item) => item.user), roles: Object.values(Role), characters,
     };
   },
 

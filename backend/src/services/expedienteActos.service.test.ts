@@ -22,6 +22,7 @@ function database(input: { acts?: any[]; count?: Record<string, number>; status?
     expedienteSeguimientoActividad: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn(), upsert: vi.fn() },
     expedienteSeguimientoDependencia: { findMany: vi.fn().mockResolvedValue([]), upsert: vi.fn() },
     expedienteSeguimientoHistorial: { count: vi.fn().mockResolvedValue(0), create: vi.fn() },
+    expedienteComplianceState: { findFirst: vi.fn().mockResolvedValue(null) },
     organizationMembership: { findFirst: vi.fn().mockResolvedValue(null) },
     expedienteActividad: { create: vi.fn().mockResolvedValue({ id: 'activity-1' }) },
     auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-1' }) },

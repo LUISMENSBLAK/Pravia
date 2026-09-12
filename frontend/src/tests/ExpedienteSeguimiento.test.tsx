@@ -17,6 +17,7 @@ const tracking = (activities: SeguimientoActivity[] = [activity()]): ExpedienteS
   expediente_id: 'exp-1', configuracion_actual_no_reaplicada: true, fecha_firma_manual: '2026-09-01T17:00:00Z',
   firma: { programada: '2026-09-01T17:00:00Z', efectiva: null, snapshot_canonico: false },
   entrega: { completada: false, fecha: null, alertas_operativas_activas: true },
+  proyeccion: { dias_restantes_ruta_critica: 12, fecha_final_estimada: '2026-09-22T12:00:00.000Z', semantica_paralelo: 'MAX', altera_fecha_estimada_firma: false },
   actos: [{ expediente_acto_id: 'act-1', tipo_acto_id: 'type-1', nombre: 'Compraventa', estatus: 'ACTIVO', etapas: [{ nombre: 'Prefirma', orden: 1, actividades: activities }] }],
   responsables: [{ id: 'user-1', nombre: 'Andrea', apellido: 'Ruiz' }], signals: { prefirm: activities, postfirm: [] },
 });

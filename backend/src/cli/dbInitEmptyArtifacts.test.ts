@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { readdir } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import {
   assertEmptyBootstrapConfirmation,
@@ -88,6 +89,19 @@ describe('db:init-empty historical artifacts', () => {
     expect(h2.expected.triggers).toEqual(expect.arrayContaining(['h2_validate_compliance_requirement_trigger', 'h2_validate_compliance_evidence_trigger', 'h2_compliance_evidence_immutable_trigger']));
     expect(h2.expected.checks).toEqual(expect.arrayContaining(['ck_h2_document_requirement_shape', 'ck_h2_evidence_new_lineage', 'ck_h2_evidence_validation_actor', 'ck_h2_evidence_signed_source']));
     expect(h2.expected.indexes).toEqual(expect.arrayContaining(['uq_h2_compliance_evidence_active_version', 'uq_compliance_evidence_legacy_reference']));
+  });
+
+  it('does not restore an index explicitly retired by a later migration', async () => {
+    const allMigrations = (await readdir(migrationsRoot, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+    const plan = await buildHistoricalArtifactPlan(migrationsRoot, allMigrations);
+    expect(plan.expected.indexes).not.toContain('uq_exp_seguimiento_acto_actividad');
+    expect(plan.expected.indexes).toContain('uq_exp_seguimiento_identidad');
+    expect(plan.expected.policies).toEqual(expect.arrayContaining([
+      'tenant_isolation_catalogo_normativa_revisiones',
+      'tenant_isolation_catalogo_biblioteca_importaciones',
+    ]));
+    expect(plan.sql).not.toContain('CREATE POLICY legacy_data_api_denied');
   });
 
   it('fails closed when the multitenant foundation is not in the plan', async () => {

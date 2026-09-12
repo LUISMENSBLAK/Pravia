@@ -18,6 +18,12 @@ export const getExpedienteSeguimiento = async (req: Request, res: Response) => {
 export const materializeExpedienteSeguimiento = async (req: Request, res: Response) => {
   try { return res.json(await service.materialize(actor(req), req.params.id)); } catch (error) { return failure(res, error); }
 };
+export const createExpedienteSeguimientoExtraordinary = async (req: Request, res: Response) => {
+  try { return res.status(201).json(await service.createExtraordinary(actor(req), req.params.id, req.body)); } catch (error) { return failure(res, error); }
+};
+export const setExpedienteSeguimientoDependencies = async (req: Request, res: Response) => {
+  try { return res.json(await service.setOperationalDependencies(actor(req), req.params.id, req.params.activityId, req.body)); } catch (error) { return failure(res, error); }
+};
 export const updateExpedienteSeguimientoActividad = async (req: Request, res: Response) => {
   try { return res.json(await service.update(actor(req), req.params.id, req.params.activityId, req.body)); } catch (error) { return failure(res, error); }
 };

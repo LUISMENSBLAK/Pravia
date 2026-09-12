@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const db: any = {
-    tipoActo: { findMany: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
+    tipoActo: { findMany: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     configuracionActo: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     configuracionEtapa: { findFirst: vi.fn(), findMany: vi.fn(), aggregate: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() },
     configuracionActividad: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
@@ -162,10 +162,12 @@ describe('CFG-001 forensic behavior', () => {
   });
 
   it('un acto nuevo nace con ownership de la organización activa', async () => {
-    mocks.db.tipoActo.findFirst.mockResolvedValue(null); mocks.db.tipoActo.findUnique.mockResolvedValue(null);
+    mocks.db.tipoActo.findFirst.mockResolvedValue(null);
     mocks.db.tipoActo.create.mockResolvedValue({ id: 'act-new', organization_id: actor.organizationId, nombre: 'Acto privado', descripcion: null, activo: true });
     mocks.db.configuracionActo.create.mockResolvedValue({ id: 'config-new', revision: 1, etapas: [] });
     await actsAndTimesService.create(actor, { nombre: 'Acto privado' });
+    expect(mocks.db.tipoActo.findUnique).not.toHaveBeenCalled();
+    expect(mocks.db.tipoActo.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ codigo_catalogo: expect.any(String) }) }));
     expect(mocks.db.tipoActo.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ organization_id: actor.organizationId }) }));
   });
 
@@ -175,6 +177,15 @@ describe('CFG-001 forensic behavior', () => {
     await actsAndTimesService.update(actor, 'act-global', { nombre: 'Compraventa local' });
     expect(mocks.db.tipoActo.update).not.toHaveBeenCalled();
     expect(mocks.db.configuracionActo.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ nombre_personalizado: 'Compraventa local', revision: { increment: 1 } }) }));
+  });
+
+  it('edita la identidad tenant-owned con updateMany compatible con el filtro multitenant', async () => {
+    mocks.db.tipoActo.findFirst.mockResolvedValue({ id: 'act-local', organization_id: actor.organizationId, nombre: 'Acto local', descripcion: null, activo: true, configuracionesOperativas: [{ id: 'config-a', revision: 1, activa: true, requiere_revision: true, etapas: [] }] });
+    mocks.db.tipoActo.updateMany.mockResolvedValue({ count: 1 });
+    mocks.db.configuracionActo.update.mockResolvedValue({ id: 'config-a', revision: 2, activa: true, requiere_revision: true, etapas: [] });
+    await actsAndTimesService.update(actor, 'act-local', { descripcion: 'Descripción editada' });
+    expect(mocks.db.tipoActo.updateMany).toHaveBeenCalledWith({ where: { id: 'act-local' }, data: { descripcion: 'Descripción editada' } });
+    expect(mocks.db.tipoActo.update).not.toHaveBeenCalled();
   });
 
   it('el backend RBAC separa lectura de administración en CFG-001 y CFG-002', () => {

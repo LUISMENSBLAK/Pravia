@@ -41,7 +41,8 @@ import {
   downloadIAReport,
   downloadCarpetaZip,
   getDatosDetectadosMatrix,
-  generarProyectoConIA
+  generarProyectoConIA,
+  saveProyectoAsNotaryTemplate,
 } from '../controllers/proyectos.controller';
 import { requireExpedienteAccess, requirePermission } from '../middleware/auth.middleware';
 import { applyExpedienteActoChange, listExpedienteActos, previewExpedienteActoChange } from '../controllers/expedienteActos.controller';
@@ -60,9 +61,11 @@ import {
   searchExpedientePredios,
 } from '../controllers/expedientePredios.controller';
 import {
+  createExpedienteSeguimientoExtraordinary,
   getExpedienteSeguimiento,
   materializeExpedienteSeguimiento,
   reopenExpedienteSeguimientoActividad,
+  setExpedienteSeguimientoDependencies,
   updateExpedienteSeguimientoActividad,
 } from '../controllers/expedienteSeguimiento.controller';
 import {
@@ -121,7 +124,9 @@ router.post('/:id/predios/preview', requirePermission('expedientes.write'), prev
 router.post('/:id/predios/aplicar', requirePermission('expedientes.write'), applyExpedientePredioChange);
 router.get('/:id/seguimiento', requirePermission('expedientes.read'), getExpedienteSeguimiento);
 router.post('/:id/seguimiento/materializar', requirePermission('expedientes.write'), materializeExpedienteSeguimiento);
+router.post('/:id/seguimiento/actividades-extraordinarias', requirePermission('expedientes.write'), createExpedienteSeguimientoExtraordinary);
 router.patch('/:id/seguimiento/actividades/:activityId', requirePermission('expedientes.write'), updateExpedienteSeguimientoActividad);
+router.put('/:id/seguimiento/actividades/:activityId/dependencias', requirePermission('expedientes.write'), setExpedienteSeguimientoDependencies);
 router.post('/:id/seguimiento/actividades/:activityId/reabrir', requirePermission('expedientes.write'), reopenExpedienteSeguimientoActividad);
 router.get('/:id/plantillas-formatos', requirePermission('documentos.read'), getExpedienteArtifacts);
 router.post('/:id/plantillas-formatos/materializar', requirePermission('documentos.write'), materializeExpedienteArtifacts);
@@ -187,6 +192,7 @@ router.post('/:id/proyecto/upload', uploadProyectoMulter.single('file'), uploadP
 router.patch('/:id/proyecto/versions/:versionId', updateProyectoVersion);
 router.get('/:id/proyecto/versions/:versionId/visualizar', requirePermission('expedientes.project.read'), streamProyectoVersion);
 router.get('/:id/proyecto/versions/:versionId/descargar', requirePermission('expedientes.project.read'), downloadProyectoVersion);
+router.post('/:id/proyecto/versions/:versionId/guardar-como-plantilla', requirePermission('expedientes.project.read'), requirePermission('configuracion.plantillas_formatos.manage'), saveProyectoAsNotaryTemplate);
 router.post('/:id/proyecto/analizar-ia', requirePermission('ia.execute'), analizarProyectoConIA);
 router.get('/:id/proyecto/reporte-ia/visualizar', requirePermission('expedientes.project.read'), streamIAReport);
 router.get('/:id/proyecto/reporte-ia/descargar', requirePermission('expedientes.project.read'), downloadIAReport);

@@ -9,7 +9,8 @@ export type HistoricalArtifactKind =
   | 'INDEX'
   | 'CHECK'
   | 'SEQUENCE'
-  | 'RLS';
+  | 'RLS'
+  | 'POLICY';
 
 export interface HistoricalArtifact {
   migration: string;
@@ -28,6 +29,7 @@ export interface HistoricalArtifactPlan {
     indexes: string[];
     sequences: string[];
     rlsTables: string[];
+    policies: string[];
   };
 }
 
@@ -202,8 +204,16 @@ function classify(statement: string, migration: string): HistoricalArtifact[] {
   } else if (/^CREATE\s+SEQUENCE\b/i.test(normalized)) artifacts.push({ migration, kind: 'SEQUENCE', sql: normalized });
   else if (/^ALTER\s+TABLE\b/i.test(normalized) && /ENABLE\s+ROW\s+LEVEL\s+SECURITY/i.test(normalized) && !/ALTER\s+TABLE\s+public\./i.test(normalized)) {
     artifacts.push({ migration, kind: 'RLS', sql: normalized });
+  } else if (/^CREATE\s+POLICY\b/i.test(normalized) && !/\bON\s+public\./i.test(normalized)) {
+    artifacts.push({ migration, kind: 'POLICY', sql: normalized });
   }
   return artifacts;
+}
+
+function droppedIndexName(statement: string) {
+  const normalized = withoutLeadingComments(statement);
+  const match = normalized.match(new RegExp(`^DROP\\s+INDEX(?:\\s+IF\\s+EXISTS)?\\s+(${qualifiedIdentifier})`, 'i'));
+  return match ? postgresIdentifier(match[1].split('.').at(-1)!) : null;
 }
 
 function uniqueSorted(values: string[]) {
@@ -222,6 +232,7 @@ export function historicalArtifactObjectNames(artifacts: HistoricalArtifact[]) {
   const indexes: string[] = [];
   const sequences: string[] = [];
   const rlsTables: string[] = [];
+  const policies: string[] = [];
   for (const artifact of artifacts) {
     if (artifact.kind === 'EXTENSION') {
       const match = artifact.sql.match(new RegExp(`^CREATE\\s+EXTENSION(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+(${identifier})`, 'i'));
@@ -244,6 +255,9 @@ export function historicalArtifactObjectNames(artifacts: HistoricalArtifact[]) {
     } else if (artifact.kind === 'RLS') {
       const match = artifact.sql.match(new RegExp(`^ALTER\\s+TABLE\\s+(${qualifiedIdentifier})\\s+ENABLE\\s+ROW\\s+LEVEL\\s+SECURITY`, 'i'));
       if (match) rlsTables.push(postgresIdentifier(match[1].split('.').at(-1)!));
+    } else if (artifact.kind === 'POLICY') {
+      const match = artifact.sql.match(new RegExp(`^CREATE\\s+POLICY\\s+(${identifier})`, 'i'));
+      if (match) policies.push(postgresIdentifier(match[1]));
     }
   }
   return {
@@ -254,6 +268,7 @@ export function historicalArtifactObjectNames(artifacts: HistoricalArtifact[]) {
     indexes: uniqueSorted(indexes),
     sequences: uniqueSorted(sequences),
     rlsTables: uniqueSorted(rlsTables),
+    policies: uniqueSorted(policies),
   };
 }
 
@@ -263,7 +278,16 @@ export async function buildHistoricalArtifactPlan(migrationsRoot: string, migrat
   for (const migration of migrationNames) {
     if (!available.has(migration)) throw new Error(`Migración histórica ausente: ${migration}.`);
     const sql = await readFile(path.join(migrationsRoot, migration, 'migration.sql'), 'utf8');
-    for (const statement of splitPostgresStatements(sql)) artifacts.push(...classify(statement, migration));
+    for (const statement of splitPostgresStatements(sql)) {
+      const retiredIndex = droppedIndexName(statement);
+      if (retiredIndex) {
+        for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+          const artifact = artifacts[index];
+          if (artifact.kind === 'INDEX' && historicalArtifactObjectNames([artifact]).indexes.includes(retiredIndex)) artifacts.splice(index, 1);
+        }
+      }
+      artifacts.push(...classify(statement, migration));
+    }
   }
   const expected = historicalArtifactObjectNames(artifacts);
   if (!expected.functions.includes('enforce_same_organization')) {

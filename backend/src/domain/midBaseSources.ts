@@ -90,8 +90,8 @@ export type OperationalMidBaseSource = BaseSource & {
     remainingDuration: number | null;
     safetyMargin: number;
     marginDeadline: Date | null;
-    configurationId: string;
-    configurationRevision: number;
+    configurationId: string | null;
+    configurationRevision: number | null;
     resolutionSource: string;
   };
 };

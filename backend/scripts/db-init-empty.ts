@@ -73,6 +73,10 @@ async function verifyHistoricalArtifacts(url: URL, plan: HistoricalArtifactPlan)
       SELECT 'RLS', c.relname
       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'pravia_os' AND c.relrowsecurity
+      UNION ALL
+      SELECT 'POLICY', p.policyname
+      FROM pg_policies p
+      WHERE p.schemaname = 'pravia_os'
     `);
     const present = new Map<string, Set<string>>();
     for (const row of rows) {
@@ -87,6 +91,7 @@ async function verifyHistoricalArtifacts(url: URL, plan: HistoricalArtifactPlan)
       ['INDEX', plan.expected.indexes],
       ['SEQUENCE', plan.expected.sequences],
       ['RLS', plan.expected.rlsTables],
+      ['POLICY', plan.expected.policies],
     ] as const;
     const missing = expected.flatMap(([kind, names]) => names.filter((name) => !present.get(kind)?.has(name)).map((name) => `${kind}:${name}`));
     if (missing.length) throw new Error(`Artefactos históricos ausentes: ${missing.join(', ')}.`);

@@ -34,6 +34,8 @@ export const expedientesService = {
   applyProperty(id: string, input: ExpedientePredioCommand) { return apiRequest<{ relation: ExpedientePredioRelation; idempotent: boolean; version?: number }>(`/expedientes/${encodeURIComponent(id)}/predios/aplicar`, { method: 'POST', body: JSON.stringify(input) }); },
   seguimiento(id: string, signal?: AbortSignal) { return apiRequest<ExpedienteSeguimiento>(`/expedientes/${encodeURIComponent(id)}/seguimiento`, { signal }); },
   materializeSeguimiento(id: string) { return apiRequest<{ created: number; existing: number; review_required: number; idempotent: boolean }>(`/expedientes/${encodeURIComponent(id)}/seguimiento/materializar`, { method: 'POST' }); },
+  createSeguimientoExtraordinary(id: string, input: Record<string, unknown>) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/seguimiento/actividades-extraordinarias`, { method: 'POST', body: JSON.stringify(input) }); },
+  setSeguimientoDependencies(id: string, activityId: string, dependency_ids: string[]) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/seguimiento/actividades/${encodeURIComponent(activityId)}/dependencias`, { method: 'PUT', body: JSON.stringify({ dependency_ids }) }); },
   artifacts(id: string, signal?: AbortSignal) { return apiRequest<ExpedienteArtifacts>(`/expedientes/${encodeURIComponent(id)}/plantillas-formatos`, { signal }); },
   budget(id: string, signal?: AbortSignal) { return apiRequest<ExpedienteBudget>(`/expedientes/${encodeURIComponent(id)}/presupuesto`, { signal }); },
   saveBudget(id: string, input: { expected_version: number; concepts: ExpedienteBudgetConcept[]; distribution?: { pravia_honorarios: { mode: 'AMOUNT' | 'PERCENT'; value: string }; pravia_iva: { mode: 'AMOUNT' | 'PERCENT'; value: string } } }) { return apiRequest<ExpedienteBudget>(`/expedientes/${encodeURIComponent(id)}/presupuesto`, { method: 'PUT', body: JSON.stringify(input) }); },
@@ -46,7 +48,7 @@ export const expedientesService = {
   uploadArtifact(id: string, pendingId: string, file: File, expectedVersion: number, idempotencyKey: string) { const body = new FormData(); body.set('file', file); body.set('expected_version', String(expectedVersion)); body.set('idempotency_key', idempotencyKey); return apiRequest(`/expedientes/${encodeURIComponent(id)}/plantillas-formatos/${encodeURIComponent(pendingId)}/upload`, { method: 'POST', body }); },
   validateArtifact(id: string, pendingId: string, expectedVersion: number, idempotencyKey: string) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/plantillas-formatos/${encodeURIComponent(pendingId)}/validar`, { method: 'POST', body: JSON.stringify({ expected_version: expectedVersion, idempotency_key: idempotencyKey }) }); },
   artifactUrl(id: string, pendingId: string) { return apiRequest<{ url: string; file_name: string }>(`/expedientes/${encodeURIComponent(id)}/plantillas-formatos/${encodeURIComponent(pendingId)}/url`); },
-  updateSeguimientoActivity(id: string, activityId: string, input: { expected_version: number; estado?: SeguimientoEstado; responsable_id?: string | null; excepcion_operativa?: { duracion_estimada?: number; tipo_dias?: 'HABILES' | 'NATURALES'; margen_seguridad?: number; motivo?: string } | null; razon?: string }) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/seguimiento/actividades/${encodeURIComponent(activityId)}`, { method: 'PATCH', body: JSON.stringify(input) }); },
+  updateSeguimientoActivity(id: string, activityId: string, input: { expected_version: number; estado?: SeguimientoEstado; responsable_id?: string | null; excepcion_operativa?: { duracion_estimada?: number; tipo_dias?: 'HABILES' | 'NATURALES'; margen_seguridad?: number; motivo?: string } | null; razon?: string; orden_operativo?: number }) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/seguimiento/actividades/${encodeURIComponent(activityId)}`, { method: 'PATCH', body: JSON.stringify(input) }); },
   reopenSeguimientoActivity(id: string, activityId: string, input: { expected_version: number; razon: string }) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/seguimiento/actividades/${encodeURIComponent(activityId)}/reabrir`, { method: 'POST', body: JSON.stringify(input) }); },
   eligibleQuotes(signal?: AbortSignal) {
     return apiRequest<{ data: EligibleQuoteCandidate[]; total: number }>('/expedientes/cotizaciones-elegibles', { signal });
@@ -73,6 +75,9 @@ export const expedientesService = {
   uploadProject(id: string, file: File, note = '') {
     const body = new FormData(); body.set('file', file); if (note) body.set('nota_version', note);
     return apiRequest(`/expedientes/${encodeURIComponent(id)}/proyecto/upload`, { method: 'POST', body });
+  },
+  saveProjectAsNotaryTemplate(id: string, versionId: string, nombre?: string) {
+    return apiRequest<{ artifact_id: string; version_id: string; idempotent: boolean }>(`/expedientes/${encodeURIComponent(id)}/proyecto/versions/${encodeURIComponent(versionId)}/guardar-como-plantilla`, { method: 'POST', body: JSON.stringify({ nombre }) });
   },
   createPostfirmaTask(id: string, input: { tipo: string; descripcion: string; institucion: string; fecha_limite?: string }) {
     return apiRequest(`/expedientes/${encodeURIComponent(id)}/postfirma/tramites`, { method: 'POST', body: JSON.stringify(input) });

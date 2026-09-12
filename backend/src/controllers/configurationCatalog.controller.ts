@@ -1,6 +1,8 @@
 import type { Request } from 'express';
 import { Prisma } from '@prisma/client';
 import { actsAndTimesService, CatalogConfigurationError, templatesAndFormatsService } from '../services/configurationCatalog.service';
+import { configurationCatalogV2Service } from '../services/configurationCatalogV2.service';
+import { configurationCatalogV4Service } from '../services/configurationCatalogV4.service';
 
 const actor = (req: Request) => {
   if (!req.user) throw new CatalogConfigurationError(401, 'AUTH_REQUIRED', 'Inicia sesión para continuar.');
@@ -35,6 +37,16 @@ export const configurationCatalogController = {
   createException: (req: Request) => actsAndTimesService.createException(actor(req), req.params.activityId, req.body),
   updateException: (req: Request) => actsAndTimesService.updateException(actor(req), req.params.exceptionId, req.body),
   resolveTiming: (req: Request) => actsAndTimesService.resolveTiming(actor(req), req.params.activityId, { type: String(req.query.type || ''), id: String(req.query.id || '') }),
+  listConcepts: (req: Request) => configurationCatalogV2Service.listConcepts(actor(req)),
+  createConcept: (req: Request) => configurationCatalogV2Service.createConcept(actor(req), req.body),
+  updateConcept: (req: Request) => configurationCatalogV2Service.updateConcept(actor(req), req.params.conceptId, req.body),
+  createApplication: (req: Request) => configurationCatalogV2Service.createApplication(actor(req), req.params.stageId, req.body),
+  revertActivityAttribute: (req: Request) => configurationCatalogV2Service.revertAttribute(actor(req), req.params.activityId, req.params.attribute),
+  upsertInstitutionResponse: (req: Request) => configurationCatalogV2Service.upsertInstitutionResponse(actor(req), req.params.institutionId, req.body),
+  duplicateAct: (req: Request) => configurationCatalogV2Service.duplicateAct(actor(req), req.params.id, req.body),
+  overrideInheritedApplication: (req: Request) => configurationCatalogV2Service.overrideInheritedApplication(actor(req), req.params.id, req.params.activityId, req.body),
+  removeConceptFromAct: (req: Request) => configurationCatalogV2Service.removeConceptFromAct(actor(req), req.params.id, req.params.activityId),
+  bootstrapV2: (req: Request) => configurationCatalogV2Service.bootstrap(actor(req)),
   artifactsRoot: (req: Request) => templatesAndFormatsService.root(actor(req)),
   supportingCatalogs: (req: Request) => templatesAndFormatsService.supportingCatalogs(actor(req)),
   createInstitution: (req: Request) => templatesAndFormatsService.createInstitution(actor(req), req.body),
@@ -50,4 +62,7 @@ export const configurationCatalogController = {
   },
   updateArtifact: (req: Request) => templatesAndFormatsService.updateArtifact(actor(req), req.params.artifactId, req.body),
   artifactVersionUrl: (req: Request) => templatesAndFormatsService.signedUrl(actor(req), req.params.versionId),
+  bootstrapLibraryV4: (req: Request) => configurationCatalogV4Service.bootstrap(actor(req), String(req.get('Idempotency-Key') || '').trim() || undefined),
+  previewArtifactImport: (req: Request) => configurationCatalogV4Service.preview(actor(req), req.files as Express.Multer.File[] || []),
+  confirmArtifactImport: (req: Request) => configurationCatalogV4Service.confirm(actor(req), multipartBody(req), req.files as Express.Multer.File[] || [], String(req.get('Idempotency-Key') || '').trim()),
 };
