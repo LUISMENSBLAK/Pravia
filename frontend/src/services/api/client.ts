@@ -114,4 +114,38 @@ export const apiRequest = async <T>(path: string, options: RequestOptions = {}):
   return payload as T;
 };
 
+export const apiBlobRequest = async (path: string, options: RequestOptions = {}): Promise<Blob> => {
+  const { retryOnUnauthorized = true, headers, ...init } = options;
+  const requestHeaders = new Headers(headers);
+  const token = tokenStore.get();
+  if (token) requestHeaders.set('Authorization', `Bearer ${token}`);
+
+  const response = await fetch(apiUrl(path), {
+    ...init,
+    credentials: 'include',
+    headers: requestHeaders,
+  });
+
+  if (response.status === 401 && retryOnUnauthorized) {
+    try {
+      await refreshSession();
+      return apiBlobRequest(path, { ...options, retryOnUnauthorized: false });
+    } catch {
+      tokenStore.clear();
+    }
+  }
+
+  if (!response.ok) {
+    const payload = await parseResponse(response);
+    const message = typeof payload === 'object' && payload && 'message' in payload
+      ? String((payload as { message: unknown }).message)
+      : typeof payload === 'object' && payload && 'error' in payload
+        ? String((payload as { error: unknown }).error)
+        : 'No fue posible descargar el archivo.';
+    throw new ApiError(message, response.status, payload);
+  }
+
+  return response.blob();
+};
+
 export { extractToken };

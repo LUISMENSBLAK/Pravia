@@ -77,7 +77,7 @@ export async function recordQuoteTransitionInTransaction(tx: Prisma.TransactionC
     } : {}),
   };
   if (input.action === 'ENVIAR_CLIENTE') quoteData.fecha_enviada_cliente = input.effectiveAt;
-  if (input.action === 'REGISTRAR_ACEPTACION_ANTICIPO') quoteData.fecha_aceptacion_cliente = input.effectiveAt;
+  if (input.action === 'ACEPTAR') quoteData.fecha_aceptacion_cliente = input.effectiveAt;
   if (input.action === 'CONVERTIR') quoteData.fecha_conversion_expediente = input.effectiveAt;
   await tx.cotizacion.update({ where: { id: quote.id }, data: quoteData });
   await tx.auditLog.create({ data: {
@@ -138,7 +138,7 @@ export class CotizacionWorkflowService {
     });
     const firstSend = events.find((event) => event.accion === 'ENVIAR_CLIENTE');
     const lastSend = [...events].reverse().find((event) => ['ENVIAR_CLIENTE', 'REENVIAR_CLIENTE'].includes(event.accion));
-    const accepted = events.find((event) => event.accion === 'REGISTRAR_ACEPTACION_ANTICIPO');
+    const accepted = events.find((event) => ['ACEPTAR', 'REGISTRAR_ACEPTACION_ANTICIPO'].includes(event.accion));
     const suspended = events.find((event) => event.accion === 'SUSPENDER');
     const cancelled = events.find((event) => event.accion === 'CANCELAR');
     const converted = events.find((event) => event.accion === 'CONVERTIR');
@@ -215,6 +215,21 @@ export class CotizacionWorkflowService {
         if (raw.versionId && String(raw.versionId) !== approved.id) failQuote(409, 'COT001_VERSION_CHANGED', 'La versión vigente cambió. Actualiza la ficha antes de registrar el envío.');
         quoteVersionId = approved.id;
         evidence = { deliveryEvidence, deliveryConfirmedByProvider: false, quoteVersion: approved.version, pdfAvailable: Boolean(approved.pdf_url) };
+      }
+      if (action === 'ACEPTAR') {
+        const approved = await tx.cotizacionVersion.findFirst({
+          where: { cotizacion_id: id, aprobada: true },
+          orderBy: { version: 'desc' },
+          include: { conceptos: { orderBy: { orden: 'asc' } } },
+        });
+        if (!approved || approved.conceptos.length === 0) {
+          return failQuote(409, 'COT002_STRUCTURED_VERSION_REQUIRED', 'Aprueba primero una versión con presupuesto estructurado.');
+        }
+        if (raw.versionId && String(raw.versionId) !== approved.id) {
+          failQuote(409, 'COT002_VERSION_CHANGED', 'La versión vigente cambió. Actualiza la ficha antes de registrar la aceptación.');
+        }
+        quoteVersionId = approved.id;
+        evidence = { confirmation: 'Aceptación confirmada por el actor', quoteVersion: approved.version, immutableSnapshot: true };
       }
       const event = await recordQuoteTransitionInTransaction(tx, {
         actor, quote, action, next, changesStage, effectiveAt, recordedAt, key, hash, evidence,

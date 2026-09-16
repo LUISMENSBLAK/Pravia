@@ -1,6 +1,6 @@
 import { PrismaClient, ExpedienteEstatus, Role, Prisma } from '@prisma/client';
 import { ExpedienteProgressService } from './expedienteProgress.service';
-import { assertExpedienteTransition, ExpedienteWorkflowError } from '../domain/expedienteWorkflow';
+import { assertExpedienteTransition, assertSignatureRequirements, ExpedienteWorkflowError } from '../domain/expedienteWorkflow';
 import {
   assertPostfirmaReadyForDelivery,
   assertSpecializedTransition,
@@ -87,7 +87,7 @@ export class ExpedienteWorkflowService {
         where: { id: payload.expedienteId, organization_id: actorContext.organizationId },
         include: {
           requisitos_docs: true,
-          comparecientes: { include: { compareciente: true } },
+          comparecientes: { where: { estatus: 'ACTIVO', archived_at: null }, include: { compareciente: true } },
           cotizacion: true,
           flujoVersion: true,
           expedienteDocumentos: { where: { estatus: 'ACTIVO' }, select: { documento_id: true } },
@@ -160,7 +160,7 @@ export class ExpedienteWorkflowService {
 
       // 6. Regla especial y checklist de Firma Programada
       if (payload.nuevoEstatus === 'FIRMA_PROGRAMADA') {
-        this.validarRequisitosFirma(exp, payload.datosFirma);
+        assertSignatureRequirements(exp, payload.datosFirma);
       }
       if (payload.nuevoEstatus === 'LISTO_ENTREGA') {
         assertPostfirmaReadyForDelivery(
@@ -477,31 +477,6 @@ export class ExpedienteWorkflowService {
 
       return expActualizado;
     });
-  }
-
-  private validarRequisitosFirma(exp: any, datosFirma?: any) {
-    if (!datosFirma || !datosFirma.fechaFirma) {
-      throw new Error('Debe especificar la fecha y hora programada para la firma');
-    }
-
-    // Verificar comparecientes requeridos
-    if (!exp.comparecientes || exp.comparecientes.length === 0) {
-      throw new Error('No se pueden programar la firma sin comparecientes vinculados al expediente');
-    }
-
-    const unvalidated = exp.comparecientes.filter((c: any) => !c.datos_validados);
-    if (unvalidated.length > 0) {
-      throw new Error(`Existen ${unvalidated.length} compareciente(s) con datos sin validar. Valide las identidades antes de programar firma.`);
-    }
-
-    // Verificar checklist obligatorio
-    const reqsObligatoriosFaltantes = (exp.requisitos_docs || []).filter(
-      (r: any) => r.obligatorio && r.categoria === 'FIRMA' && r.estatus !== 'VALIDADO'
-    );
-
-    if (reqsObligatoriosFaltantes.length > 0) {
-      throw new Error(`Faltan ${reqsObligatoriosFaltantes.length} documento(s) obligatorios de categoría FIRMA por validar.`);
-    }
   }
 
   private async registrarEventoOutbox(

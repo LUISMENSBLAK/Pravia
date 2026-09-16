@@ -61,4 +61,14 @@ describe('H7 expediente list compliance projection', () => {
       cumplimiento: { state: null, label: 'Restringido', pending_count: 0 },
     });
   });
+
+  it('intersects folio, stage and compliance column filters in one tenant-scoped query', async () => {
+    const db = database();
+    await new ExpedienteReadService(db).list(user, { ...query, folio: 'EXP-0001', stage: 'Entregado', compliance: 'PENDING' });
+    const where = JSON.stringify(db.expediente.findMany.mock.calls[0][0].where);
+    expect(where).toContain('EXP-0001');
+    expect(where).toContain('Entregado');
+    expect(where).toContain('complianceStates');
+    expect(where).toContain('PENDIENTE');
+  });
 });

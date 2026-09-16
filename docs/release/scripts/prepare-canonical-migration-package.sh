@@ -68,6 +68,11 @@ migrations=(
   20260905030000_create_h9_assisted_compliance_review
   20260905040000_add_h10_compliance_fk_indexes
   20260905041000_index_rebaseline_legacy_foreign_keys
+  20260906010000_correct_prospect_quote_workflow
+  20260910010000_cfg001_v2_master_inheritance
+  20260911010000_cfg002_v4_legal_library
+  20260912010000_correction002_cfg001_questionnaires
+  20260915010000_corrections004005006
 )
 
 for migration in "${migrations[@]}"; do
@@ -96,4 +101,4 @@ if [[ "$baseline_hash" != "51526bb12228a0c5f4fd02f9baec77ae696f601c2c6f5ff70c2fa
 fi
 
 echo "Paquete canónico preparado localmente: $output_dir"
-echo "Migraciones incluidas: ${#migrations[@]} (18 aplicadas + 27 pendientes)."
+echo "Migraciones incluidas: ${#migrations[@]}."

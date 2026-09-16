@@ -16,7 +16,7 @@ export function RegisterDeliveryDialog({ quote, target, onClose, onDone }: { quo
     setSaving(true); setError('');
     try {
       if (canonical && target === 'CLIENTE') {
-        const action = quote.workflow!.stage === 'BORRADOR' ? 'ENVIAR_CLIENTE' : 'REENVIAR_CLIENTE';
+        const action = quote.workflow!.stage === 'EN_ELABORACION' ? 'ENVIAR_CLIENTE' : 'REENVIAR_CLIENTE';
         const approved = quote.versiones.find((item) => item.aprobada);
         await quotesService.contractAction(quote.id, { action, expectedVersion: quote.workflow!.version, idempotencyKey: key, confirm: true,
           effectiveAt: new Date(effectiveAt).toISOString(), channel, recipient, evidence: summary, ...(approved ? { versionId: approved.id } : {}) });

@@ -5,12 +5,12 @@ import type { Quote, QuoteContractAction } from '../quotes.types';
 import { QuoteActionDialog } from './QuoteActionDialog';
 import styles from '../Quotes.module.css';
 
-const config: Record<'REGISTRAR_ACEPTACION_ANTICIPO' | 'SUSPENDER' | 'CANCELAR', { title: string; description: string; submit: string; destructive?: boolean }> = {
-  REGISTRAR_ACEPTACION_ANTICIPO: {
-    title: 'Registrar Aceptó / Anticipo',
-    description: 'Registra un solo hito comercial. No crea, valida ni aplica movimientos financieros.',
-    submit: 'Confirmar hito comercial',
-  },
+type DialogAction = 'COMENZAR_ELABORACION' | 'INICIAR_SEGUIMIENTO' | 'ACEPTAR' | 'RECHAZAR' | 'SUSPENDER' | 'CANCELAR';
+const config: Record<DialogAction, { title: string; description: string; submit: string; destructive?: boolean }> = {
+  COMENZAR_ELABORACION: { title: 'Comenzar elaboración', description: 'Inicia la preparación de la cotización y su presupuesto estructurado.', submit: 'Comenzar elaboración' },
+  INICIAR_SEGUIMIENTO: { title: 'Iniciar seguimiento', description: 'Registra que la cotización enviada entra en seguimiento con el cliente.', submit: 'Iniciar seguimiento' },
+  ACEPTAR: { title: 'Registrar aceptación', description: 'Congela la versión vigente como evidencia histórica y habilita la conversión.', submit: 'Confirmar aceptación' },
+  RECHAZAR: { title: 'Registrar rechazo', description: 'Conserva la cotización y su historia como registro rechazado.', submit: 'Registrar rechazo', destructive: true },
   SUSPENDER: { title: 'Suspender cotización', description: 'La cotización conservará su historia, fuente, documentos y relaciones.', submit: 'Suspender', destructive: true },
   CANCELAR: { title: 'Cancelar cotización', description: 'La cancelación no elimina la cotización ni sus documentos, pagos o auditoría.', submit: 'Cancelar cotización', destructive: true },
 };
@@ -19,7 +19,7 @@ const localNow = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60
 
 export function QuoteContractActionDialog({ quote, action, onClose, onDone }: {
   quote: Quote;
-  action: 'REGISTRAR_ACEPTACION_ANTICIPO' | 'SUSPENDER' | 'CANCELAR';
+  action: DialogAction;
   onClose: () => void;
   onDone: () => void;
 }) {
@@ -53,7 +53,7 @@ export function QuoteContractActionDialog({ quote, action, onClose, onDone }: {
       {error && <div className={styles.formError} role="alert">{error}</div>}
       <label><span>Fecha y hora efectiva</span><input type="datetime-local" max={localNow()} value={effectiveAt} onChange={(event) => setEffectiveAt(event.target.value)} required /></label>
       <label><span>Nota opcional</span><textarea rows={3} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Contexto operativo, si aplica." /></label>
-      {action === 'REGISTRAR_ACEPTACION_ANTICIPO' && <p className={styles.contractNotice}>Este hito habilita la conversión comercial. La captura y aplicación de dinero permanecen separadas en Finanzas del expediente.</p>}
+      {action === 'ACEPTAR' && <p className={styles.contractNotice}>La aceptación inmoviliza la versión vigente. Los cambios posteriores se harán únicamente en el presupuesto independiente del expediente.</p>}
     </form>
   </QuoteActionDialog>;
 }

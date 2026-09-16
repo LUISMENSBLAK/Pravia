@@ -3,17 +3,25 @@ import { CotizacionEtapaContractual as Stage, CotizacionEstado } from '@prisma/c
 
 export const QUOTE_CONTRACT_STAGES = Object.freeze([
   { code: Stage.BORRADOR, label: 'Borrador' },
+  { code: Stage.EN_ELABORACION, label: 'En elaboración' },
   { code: Stage.ENVIADA_CLIENTE, label: 'Enviada al cliente' },
-  { code: Stage.ACEPTO_ANTICIPO, label: 'Aceptó / Anticipo' },
+  { code: Stage.EN_SEGUIMIENTO, label: 'En seguimiento' },
+  { code: Stage.ACEPTADA, label: 'Aceptada' },
+  { code: Stage.RECHAZADA, label: 'Rechazada' },
+  // Historical canonical value retained read-only for pre-Correction-002 records.
+  { code: Stage.ACEPTO_ANTICIPO, label: 'Aceptó / Anticipo (histórico)' },
   { code: Stage.SUSPENDIDA, label: 'Suspendida' },
   { code: Stage.CANCELADA, label: 'Cancelada' },
   { code: Stage.CONVERTIDA_EXPEDIENTE, label: 'Convertida en expediente' },
 ]);
 
 export const QUOTE_CONTRACT_ACTIONS = {
+  COMENZAR_ELABORACION: 'Comenzar elaboración',
   ENVIAR_CLIENTE: 'Registrar envío al cliente',
+  INICIAR_SEGUIMIENTO: 'Iniciar seguimiento',
   REENVIAR_CLIENTE: 'Registrar reenvío al cliente',
-  REGISTRAR_ACEPTACION_ANTICIPO: 'Registrar Aceptó / Anticipo',
+  ACEPTAR: 'Registrar aceptación',
+  RECHAZAR: 'Registrar rechazo',
   SUSPENDER: 'Suspender cotización',
   CANCELAR: 'Cancelar cotización',
   CONVERTIR: 'Convertir en expediente',
@@ -27,9 +35,11 @@ export const failQuote = (status: number, code: string, message: string): never 
 export const quoteStageLabel = (stage: Stage | null) => QUOTE_CONTRACT_STAGES.find((item) => item.code === stage)?.label ?? 'Etapa histórica por confirmar';
 
 export function allowedQuoteActions(stage: Stage | null): QuoteContractAction[] {
-  if (stage === Stage.BORRADOR) return ['ENVIAR_CLIENTE', 'SUSPENDER', 'CANCELAR'];
-  if (stage === Stage.ENVIADA_CLIENTE) return ['REENVIAR_CLIENTE', 'REGISTRAR_ACEPTACION_ANTICIPO', 'SUSPENDER', 'CANCELAR'];
-  if (stage === Stage.ACEPTO_ANTICIPO) return ['CONVERTIR', 'SUSPENDER', 'CANCELAR'];
+  if (stage === Stage.BORRADOR) return ['COMENZAR_ELABORACION', 'SUSPENDER', 'CANCELAR'];
+  if (stage === Stage.EN_ELABORACION) return ['ENVIAR_CLIENTE', 'SUSPENDER', 'CANCELAR'];
+  if (stage === Stage.ENVIADA_CLIENTE) return ['INICIAR_SEGUIMIENTO', 'REENVIAR_CLIENTE', 'ACEPTAR', 'RECHAZAR', 'SUSPENDER', 'CANCELAR'];
+  if (stage === Stage.EN_SEGUIMIENTO) return ['REENVIAR_CLIENTE', 'ACEPTAR', 'RECHAZAR', 'SUSPENDER', 'CANCELAR'];
+  if (stage === Stage.ACEPTADA || stage === Stage.ACEPTO_ANTICIPO) return ['CONVERTIR'];
   return [];
 }
 
@@ -37,17 +47,26 @@ export function quoteActionResult(stage: Stage | null, action: QuoteContractActi
   if (!allowedQuoteActions(stage).includes(action)) {
     failQuote(409, 'COT001_TRANSITION_DENIED', 'Esta acción ya no corresponde a la etapa actual. Actualiza la ficha.');
   }
+  if (action === 'COMENZAR_ELABORACION') return { next: Stage.EN_ELABORACION, changesStage: true };
   if (action === 'ENVIAR_CLIENTE') return { next: Stage.ENVIADA_CLIENTE, changesStage: true };
-  if (action === 'REENVIAR_CLIENTE') return { next: Stage.ENVIADA_CLIENTE, changesStage: false };
-  if (action === 'REGISTRAR_ACEPTACION_ANTICIPO') return { next: Stage.ACEPTO_ANTICIPO, changesStage: true };
+  if (action === 'INICIAR_SEGUIMIENTO') return { next: Stage.EN_SEGUIMIENTO, changesStage: true };
+  if (action === 'REENVIAR_CLIENTE') return { next: stage!, changesStage: false };
+  if (action === 'ACEPTAR') return { next: Stage.ACEPTADA, changesStage: true };
+  if (action === 'RECHAZAR') return { next: Stage.RECHAZADA, changesStage: true };
   if (action === 'SUSPENDER') return { next: Stage.SUSPENDIDA, changesStage: true };
   if (action === 'CANCELAR') return { next: Stage.CANCELADA, changesStage: true };
   return { next: Stage.CONVERTIDA_EXPEDIENTE, changesStage: true };
 }
 
 export function quoteLegacyProjection(stage: Stage): CotizacionEstado {
-  if (stage === Stage.ACEPTO_ANTICIPO) return CotizacionEstado.ACEPTADA;
-  return stage as unknown as CotizacionEstado;
+  if (stage === Stage.BORRADOR || stage === Stage.EN_ELABORACION) return CotizacionEstado.BORRADOR;
+  if (stage === Stage.ENVIADA_CLIENTE) return CotizacionEstado.ENVIADA_CLIENTE;
+  if (stage === Stage.EN_SEGUIMIENTO) return CotizacionEstado.EN_NEGOCIACION;
+  if (stage === Stage.ACEPTADA || stage === Stage.ACEPTO_ANTICIPO) return CotizacionEstado.ACEPTADA;
+  if (stage === Stage.RECHAZADA) return CotizacionEstado.RECHAZADA;
+  if (stage === Stage.SUSPENDIDA) return CotizacionEstado.SUSPENDIDA;
+  if (stage === Stage.CANCELADA) return CotizacionEstado.CANCELADA;
+  return CotizacionEstado.CONVERTIDA_EXPEDIENTE;
 }
 
 export function assertQuoteVersion(expected: unknown, current: number) {

@@ -9,12 +9,15 @@ export function urlWithSchema(rawUrl: string | undefined, schema: string) {
   return parsed.toString();
 }
 
+export function requiresMigrationConfirmation(args: string[]) {
+  return args[0] === 'migrate' && args[1] === 'deploy';
+}
+
 export function runPrismaSafely(args = process.argv.slice(2)) {
   const config = resolveRuntimeConfig();
   const errors = validateRuntimeConfig(config);
   if (errors.length) throw new Error(`Configuración Prisma inválida: ${errors.join(' ')}`);
-  const operation = args.join(' ');
-  if (operation === 'migrate deploy' && process.env.MIGRATION_CONFIRMATION !== 'APPLY_VERIFIED_MIGRATIONS') {
+  if (requiresMigrationConfirmation(args) && process.env.MIGRATION_CONFIRMATION !== 'APPLY_VERIFIED_MIGRATIONS') {
     throw new Error('MIGRATION_CONFIRMATION=APPLY_VERIFIED_MIGRATIONS es obligatorio para migrate deploy.');
   }
   if (!args.length) throw new Error('Indica el comando Prisma que deseas ejecutar.');

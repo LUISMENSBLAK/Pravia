@@ -80,6 +80,13 @@ describe('EXP-001 conversión canónica y atómica', () => {
     const result = await new CotizacionConversionService(prisma).convert({ cotizacionId: 'quote-1', actorUserId: 'user-1', actorOrganizationId: 'org-1' });
     expect(result).toMatchObject({ alreadyConverted: false, validatedAdvanceTotal: 30_000, expediente: { numero_pravia: 'EXP-0001-2026', cotizacion_id: 'quote-1' } });
     expect(dependencies.open).toHaveBeenCalledWith(tx, expect.objectContaining({ clienteAlias: 'Cliente heredado', tipoActoId: 'act-1', abogadoId: 'user-1', notariaId: 'notary-1' }));
+    expect(tx.tipoActo.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        activo: true,
+        archived_at: null,
+        OR: [{ organization_id: null }, { organization_id: 'org-1' }],
+      }),
+    }));
     expect(dependencies.createBudget).toHaveBeenCalledWith(tx, expect.objectContaining({
       expedienteId: 'exp-1',
       actor: expect.objectContaining({ organizationId: 'org-1' }),

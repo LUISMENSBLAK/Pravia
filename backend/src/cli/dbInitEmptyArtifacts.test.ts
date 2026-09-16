@@ -101,6 +101,8 @@ describe('db:init-empty historical artifacts', () => {
       'tenant_isolation_catalogo_normativa_revisiones',
       'tenant_isolation_catalogo_biblioteca_importaciones',
     ]));
+    expect(plan.expected.checks).toContain('ck_predio_documento_version_positive');
+    expect(plan.sql).not.toContain('ADD COLUMN "vigencia"');
     expect(plan.sql).not.toContain('CREATE POLICY legacy_data_api_denied');
   });
 
@@ -124,6 +126,7 @@ describe('db:init-empty historical artifacts', () => {
   it('skips only references proven obsolete and fails closed for other SQL errors', () => {
     expect(isObsoleteHistoricalArtifactError({ meta: { code: '42P01' } })).toBe(true);
     expect(isObsoleteHistoricalArtifactError({ meta: { code: '42703' } })).toBe(true);
+    expect(isObsoleteHistoricalArtifactError({ meta: { code: '42710' } })).toBe(true);
     expect(isObsoleteHistoricalArtifactError({ meta: { code: '42883' } })).toBe(false);
     expect(isObsoleteHistoricalArtifactError(new Error('syntax error'))).toBe(false);
   });

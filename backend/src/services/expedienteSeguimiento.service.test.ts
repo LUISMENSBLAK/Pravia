@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addOperationalDays, isDependencySatisfied, operationalCopyFingerprint, operationalDaysBetween } from './expedienteSeguimiento.service';
+import { addOperationalDays, calculateTemporalSummary, isDependencySatisfied, operationalCopyFingerprint, operationalDaysBetween } from './expedienteSeguimiento.service';
 import { resolveOperationalActivityConfiguration } from './configurationCatalog.service';
 
 const activity = (exceptions: any[] = []) => ({ duracion_estimada: 5, tipo_dias: 'HABILES', margen_seguridad: 2, excepciones: exceptions });
@@ -17,6 +17,14 @@ describe('EXP-005 · resolver y calendario operacional', () => {
   it('excluye fin de semana en días hábiles', () => expect(addOperationalDays(new Date('2026-08-14T12:00:00Z'), 2, 'HABILES').toISOString()).toBe('2026-08-18T12:00:00.000Z'));
   it('cuenta días naturales transcurridos', () => expect(operationalDaysBetween(new Date('2026-08-14T12:00:00Z'), new Date('2026-08-17T12:00:00Z'), 'NATURALES')).toBe(3));
   it('cuenta sólo hábiles transcurridos', () => expect(operationalDaysBetween(new Date('2026-08-14T12:00:00Z'), new Date('2026-08-18T12:00:00Z'), 'HABILES')).toBe(2));
+  it('expone los dos tiempos del resumen desde la ruta crítica de Seguimiento', () => {
+    const summary = calculateTemporalSummary([
+      { id: 'a', stageName: 'Integración', stageOrder: 1, activityName: 'Integrar', state: 'NO_INICIADO', duration: 2, margin: 0, dependencyIds: [], scopeKey: 'ACTO:1' },
+      { id: 'b', stageName: 'Firma', stageOrder: 2, activityName: 'Firma', state: 'NO_INICIADO', duration: 3, margin: 0, dependencyIds: ['a'], scopeKey: 'ACTO:1' },
+      { id: 'c', stageName: 'Postfirma', stageOrder: 3, activityName: 'Inscribir', state: 'NO_INICIADO', duration: 4, margin: 0, dependencyIds: ['b'], scopeKey: 'ACTO:1' },
+    ]);
+    expect(summary).toMatchObject({ source: 'SEGUIMIENTO', businessDaysToSignature: 5, businessDaysToDelivery: 9 });
+  });
   it('no produce días negativos', () => expect(operationalDaysBetween(new Date('2026-08-18T12:00:00Z'), new Date('2026-08-14T12:00:00Z'), 'HABILES')).toBe(0));
   it('identidad incluye instancia de acto', () => expect(operationalCopyFingerprint({ expediente_acto_id: 'act-1', actividad_maestra_id: 'master-1', configuracion_revision: 1 })).not.toBe(operationalCopyFingerprint({ expediente_acto_id: 'act-2', actividad_maestra_id: 'master-1', configuracion_revision: 1 })));
   it('una dependencia completada o no aplicable no bloquea downstream', () => {

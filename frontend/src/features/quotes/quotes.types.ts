@@ -1,9 +1,9 @@
 export const QUOTE_STATES = ['BORRADOR', 'ENVIADA_NOTARIA', 'PRESUPUESTO_RECIBIDO', 'EN_REVISION_ABOGADO', 'ENVIADA_CLIENTE', 'EN_NEGOCIACION', 'ACEPTADA', 'RECHAZADA', 'VENCIDA', 'SUSPENDIDA', 'CANCELADA', 'CONVERTIDA_EXPEDIENTE'] as const;
 export type QuoteState = typeof QUOTE_STATES[number];
 
-export const QUOTE_CONTRACT_STAGES = ['BORRADOR', 'ENVIADA_CLIENTE', 'ACEPTO_ANTICIPO', 'SUSPENDIDA', 'CANCELADA', 'CONVERTIDA_EXPEDIENTE'] as const;
+export const QUOTE_CONTRACT_STAGES = ['BORRADOR', 'EN_ELABORACION', 'ENVIADA_CLIENTE', 'EN_SEGUIMIENTO', 'ACEPTADA', 'RECHAZADA', 'ACEPTO_ANTICIPO', 'SUSPENDIDA', 'CANCELADA', 'CONVERTIDA_EXPEDIENTE'] as const;
 export type QuoteContractStage = typeof QUOTE_CONTRACT_STAGES[number];
-export type QuoteContractAction = 'ENVIAR_CLIENTE' | 'REENVIAR_CLIENTE' | 'REGISTRAR_ACEPTACION_ANTICIPO' | 'SUSPENDER' | 'CANCELAR' | 'CONVERTIR';
+export type QuoteContractAction = 'COMENZAR_ELABORACION' | 'ENVIAR_CLIENTE' | 'INICIAR_SEGUIMIENTO' | 'REENVIAR_CLIENTE' | 'ACEPTAR' | 'RECHAZAR' | 'SUSPENDER' | 'CANCELAR' | 'CONVERTIR' | 'REGISTRAR_ACEPTACION_ANTICIPO';
 export type QuoteWorkflowEvent = {
   id: string; previous: QuoteContractStage | null; next: QuoteContractStage;
   previousLabel?: string | null; nextLabel: string; action: string; actionLabel: string;
@@ -14,13 +14,14 @@ export type QuoteWorkflowEvent = {
 export type QuoteWorkflow = {
   stage: QuoteContractStage | null; stageLabel: string; stageEnteredAt?: string | null;
   knowledge: 'KNOWN' | 'UNKNOWN_LEGACY' | 'NOT_APPLICABLE'; version: number;
+  stages?: Array<{ code: QuoteContractStage; label: string }>;
   actions: Array<QuoteContractAction | { code: QuoteContractAction; label: string }>;
   firstSentAt?: string | null; lastSentAt?: string | null; acceptedAdvanceAt?: string | null;
   suspendedAt?: string | null; cancelledAt?: string | null; convertedAt?: string | null;
   provenance?: string | null; events?: QuoteWorkflowEvent[];
 };
 
-export type QuoteConceptCategory = 'HONORARIOS' | 'DERECHOS' | 'IMPUESTOS' | 'GASTOS' | 'OTROS';
+export type QuoteConceptCategory = 'HONORARIOS' | 'IVA_HONORARIOS' | 'IMPUESTOS_DERECHOS' | 'OTROS';
 export type QuoteConcept = { categoria: QuoteConceptCategory; concepto: string; monto: number };
 
 export type QuoteVersion = {
@@ -35,6 +36,7 @@ export type QuoteVersion = {
   pdf_url?: string | null;
   aprobada: boolean;
   created_at: string;
+  conceptos?: Array<{ id: string; concepto: string; categoria: QuoteConceptCategory; importe: number | string; orden: number; origen: 'MANUAL' | 'IMPORTADO' }>;
 };
 
 export type QuoteFollowUp = {
@@ -133,4 +135,16 @@ export type CreateQuoteVersionInput = {
   honorarios_pravia: number;
   notas?: string;
   aprobada?: boolean;
+  conceptos?: Array<{ categoria: QuoteConceptCategory; concepto: string; importe: number }>;
+  origen?: 'MANUAL' | 'IMPORTADO';
+};
+
+export type QuoteBudgetExtraction = {
+  rubros: Array<{ id: string; concepto: string; nombre_original?: string; monto: number; categoria: string }>;
+  total_notaria: number;
+  total_pdf_declarado: number;
+  suma_valida: boolean;
+  mensaje_validacion: string;
+  diferencia_monto: number;
+  error?: string;
 };

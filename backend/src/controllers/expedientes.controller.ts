@@ -1054,6 +1054,7 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
     const { id } = req.params;
     const file = req.file;
     const { nombre, categoria, carpeta, observaciones } = req.body;
+    const folderId = String(req.body.folder_id || '').trim() || null;
     const requisitoId = String(req.body.requisito_id || '').trim() || null;
     
     const userId = req.user?.id;
@@ -1110,6 +1111,10 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
     try {
       const result = await prisma.$transaction(async (tx) => {
         const storageKeyFinal = uploadedStorageKey as string;
+        const folder = folderId ? await tx.expedienteDocumentoCarpeta.findFirst({ where: {
+          id: folderId, organization_id: req.user!.organizationId, expediente_id: id, archived_at: null,
+        } }) : null;
+        if (folderId && !folder) throw new ExpedienteUpdateError('La carpeta no pertenece al expediente activo.', 'EXP004_FOLDER_ACCESS_DENIED', 403);
 
         const doc = await tx.documento.create({
           data: {
@@ -1142,7 +1147,9 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
             source_context: 'CARGA_DIRECTA',
             source_key: `EXPEDIENTE:EXPEDIENTE:${id}:${doc.id}:CARGA_DIRECTA`,
             document_version: createHash('sha256').update(fileBuffer).digest('hex'),
-            provenance: { origin: 'EXPEDIENTE', direct_upload: true }
+            provenance: { origin: 'EXPEDIENTE', direct_upload: true },
+            carpeta_id: folder?.id || null,
+            nombre_visual: nombre ? String(nombre).trim().slice(0, 500) : null,
           }
         });
 
@@ -1183,6 +1190,7 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
               expediente_documento_id: expDoc.id,
               categoria: categoriaTarget,
               carpeta: carpetaTarget,
+              carpeta_id: folder?.id || null,
               size_bytes: file.size,
               blob_copies: 0,
             },
@@ -1350,17 +1358,13 @@ export const updateExpedienteDocumento = async (req: Request, res: Response) => 
 
     if (expDoc) {
       const result = await prisma.$transaction(async (tx) => {
-        const updatedDocument = nombre
-          ? await tx.documento.update({
-              where: { id: expDoc.documento_id },
-              data: { nombre_original: nombre }
-            })
-          : expDoc.documento;
+        const cleanName = nombre ? String(nombre).trim().replace(/[\\/:*?"<>|]/g, '-').slice(0, 500) : '';
+        const updatedDocument = expDoc.documento;
 
-        const updatedLink = carpeta
+        const updatedLink = carpeta || cleanName
           ? await tx.expedienteDocumento.update({
               where: { id: expDoc.id },
-              data: { tipo_vinculo: carpeta }
+              data: { ...(carpeta ? { tipo_vinculo: carpeta } : {}), ...(cleanName ? { nombre_visual: cleanName } : {}) }
             })
           : expDoc;
 
@@ -1379,7 +1383,7 @@ export const updateExpedienteDocumento = async (req: Request, res: Response) => 
 
         return {
           id: updatedDocument.id,
-          nombre: updatedDocument.nombre_original,
+          nombre: updatedLink.nombre_visual || updatedDocument.nombre_original,
           carpeta: updatedLink.tipo_vinculo
         };
       });

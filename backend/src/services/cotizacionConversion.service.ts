@@ -57,7 +57,7 @@ export class CotizacionConversionService {
         include: {
           prospecto: true,
           expediente: true,
-          versiones: { orderBy: { version: 'desc' } },
+          versiones: { orderBy: { version: 'desc' }, include: { conceptos: { orderBy: { orden: 'asc' } } } },
           pagos: true,
           transicion_actual: true,
         },
@@ -124,7 +124,12 @@ export class CotizacionConversionService {
       if (!actor) throw new CotizacionBusinessError('El usuario que convierte no existe o está inactivo.', 'ACTOR_INVALID', 403);
       if (!lawyer) throw new CotizacionBusinessError('El abogado asignado no existe o está inactivo.', 'LAWYER_INVALID');
 
-      const tipoActo = await this.resolveTipoActo(tx, input.tipoActoId, cotizacion.prospecto?.tipo_acto);
+      const tipoActo = await this.resolveTipoActo(
+        tx,
+        input.actorOrganizationId,
+        input.tipoActoId,
+        cotizacion.prospecto?.tipo_acto,
+      );
       const approvedVersion = cotizacion.versiones.find((version) => version.aprobada)
         || cotizacion.versiones[0];
       if (!approvedVersion) throw new CotizacionBusinessError('La cotización no tiene una versión estructurada aprobada.', 'APPROVED_VERSION_REQUIRED');
@@ -247,7 +252,7 @@ export class CotizacionConversionService {
           tipo: 'AUDITORIA',
           titulo: 'Conversión desde cotización aceptada',
           descripcion: canonical
-            ? `Expediente ${numeroPravia} creado después del hito comercial Aceptó / Anticipo. Se vincularon ${documentLinks.size} documento(s) sin duplicar archivos.`
+            ? `Expediente ${numeroPravia} creado desde la cotización aceptada. Se vincularon ${documentLinks.size} documento(s) sin duplicar archivos.`
             : `Expediente ${numeroPravia} creado con anticipo validado por ${eligibility.validatedAdvanceTotal.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' })}. Se vincularon ${documentLinks.size} documento(s) sin duplicar archivos.`,
           metadatos: {
             cotizacion_id: cotizacion.id,
@@ -287,16 +292,26 @@ export class CotizacionConversionService {
     }, { timeout: 20_000 });
   }
 
-  private async resolveTipoActo(tx: Prisma.TransactionClient, requestedId?: string, prospectTypeName?: string | null) {
+  private async resolveTipoActo(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    requestedId?: string,
+    prospectTypeName?: string | null,
+  ) {
+    const visibleAct = {
+      activo: true,
+      archived_at: null,
+      OR: [{ organization_id: null }, { organization_id: organizationId }],
+    } satisfies Prisma.TipoActoWhereInput;
     if (requestedId) {
-      const requested = await tx.tipoActo.findFirst({ where: { id: requestedId, activo: true } });
+      const requested = await tx.tipoActo.findFirst({ where: { id: requestedId, ...visibleAct } });
       if (requested) return requested;
       throw new CotizacionBusinessError('El tipo de acto seleccionado no existe o está inactivo.', 'TIPO_ACTO_INVALID');
     }
     if (prospectTypeName?.trim()) {
       const prospectName = prospectTypeName.trim();
       const exactMatch = await tx.tipoActo.findFirst({
-        where: { activo: true, nombre: { equals: prospectName, mode: 'insensitive' } },
+        where: { ...visibleAct, nombre: { equals: prospectName, mode: 'insensitive' } },
         orderBy: { nombre: 'asc' },
       });
       if (exactMatch) return exactMatch;
@@ -310,7 +325,7 @@ export class CotizacionConversionService {
         });
       if (significantWord) {
         const candidates = await tx.tipoActo.findMany({
-          where: { activo: true, nombre: { contains: significantWord, mode: 'insensitive' } },
+          where: { ...visibleAct, nombre: { contains: significantWord, mode: 'insensitive' } },
           orderBy: { nombre: 'asc' },
           take: 5,
         });

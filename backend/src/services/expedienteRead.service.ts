@@ -24,6 +24,7 @@ export class ExpedienteReadService {
 
   private where(user: AuthUser, query: ParsedExpedienteQuery): Prisma.ExpedienteWhereInput {
     const AND: Prisma.ExpedienteWhereInput[] = [scopeWhere(user)];
+    if (query.folio) AND.push({ numero_pravia: { contains: query.folio, mode: 'insensitive' } });
     if (query.status) AND.push({ estatus: query.status });
     else if (query.macrophase) AND.push({ estatus: { in: EXPEDIENTE_MACROPHASE_STATUSES[query.macrophase] } });
     if (query.stage) AND.push({ etapaActual: { is: { nombre_snapshot: { equals: query.stage, mode: 'insensitive' } } } });
@@ -42,6 +43,10 @@ export class ExpedienteReadService {
       { resultado_json: { path: ['clasificacion'], equals: 'INCOMPLETO' } },
       { resultado_json: { path: ['clasificacion'], equals: 'INSUMOS_INCOMPLETOS' } },
     ] } } });
+    if (query.compliance === 'UNEVALUATED') AND.push({ complianceStates: { none: {} } });
+    if (query.compliance === 'COMPLETE') AND.push({ complianceStates: { some: { state: 'CUMPLIMIENTO_COMPLETO' } } });
+    if (query.compliance === 'OVERDUE') AND.push({ complianceStates: { some: { state: 'VENCIDO' } } });
+    if (query.compliance === 'PENDING') AND.push({ complianceStates: { some: { state: { in: ['PENDIENTE', 'EN_PROCESO', 'LISTO'] } } } });
     if (query.search) {
       const term = query.search;
       AND.push({ OR: [

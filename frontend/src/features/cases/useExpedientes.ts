@@ -11,7 +11,7 @@ export function useExpedientes(filters: ExpedienteListFilters) {
     if (!loaded.current) setStatus('loading');
     try { setResult(await expedientesService.list({ ...filters, search: deferredSearch }, signal)); loaded.current = true; setStatus('ready'); }
     catch (error) { if (!(error instanceof DOMException && error.name === 'AbortError')) setStatus('error'); }
-  }, [deferredSearch, filters.macrophase, filters.stage, filters.responsible, filters.notary, filters.risk, filters.dateFrom, filters.dateTo, filters.actType, filters.client, filters.status, filters.page, filters.sort]);
+  }, [deferredSearch, filters.folio, filters.macrophase, filters.stage, filters.responsible, filters.notary, filters.risk, filters.compliance, filters.dateFrom, filters.dateTo, filters.actType, filters.client, filters.status, filters.page, filters.sort]);
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
   return { result, status, reload: () => load() };
 }

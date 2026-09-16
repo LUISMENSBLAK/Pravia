@@ -165,7 +165,11 @@ describe('CFG-001 forensic behavior', () => {
     mocks.db.tipoActo.findFirst.mockResolvedValue(null);
     mocks.db.tipoActo.create.mockResolvedValue({ id: 'act-new', organization_id: actor.organizationId, nombre: 'Acto privado', descripcion: null, activo: true });
     mocks.db.configuracionActo.create.mockResolvedValue({ id: 'config-new', revision: 1, etapas: [] });
-    await actsAndTimesService.create(actor, { nombre: 'Acto privado' });
+    await actsAndTimesService.create(actor, {
+      nombre: 'Acto privado',
+      clasificacion: 'NO TRASLATIVOS',
+      familia: 'Otros actos',
+    });
     expect(mocks.db.tipoActo.findUnique).not.toHaveBeenCalled();
     expect(mocks.db.tipoActo.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ codigo_catalogo: expect.any(String) }) }));
     expect(mocks.db.tipoActo.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ organization_id: actor.organizationId }) }));

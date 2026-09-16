@@ -1,25 +1,38 @@
-import { RotateCcw, Search, SlidersHorizontal } from 'lucide-react';
-import { useState } from 'react';
+import { ArrowDown, ArrowUp, Filter, X } from 'lucide-react';
+import type { ReactNode } from 'react';
 import type { ExpedienteListResult } from '../expedientes.types';
-import { statusLabels } from '../expedienteFormatters';
 import styles from '../Expedientes.module.css';
-type Props = { values: Record<string, string>; facets: ExpedienteListResult['facets']; onChange(field: string, value: string): void; onClear(): void };
-export function ExpedienteFilters({ values, facets, onChange, onClear }: Props) {
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const select = (label: string, field: string, options: Array<{ value: string; label: string }>) => <label className={styles.field}><span>{label}</span><select value={values[field] || ''} onChange={(event) => onChange(field, event.target.value)}><option value="">Todos</option>{options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>;
-  return <section className={`${styles.filters} ${mobileOpen ? styles.filtersOpen : ''}`} aria-label="Filtros de expedientes">
-    <label className={`${styles.field} ${styles.searchField}`}><span>Buscar</span><div><Search size={16} /><input value={values.search || ''} onChange={(event) => onChange('search', event.target.value)} placeholder="Folio, cliente, acto, notaría…" /></div></label>
-    <button type="button" className={styles.mobileFilterToggle} aria-expanded={mobileOpen} onClick={() => setMobileOpen((value) => !value)}><SlidersHorizontal size={16} />{mobileOpen ? 'Ocultar filtros' : 'Más filtros'}</button>
-    {select('Etapa', 'stage', facets.stages.map((name) => ({ value: name, label: name })))}
-    {select('Responsable', 'responsible', facets.responsibles.map((item) => ({ value: item.id, label: `${item.nombre} ${item.apellido || ''}`.trim() })))}
-    {select('Notaría', 'notary', facets.notaries.map((item) => ({ value: item.id, label: item.numero_notaria ? `Notaría ${item.numero_notaria} · ${item.municipio || item.nombre}` : item.nombre })))}
-    {select('Riesgo', 'risk', [{ value: 'ATTENTION', label: 'Requiere atención' }, { value: 'EVALUATED', label: 'Evaluado' }, { value: 'UNEVALUATED', label: 'Sin evaluar' }])}
-    <label className={styles.field}><span>Actualización</span><div className={styles.dateRange}><input aria-label="Actualizado desde" type="date" value={values.dateFrom || ''} onChange={(event) => onChange('dateFrom', event.target.value)} /><input aria-label="Actualizado hasta" type="date" value={values.dateTo || ''} onChange={(event) => onChange('dateTo', event.target.value)} /></div></label>
-    {select('Tipo de acto', 'actType', facets.actTypes.map((item) => ({ value: item.id, label: item.nombre })))}
-    <label className={styles.field}><span>Cliente</span><input value={values.client || ''} onChange={(event) => onChange('client', event.target.value)} placeholder="Nombre o razón social" /></label>
-    {select('Estado', 'status', Object.entries(statusLabels).map(([value, label]) => ({ value, label })))}
-    {select('Orden', 'sort', [{ value: 'updated_at:desc', label: 'Actualización reciente' }, { value: 'updated_at:asc', label: 'Actualización antigua' }, { value: 'numero_pravia:asc', label: 'Folio ascendente' }, { value: 'numero_pravia:desc', label: 'Folio descendente' }])}
-    <button type="button" className={styles.savedFilters} disabled title="Los filtros guardados se habilitarán cuando exista un contrato persistente"><SlidersHorizontal size={16} />Filtros guardados</button>
-    <button type="button" className={styles.clearButton} onClick={onClear}><RotateCcw size={16} />Limpiar filtros</button>
-  </section>;
+
+type Props = { values: Record<string, string>; facets: ExpedienteListResult['facets']; onChange(field: string, value: string): void };
+
+function ColumnFilter({ label, active, onClear, children, sort, onSort }: { label: string; active: boolean; onClear(): void; children: ReactNode; sort?: 'asc' | 'desc' | null; onSort?(): void }) {
+  return <div className={styles.columnHeader}>
+    <span>{label}</span>
+    {onSort && <button type="button" className={`${styles.sortButton} ${sort ? styles.headerControlActive : ''}`} aria-label={`Ordenar ${label} ${sort === 'asc' ? 'descendente' : 'ascendente'}`} onClick={onSort}>{sort === 'desc' ? <ArrowDown /> : <ArrowUp />}</button>}
+    <details className={styles.columnFilter}>
+      <summary className={active ? styles.headerControlActive : ''} aria-label={`Filtrar ${label}`}><Filter />{active && <i aria-hidden="true" />}</summary>
+      <div className={styles.columnFilterPanel}>
+        <strong>Filtrar {label}</strong>
+        {children}
+        {active && <button type="button" className={styles.clearColumnFilter} onClick={onClear}><X />Limpiar este filtro</button>}
+      </div>
+    </details>
+  </div>;
+}
+
+const sortDirection = (sort: string, field: string) => sort.startsWith(`${field}:`) ? sort.split(':')[1] as 'asc' | 'desc' : null;
+
+export function ExpedienteFilters({ values, facets, onChange }: Props) {
+  const changeSort = (field: string) => { const current = sortDirection(values.sort || '', field); onChange('sort', `${field}:${current === 'asc' ? 'desc' : 'asc'}`); };
+  return <tr className={styles.columnHeaders}>
+    <th aria-label="Folio"><ColumnFilter label="Folio" active={Boolean(values.folio)} onClear={() => onChange('folio', '')} sort={sortDirection(values.sort || '', 'numero_pravia')} onSort={() => changeSort('numero_pravia')}><input aria-label="Filtrar por folio" value={values.folio || ''} onChange={(event) => onChange('folio', event.target.value)} placeholder="EXP-0001-2026" /></ColumnFilter></th>
+    <th aria-label="Acto"><ColumnFilter label="Acto" active={Boolean(values.actType)} onClear={() => onChange('actType', '')}><select aria-label="Filtrar por acto" value={values.actType || ''} onChange={(event) => onChange('actType', event.target.value)}><option value="">Todos</option>{facets.actTypes.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select></ColumnFilter></th>
+    <th aria-label="Cliente"><ColumnFilter label="Cliente" active={Boolean(values.client)} onClear={() => onChange('client', '')}><input aria-label="Filtrar por cliente" value={values.client || ''} onChange={(event) => onChange('client', event.target.value)} placeholder="Nombre o razón social" /></ColumnFilter></th>
+    <th aria-label="Etapa"><ColumnFilter label="Etapa" active={Boolean(values.stage)} onClear={() => onChange('stage', '')}><select aria-label="Filtrar por etapa" value={values.stage || ''} onChange={(event) => onChange('stage', event.target.value)}><option value="">Todas</option>{facets.stages.map((name) => <option key={name}>{name}</option>)}</select></ColumnFilter></th>
+    <th aria-label="Responsable"><ColumnFilter label="Responsable" active={Boolean(values.responsible)} onClear={() => onChange('responsible', '')}><select aria-label="Filtrar por responsable" value={values.responsible || ''} onChange={(event) => onChange('responsible', event.target.value)}><option value="">Todos</option>{facets.responsibles.map((item) => <option key={item.id} value={item.id}>{`${item.nombre} ${item.apellido || ''}`.trim()}</option>)}</select></ColumnFilter></th>
+    <th aria-label="Actualización"><ColumnFilter label="Actualización" active={Boolean(values.dateFrom || values.dateTo)} onClear={() => onChange('dateRange', '')} sort={sortDirection(values.sort || '', 'updated_at')} onSort={() => changeSort('updated_at')}><label>Desde<input aria-label="Actualizado desde" type="date" value={values.dateFrom || ''} onChange={(event) => onChange('dateFrom', event.target.value)} /></label><label>Hasta<input aria-label="Actualizado hasta" type="date" value={values.dateTo || ''} onChange={(event) => onChange('dateTo', event.target.value)} /></label></ColumnFilter></th>
+    <th aria-label="Vulnerable"><ColumnFilter label="Vulnerable" active={Boolean(values.risk)} onClear={() => onChange('risk', '')}><select aria-label="Filtrar por vulnerabilidad" value={values.risk || ''} onChange={(event) => onChange('risk', event.target.value)}><option value="">Todos</option><option value="ATTENTION">Requiere atención</option><option value="EVALUATED">Evaluado</option><option value="UNEVALUATED">Sin evaluar</option></select></ColumnFilter></th>
+    <th aria-label="Cumplimiento"><ColumnFilter label="Cumplimiento" active={Boolean(values.compliance)} onClear={() => onChange('compliance', '')}><select aria-label="Filtrar por cumplimiento" value={values.compliance || ''} onChange={(event) => onChange('compliance', event.target.value)}><option value="">Todos</option><option value="COMPLETE">Completo</option><option value="PENDING">Pendiente</option><option value="OVERDUE">Vencido</option><option value="UNEVALUATED">Sin evaluar</option></select></ColumnFilter></th>
+    <th><span className={styles.srOnly}>Acciones</span></th>
+  </tr>;
 }

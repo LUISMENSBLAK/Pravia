@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma';
-import { CotizacionEstado, Prisma } from '@prisma/client';
+import { CotizacionEtapaContractual, CotizacionEstado, Prisma } from '@prisma/client';
 import { logAudit } from '../utils/auditLogger';
 import {
   CotizacionBusinessError,
@@ -16,9 +16,47 @@ import { ProspectWorkflowService } from '../services/prospectWorkflow.service';
 import { prospectWorkflowError } from './prospectWorkflowError';
 import { CotizacionWorkflowService } from '../services/cotizacionWorkflow.service';
 import { allowedQuoteActions, QuoteContractError, quoteKnowledge, quoteStageLabel } from '../domain/cotizacionContract';
+import { BudgetValidationError, budgetTotals, normalizeBudgetConcepts } from '../domain/expedienteBudget';
+import { QuoteDocumentError, quoteDocumentService } from '../services/quoteDocument.service';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
 const cotizacionWorkflowService = new CotizacionWorkflowService(prisma);
+const quoteFrozenStages = new Set<CotizacionEtapaContractual>([
+  CotizacionEtapaContractual.ACEPTADA,
+  CotizacionEtapaContractual.ACEPTO_ANTICIPO,
+  CotizacionEtapaContractual.CONVERTIDA_EXPEDIENTE,
+]);
+
+const normalizeQuoteConcepts = (raw: unknown) => normalizeBudgetConcepts(
+  Array.isArray(raw) ? raw.map((item: any) => ({
+    concepto: item?.concepto,
+    importe: item?.importe ?? item?.monto,
+    categoria: item?.categoria,
+  })) : raw,
+);
+
+const quoteBudgetResponse = (rows: any[]) => {
+  const concepts = rows.map((row, orden) => ({
+    id: row.id,
+    concepto: row.concepto,
+    categoria: row.categoria,
+    importe: String(row.importe),
+    importeCents: BigInt(Math.round(Number(row.importe) * 100)),
+    orden,
+    origen: row.origen,
+  }));
+  const totals = budgetTotals(concepts);
+  return {
+    concepts: concepts.map(({ importeCents: _ignored, ...item }) => item),
+    totals: {
+      honorarios: totals.honorarios,
+      iva_honorarios: totals.iva_honorarios,
+      subtotal_honorarios: totals.subtotal_honorarios,
+      impuestos_derechos: totals.subtotal_impuestos_derechos,
+      total: totals.total,
+    },
+  };
+};
 
 const quoteWorkflowError = (res: Response, error: unknown) => {
   if (error instanceof QuoteContractError) return res.status(error.status).json({ error: error.message, code: error.code });
@@ -133,7 +171,8 @@ export const getCotizacionById = async (req: Request, res: Response) => {
         },
         notaria: true,
         fuente_notarial: { include: { documento: { select: { id: true, nombre_original: true, mime_type: true } } } },
-        versiones: { orderBy: { version: 'desc' } },
+        versiones: { orderBy: { version: 'desc' }, include: { conceptos: { orderBy: { orden: 'asc' } } } },
+        conceptos: { orderBy: { orden: 'asc' } },
         documentos: true,
         pagos: true,
         expediente: true,
@@ -151,6 +190,7 @@ export const getCotizacionById = async (req: Request, res: Response) => {
       fuente_notarial: req.user?.permissions.includes('documentos.read') ? cotizacion.fuente_notarial : null,
       transiciones_permitidas: getAllowedCotizacionTransitions(cotizacion.estado, Boolean(cotizacion.fuente_notarial_id)),
       conversion: evaluateConversionEligibility(cotizacion),
+      presupuesto: quoteBudgetResponse(cotizacion.conceptos),
       workflow,
     };
     res.json(safeCotizacion);
@@ -252,6 +292,8 @@ export const createCotizacionVersion = async (req: Request, res: Response) => {
     const { id } = req.params;
     const {
       desglose_notaria,
+      conceptos,
+      origen,
       desglose_pravia,
       total_notaria,
       honorarios_pravia,
@@ -261,8 +303,14 @@ export const createCotizacionVersion = async (req: Request, res: Response) => {
     const actorUserId = req.user?.id;
     if (!actorUserId) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
 
-    // Total cliente equals total notaria (PRAVIA participation is an internal split, NOT an additive fee)
-    const totalNotariaVal = Number(total_notaria || 0);
+    const normalizedConcepts = normalizeQuoteConcepts(conceptos ?? (desglose_notaria as any)?.rubros);
+    const calculated = budgetTotals(normalizedConcepts);
+    // The normalized rows are authoritative; supplied totals are accepted only
+    // when they agree exactly, preventing a document/JSON total from drifting.
+    const totalNotariaVal = Number(calculated.total);
+    if (total_notaria !== undefined && Number(total_notaria) !== totalNotariaVal) {
+      return res.status(400).json({ error: 'El total no coincide con los conceptos estructurados.', code: 'QUOTE_TOTAL_MISMATCH' });
+    }
     const totalClienteVal = totalNotariaVal;
     const honorariosPraviaVal = Number(honorarios_pravia || 0);
     if (!Number.isFinite(totalNotariaVal) || totalNotariaVal <= 0) {
@@ -280,6 +328,9 @@ export const createCotizacionVersion = async (req: Request, res: Response) => {
       const cotizacion = await tx.cotizacion.findUnique({ where: { id } });
       if (!cotizacion) {
         throw new CotizacionBusinessError('Cotización no encontrada.', 'COTIZACION_NOT_FOUND', 404);
+      }
+      if (cotizacion.etapa_contractual && quoteFrozenStages.has(cotizacion.etapa_contractual)) {
+        throw new CotizacionBusinessError('La cotización aceptada conserva su versión histórica y ya no puede modificarse.', 'QUOTE_ACCEPTED_IMMUTABLE', 409);
       }
 
       const latestVersion = await tx.cotizacionVersion.findFirst({
@@ -302,16 +353,27 @@ export const createCotizacionVersion = async (req: Request, res: Response) => {
           organization_id: cotizacion.organization_id,
           cotizacion_id: id,
           version: newVersionNum,
-          desglose_notaria,
+          desglose_notaria: { rubros: normalizedConcepts.map((item) => ({ concepto: item.concepto, categoria: item.categoria, monto: item.importe })) },
           desglose_pravia,
           total_notaria: totalNotariaVal,
           honorarios_pravia: honorariosPraviaVal,
           total_cliente: totalClienteVal,
           creada_por_id: userId,
           aprobada: aprobada ?? false,
-          notas
+          notas,
         }
       });
+      await tx.cotizacionVersionConcepto.createMany({ data: normalizedConcepts.map((item) => ({
+        organization_id: cotizacion.organization_id!, cotizacion_version_id: version.id,
+        concepto: item.concepto, categoria: item.categoria, importe: item.importe, orden: item.orden,
+        origen: origen === 'IMPORTADO' ? 'IMPORTADO' : 'MANUAL',
+      })) });
+      await tx.cotizacionConcepto.deleteMany({ where: { cotizacion_id: id, organization_id: cotizacion.organization_id! } });
+      await tx.cotizacionConcepto.createMany({ data: normalizedConcepts.map((item) => ({
+        organization_id: cotizacion.organization_id!, cotizacion_id: id, concepto: item.concepto,
+        categoria: item.categoria, importe: item.importe, orden: item.orden,
+        origen: origen === 'IMPORTADO' ? 'IMPORTADO' : 'MANUAL',
+      })) });
       const updatedCotizacion = await tx.cotizacion.update({
         where: { id },
         data: {
@@ -339,8 +401,12 @@ Equipo PRAVIA OS`,
       aprobada: Boolean(aprobada),
     });
 
-    res.status(201).json({ version: result.version, cotizacion: result.updatedCotizacion });
+    const version = await prisma.cotizacionVersion.findUnique({ where: { id: result.version.id }, include: { conceptos: { orderBy: { orden: 'asc' } } } });
+    res.status(201).json({ version, cotizacion: result.updatedCotizacion });
   } catch (error: any) {
+    if (error instanceof BudgetValidationError) {
+      return res.status(400).json({ error: error.message, code: error.code });
+    }
     if (error instanceof CotizacionBusinessError) {
       return res.status(error.status).json({ error: error.message, code: error.code });
     }
@@ -368,9 +434,15 @@ export const aprobarVersion = async (req: Request, res: Response) => {
 
     const result = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:cotizacion-version:${target.cotizacion_id}`}))`);
-      const version = await tx.cotizacionVersion.findUnique({ where: { id: versionId } });
+      const version = await tx.cotizacionVersion.findUnique({ where: { id: versionId }, include: { conceptos: true, cotizacion: { select: { etapa_contractual: true } } } });
       if (!version) {
         throw new CotizacionBusinessError('Versión de cotización no encontrada.', 'QUOTE_VERSION_NOT_FOUND', 404);
+      }
+      if (version.cotizacion.etapa_contractual && quoteFrozenStages.has(version.cotizacion.etapa_contractual)) {
+        throw new CotizacionBusinessError('La versión aceptada es inmutable.', 'QUOTE_ACCEPTED_IMMUTABLE', 409);
+      }
+      if (version.conceptos.length === 0) {
+        throw new CotizacionBusinessError('La versión debe contener conceptos estructurados.', 'QUOTE_STRUCTURED_BUDGET_REQUIRED', 409);
       }
 
       await tx.cotizacionVersion.updateMany({
@@ -456,6 +528,18 @@ export const extractPresupuesto = async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('Error en extractPresupuesto:', error);
     res.status(500).json({ error: 'Error al extraer montos del PDF', detail: error.message });
+  }
+};
+
+export const generateCotizacionDocument = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
+    const document = await quoteDocumentService.generate(req.user, req.params.id);
+    return res.status(201).json(document);
+  } catch (error) {
+    if (error instanceof QuoteDocumentError) return res.status(error.status).json({ error: error.message, code: error.code });
+    console.error('Quote document generation failed', error);
+    return res.status(500).json({ error: 'No fue posible generar la cotización.', code: 'QUOTE_DOCUMENT_GENERATION_FAILED' });
   }
 };
 

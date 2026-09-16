@@ -134,6 +134,8 @@ export type OperationalConfigurationSelectors = {
 };
 
 const normalized = (value: unknown) => String(value || '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es-MX');
+const isInternalCfg001FlowBase = (act: { nombre: string; codigo_catalogo?: string | null }) =>
+  act.nombre === 'Protocolización inmobiliaria' && String(act.codigo_catalogo || '').startsWith('CFG001_');
 const exceptionDependencySignature = (exception: any) => (exception.dependencias_adicionales || [])
   .map((item: any) => `${item.depende_actividad_id}:${item.bloqueante !== false}`)
   .sort();
@@ -234,7 +236,9 @@ export const actsAndTimesService = {
       orderBy: [{ activo: 'desc' }, { nombre: 'asc' }],
     });
     const normalizedSearch = search.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es');
-    const data = acts.map(effectiveAct).filter((act) => !normalizedSearch || `${act.nombre} ${act.descripcion || ''}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es').includes(normalizedSearch));
+    const data = acts.map(effectiveAct)
+      .filter((act) => !isInternalCfg001FlowBase(act))
+      .filter((act) => !normalizedSearch || `${act.nombre} ${act.descripcion || ''}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es').includes(normalizedSearch));
     return {
       data,
       metrics: catalogActMetrics(data),
@@ -305,12 +309,15 @@ export const actsAndTimesService = {
   async create(actor: Actor, input: any) {
     const nombre = requiredText(input.nombre, 'Nombre del acto');
     const descripcion = optionalText(input.descripcion);
+    const clasificacion = requiredText(input.clasificacion, 'Clasificación');
+    if (!['TRASLATIVOS', 'NO TRASLATIVOS'].includes(clasificacion)) throw new CatalogConfigurationError(400, 'ACT_CLASSIFICATION_INVALID', 'Selecciona Traslativos o No traslativos.');
+    const familia = requiredText(input.familia, 'Familia');
     return prisma.$transaction(async (tx) => {
       const duplicate = await tx.tipoActo.findFirst({ where: { nombre: { equals: nombre, mode: 'insensitive' }, archived_at: null, OR: [{ organization_id: actor.organizationId }, { organization_id: null }] }, select: { id: true } });
       if (duplicate) throw new CatalogConfigurationError(409, 'ACT_ALREADY_EXISTS', 'Ya existe un acto con ese nombre.');
       const act = await tx.tipoActo.create({ data: { organization_id: actor.organizationId, codigo_catalogo: await uniqueActCode(tx, nombre), nombre, descripcion, activo: true } });
-      const configuration = await tx.configuracionActo.create({ data: { organization_id: actor.organizationId, tipo_acto_id: act.id, creado_por_id: actor.id, actualizado_por_id: actor.id, activa: booleanValue(input.activo, true), etapas: { create: ['Prefirma', 'Firma', 'Postfirma', 'Registro', 'Cierre'].map((stage, index) => ({ organization_id: actor.organizationId, nombre: stage, orden: index + 1 })) } }, include: actInclude });
-      await audit(tx, actor, 'CFG_ACT_CREATED', 'TipoActo', act.id, undefined, { nombre, descripcion, configuracion_id: configuration.id });
+      const configuration = await tx.configuracionActo.create({ data: { organization_id: actor.organizationId, tipo_acto_id: act.id, creado_por_id: actor.id, actualizado_por_id: actor.id, activa: booleanValue(input.activo, true), clasificacion, familia, etapas: { create: ['Prefirma', 'Firma', 'Postfirma', 'Registro', 'Cierre'].map((stage, index) => ({ organization_id: actor.organizationId, nombre: stage, orden: index + 1 })) } }, include: actInclude });
+      await audit(tx, actor, 'CFG_ACT_CREATED', 'TipoActo', act.id, undefined, { nombre, descripcion, clasificacion, familia, configuracion_id: configuration.id });
       return { ...act, configuration, complete: false };
     });
   },
@@ -336,12 +343,17 @@ export const actsAndTimesService = {
       if (isTenantOwned && input.nombre !== undefined) identity.nombre = requiredText(input.nombre, 'Nombre del acto');
       if (isTenantOwned && input.descripcion !== undefined) identity.descripcion = optionalText(input.descripcion);
       if (Object.keys(identity).length) await tx.tipoActo.updateMany({ where: { id: actId }, data: identity });
-      const functionalChange = ['nombre', 'descripcion', 'activo', 'config_activa', 'requiere_revision'].some((key) => input[key] !== undefined);
+      const requestedClassification = input.clasificacion === undefined ? undefined : requiredText(input.clasificacion, 'Clasificación');
+      if (requestedClassification !== undefined && !['TRASLATIVOS', 'NO TRASLATIVOS'].includes(requestedClassification)) throw new CatalogConfigurationError(400, 'ACT_CLASSIFICATION_INVALID', 'Selecciona Traslativos o No traslativos.');
+      const requestedFamily = input.familia === undefined ? undefined : requiredText(input.familia, 'Familia');
+      const functionalChange = ['nombre', 'descripcion', 'activo', 'config_activa', 'requiere_revision', 'clasificacion', 'familia'].some((key) => input[key] !== undefined);
       const configuration = await tx.configuracionActo.update({ where: { id: config.id }, data: {
         ...(!isTenantOwned && input.nombre !== undefined ? { nombre_personalizado: requiredText(input.nombre, 'Nombre del acto') } : {}),
         ...(!isTenantOwned && input.descripcion !== undefined ? { descripcion_personalizada: optionalText(input.descripcion) } : {}),
         ...(input.activo !== undefined ? { activa: Boolean(input.activo) } : input.config_activa !== undefined ? { activa: Boolean(input.config_activa) } : {}),
         ...(input.requiere_revision !== undefined ? { requiere_revision: Boolean(input.requiere_revision) } : {}),
+        ...(requestedClassification !== undefined ? { clasificacion: requestedClassification } : {}),
+        ...(requestedFamily !== undefined ? { familia: requestedFamily } : {}),
         actualizado_por_id: actor.id,
         ...(functionalChange ? { revision: { increment: 1 } } : {}),
       } });

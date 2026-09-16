@@ -69,8 +69,15 @@ import {
   updateExpedienteSeguimientoActividad,
 } from '../controllers/expedienteSeguimiento.controller';
 import {
+  archiveExpedienteDocumentFolder,
+  createExpedienteDocumentFolder,
+  downloadExpedienteAppendixFile,
+  downloadExpedienteAppendixZip,
   getExpedienteAppendixSignedUrl,
   getExpedienteDocumentAppendix,
+  importExpedienteDocuments,
+  moveExpedienteDocumentItems,
+  renameExpedienteDocumentFolder,
   syncExpedienteDocumentAppendix,
 } from '../controllers/expedienteDocuments.controller';
 import {
@@ -98,6 +105,7 @@ import {
   verifyExpedientePraviaReceipt, voidExpedienteIncome, voidExpedientePaymentRequest,
 } from '../controllers/expedienteFinance.controller';
 import { addExpedienteActivityNote, listExpedienteActivity } from '../controllers/expedienteActivity.controller';
+import { listExpedienteQuestionnaireAnswers, listExpedienteQuestionnaires, saveExpedienteQuestionnaireAnswers } from '../controllers/expedienteQuestionnaires.controller';
 
 const router = express.Router();
 router.param('id', requireExpedienteAccess);
@@ -109,6 +117,9 @@ router.get('/', getExpedientes);
 router.get('/:id', getExpedienteById);
 router.get('/:id/actividad', requirePermission('expedientes.read'), listExpedienteActivity);
 router.post('/:id/actividad/notas', requirePermission('expedientes.write'), addExpedienteActivityNote);
+router.get('/:id/cuestionarios', requirePermission('expedientes.read'), listExpedienteQuestionnaires);
+router.get('/:id/cuestionarios/respuestas', requirePermission('expedientes.read'), listExpedienteQuestionnaireAnswers);
+router.post('/:id/cuestionarios/respuestas', requirePermission('expedientes.write'), saveExpedienteQuestionnaireAnswers);
 router.get('/:id/actos', listExpedienteActos);
 router.post('/:id/actos/preview', requirePermission('expedientes.write'), previewExpedienteActoChange);
 router.post('/:id/actos/aplicar', requirePermission('expedientes.write'), applyExpedienteActoChange);
@@ -176,6 +187,13 @@ router.get('/:id/documentos/descargar-zip', downloadCarpetaZip);
 router.get('/:id/carpetas/:carpeta/zip', downloadCarpetaZip);
 router.get('/:id/documentos/apendice', requirePermission('documentos.read'), getExpedienteDocumentAppendix);
 router.post('/:id/documentos/sincronizar', requirePermission('documentos.write'), syncExpedienteDocumentAppendix);
+router.post('/:id/documentos/importar/:origin(compareciente|predio)', requirePermission('documentos.write'), importExpedienteDocuments);
+router.post('/:id/documentos/carpetas', requirePermission('documentos.write'), createExpedienteDocumentFolder);
+router.patch('/:id/documentos/carpetas/:folderId', requirePermission('documentos.write'), renameExpedienteDocumentFolder);
+router.delete('/:id/documentos/carpetas/:folderId', requirePermission('documentos.unlink'), archiveExpedienteDocumentFolder);
+router.post('/:id/documentos/mover', requirePermission('documentos.write'), moveExpedienteDocumentItems);
+router.get('/:id/documentos/apendice/:itemId/descargar', requirePermission('documentos.read'), downloadExpedienteAppendixFile);
+router.post('/:id/documentos/apendice/descargar-zip', requirePermission('documentos.read'), downloadExpedienteAppendixZip);
 router.get('/:id/documentos/apendice/:itemId/url', requirePermission('documentos.read'), getExpedienteAppendixSignedUrl);
 router.post('/:id/documentos', requirePermission('documentos.write'), uploadDocumentoMulter.single('file'), addExpedienteDocumento);
 router.patch('/:id/requisitos/:requisitoId', updateExpedienteRequisito);

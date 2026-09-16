@@ -92,6 +92,24 @@ export const standardConcepts: StandardConcept[] = [
   { code: 'AVISO_DOMINIO', name: 'Aviso de dominio', duration: 3, nature: 'INGRESO_A_EXTERNO' },
 ];
 
+export const standardActTaxonomy = [
+  ['TRASLATIVOS', 'Compraventas', ['Compraventa', 'Compraventa con reserva de dominio', 'Compraventa con crédito y garantía hipotecaria', 'Compraventa con crédito sin garantía hipotecaria']],
+  ['TRASLATIVOS', 'Otros traslativos', ['Donación', 'Adjudicación', 'Permuta', 'Dación en pago']],
+  ['TRASLATIVOS', 'Fideicomisos', ['Constitución de fideicomiso', 'Cesión de derechos fideicomisarios', 'Reversión de fideicomiso', 'Extinción / ejecución de fines de fideicomiso', 'Transmisión en ejecución de fideicomiso', 'Transmisión en ejecución + constitución de nuevo fideicomiso']],
+  ['NO TRASLATIVOS', 'Protocolizaciones inmobiliarias', ['Protocolización de subdivisión', 'Protocolización de fusión', 'Protocolización de homologación', 'Protocolización de documentos', 'Rectificación de escritura de medidas', 'Rectificación de escritura — otros datos']],
+  ['NO TRASLATIVOS', 'Cancelaciones', ['Cancelación de hipoteca']],
+  ['NO TRASLATIVOS', 'Poderes', ['Poder sin registro', 'Poder para actos de dominio limitado', 'Poder para actos de dominio', 'Poder de persona moral']],
+  ['NO TRASLATIVOS', 'Otros instrumentos', ['Testamento', 'Ratificación de firmas', 'Testimonial']],
+  ['NO TRASLATIVOS', 'Societario', ['Protocolización de acta de asamblea — no vulnerable', 'Protocolización de acta de asamblea — vulnerable']],
+] as const;
+
+const taxonomyFor = (name: string) => {
+  for (const [classification, family, names] of standardActTaxonomy) {
+    if ((names as readonly string[]).includes(name)) return { classification, family };
+  }
+  return null;
+};
+
 export const standardActInheritance = [
   { act: 'Donación', base: 'Compraventa', family: 'INMOBILIARIO', exclusions: [] },
   { act: 'Adjudicación', base: 'Compraventa', family: 'INMOBILIARIO', exclusions: [] },
@@ -103,22 +121,22 @@ export const standardActInheritance = [
   { act: 'Reversión de fideicomiso', base: 'Constitución de fideicomiso', family: 'FIDUCIARIO', exclusions: ['SRE_SOLICITUD', 'SRE_OBTENCION'] },
   { act: 'Extinción / ejecución de fines de fideicomiso', base: 'Constitución de fideicomiso', family: 'FIDUCIARIO', exclusions: ['SRE_SOLICITUD', 'SRE_OBTENCION'] },
   { act: 'Transmisión en ejecución de fideicomiso', base: 'Constitución de fideicomiso', family: 'FIDUCIARIO', exclusions: ['SRE_SOLICITUD', 'SRE_OBTENCION'] },
-  { act: 'Transmisión en ejecución de fideicomiso + constitución de nuevo fideicomiso', base: 'Constitución de fideicomiso', family: 'FIDUCIARIO', exclusions: [] },
+  { act: 'Transmisión en ejecución + constitución de nuevo fideicomiso', base: 'Constitución de fideicomiso', family: 'FIDUCIARIO', exclusions: [] },
   { act: 'Compraventa con crédito sin garantía hipotecaria', base: 'Compraventa con crédito y garantía hipotecaria', family: 'INMOBILIARIO', exclusions: [] },
   { act: 'Protocolización de subdivisión', base: 'Protocolización inmobiliaria', family: 'INMOBILIARIO', exclusions: [] },
   { act: 'Protocolización de fusión', base: 'Protocolización inmobiliaria', family: 'INMOBILIARIO', exclusions: [] },
   { act: 'Protocolización de homologación', base: 'Protocolización inmobiliaria', family: 'INMOBILIARIO', exclusions: [] },
-  { act: 'Protocolización de documentos cuando corresponda', base: 'Protocolización inmobiliaria', family: 'INMOBILIARIO', exclusions: [] },
+  { act: 'Protocolización de documentos', base: 'Protocolización inmobiliaria', family: 'INMOBILIARIO', exclusions: [] },
   { act: 'Rectificación de escritura de medidas', base: 'Protocolización inmobiliaria', family: 'INMOBILIARIO', exclusions: [] },
-  { act: 'Rectificación de escritura de otros datos', base: 'Protocolización inmobiliaria', family: 'INMOBILIARIO', exclusions: ['SOLICITUD_CLG', 'INGRESO_CLG', 'OBTENCION_CLG', 'ENTREGA_CLG', 'SOLVENCIA_INGRESO', 'SOLVENCIA_OBTENCION'] },
+  { act: 'Rectificación de escritura — otros datos', base: 'Protocolización inmobiliaria', family: 'INMOBILIARIO', exclusions: ['SOLICITUD_CLG', 'INGRESO_CLG', 'OBTENCION_CLG', 'ENTREGA_CLG', 'SOLVENCIA_INGRESO', 'SOLVENCIA_OBTENCION'] },
   { act: 'Testamento', base: 'Poder sin registro', family: 'CORTO', exclusions: [] },
   { act: 'Ratificación de firmas', base: 'Poder sin registro', family: 'CORTO', exclusions: ['AVISO_DIRECCION'] },
   { act: 'Testimonial', base: 'Poder sin registro', family: 'CORTO', exclusions: ['AVISO_DIRECCION'] },
   { act: 'Poder para actos de dominio limitado', base: 'Poder sin registro', family: 'CORTO_REGISTRABLE', exclusions: [] },
   { act: 'Poder para actos de dominio', base: 'Poder sin registro', family: 'CORTO', exclusions: [] },
   { act: 'Poder de persona moral', base: 'Poder para actos de dominio limitado', family: 'SOCIETARIO', exclusions: ['AVISO_DOMINIO'] },
-  { act: 'Protocolización del acta de asamblea no vulnerable', base: 'Poder de persona moral', family: 'SOCIETARIO', exclusions: [] },
-  { act: 'Protocolización del acta de asamblea vulnerable', base: 'Protocolización del acta de asamblea no vulnerable', family: 'SOCIETARIO', exclusions: [] },
+  { act: 'Protocolización de acta de asamblea — no vulnerable', base: 'Poder de persona moral', family: 'SOCIETARIO', exclusions: [] },
+  { act: 'Protocolización de acta de asamblea — vulnerable', base: 'Protocolización de acta de asamblea — no vulnerable', family: 'SOCIETARIO', exclusions: [] },
 ] as const;
 
 type FlowStep = { concept: string; stage: string; dependsOn?: string[]; parallel?: string; durationOverride?: number };
@@ -191,7 +209,7 @@ export const standardFlowSpecs: Record<string, FlowStep[]> = {
   'Poder para actos de dominio': [
     { concept: 'AVISO_DOMINIO', stage: 'Postfirma', dependsOn: ['FIRMA'], parallel: 'CIERRE_DOMINIO' },
   ],
-  'Protocolización del acta de asamblea no vulnerable': [
+  'Protocolización de acta de asamblea — no vulnerable': [
     { concept: 'REVISION_INICIAL', stage: 'Prefirma', durationOverride: 5 },
   ],
 };
@@ -309,7 +327,7 @@ export class ConfigurationCatalogV2Service {
       if (duplicate) throw new CatalogConfigurationError(409, 'ACT_ALREADY_EXISTS', 'Ya existe un acto con ese nombre.');
       const act = await tx.tipoActo.create({ data: { organization_id: actor.organizationId, codigo_catalogo: `${code(name).slice(0, 60)}_${randomUUID().slice(0, 8).toUpperCase()}`, nombre: name, descripcion: source.descripcion, activo: true } });
       const base = source.configuracionesOperativas[0];
-      const configuration = await tx.configuracionActo.create({ data: { organization_id: actor.organizationId, tipo_acto_id: act.id, activa: base?.activa ?? true, requiere_revision: true, revision: 1, familia: base?.familia, hereda_configuracion_id: null, exclusiones_conceptos: [], creado_por_id: actor.id, actualizado_por_id: actor.id } });
+      const configuration = await tx.configuracionActo.create({ data: { organization_id: actor.organizationId, tipo_acto_id: act.id, activa: base?.activa ?? true, requiere_revision: true, revision: 1, familia: base?.familia, clasificacion: base?.clasificacion, hereda_configuracion_id: null, exclusiones_conceptos: [], creado_por_id: actor.id, actualizado_por_id: actor.id } });
       if (base) {
         const chain: any[] = []; const visited = new Set<string>(); let current: any = base;
         while (current) {
@@ -481,6 +499,7 @@ export class ConfigurationCatalogV2Service {
       const requiredActNames = [...new Set([
         ...Object.keys(standardFlowSpecs),
         ...standardActInheritance.flatMap((rule) => [rule.act, rule.base]),
+        ...standardActTaxonomy.flatMap(([, , names]) => [...names]),
       ])];
       for (const name of requiredActNames) {
         if (acts.some((item) => normalized(item.nombre) === normalized(name))) continue;
@@ -499,7 +518,11 @@ export class ConfigurationCatalogV2Service {
       for (const [actName, steps] of Object.entries(standardFlowSpecs)) {
         const act = acts.find((item) => normalized(item.nombre) === normalized(actName)); if (!act) continue;
         let configuration: any = act.configuracionesOperativas[0];
-        if (!configuration) configuration = await tx.configuracionActo.create({ data: { organization_id: actor.organizationId, tipo_acto_id: act.id, activa: true, requiere_revision: true, familia: actName === 'Poder sin registro' ? 'CORTO' : actName === 'Constitución de fideicomiso' ? 'FIDUCIARIO' : 'INMOBILIARIO', creado_por_id: actor.id, actualizado_por_id: actor.id }, include: { etapas: { include: { actividades: true } } } });
+        const taxonomy = taxonomyFor(actName);
+        if (!configuration) configuration = await tx.configuracionActo.create({ data: { organization_id: actor.organizationId, tipo_acto_id: act.id, activa: true, requiere_revision: true, familia: taxonomy?.family ?? (actName === 'Poder sin registro' ? 'Poderes' : actName === 'Constitución de fideicomiso' ? 'Fideicomisos' : 'Compraventas'), clasificacion: taxonomy?.classification ?? null, creado_por_id: actor.id, actualizado_por_id: actor.id }, include: { etapas: { include: { actividades: true } } } });
+        else if (taxonomy && (configuration.familia !== taxonomy.family || configuration.clasificacion !== taxonomy.classification)) {
+          configuration = await tx.configuracionActo.update({ where: { id: configuration.id }, data: { familia: taxonomy.family, clasificacion: taxonomy.classification }, include: { etapas: { include: { actividades: true } } } });
+        }
         configByActName.set(actName, configuration);
         const stageByName = new Map<string, any>(configuration.etapas.map((item: any) => [item.nombre, item]));
         for (const stageName of [...new Set(steps.map((item) => item.stage))]) if (!stageByName.has(stageName)) {
@@ -528,6 +551,17 @@ export class ConfigurationCatalogV2Service {
             const dependency = applicationByCode.get(dependencyCode) || (baseConfig && conceptByCode.get(dependencyCode) ? await tx.configuracionActividad.findFirst({ where: { organization_id: actor.organizationId, concepto_maestro_id: conceptByCode.get(dependencyCode)!.id, etapa: { configuracion_id: baseConfig.id } } }) : null);
             if (dependency) await tx.configuracionDependencia.upsert({ where: { actividad_id_depende_actividad_id: { actividad_id: activity.id, depende_actividad_id: dependency.id } }, update: {}, create: { organization_id: actor.organizationId, actividad_id: activity.id, depende_actividad_id: dependency.id, bloqueante: true } });
           }
+        }
+      }
+      for (const [classification, family, names] of standardActTaxonomy) {
+        for (const actName of names) {
+          const act = acts.find((item) => normalized(item.nombre) === normalized(actName));
+          if (!act) continue;
+          const current = configByActName.get(actName) || act.configuracionesOperativas[0];
+          const configuration = current
+            ? await tx.configuracionActo.update({ where: { id: current.id }, data: { clasificacion: classification, familia: family } })
+            : await tx.configuracionActo.create({ data: { organization_id: actor.organizationId, tipo_acto_id: act.id, activa: true, requiere_revision: true, clasificacion: classification, familia: family, creado_por_id: actor.id, actualizado_por_id: actor.id } });
+          configByActName.set(actName, configuration);
         }
       }
       const purchaseConfig = configByActName.get('Compraventa'); const trustConfig = configByActName.get('Constitución de fideicomiso');

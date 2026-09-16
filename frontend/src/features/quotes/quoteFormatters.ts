@@ -17,12 +17,28 @@ export const QUOTE_STATE_LABELS: Record<QuoteState, string> = {
 
 export const QUOTE_CONTRACT_STAGE_LABELS: Record<QuoteContractStage, string> = {
   BORRADOR: 'Borrador',
+  EN_ELABORACION: 'En elaboración',
   ENVIADA_CLIENTE: 'Enviada al cliente',
-  ACEPTO_ANTICIPO: 'Aceptó / Anticipo',
+  EN_SEGUIMIENTO: 'En seguimiento',
+  ACEPTADA: 'Aceptada',
+  RECHAZADA: 'Rechazada',
+  ACEPTO_ANTICIPO: 'Aceptó / Anticipo (histórico)',
   SUSPENDIDA: 'Suspendida',
   CANCELADA: 'Cancelada',
   CONVERTIDA_EXPEDIENTE: 'Convertida en expediente',
 };
+
+export const QUOTE_CONCEPT_CATEGORY_LABELS: Record<QuoteConcept['categoria'], string> = {
+  HONORARIOS: 'Honorarios',
+  IVA_HONORARIOS: 'IVA de honorarios',
+  IMPUESTOS_DERECHOS: 'Impuestos y derechos',
+  OTROS: 'Otros',
+};
+export const quoteCategoryLabel = (category: QuoteConcept['categoria']) => QUOTE_CONCEPT_CATEGORY_LABELS[category];
+export const quoteSubtotals = (concepts: QuoteConcept[]) => concepts.reduce<Partial<Record<QuoteConcept['categoria'], number>>>((result, item) => ({
+  ...result,
+  [item.categoria]: Number(result[item.categoria] || 0) + Number(item.monto || 0),
+}), {});
 
 export const quoteTone = (state: QuoteState) => {
   if (state === 'ACEPTADA') return 'success';
@@ -79,6 +95,11 @@ export const quoteDeadline = (quote: Quote) => {
 const asRecord = (value: unknown): Record<string, unknown> | null => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 export const conceptsFromVersion = (version?: QuoteVersion | null): QuoteConcept[] => {
   if (!version) return [];
+  if (version.conceptos?.length) return version.conceptos.map((item) => ({
+    categoria: item.categoria,
+    concepto: item.concepto,
+    monto: Number(item.importe),
+  }));
   const root = asRecord(version.desglose_notaria);
   const rows = Array.isArray(version.desglose_notaria) ? version.desglose_notaria : Array.isArray(root?.rubros) ? root.rubros : [];
   return rows.flatMap((item) => {
@@ -86,7 +107,7 @@ export const conceptsFromVersion = (version?: QuoteVersion | null): QuoteConcept
     const concepto = typeof row?.concepto === 'string' ? row.concepto : typeof row?.nombre === 'string' ? row.nombre : '';
     const monto = Number(row?.monto ?? row?.importe ?? 0);
     const rawCategory = String(row?.categoria ?? 'OTROS').toUpperCase();
-    const categoria = ['HONORARIOS', 'DERECHOS', 'IMPUESTOS', 'GASTOS', 'OTROS'].includes(rawCategory) ? rawCategory as QuoteConcept['categoria'] : 'OTROS';
+    const categoria = ['HONORARIOS', 'IVA_HONORARIOS', 'IMPUESTOS_DERECHOS'].includes(rawCategory) ? rawCategory as QuoteConcept['categoria'] : 'OTROS';
     return concepto && Number.isFinite(monto) ? [{ categoria, concepto, monto }] : [];
   });
 };

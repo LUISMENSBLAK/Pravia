@@ -394,7 +394,8 @@ describe("Catálogos contractuales accesibles", () => {
       screen.getByText("BANCO · 1 tiempo configurado"),
     ).toBeInTheDocument();
     expect(screen.getByText("Respuesta: 1 día hábil")).toBeInTheDocument();
-    expect(screen.getByText("1 etapa · Sin familia")).toBeInTheDocument();
+    expect(screen.getByText("Sin familia")).toBeInTheDocument();
+    expect(screen.getByText("1 etapa")).toBeInTheDocument();
     expect(
       screen.queryByText(/1 días|1 etapas|1 tiempos configurados/),
     ).not.toBeInTheDocument();

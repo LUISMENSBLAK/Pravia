@@ -6,6 +6,7 @@ const root = path.resolve(__dirname, '../../..');
 const read = (relative: string) => readFileSync(path.join(root, relative), 'utf8');
 const schema = read('backend/prisma/schema.prisma');
 const migration = read('backend/prisma/migrations/20260828020000_create_exp004_document_snapshot/migration.sql');
+const correctionMigration = read('backend/prisma/migrations/20260915010000_corrections004005006/migration.sql');
 const service = read('backend/src/services/expedienteDocumentAppendix.service.ts');
 const workflow = read('backend/src/services/expedienteWorkflow.service.ts');
 const controller = read('backend/src/controllers/expedientes.controller.ts');
@@ -19,18 +20,18 @@ const cases: Array<[string, () => void]> = [
   ['1 Prospect source contextual link', () => expect(service).toContain("addDocument('PROSPECTO'")],
   ['2 Cotización source contextual link', () => expect(service).toContain("'COTIZACION', expediente.cotizacion.id")],
   ['3 Cotización Notaría stays isolated', () => { expect(schema).toContain('COTIZACION_NOTARIA'); expect(service).toContain('isolated_notary_quote'); }],
-  ['4 Compareciente Vigente included', () => expect(service).toContain("documento: { estatus: 'VIGENTE' }")],
-  ['5 Compareciente Histórico excluded', () => expect(service).toContain("archived_at: null, estatus: 'ACTIVO'")],
+  ['4 Compareciente vigente discoverable only for explicit import', () => { expect(service).toContain("async importCurrent"); expect(service).toContain("['PENDIENTE', 'VIGENTE', 'POR_VENCER']"); }],
+  ['5 Compareciente histórico excluded from import', () => expect(service).toContain("archived_at: null, estatus: 'ACTIVO'")],
   ['6 Vigente v1→v2 pre-firma sync', () => { expect(service).toContain('document_version: candidate.documentVersion'); expect(service).toContain("estatus: 'SUSTITUIDO'"); }],
   ['7 old historical file preserved master', () => expect(service).not.toContain('documento.delete')],
-  ['8 Predio document included', () => expect(service).toContain("addDocument('PREDIO'")],
+  ['8 Predio document requires explicit controlled import', () => { expect(service).toContain("origin: 'COMPARECIENTE' | 'PREDIO'"); expect(service).toContain("vigencia: 'VIGENTE'"); expect(service).toContain("['PENDIENTE', 'VIGENTE', 'POR_VENCER']"); expect(service).toContain('explicit_import: true'); }],
   ['9 Finance origin preserved', () => expect(service).toContain("addDocument('FINANZAS'")],
   ['10 ISR origin preserved', () => expect(service).toContain("addDocument('ISR'")],
   ['11 direct Expediente upload origin', () => { expect(controller).toContain("origen: 'EXPEDIENTE'"); expect(controller).toContain("source_context: 'CARGA_DIRECTA'"); }],
   ['12 no duplicate blob on context link', () => { expect(service).toContain('blob_copies: 0'); expect(service).not.toContain('uploadFile'); expect(storage).toContain('upsert: false'); }],
   ['13 repeated sync idempotent', () => { expect(service).toContain('source_key: candidate.sourceKey'); expect(schema).toContain('uq_exp_documentos_source_key'); }],
   ['14 no duplicate contextual relation', () => expect(schema).toContain('@@unique([organization_id, expediente_id, source_key]')],
-  ['15 unlink source entity updates pre-firma safely', () => { expect(service).toContain('SOURCE_NO_LONGER_CURRENT'); expect(service).toContain('inactivado_at'); }],
+  ['15 source changes preserve the imported relation and provenance', () => { expect(service).toContain('previous_document_id'); expect(service).toContain('source_changed'); }],
   ['16 protected work not silently deleted', () => { expect(service).not.toContain('expedienteDocumento.delete'); expect(service).not.toContain('deleteFile'); }],
   ['17 missing legacy file preserved', () => expect(service).toContain('legacy_reference: true')],
   ['18 missing legacy file no fake signed URL', () => { expect(service).toContain('EXP004_FILE_UNAVAILABLE'); expect(service).toContain('fileExists(storageKey)'); expect(documentTab).toContain('Archivo no disponible'); }],
@@ -39,7 +40,7 @@ const cases: Array<[string, () => void]> = [
   ['21 snapshot includes sources', () => expect(schema).toContain('provenance_snapshot')],
   ['22 snapshot includes version identity', () => { expect(schema).toContain('document_version'); expect(schema).toContain('document_revision'); }],
   ['23 snapshot immutable', () => expect(migration).toContain('trg_exp004_snapshot_immutable')],
-  ['24 master changes after sign do not alter snapshot', () => expect(service).toContain('nombre_snapshot: candidate.document?.nombre_original')],
+  ['24 master changes after sign do not alter snapshot', () => expect(service).toContain('nombre_snapshot: candidate.visualName || candidate.document?.nombre_original')],
   ['25 Compareciente new Vigente after sign ignored by snapshot', () => expect(service).toContain('if (snapshot) return this.snapshotResponse(snapshot)')],
   ['26 Predio doc change after sign ignored', () => expect(service).toContain('CONGELADO_AL_FIRMAR')],
   ['27 snapshot does not freeze master', () => expect(migration).not.toMatch(/TRIGGER[^;]+ ON "pravia_os"\."documentos"/s)],
@@ -65,9 +66,15 @@ const cases: Array<[string, () => void]> = [
   ['47 7 legacy expedientes preserved', () => expect(migration).toContain('siete expedientes legacy')],
   ['48 no invented historical snapshots', () => expect(migration).toContain('no se crean snapshots')],
   ['49 blob count unchanged', () => expect(migration).toContain('Storage blob count before/after: unchanged')],
-  ['50 EXP-005 not implemented', () => expect(service).not.toContain('EXP-005')],
-  ['51 EXP-006 not implemented', () => expect(service).toContain('EXP-006 aún no existe')],
-  ['52 EXP-009 not implemented', () => expect(service).not.toContain('EXP-009')],
+  ['50 controlled imports never copy blobs', () => { expect(service).toContain('duplicates_created: 0'); expect(service).toContain('historical_imported: 0'); }],
+  ['51 EXP-006 folder paths freeze with snapshot', () => { expect(correctionMigration).toContain('expediente_documento_carpetas'); expect(service).toContain('folder_path_snapshot'); }],
+  ['52 visual rename does not mutate the shared canonical document', () => { expect(controller).toContain('nombre_visual: cleanName'); expect(controller).not.toContain('data: { nombre_original: nombre }'); }],
+  ['53 folder removal is soft and only allowed when empty', () => { expect(service).toContain('EXP004_FOLDER_NOT_EMPTY'); expect(service).toContain('archived_at: new Date()'); }],
+  ['54 upload persists the selected explorer folder', () => { expect(controller).toContain('carpeta_id: folder?.id || null'); expect(documentTab).toContain('folder_id: folderId'); }],
+  ['55 explorer search covers the full expediente', () => expect(documentTab).toContain('Buscar en todo el expediente')],
+  ['56 EXP-009 not implemented', () => expect(service).not.toContain('EXP-009')],
+  ['57 signed explorer rebuilds its immutable folder tree', () => { expect(service).toContain('snapshotFolderId'); expect(service).toContain('const folders = snapshotFolders(snapshot.items)'); expect(service).toContain('folder_id: item.folder_path_snapshot ? snapshotFolderId'); }],
+  ['58 signed ZIP supports an immutable folder selection', () => { expect(service).toContain('const paths = new Map(folders.map((folder) => [folder.id, folder.path]))'); expect(service).toContain('requestedFolders.size'); }],
 ];
 
 describe('EXP-004 contrato atómico', () => {

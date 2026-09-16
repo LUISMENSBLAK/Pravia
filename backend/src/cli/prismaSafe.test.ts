@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { urlWithSchema } from './prismaSafe';
+import { requiresMigrationConfirmation, urlWithSchema } from './prismaSafe';
 
 describe('Prisma CLI seguro', () => {
   it('fuerza el esquema operativo aunque la URL contenga otro', () => {
@@ -11,5 +11,11 @@ describe('Prisma CLI seguro', () => {
 
   it('rechaza protocolos ajenos a PostgreSQL', () => {
     expect(() => urlWithSchema('https://example.test', 'pravia_os')).toThrow('PostgreSQL');
+  });
+
+  it('exige confirmación también cuando migrate deploy recibe --schema', () => {
+    expect(requiresMigrationConfirmation(['migrate', 'deploy'])).toBe(true);
+    expect(requiresMigrationConfirmation(['migrate', 'deploy', '--schema', '/tmp/schema.prisma'])).toBe(true);
+    expect(requiresMigrationConfirmation(['migrate', 'status', '--schema', '/tmp/schema.prisma'])).toBe(false);
   });
 });

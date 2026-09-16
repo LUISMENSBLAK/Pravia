@@ -96,7 +96,8 @@ export function validateCotizacionTransition(input: {
 export function evaluateConversionEligibility(candidate: ConversionCandidate): ConversionEligibility {
   const canonical = Boolean(candidate.etapa_contractual);
   const accepted = canonical
-    ? candidate.etapa_contractual === CotizacionEtapaContractual.ACEPTO_ANTICIPO
+    ? candidate.etapa_contractual === CotizacionEtapaContractual.ACEPTADA
+      || candidate.etapa_contractual === CotizacionEtapaContractual.ACEPTO_ANTICIPO
     : candidate.estado === CotizacionEstado.ACEPTADA;
   const approvedVersion = candidate.versiones.some((version) => version.aprobada);
   const validatedAdvances = candidate.pagos.filter(
@@ -113,11 +114,11 @@ export function evaluateConversionEligibility(candidate: ConversionCandidate): C
   const failures: string[] = [];
 
   if (!accepted) failures.push(canonical
-    ? 'Registra primero el hito Aceptó / Anticipo.'
+    ? 'Registra primero la aceptación de la cotización.'
     : 'La cotización histórica debe estar aceptada por el cliente.');
   if (!approvedVersion) failures.push('Debe existir una versión de presupuesto aprobada.');
-  // In COT-001, “Aceptó / Anticipo” is one commercial milestone. A financial
-  // payment is deliberately informational and is never a conversion gate.
+  // In the canonical Correction-002 flow, acceptance is the commercial gate.
+  // A financial payment remains informational and is never a conversion gate.
   if (!canonical && !validatedAdvance) failures.push('Debe existir un anticipo mayor a cero validado por administración.');
   if (!notConverted) failures.push('La cotización ya fue convertida a expediente.');
   if (!linkedProspect) failures.push('La cotización debe conservar un prospecto vinculado.');

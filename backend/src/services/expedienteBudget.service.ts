@@ -181,8 +181,15 @@ export class ExpedienteBudgetService {
 
   async createFromQuoteInTransaction(tx: Prisma.TransactionClient, input: { actor: BudgetActor; expedienteId: string; quoteVersion: any }) {
     const { actor, expedienteId, quoteVersion } = input;
-    const rawConcepts = Array.isArray(quoteVersion?.desglose_notaria?.rubros) ? quoteVersion.desglose_notaria.rubros : [];
-    const normalized = rawConcepts.map((item: any) => ({ concepto: String(item?.concepto || '').trim(), categoria: quoteCategoryToBudget(item?.categoria, item?.concepto), importe: String(item?.monto ?? '0') })).filter((item: any) => item.concepto);
+    const structured = Array.isArray(quoteVersion?.conceptos) ? quoteVersion.conceptos : [];
+    const rawConcepts = structured.length
+      ? structured.map((item: any) => ({ concepto: item.concepto, categoria: item.categoria, importe: item.importe }))
+      : Array.isArray(quoteVersion?.desglose_notaria?.rubros) ? quoteVersion.desglose_notaria.rubros : [];
+    const normalized = rawConcepts.map((item: any) => ({
+      concepto: String(item?.concepto || '').trim(),
+      categoria: structured.length ? item.categoria : quoteCategoryToBudget(item?.categoria, item?.concepto),
+      importe: String(item?.importe ?? item?.monto ?? '0'),
+    })).filter((item: any) => item.concepto);
     const concepts = normalized.length ? normalizeBudgetConcepts(normalized) : [];
     const totals = budgetTotals(concepts);
     const totalFallback = money(quoteVersion.total_cliente);
@@ -194,8 +201,17 @@ export class ExpedienteBudgetService {
       total: concepts.length ? totals.total : totalFallback, requiere_clasificacion: !concepts.length,
       distribucion_requiere_revision: !concepts.length && praviaTotal > 0n,
       creado_por_id: actor.id, actualizado_por_id: actor.id,
-      conceptos: concepts.length ? { create: concepts.map((item) => ({ organization_id: actor.organizationId, concepto: item.concepto, categoria: item.categoria, importe: item.importe, orden: item.orden })) } : undefined,
     } });
+    if (concepts.length) {
+      await tx.expedientePresupuestoConcepto.createMany({ data: concepts.map((item) => ({
+        organization_id: actor.organizationId,
+        presupuesto_id: budget.id,
+        concepto: item.concepto,
+        categoria: item.categoria,
+        importe: item.importe,
+        orden: item.orden,
+      })) });
+    }
     const praviaHonorarios = praviaTotal > totals.honorariosCents ? totals.honorariosCents : praviaTotal;
     const praviaIva = praviaTotal - praviaHonorarios > totals.ivaHonorariosCents ? totals.ivaHonorariosCents : praviaTotal - praviaHonorarios;
     await tx.expedientePresupuestoDistribucion.create({ data: {

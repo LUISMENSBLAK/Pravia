@@ -6,6 +6,7 @@ const root = path.resolve(__dirname, '../../..');
 const read = (relative: string) => readFileSync(path.join(root, relative), 'utf8');
 const schema = read('backend/prisma/schema.prisma');
 const migration = read('backend/prisma/migrations/20260828010000_create_property_master/migration.sql');
+const correctionMigration = read('backend/prisma/migrations/20260915010000_corrections004005006/migration.sql');
 const master = read('backend/src/services/predios.service.ts');
 const relations = read('backend/src/services/expedientePredios.service.ts');
 const extraction = read('backend/src/services/openaiDocument.service.ts');
@@ -31,8 +32,8 @@ const cases: Array<[string, () => void]> = [
   ['14 acepta referencias no cardinales', () => expect(workspace).toContain('Del vértice 1 al 2')],
   ['15 vincula documentos al maestro canónico', () => expect(schema).toMatch(/documento\s+Documento\s+@relation/)],
   ['16 conserva Storage privado tenant-scoped', () => expect(read('backend/src/controllers/predios.controller.ts')).toContain('organizations/${user.organizationId}/documentos/')],
-  ['17 exige fuente IA explícita', () => expect(workspace).toContain('Documento fuente para extracción')],
-  ['18 envía sólo el documento seleccionado', () => expect(extraction).toContain('extraerPredioDesdeDocumento(\n  documento: DocumentoParaExtraccion')],
+  ['17 exige una o varias fuentes IA explícitas', () => { expect(workspace).toContain('sourceDocumentIds'); expect(workspace).toContain('fuentes vigentes'); }],
+  ['18 procesa sólo los documentos expresamente seleccionados', () => { expect(extraction).toContain('extraerPredioDesdeDocumento(\n  documento: DocumentoParaExtraccion'); expect(master).toContain('documentoIds.filter(Boolean)'); }],
   ['19 la extracción no recibe expediente completo', () => expect(extraction.slice(extraction.indexOf('extraerPredioDesdeDocumento'), extraction.indexOf('COMPATIBILIDAD: extracción'))).not.toContain('expedienteId')],
   ['20 la propuesta no escribe silenciosamente', () => expect(master).toContain('persisted_master: false')],
   ['21 el prompt prohíbe inventar datos', () => expect(extraction).toContain('No infieras ni completes datos ausentes')],
@@ -65,9 +66,10 @@ const cases: Array<[string, () => void]> = [
   ['48 preserva campos legacy', () => expect(migration).toContain('JSON y snapshots existentes permanecen intactos')],
   ['49 no crea writers legacy nuevos', () => { expect(master).not.toContain('datos_operacion'); expect(relations).not.toContain('datos_operacion'); }],
   ['50 previene maestros duplicados por identificador', () => { expect(migration).toContain('uq_predios_clave_catastral_active'); expect(migration).toContain('uq_predios_folio_real_active'); }],
-  ['51 no implementa EXP-004', () => expect(propertyTab).not.toContain('Generar instrumento')],
-  ['52 no implementa EXP-006 ni genera documentos', () => expect(relations).toContain('automatic_document_generation: false')],
-  ['53 no amplía ISR-001', () => { expect(master).not.toContain('deduccion'); expect(relations).not.toContain('calculoISR'); }],
+  ['51 clasifica Vigente/Histórico y antecedente principal', () => { expect(correctionMigration).toContain('PredioDocumentoVigencia'); expect(schema).toContain('es_antecedente_principal'); }],
+  ['52 vincular predio no genera ni importa documentos', () => expect(relations).toContain('automatic_document_generation: false')],
+  ['53 importación específica concurrente es idempotente', () => { expect(master).toContain('pg_advisory_xact_lock'); expect(master).toContain('blob_copies: 0'); }],
+  ['54 no amplía ISR-001', () => { expect(master).not.toContain('deduccion'); expect(relations).not.toContain('calculoISR'); }],
 ];
 
 describe('PRD-001 contrato atómico', () => {

@@ -47,12 +47,15 @@ export type ExpedienteDocumentAppendixItem = {
   id: string; documento_id?: string | null; origin: ExpedienteDocumentOrigin; source_name: string;
   source_entity_type?: string | null; source_entity_id?: string | null; source_context?: string | null;
   document_version: string; name: string; type: string; status: string; incorporated_at: string;
-  file_available: boolean; snapshot: boolean;
+  file_available: boolean; snapshot: boolean; folder_id?: string | null; folder_path?: string | null;
 };
+export type ExpedienteDocumentFolder = { id: string; parent_id?: string | null; nombre: string; orden: number };
 export type ExpedienteDocumentAppendix = {
   state: 'SINCRONIZADO_PREFIRMA' | 'CONGELADO_AL_FIRMAR'; frozen_at?: string | null; revision: string;
   groups: Array<{ origin: ExpedienteDocumentOrigin; label: string; items: ExpedienteDocumentAppendixItem[] }>;
+  folders: ExpedienteDocumentFolder[];
   sync?: { created: number; reactivated: number; inactivated: number; blob_copies: 0 };
+  import?: { origin: 'COMPARECIENTE' | 'PREDIO'; new: number; updated: number; unchanged: number; duplicates_created: 0; historical_imported: 0; blob_copies: 0 };
 };
 
 export type SeguimientoEstado = 'NO_INICIADO' | 'EN_PROCESO' | 'EN_ESPERA_EXTERNA' | 'COMPLETADO' | 'BLOQUEADO' | 'NO_APLICA';
@@ -74,6 +77,7 @@ export type ExpedienteSeguimiento = {
   actos: Array<{ expediente_acto_id: string; tipo_acto_id?: string; nombre: string; estatus: string; etapas: Array<{ nombre: string; orden: number; actividades: SeguimientoActivity[] }> }>;
   responsables: PersonOption[];
   proyeccion: { dias_restantes_ruta_critica: number; fecha_final_estimada?: string | null; semantica_paralelo: 'MAX'; altera_fecha_estimada_firma: false };
+  resumen_temporal: { fuente: 'SEGUIMIENTO'; dias_habiles_a_firma: number; dias_habiles_a_entrega: number };
   signals: { prefirm: SeguimientoActivity[]; postfirm: SeguimientoActivity[] };
 };
 
@@ -89,6 +93,14 @@ export type ExpedienteArtifacts = {
   data: ExpedienteArtifactPending[];
   preview: { revision: string; applicable: number; creates: number };
   source: 'CFG-002'; master_rules_editable: false; auto_generated_documents: 0;
+};
+
+export type ExpedienteQuestionnaireInstance = {
+  artifact: { id: string; name: string }; version: { id: string; number: number };
+  definition: import('../settings/catalogs/catalogs.types').QuestionnaireDefinition;
+  subject: { key: string; label: string }; prefill: Record<string, unknown>;
+  latestResponse: null | { id: string; estado: 'BORRADOR' | 'FINALIZADO'; revision: number; answers_json: Record<string, unknown>; completeness_json: { complete: boolean; missing: string[] }; created_at: string };
+  formats: Array<{ id: string; nombre: string }>;
 };
 
 export type BudgetConceptCategory = 'HONORARIOS' | 'IVA_HONORARIOS' | 'IMPUESTOS_DERECHOS';
@@ -123,7 +135,7 @@ export type ExpedienteListResult = {
   meta: { total: number; page: number; pageSize: number; limit: number; totalPages: number; hasPreviousPage: boolean; hasNextPage: boolean };
   facets: { actTypes: ActTypeOption[]; responsibles: PersonOption[]; notaries: NotaryOption[]; stages: string[] };
 };
-export type ExpedienteListFilters = { search?: string; macrophase?: string; stage?: string; responsible?: string; notary?: string; risk?: string; dateFrom?: string; dateTo?: string; actType?: string; client?: string; status?: string; page?: number; pageSize?: number; sort?: string };
+export type ExpedienteListFilters = { search?: string; folio?: string; macrophase?: string; stage?: string; responsible?: string; notary?: string; risk?: string; compliance?: string; dateFrom?: string; dateTo?: string; actType?: string; client?: string; status?: string; page?: number; pageSize?: number; sort?: string };
 
 export type EligibleQuoteCandidate = {
   id: string;

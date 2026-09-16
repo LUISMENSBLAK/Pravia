@@ -1,6 +1,6 @@
 import { apiRequest } from '../../services/api/client';
 import type { ManagedUser, NotificationItem, SearchResult, Session, UserPreferences } from './settings.types';
-import type { ActActivity, ActListPayload, ActivityConcept, CatalogAct, CatalogArtifact, CatalogFolder, CatalogOwner, ExplorerPayload, SupportingCatalogs, CatalogImportPreview } from './catalogs/catalogs.types';
+import type { ActActivity, ActListPayload, ActivityConcept, CatalogAct, CatalogArtifact, CatalogFolder, CatalogOwner, ExplorerPayload, SupportingCatalogs, CatalogImportPreview, QuestionnaireCatalogItem, QuestionnaireDefinition } from './catalogs/catalogs.types';
 import type { PublishTimingPolicyInput, TimingPolicyDefinition, TimingPolicyRevision } from './timing/timing.types';
 
 const qs = (params: Record<string, string | number | undefined>) => {
@@ -87,4 +87,10 @@ export const settingsService = {
   bootstrapCatalogLibraryV4: () => apiRequest('/settings/catalogs/artifacts/library/bootstrap', { method: 'POST', headers: { 'Idempotency-Key': 'PRAVIA_CFG002_STANDARD:v2-LEGAL' } }),
   previewCatalogImport: (files: File[]) => { const body = new FormData(); files.forEach((file) => body.append('files', file)); return apiRequest<{ data: CatalogImportPreview }>('/settings/catalogs/artifacts/import/preview', { method: 'POST', body }).then((payload) => payload.data); },
   confirmCatalogImport: (metadata: Record<string, unknown>, files: File[]) => { const body = new FormData(); body.append('metadata', JSON.stringify(metadata)); files.forEach((file) => body.append('files', file)); return apiRequest('/settings/catalogs/artifacts/import/confirm', { method: 'POST', headers: { 'Idempotency-Key': globalThis.crypto?.randomUUID?.() || `cfg002-${Date.now()}` }, body }); },
+  catalogQuestionnaires: (search = '') => apiRequest<{ data: QuestionnaireCatalogItem[] }>(`/settings/catalogs/questionnaires${search ? `?search=${encodeURIComponent(search)}` : ''}`).then((payload) => payload.data),
+  questionnaireSupporting: () => apiRequest<{ data: { acts: Array<{ id: string; nombre: string }>; stages: Array<{ id: string; nombre: string }>; formats: Array<{ id: string; nombre: string }> } }>('/settings/catalogs/questionnaires-supporting').then((payload) => payload.data),
+  createQuestionnaire: (definition: QuestionnaireDefinition) => apiRequest('/settings/catalogs/questionnaires', { method: 'POST', body: JSON.stringify({ definition }) }),
+  versionQuestionnaire: (id: string, definition: QuestionnaireDefinition) => apiRequest(`/settings/catalogs/questionnaires/${encodeURIComponent(id)}/versions`, { method: 'POST', body: JSON.stringify({ definition }) }),
+  duplicateQuestionnaire: (id: string) => apiRequest(`/settings/catalogs/questionnaires/${encodeURIComponent(id)}/duplicate`, { method: 'POST' }),
+  setQuestionnaireActive: (id: string, active: boolean) => apiRequest(`/settings/catalogs/questionnaires/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ active }) }),
 };

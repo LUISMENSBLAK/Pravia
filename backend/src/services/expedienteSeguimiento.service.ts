@@ -40,6 +40,36 @@ const stateLabels: Record<SeguimientoActividadEstado, string> = {
   COMPLETADO: 'Completado', BLOQUEADO: 'Bloqueado', NO_APLICA: 'No aplica',
 };
 
+type TemporalSummaryActivity = {
+  id: string; stageName: string; stageOrder: number; activityName: string;
+  state: SeguimientoActividadEstado; duration: number; margin: number;
+  dependencyIds: string[]; scopeKey: string; completedAt?: Date | null;
+};
+
+export const calculateTemporalSummary = (activities: TemporalSummaryActivity[]) => {
+  const projection = (items: TemporalSummaryActivity[]) => calculateCriticalPath(items.map((item) => ({
+    id: item.id,
+    duration: terminal.has(item.state) ? 0 : item.duration,
+    margin: terminal.has(item.state) ? 0 : item.margin,
+    dependencyIds: item.dependencyIds,
+    scopeKey: item.scopeKey,
+    completedAt: item.completedAt,
+  })));
+  const signatureOrders = activities
+    .filter((item) => normalize(item.stageName) === 'firma' || normalize(item.activityName) === 'firma')
+    .map((item) => item.stageOrder);
+  const signatureOrder = signatureOrders.length ? Math.max(...signatureOrders) : null;
+  const toSignature = signatureOrder === null ? [] : activities.filter((item) => item.stageOrder <= signatureOrder);
+  const delivery = projection(activities);
+  const signature = projection(toSignature);
+  return {
+    source: 'SEGUIMIENTO' as const,
+    businessDaysToSignature: signature.total,
+    businessDaysToDelivery: delivery.total,
+    delivery,
+  };
+};
+
 export const addOperationalDays = (date: Date, amount: number, type: ConfiguracionTipoDias) => {
   const result = new Date(date);
   let remaining = Math.max(0, Math.trunc(amount));
@@ -147,13 +177,19 @@ export class ExpedienteSeguimientoService {
       return { expediente_acto_id: actId, tipo_acto_id: act?.tipo_acto_id, nombre: act?.tipo_acto.nombre || 'Acto retirado', estatus: act?.estatus || 'RETIRADO', etapas: stages };
     });
     const activeForProjection = decorated.filter((item) => item.en_alcance && item.estado !== 'NO_APLICA');
-    const critical = calculateCriticalPath(activeForProjection.map((item) => ({
-      id: item.id, duration: terminal.has(item.estado) ? 0 : item.tiempo.estimado,
-      margin: terminal.has(item.estado) ? 0 : item.tiempo.margen,
+    const temporalSummary = calculateTemporalSummary(activeForProjection.map((item) => ({
+      id: item.id,
+      stageName: item.etapa_nombre_snapshot,
+      stageOrder: item.etapa_orden_snapshot,
+      activityName: item.actividad_nombre_snapshot,
+      state: item.estado,
+      duration: item.tiempo.estimado,
+      margin: item.tiempo.margen,
       dependencyIds: (depsByActivity.get(item.id) || []).filter((dep) => dep.bloqueante).map((dep) => dep.depende_actividad_id),
       scopeKey: `${item.alcance_instancia}:${item.alcance_referencia_id || item.expediente_acto_id}`,
       completedAt: item.fecha_completada_actual,
     })));
+    const critical = temporalSummary.delivery;
     const projectedDates = activeForProjection.map((item) => item.fecha_objetivo_proyectada).filter(Boolean) as Date[];
     return {
       expediente_id: expediente.id,
@@ -168,6 +204,11 @@ export class ExpedienteSeguimientoService {
         fecha_final_estimada: projectedDates.length ? new Date(Math.max(...projectedDates.map((item) => item.getTime()))) : null,
         semantica_paralelo: critical.parallel_semantics,
         altera_fecha_estimada_firma: false,
+      },
+      resumen_temporal: {
+        fuente: temporalSummary.source,
+        dias_habiles_a_firma: temporalSummary.businessDaysToSignature,
+        dias_habiles_a_entrega: temporalSummary.businessDaysToDelivery,
       },
       signals: { prefirm: decorated.filter((item) => normalize(item.etapa_nombre_snapshot) === 'prefirma'), postfirm: decorated.filter((item) => normalize(item.etapa_nombre_snapshot) === 'postfirma') },
     };

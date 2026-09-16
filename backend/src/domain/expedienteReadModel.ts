@@ -18,6 +18,7 @@ export function macrophaseForStatus(status: ExpedienteEstatus): ExpedienteMacrop
 
 export type ExpedienteQueryInput = {
   search?: unknown;
+  folio?: unknown;
   estatus?: unknown;
   macrofase?: unknown;
   etapa?: unknown;
@@ -27,6 +28,7 @@ export type ExpedienteQueryInput = {
   tipo_acto_id?: unknown;
   cliente?: unknown;
   riesgo?: unknown;
+  cumplimiento?: unknown;
   fecha_desde?: unknown;
   fecha_hasta?: unknown;
   page?: unknown;
@@ -37,6 +39,7 @@ export type ExpedienteQueryInput = {
 
 export type ParsedExpedienteQuery = {
   search?: string;
+  folio?: string;
   status?: ExpedienteEstatus;
   macrophase?: ExpedienteMacrophase;
   stage?: string;
@@ -45,6 +48,7 @@ export type ParsedExpedienteQuery = {
   actTypeId?: string;
   client?: string;
   risk?: 'ATTENTION' | 'EVALUATED' | 'UNEVALUATED';
+  compliance?: 'COMPLETE' | 'PENDING' | 'OVERDUE' | 'UNEVALUATED';
   updatedFrom?: Date;
   updatedTo?: Date;
   page: number;
@@ -67,10 +71,12 @@ export function parseExpedienteQuery(input: ExpedienteQueryInput): ParsedExpedie
   const statusValue = text(input.estatus)?.toUpperCase() as ExpedienteEstatus | undefined;
   const macroValue = text(input.macrofase)?.toUpperCase() as ExpedienteMacrophase | undefined;
   const riskValue = text(input.riesgo)?.toUpperCase() as ParsedExpedienteQuery['risk'];
+  const complianceValue = text(input.cumplimiento)?.toUpperCase() as ParsedExpedienteQuery['compliance'];
   const requestedSort = text(input.sort)?.toLowerCase().replace('folio', 'numero_pravia').replace('actualizacion', 'updated_at');
   const validSort = new Set<ParsedExpedienteQuery['sort']>(['numero_pravia:asc', 'numero_pravia:desc', 'updated_at:asc', 'updated_at:desc']);
   return {
     search: text(input.search),
+    folio: text(input.folio),
     status: statusValue && statuses.has(statusValue) ? statusValue : undefined,
     macrophase: macroValue && Object.prototype.hasOwnProperty.call(EXPEDIENTE_MACROPHASE_STATUSES, macroValue) ? macroValue : undefined,
     stage: text(input.etapa),
@@ -79,6 +85,7 @@ export function parseExpedienteQuery(input: ExpedienteQueryInput): ParsedExpedie
     actTypeId: text(input.tipo_acto_id),
     client: text(input.cliente),
     risk: riskValue && ['ATTENTION', 'EVALUATED', 'UNEVALUATED'].includes(riskValue) ? riskValue : undefined,
+    compliance: complianceValue && ['COMPLETE', 'PENDING', 'OVERDUE', 'UNEVALUATED'].includes(complianceValue) ? complianceValue : undefined,
     updatedFrom: date(input.fecha_desde),
     updatedTo: date(input.fecha_hasta, true),
     page,

@@ -19,7 +19,7 @@ export type ActActivity = {
   etapa?: { id: string; nombre: string; orden: number }; source_configuration_id?: string;
 };
 export type ActStage = { id: string; nombre: string; orden: number; activa: boolean; inherited?: boolean; actividades: ActActivity[] };
-export type ActConfiguration = { id: string; activa: boolean; requiere_revision: boolean; revision: number; familia?: string | null; hereda_configuracion_id?: string | null; exclusiones_conceptos?: string[] | null; created_at: string; updated_at: string; etapas: ActStage[] };
+export type ActConfiguration = { id: string; activa: boolean; requiere_revision: boolean; revision: number; familia?: string | null; clasificacion?: string | null; hereda_configuracion_id?: string | null; exclusiones_conceptos?: string[] | null; created_at: string; updated_at: string; etapas: ActStage[] };
 export type CatalogAct = { id: string; organization_id?: string | null; codigo_catalogo?: string | null; nombre: string; descripcion?: string | null; activo: boolean; complete: boolean; edited?: boolean; configuration?: ActConfiguration | null; effective_activities?: ActActivity[]; effective_stages?: ActStage[]; inheritance_chain?: string[] };
 export type ActListPayload = { data: CatalogAct[]; metrics: { total: number; complete: number; edited: number; pending: number } };
 
@@ -56,4 +56,22 @@ export type CatalogImportPreview = {
   total_files: number; total_bytes: number; requires_confirmation: true; persisted: false;
   folders?: string[];
   files: Array<{ path: string; name: string; extension: string; mimeType: string; checksum: string; size: number; folders: string[] }>;
+};
+
+export type QuestionnaireType = 'SHORT_TEXT' | 'LONG_TEXT' | 'NUMBER' | 'CURRENCY' | 'PERCENTAGE' | 'DATE' | 'YES_NO' | 'SINGLE_CHOICE' | 'MULTIPLE_CHOICE' | 'CATALOG' | 'PERSON' | 'INSTITUTION' | 'SUPPORT_FILE' | 'REPEATABLE_TABLE';
+export type QuestionnaireQuestion = {
+  id: string; label: string; type: QuestionnaireType; order: number; required?: boolean; help?: string;
+  options?: string[]; condition?: { questionId: string; operator: 'EQUALS' | 'NOT_EQUALS' | 'INCLUDES' | 'NOT_EMPTY'; value?: unknown };
+  prefill?: 'EXPEDIENTE_FOLIO' | 'EXPEDIENTE_CLIENTE' | 'COMPARECIENTE_NOMBRE' | 'INMUEBLE_CLAVE_CATASTRAL'; mappings?: string[];
+};
+export type QuestionnaireDefinition = {
+  title: string; description?: string; purpose?: string; scope: 'EXPEDIENTE' | 'COMPARECIENTE' | 'INMUEBLE';
+  applicableActIds?: string[]; stageId?: string | null; formatMappings?: Array<{ formatId: string; mappings: Record<string, string[]> }>;
+  sections: Array<{ id: string; title: string; order: number; questions: QuestionnaireQuestion[] }>;
+};
+export type QuestionnaireCatalogItem = {
+  id: string; nombre: string; descripcion?: string | null; activo: boolean; revision: number;
+  versiones: Array<{ id: string; version: number; definition_json: QuestionnaireDefinition; definition_checksum?: string | null; created_at: string }>;
+  actos: Array<{ tipo_acto_id: string }>;
+  cuestionarioFormatos: Array<{ formato: { id: string; nombre: string } }>;
 };

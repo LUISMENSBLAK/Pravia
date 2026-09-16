@@ -10,15 +10,15 @@ export async function reserveExpedienteFolio(
 ) {
   const year = effectiveDate.getFullYear();
   await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:expediente-folio:${year}`}))`);
-  const yearlyFolios = await tx.expediente.findMany({
-    where: {
-      OR: [
-        { numero_pravia: { startsWith: `EXP-${year}-` } },
-        { AND: [{ numero_pravia: { startsWith: 'EXP-' } }, { numero_pravia: { endsWith: `-${year}` } }] },
-      ],
-    },
-    select: { numero_pravia: true },
-  });
+  // numero_pravia is globally unique, so reservation must inspect the same
+  // global namespace. A model query would be tenant-scoped by middleware and
+  // could choose a folio already owned by another organization.
+  const yearlyFolios = await tx.$queryRaw<Array<{ numero_pravia: string }>>(Prisma.sql`
+    SELECT numero_pravia
+    FROM pravia_os.expedientes
+    WHERE numero_pravia LIKE ${`EXP-${year}-%`}
+       OR numero_pravia LIKE ${`EXP-%-${year}`}
+  `);
   const nextSequence = yearlyFolios.reduce((highest, expediente) => {
     const historical = expediente.numero_pravia.match(new RegExp(`^EXP-${year}-(\\d+)$`));
     const current = expediente.numero_pravia.match(new RegExp(`^EXP-(\\d+)-${year}$`));

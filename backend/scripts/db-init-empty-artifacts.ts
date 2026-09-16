@@ -63,7 +63,12 @@ export function isObsoleteHistoricalArtifactError(error: unknown) {
   const metaCode = typeof candidate.meta?.code === 'string' ? candidate.meta.code : '';
   const message = typeof candidate.message === 'string' ? candidate.message : '';
   const code = metaCode || message.match(/(?:SQLSTATE|code)[: ]+[`'"]?([0-9A-Z]{5})/i)?.[1] || '';
-  return code === '42P01' || code === '42703';
+  // The baseline is generated from the current Prisma schema, so a historical
+  // CHECK may already exist before we replay the non-Prisma artifacts.  In
+  // that case PostgreSQL reports duplicate_object (42710).  Treat it like the
+  // other obsolete historical artifacts and rely on the final inventory
+  // verification to prove that the canonical object is present.
+  return code === '42P01' || code === '42703' || code === '42710';
 }
 
 const identifier = '(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)';
@@ -189,9 +194,30 @@ function embeddedChecks(statement: string, migration: string): HistoricalArtifac
   return artifacts;
 }
 
+function alteredChecks(statement: string, migration: string): HistoricalArtifact[] {
+  const normalized = withoutLeadingComments(statement);
+  const tableMatch = normalized.match(new RegExp(`^ALTER\\s+TABLE\\s+(${qualifiedIdentifier})`, 'i'));
+  if (!tableMatch) return [];
+  const artifacts: HistoricalArtifact[] = [];
+  const checkPattern = new RegExp(`ADD\\s+CONSTRAINT\\s+(${identifier})\\s+CHECK\\s*\\(`, 'gi');
+  let match: RegExpExecArray | null;
+  while ((match = checkPattern.exec(normalized))) {
+    const opening = normalized.indexOf('(', match.index + match[0].length - 1);
+    const closing = matchingParenthesis(normalized, opening);
+    const expression = normalized.slice(opening + 1, closing);
+    artifacts.push({
+      migration,
+      kind: 'CHECK',
+      sql: `ALTER TABLE ${tableMatch[1]} ADD CONSTRAINT ${match[1]} CHECK (${expression});`,
+    });
+    checkPattern.lastIndex = closing + 1;
+  }
+  return artifacts;
+}
+
 function classify(statement: string, migration: string): HistoricalArtifact[] {
   const normalized = withoutLeadingComments(statement);
-  const artifacts = embeddedChecks(statement, migration);
+  const artifacts = [...embeddedChecks(statement, migration), ...alteredChecks(statement, migration)];
   if (/^CREATE\s+EXTENSION\b/i.test(normalized)) artifacts.push({ migration, kind: 'EXTENSION', sql: normalized });
   else if (/^CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\b/i.test(normalized)) artifacts.push({ migration, kind: 'FUNCTION', sql: normalized });
   else if (/^DO\s+\$/i.test(normalized) && /CREATE\s+TRIGGER/i.test(normalized)) artifacts.push({ migration, kind: 'DYNAMIC_TRIGGER_BLOCK', sql: normalized });
@@ -199,8 +225,6 @@ function classify(statement: string, migration: string): HistoricalArtifact[] {
   else if (/^CREATE\s+(?:UNIQUE\s+)?INDEX\b/i.test(normalized)) {
     const idempotent = normalized.replace(/^(CREATE\s+(?:UNIQUE\s+)?INDEX)\s+(?!IF\s+NOT\s+EXISTS)/i, '$1 IF NOT EXISTS ');
     artifacts.push({ migration, kind: 'INDEX', sql: idempotent });
-  } else if (/^ALTER\s+TABLE\b/i.test(normalized) && /ADD\s+CONSTRAINT[\s\S]*\bCHECK\s*\(/i.test(normalized)) {
-    artifacts.push({ migration, kind: 'CHECK', sql: normalized });
   } else if (/^CREATE\s+SEQUENCE\b/i.test(normalized)) artifacts.push({ migration, kind: 'SEQUENCE', sql: normalized });
   else if (/^ALTER\s+TABLE\b/i.test(normalized) && /ENABLE\s+ROW\s+LEVEL\s+SECURITY/i.test(normalized) && !/ALTER\s+TABLE\s+public\./i.test(normalized)) {
     artifacts.push({ migration, kind: 'RLS', sql: normalized });

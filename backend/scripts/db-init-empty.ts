@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PrismaClient } from '@prisma/client';
+import { seedProspectCatalogs } from '../prisma/seeds/prospect_catalogs.seed';
 import { postgresEnv } from './database-tooling';
 import {
   assertEmptyBootstrapConfirmation,
@@ -211,6 +212,12 @@ async function main() {
       prisma(['migrate', 'resolve', '--applied', migrationName, '--schema', 'prisma/schema.prisma'], url);
     }
     prisma(['migrate', 'deploy', '--schema', 'prisma/schema.prisma'], url);
+    const catalogClient = new PrismaClient({ datasources: { db: { url: url.toString() } } });
+    try {
+      await seedProspectCatalogs(catalogClient);
+    } finally {
+      await catalogClient.$disconnect();
+    }
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }

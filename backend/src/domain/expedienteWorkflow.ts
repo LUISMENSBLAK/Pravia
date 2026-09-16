@@ -103,3 +103,31 @@ export function assertExpedienteTransition(current: ExpedienteEstatus, next?: Ex
     );
   }
 }
+
+export function assertSignatureRequirements(expediente: {
+  comparecientes?: Array<{ datos_validados: boolean; estatus?: string | null; archived_at?: Date | null }>;
+  requisitos_docs?: Array<{ obligatorio: boolean; categoria: string; estatus: string }>;
+}, datosFirma?: { fechaFirma?: Date }) {
+  if (!datosFirma?.fechaFirma) {
+    throw new Error('Debe especificar la fecha y hora programada para la firma');
+  }
+
+  const activeParties = (expediente.comparecientes || []).filter((party) => (
+    (party.estatus === undefined || party.estatus === 'ACTIVO') && !party.archived_at
+  ));
+  if (activeParties.length === 0) {
+    throw new Error('No se pueden programar la firma sin comparecientes vinculados al expediente');
+  }
+
+  const unvalidated = activeParties.filter((party) => !party.datos_validados);
+  if (unvalidated.length > 0) {
+    throw new Error(`Existen ${unvalidated.length} compareciente(s) con datos sin validar. Valide las identidades antes de programar firma.`);
+  }
+
+  const missingSignatureDocuments = (expediente.requisitos_docs || []).filter(
+    (requirement) => requirement.obligatorio && requirement.categoria === 'FIRMA' && requirement.estatus !== 'VALIDADO',
+  );
+  if (missingSignatureDocuments.length > 0) {
+    throw new Error(`Faltan ${missingSignatureDocuments.length} documento(s) obligatorios de categoría FIRMA por validar.`);
+  }
+}

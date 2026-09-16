@@ -1,88 +1,62 @@
-import { AlertTriangle, Download, FileText, FolderOpen, LoaderCircle, LockKeyhole, RefreshCw, Upload } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { AlertTriangle, ChevronRight, Download, FileArchive, FileText, Folder, FolderOpen, LoaderCircle, LockKeyhole, Pencil, Plus, Search, Trash2, Upload, Users, Warehouse } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { expedientesService } from '../../expedientes.service';
-import type { ExpedienteDetail, ExpedienteDocumentAppendix, ExpedienteDocumentAppendixItem } from '../../expedientes.types';
+import type { ExpedienteDetail, ExpedienteDocumentAppendix, ExpedienteDocumentAppendixItem, ExpedienteDocumentFolder } from '../../expedientes.types';
 import { dateTime } from '../../expedienteFormatters';
 import styles from '../../Expedientes.module.css';
 
-const originLabels: Record<string, string> = {
-  PROSPECTO: 'Prospecto', COTIZACION: 'Cotización', COTIZACION_NOTARIA: 'Cotización Notaría',
-  COMPARECIENTE: 'Compareciente', PREDIO: 'Predio', CFG002: 'Formato', ISR: 'ISR',
-  FINANZAS: 'Finanzas', EXPEDIENTE: 'Expediente',
-};
+const originLabels: Record<string, string> = { PROSPECTO: 'Prospecto', COTIZACION: 'Cotización', COTIZACION_NOTARIA: 'Cotización Notaría', COMPARECIENTE: 'Compareciente', PREDIO: 'Predio', CFG002: 'Formato', ISR: 'ISR', FINANZAS: 'Finanzas', EXPEDIENTE: 'Expediente' };
 
 export function DocumentsTab({ expediente, onChanged }: { expediente: ExpedienteDetail; onChanged(): void }) {
   const input = useRef<HTMLInputElement>(null);
   const [appendix, setAppendix] = useState<ExpedienteDocumentAppendix | null>(null);
-  const [busy, setBusy] = useState<'load' | 'sync' | 'upload' | string>('load');
-  const [error, setError] = useState('');
-  const load = useCallback(async (signal?: AbortSignal) => {
-    setError('');
-    try { setAppendix(await expedientesService.documentAppendix(expediente.id, signal)); }
-    catch { if (!signal?.aborted) setError('No pudimos cargar el apéndice documental.'); }
-    finally { if (!signal?.aborted) setBusy(''); }
-  }, [expediente.id]);
+  const [busy, setBusy] = useState('load'); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
+  const [folderId, setFolderId] = useState<string | null>(null); const [selected, setSelected] = useState<string[]>([]); const [preview, setPreview] = useState<ExpedienteDocumentAppendixItem | null>(null);
+  const [selectedFolders, setSelectedFolders] = useState<string[]>([]); const [previewFile, setPreviewFile] = useState<{ url: string; mime: string } | null>(null);
+  const [search, setSearch] = useState(''); const [sort, setSort] = useState<'name' | 'date' | 'type'>('name');
+  const load = useCallback(async (signal?: AbortSignal) => { setError(''); try { setAppendix(await expedientesService.documentAppendix(expediente.id, signal)); } catch { if (!signal?.aborted) setError('No pudimos cargar el explorador documental.'); } finally { if (!signal?.aborted) setBusy(''); } }, [expediente.id]);
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
-
-  const upload = async (file?: File) => {
-    if (!file) return;
-    setBusy('upload'); setError('');
-    try {
-      await expedientesService.uploadDocument(expediente.id, file, { categoria: 'PROYECTO', carpeta: 'Carga directa' });
-      await load(); onChanged();
-    } catch { setError('No pudimos subir el documento. El archivo no fue registrado.'); }
-    finally { setBusy(''); if (input.current) input.current.value = ''; }
-  };
-  const sync = async () => {
-    setBusy('sync'); setError('');
-    try { setAppendix(await expedientesService.syncDocumentAppendix(expediente.id)); onChanged(); }
-    catch { setError('No pudimos sincronizar. Recarga el expediente e inténtalo nuevamente.'); }
-    finally { setBusy(''); }
-  };
-  const download = async (item: ExpedienteDocumentAppendixItem) => {
-    setBusy(item.id); setError('');
-    try {
-      const result = await expedientesService.appendixSignedUrl(expediente.id, item.id);
-      window.open(result.url, '_blank', 'noopener,noreferrer');
-    } catch { setError('El registro existe, pero el archivo no está disponible para descarga.'); }
-    finally { setBusy(''); }
-  };
+  useEffect(() => {
+    let active = true; setPreviewFile(null);
+    if (preview?.file_available) void expedientesService.appendixSignedUrl(expediente.id, preview.id).then((file) => { if (active) setPreviewFile({ url: file.url, mime: file.mime_type }); }).catch(() => { if (active) setPreviewFile(null); });
+    return () => { active = false; };
+  }, [expediente.id, preview]);
   const frozen = appendix?.state === 'CONGELADO_AL_FIRMAR';
-  const total = appendix?.groups.reduce((sum, group) => sum + group.items.length, 0) || 0;
+  const allItems = useMemo(() => appendix?.groups.flatMap((group) => group.items) || [], [appendix]);
+  const folders = appendix?.folders || []; const current = folders.find((folder) => folder.id === folderId) || null;
+  const breadcrumbs = useMemo(() => { const result: ExpedienteDocumentFolder[] = []; let cursor: ExpedienteDocumentFolder | null = current; while (cursor) { result.unshift(cursor); cursor = folders.find((folder) => folder.id === cursor?.parent_id) || null; } return result; }, [current, folders]);
+  const visibleFolders = folders.filter((folder) => (folder.parent_id || null) === folderId);
+  const query = search.trim().toLowerCase();
+  const visibleItems = allItems.filter((item) => (query ? true : (item.folder_id || null) === folderId) && `${item.name} ${item.type} ${item.source_name}`.toLowerCase().includes(query)).sort((a, b) => sort === 'date' ? new Date(b.incorporated_at).getTime() - new Date(a.incorporated_at).getTime() : sort === 'type' ? a.type.localeCompare(b.type, 'es') : a.name.localeCompare(b.name, 'es'));
+  const run = async (key: string, action: () => Promise<unknown>, success?: string) => { setBusy(key); setError(''); setNotice(''); try { await action(); await load(); if (success) setNotice(success); onChanged(); } catch (reason) { setError(reason instanceof Error ? reason.message : 'No pudimos completar la operación.'); } finally { setBusy(''); } };
+  const upload = async (file?: File) => { if (!file) return; await run('upload', () => expedientesService.uploadDocument(expediente.id, file, { categoria: 'PROYECTO', carpeta: current?.nombre || 'Carga directa', folder_id: folderId }), 'Documento cargado en la carpeta actual.'); if (input.current) input.current.value = ''; };
+  const importSource = (origin: 'compareciente' | 'predio') => run(`import-${origin}`, async () => { const result = await expedientesService.importDocumentSource(expediente.id, origin); setAppendix(result); const summary = result.import; setNotice(summary ? `${summary.new} nuevos · ${summary.updated} actualizados · ${summary.unchanged} sin cambios · 0 duplicados` : 'Importación terminada.'); });
+  const createFolder = () => { const name = window.prompt('Nombre de la nueva carpeta'); if (name?.trim()) void run('folder', () => expedientesService.createDocumentFolder(expediente.id, name, folderId), 'Carpeta creada.'); };
+  const renameFolder = () => { if (!current) return; const name = window.prompt('Nuevo nombre de la carpeta', current.nombre); if (name?.trim() && name.trim() !== current.nombre) void run('folder', () => expedientesService.renameDocumentFolder(expediente.id, current.id, name), 'Carpeta renombrada.'); };
+  const deleteFolder = () => { if (!current || !window.confirm(`¿Eliminar la carpeta vacía “${current.nombre}”?`)) return; void run('folder', () => expedientesService.deleteDocumentFolder(expediente.id, current.id), 'Carpeta eliminada sin borrar archivos.').then(() => setFolderId(null)); };
+  const renameDocument = () => { if (!preview || preview.snapshot) return; const name = window.prompt('Nombre visible del documento', preview.name); if (name?.trim() && name.trim() !== preview.name) void run('rename', () => expedientesService.renameDocument(expediente.id, preview.id, name), 'Documento renombrado en este expediente.').then(() => setPreview(null)); };
+  const deleteSelected = () => { if (!selected.length || !window.confirm(`¿Retirar ${selected.length} documento(s) del expediente? Los archivos se conservarán para auditoría.`)) return; void run('delete', () => Promise.all(selected.map((id) => expedientesService.deleteDocument(expediente.id, id))), 'Documentos retirados; los blobs se conservaron.').then(() => { setSelected([]); setPreview(null); }); };
+  const move = (target: string | null, ids: string[] = [], folderIds: string[] = []) => { if (!ids.length && !folderIds.length) return; void run('move', () => expedientesService.moveDocumentItems(expediente.id, { document_ids: ids, folder_ids: folderIds, target_folder_id: target }), 'Selección movida.').then(() => { setSelected([]); setSelectedFolders([]); }); };
+  const moveSelection = (target: string | null) => move(target, selected, selectedFolders);
+  const download = (item: ExpedienteDocumentAppendixItem) => run(item.id, () => expedientesService.downloadAppendixFile(expediente.id, item.id, item.name));
+  const zip = (payload: { folder_id?: string | null; folder_ids?: string[]; item_ids?: string[] }, name: string) => run('zip', () => expedientesService.downloadAppendixZip(expediente.id, payload, name));
 
   return <section className={`${styles.sectionCard} ${styles.appendixCard}`}>
-    <header className={styles.appendixHeader}>
-      <div><div className={styles.appendixEyebrow}>Documentos · Apéndice de la operación</div><h2>Archivo documental</h2><p>{frozen ? 'La evidencia corresponde exactamente al momento de firma.' : 'Documentos vigentes sincronizados desde las fuentes autorizadas.'}</p></div>
-      <div className={styles.appendixActions}>
-        {!frozen && expediente.capabilities.canUploadDocuments && <><input ref={input} className={styles.srOnly} type="file" onChange={(event) => void upload(event.target.files?.[0])} /><button type="button" className={styles.secondaryButton} disabled={Boolean(busy)} onClick={() => input.current?.click()}>{busy === 'upload' ? <LoaderCircle className={styles.spin} size={16} /> : <Upload size={16} />}Subir</button></>}
-        {!frozen && expediente.capabilities.canUploadDocuments && <button type="button" className={styles.secondaryButton} disabled={Boolean(busy)} onClick={() => void sync()}>{busy === 'sync' ? <LoaderCircle className={styles.spin} size={16} /> : <RefreshCw size={16} />}Sincronizar</button>}
-      </div>
-    </header>
-    {appendix && <div className={frozen ? styles.appendixStateFrozen : styles.appendixStateLive} role="status">
-      {frozen ? <LockKeyhole size={17} /> : <RefreshCw size={17} />}
-      <div><strong>{frozen ? 'Apéndice congelado al firmar' : 'Sincronizado · Pre-firma'}</strong><span>{frozen && appendix.frozen_at ? dateTime(appendix.frozen_at) : `${total} documento${total === 1 ? '' : 's'} vigente${total === 1 ? '' : 's'} · Revisión ${appendix.revision.slice(0, 10)}`}</span></div>
+    <header className={styles.appendixHeader}><div><div className={styles.appendixEyebrow}>Documentos · Apéndice de la operación</div><h2>Explorador documental</h2><p>{frozen ? 'Snapshot documental congelado al firmar.' : 'Organiza e importa únicamente las fuentes que decidas incorporar.'}</p></div><div className={styles.appendixActions}>{!frozen && expediente.capabilities.canUploadDocuments && <><input ref={input} className={styles.srOnly} type="file" onChange={(event) => void upload(event.target.files?.[0])} /><button type="button" className={styles.secondaryButton} disabled={Boolean(busy)} onClick={() => input.current?.click()}><Upload size={16} />Subir</button><button type="button" className={styles.secondaryButton} disabled={Boolean(busy)} onClick={createFolder}><Plus size={16} />Carpeta</button></>}<button type="button" className={styles.secondaryButton} disabled={Boolean(busy) || !allItems.length} onClick={() => void zip({}, `Expediente-${expediente.numero_pravia}.zip`)}><FileArchive size={16} />ZIP completo</button></div></header>
+    {appendix && <div className={frozen ? styles.appendixStateFrozen : styles.appendixStateLive} role="status">{frozen ? <LockKeyhole size={17} /> : <FolderOpen size={17} />}<div><strong>{frozen ? 'Apéndice congelado al firmar' : 'Pre-firma · Organización editable'}</strong><span>{frozen && appendix.frozen_at ? dateTime(appendix.frozen_at) : `${allItems.length} documento${allItems.length === 1 ? '' : 's'} · Revisión ${appendix.revision.slice(0, 10)}`}</span></div></div>}
+    {!frozen && expediente.capabilities.canUploadDocuments && <div className={styles.documentImportBar}><span>Importación controlada:</span><button type="button" disabled={Boolean(busy)} onClick={() => void importSource('compareciente')}><Users size={15} />Importar documentos vigentes de comparecientes</button><button type="button" disabled={Boolean(busy)} onClick={() => void importSource('predio')}><Warehouse size={15} />Importar documentos vigentes de predios</button><small>Vincular una persona o inmueble nunca importa documentos automáticamente.</small></div>}
+    {error && <div className={styles.inlineError} role="alert">{error}</div>}{notice && <div className={styles.documentNotice} role="status">{notice}</div>}
+    {busy === 'load' ? <div className={styles.appendixLoading}><LoaderCircle className={styles.spin} size={22} /><span>Abriendo explorador…</span></div> : appendix && <div className={styles.documentExplorer}>
+      <aside className={styles.documentTree} aria-label="Árbol de carpetas"><button type="button" className={!folderId ? styles.documentTreeActive : ''} onClick={() => setFolderId(null)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); move(null, [event.dataTransfer.getData('text/document-id')].filter(Boolean)); }}><FolderOpen size={16} />Expediente</button>{renderTree(folders, null, folderId, setFolderId, move)}</aside>
+      <main className={styles.documentCenter}><nav className={styles.documentBreadcrumbs} aria-label="Ruta de carpetas"><button type="button" onClick={() => setFolderId(null)}>Expediente</button>{breadcrumbs.map((folder) => <span key={folder.id}><ChevronRight size={13} /><button type="button" onClick={() => setFolderId(folder.id)}>{folder.nombre}</button></span>)}</nav>
+        <div className={styles.documentToolbar}><label><Search size={15} /><input aria-label="Buscar documentos" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar en todo el expediente" /></label><select aria-label="Ordenar documentos" value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="name">Nombre</option><option value="date">Fecha</option><option value="type">Tipo</option></select>{current && <button type="button" onClick={() => void zip({ folder_id: current.id }, `${current.nombre}.zip`)}>ZIP carpeta</button>}{current && !frozen && <><button type="button" onClick={renameFolder}>Renombrar carpeta</button><button type="button" onClick={deleteFolder}><Trash2 size={14} />Eliminar carpeta</button></>}{selected.length + selectedFolders.length > 0 && <><select aria-label="Mover selección" defaultValue="" onChange={(event) => { if (event.target.value === '__root') moveSelection(null); else if (event.target.value) moveSelection(event.target.value); }}><option value="" disabled>Mover a…</option><option value="__root">Expediente</option>{folders.map((folder) => <option key={folder.id} value={folder.id}>{folder.nombre}</option>)}</select><button type="button" onClick={() => void zip({ item_ids: selected, folder_ids: selectedFolders }, 'seleccion-documental.zip')}>ZIP selección</button>{!frozen && selected.length > 0 && <button type="button" onClick={deleteSelected}><Trash2 size={14} />Retirar archivos</button>}</>}</div>
+        <div className={styles.documentGrid}>{visibleFolders.map((folder) => <article key={folder.id} className={`${styles.documentFolderCard} ${selectedFolders.includes(folder.id) ? styles.documentFileSelected : ''}`} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); move(folder.id, [event.dataTransfer.getData('text/document-id')].filter(Boolean)); }}><input type="checkbox" aria-label={`Seleccionar carpeta ${folder.nombre}`} checked={selectedFolders.includes(folder.id)} onChange={() => setSelectedFolders((value) => value.includes(folder.id) ? value.filter((id) => id !== folder.id) : [...value, folder.id])} /><button type="button" onClick={() => setFolderId(folder.id)}><Folder size={26} /><strong>{folder.nombre}</strong></button></article>)}{visibleItems.map((item) => <article key={item.id} className={`${styles.documentFileCard} ${selected.includes(item.id) ? styles.documentFileSelected : ''}`} draggable={!frozen} onDragStart={(event) => event.dataTransfer.setData('text/document-id', item.id)} onClick={() => setPreview(item)}><input type="checkbox" aria-label={`Seleccionar ${item.name}`} checked={selected.includes(item.id)} onClick={(event) => event.stopPropagation()} onChange={() => setSelected((value) => value.includes(item.id) ? value.filter((id) => id !== item.id) : [...value, item.id])} /><FileText size={25} /><div><strong>{item.name}</strong><small>{item.type.replaceAll('_', ' ')} · {originLabels[item.origin]}</small></div>{item.file_available ? <button type="button" aria-label={`Descargar ${item.name}`} disabled={busy === item.id} onClick={(event) => { event.stopPropagation(); void download(item); }}>{busy === item.id ? <LoaderCircle className={styles.spin} size={16} /> : <Download size={16} />}</button> : <span title="Archivo no disponible"><AlertTriangle size={16} /></span>}</article>)}</div>
+        {!visibleFolders.length && !visibleItems.length && <div className={styles.appendixEmpty}><FolderOpen size={26} /><h3>Esta carpeta está vacía</h3><p>Sube archivos, crea carpetas o importa fuentes vigentes explícitamente.</p></div>}
+      </main><aside className={styles.documentPreview} aria-label="Vista previa"><h3>Vista previa</h3>{preview ? <><FileText size={35} /><strong>{preview.name}</strong>{previewFile?.mime.startsWith('image/') && <img className={styles.documentPreviewMedia} src={previewFile.url} alt={`Vista previa de ${preview.name}`} />}{previewFile?.mime === 'application/pdf' && <iframe className={styles.documentPreviewMedia} src={previewFile.url} title={`Vista previa de ${preview.name}`} />}<dl><dt>Origen</dt><dd>{originLabels[preview.origin]}</dd><dt>Fuente</dt><dd>{preview.source_name}</dd><dt>Estado</dt><dd>{preview.status}</dd><dt>Incorporado</dt><dd>{dateTime(preview.incorporated_at)}</dd></dl>{preview.file_available && <button type="button" className={styles.secondaryButton} onClick={() => void download(preview)}><Download size={16} />Descargar</button>}{!frozen && !preview.snapshot && <button type="button" className={styles.secondaryButton} onClick={renameDocument}><Pencil size={16} />Renombrar</button>}</> : <p>Selecciona un archivo para consultar su procedencia.</p>}</aside>
     </div>}
-    {error && <div className={styles.inlineError} role="alert">{error}</div>}
-    {busy === 'load' && <div className={styles.appendixLoading}><LoaderCircle className={styles.spin} size={22} /><span>Reuniendo documentos vigentes…</span></div>}
-    {!busy && appendix && appendix.groups.length === 0 && <div className={styles.appendixEmpty}><FolderOpen size={26} /><h3>El apéndice todavía está vacío</h3><p>Sincroniza las fuentes o carga un documento específico de esta operación.</p></div>}
-    {appendix?.groups.map((group) => <section key={group.origin} className={styles.appendixGroup} aria-labelledby={`document-group-${group.origin}`}>
-      <header><div><span>{originLabels[group.origin]}</span><h3 id={`document-group-${group.origin}`}>{group.label}</h3></div><b>{group.items.length}</b></header>
-      <div className={styles.appendixSources}>{groupItems(group.items).map(([source, items]) => <article key={`${group.origin}-${source}`} className={styles.appendixSource}>
-        <div className={styles.appendixSourceTitle}><strong>{source}</strong>{['COMPARECIENTE', 'PREDIO'].includes(group.origin) && <small>{group.origin === 'COMPARECIENTE' ? 'Persona vinculada' : 'Inmueble vinculado'}</small>}</div>
-        <div className={styles.appendixItems}>{items.map((item) => <div key={item.id} className={styles.appendixItem}>
-          <span className={styles.appendixFileIcon}><FileText size={18} /></span>
-          <div className={styles.appendixFileCopy}><strong>{item.name}</strong><small>{item.type.replaceAll('_', ' ')} · Versión {item.document_version.slice(0, 10)}</small></div>
-          <span className={styles.appendixOriginBadge}>{originLabels[item.origin]}</span>
-          <span className={item.file_available ? styles.appendixAvailable : styles.appendixUnavailable}>{item.file_available ? 'Disponible' : <><AlertTriangle size={13} />Archivo no disponible</>}</span>
-          {item.file_available ? <button type="button" className={styles.appendixDownload} disabled={busy === item.id} aria-label={`Descargar ${item.name}`} onClick={() => void download(item)}>{busy === item.id ? <LoaderCircle className={styles.spin} size={16} /> : <Download size={17} />}</button> : <span className={styles.appendixNoAction} aria-label="Sin descarga disponible" />}
-        </div>)}</div>
-      </article>)}</div>
-    </section>)}
   </section>;
 }
 
-function groupItems(items: ExpedienteDocumentAppendixItem[]) {
-  const grouped = new Map<string, ExpedienteDocumentAppendixItem[]>();
-  for (const item of items) grouped.set(item.source_name || 'Fuente registrada', [...(grouped.get(item.source_name || 'Fuente registrada') || []), item]);
-  return [...grouped.entries()];
+function renderTree(folders: ExpedienteDocumentFolder[], parentId: string | null, activeId: string | null, select: (id: string) => void, move: (target: string | null, ids?: string[]) => void, depth = 0): ReactNode {
+  return folders.filter((folder) => (folder.parent_id || null) === parentId).map((folder) => <div key={folder.id}><button type="button" style={{ paddingLeft: `${12 + depth * 14}px` }} className={activeId === folder.id ? styles.documentTreeActive : ''} onClick={() => select(folder.id)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); move(folder.id, [event.dataTransfer.getData('text/document-id')].filter(Boolean)); }}><Folder size={15} />{folder.nombre}</button>{renderTree(folders, folder.id, activeId, select, move, depth + 1)}</div>);
 }

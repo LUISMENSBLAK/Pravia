@@ -1,17 +1,24 @@
-import { apiRequest, tokenStore } from '../../services/api/client';
-import { apiUrl } from '../../services/api/config';
-import type { ActTypeOption, EligibleQuoteCandidate, ExpedienteAct, ExpedienteActCommand, ExpedienteActPreview, ExpedienteActivityCategory, ExpedienteActivityResponse, ExpedienteArtifacts, ExpedienteBudget, ExpedienteBudgetConcept, ExpedienteDetail, ExpedienteDocumentAppendix, ExpedienteListFilters, ExpedienteListResult, ExpedientePartyCatalogs, ExpedientePartyCommand, ExpedientePartyPreview, ExpedientePartyRelation, ExpedientePartySearchOption, ExpedientePredioCatalogs, ExpedientePredioCommand, ExpedientePredioPreview, ExpedientePredioRelation, ExpedienteSeguimiento, PredioSummary, ProjectState, SeguimientoEstado } from './expedientes.types';
+import { apiBlobRequest, apiRequest } from '../../services/api/client';
+import type { ActTypeOption, EligibleQuoteCandidate, ExpedienteAct, ExpedienteActCommand, ExpedienteActPreview, ExpedienteActivityCategory, ExpedienteActivityResponse, ExpedienteArtifacts, ExpedienteBudget, ExpedienteBudgetConcept, ExpedienteDetail, ExpedienteDocumentAppendix, ExpedienteListFilters, ExpedienteListResult, ExpedientePartyCatalogs, ExpedientePartyCommand, ExpedientePartyPreview, ExpedientePartyRelation, ExpedientePartySearchOption, ExpedientePredioCatalogs, ExpedientePredioCommand, ExpedientePredioPreview, ExpedientePredioRelation, ExpedienteQuestionnaireInstance, ExpedienteSeguimiento, PredioSummary, ProjectState, SeguimientoEstado } from './expedientes.types';
 
 const query = (filters: ExpedienteListFilters) => {
   const params = new URLSearchParams();
   const values: Record<string, string | number | undefined> = {
-    search: filters.search, macrofase: filters.macrophase, etapa: filters.stage, responsable: filters.responsible,
-    notaria_id: filters.notary, riesgo: filters.risk, fecha_desde: filters.dateFrom, fecha_hasta: filters.dateTo,
+    search: filters.search, folio: filters.folio, macrofase: filters.macrophase, etapa: filters.stage, responsable: filters.responsible,
+    notaria_id: filters.notary, riesgo: filters.risk, cumplimiento: filters.compliance, fecha_desde: filters.dateFrom, fecha_hasta: filters.dateTo,
     tipo_acto_id: filters.actType, cliente: filters.client, estatus: filters.status, page: filters.page || 1,
     pageSize: filters.pageSize || 20, sort: filters.sort || 'updated_at:desc',
   };
   Object.entries(values).forEach(([key, value]) => { if (value !== undefined && value !== '') params.set(key, String(value)); });
   return params.toString();
+};
+const downloadBlob = async (endpoint: string, name: string, payload?: unknown) => {
+  const blob = await apiBlobRequest(endpoint, {
+    method: payload === undefined ? 'GET' : 'POST',
+    headers: payload === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: payload === undefined ? undefined : JSON.stringify(payload),
+  });
+  const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = name; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 export const expedientesService = {
   list(filters: ExpedienteListFilters, signal?: AbortSignal) { return apiRequest<ExpedienteListResult>(`/expedientes?${query(filters)}`, { signal }); },
@@ -37,6 +44,8 @@ export const expedientesService = {
   createSeguimientoExtraordinary(id: string, input: Record<string, unknown>) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/seguimiento/actividades-extraordinarias`, { method: 'POST', body: JSON.stringify(input) }); },
   setSeguimientoDependencies(id: string, activityId: string, dependency_ids: string[]) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/seguimiento/actividades/${encodeURIComponent(activityId)}/dependencias`, { method: 'PUT', body: JSON.stringify({ dependency_ids }) }); },
   artifacts(id: string, signal?: AbortSignal) { return apiRequest<ExpedienteArtifacts>(`/expedientes/${encodeURIComponent(id)}/plantillas-formatos`, { signal }); },
+  questionnaires(id: string, signal?: AbortSignal) { return apiRequest<{ success: true; data: ExpedienteQuestionnaireInstance[] }>(`/expedientes/${encodeURIComponent(id)}/cuestionarios`, { signal }).then((payload) => payload.data); },
+  saveQuestionnaire(id: string, input: { versionId: string; scope: string; subjectKey: string; answers: Record<string, unknown>; finalize: boolean; idempotencyKey: string }) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/cuestionarios/respuestas`, { method: 'POST', body: JSON.stringify(input) }); },
   budget(id: string, signal?: AbortSignal) { return apiRequest<ExpedienteBudget>(`/expedientes/${encodeURIComponent(id)}/presupuesto`, { signal }); },
   saveBudget(id: string, input: { expected_version: number; concepts: ExpedienteBudgetConcept[]; distribution?: { pravia_honorarios: { mode: 'AMOUNT' | 'PERCENT'; value: string }; pravia_iva: { mode: 'AMOUNT' | 'PERCENT'; value: string } } }) { return apiRequest<ExpedienteBudget>(`/expedientes/${encodeURIComponent(id)}/presupuesto`, { method: 'PUT', body: JSON.stringify(input) }); },
   generateBudgetPdf(id: string, input: { expected_version: number; idempotency_key: string; note?: string }) { return apiRequest<{ item: any; idempotent: boolean }>(`/expedientes/${encodeURIComponent(id)}/presupuesto/generar`, { method: 'POST', body: JSON.stringify(input) }); },
@@ -67,9 +76,22 @@ export const expedientesService = {
   project(id: string, signal?: AbortSignal) { return apiRequest<ProjectState>(`/expedientes/${encodeURIComponent(id)}/proyecto`, { signal }); },
   documentAppendix(id: string, signal?: AbortSignal) { return apiRequest<ExpedienteDocumentAppendix>(`/expedientes/${encodeURIComponent(id)}/documentos/apendice`, { signal }); },
   syncDocumentAppendix(id: string) { return apiRequest<ExpedienteDocumentAppendix>(`/expedientes/${encodeURIComponent(id)}/documentos/sincronizar`, { method: 'POST' }); },
+  importDocumentSource(id: string, origin: 'compareciente' | 'predio') { return apiRequest<ExpedienteDocumentAppendix>(`/expedientes/${encodeURIComponent(id)}/documentos/importar/${origin}`, { method: 'POST' }); },
+  createDocumentFolder(id: string, name: string, parentId?: string | null) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos/carpetas`, { method: 'POST', body: JSON.stringify({ name, parent_id: parentId || null }) }); },
+  renameDocumentFolder(id: string, folderId: string, name: string) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos/carpetas/${encodeURIComponent(folderId)}`, { method: 'PATCH', body: JSON.stringify({ name }) }); },
+  deleteDocumentFolder(id: string, folderId: string) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos/carpetas/${encodeURIComponent(folderId)}`, { method: 'DELETE' }); },
+  moveDocumentItems(id: string, input: { document_ids?: string[]; folder_ids?: string[]; target_folder_id?: string | null }) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos/mover`, { method: 'POST', body: JSON.stringify(input) }); },
+  renameDocument(id: string, itemId: string, name: string) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos/${encodeURIComponent(itemId)}`, { method: 'PATCH', body: JSON.stringify({ nombre: name }) }); },
+  deleteDocument(id: string, itemId: string) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos/${encodeURIComponent(itemId)}`, { method: 'DELETE' }); },
   appendixSignedUrl(id: string, itemId: string) { return apiRequest<{ url: string; expires_in: number; file_name: string; mime_type: string }>(`/expedientes/${encodeURIComponent(id)}/documentos/apendice/${encodeURIComponent(itemId)}/url`); },
-  uploadDocument(id: string, file: File, fields: { categoria: string; carpeta: string }) {
-    const body = new FormData(); body.set('file', file); body.set('categoria', fields.categoria); body.set('carpeta', fields.carpeta);
+  async downloadAppendixFile(id: string, itemId: string, name: string) {
+    return downloadBlob(`/expedientes/${encodeURIComponent(id)}/documentos/apendice/${encodeURIComponent(itemId)}/descargar`, name);
+  },
+  async downloadAppendixZip(id: string, input: { folder_id?: string | null; folder_ids?: string[]; item_ids?: string[] }, name = 'expediente-documental.zip') {
+    return downloadBlob(`/expedientes/${encodeURIComponent(id)}/documentos/apendice/descargar-zip`, name, input);
+  },
+  uploadDocument(id: string, file: File, fields: { categoria: string; carpeta: string; folder_id?: string | null }) {
+    const body = new FormData(); body.set('file', file); body.set('categoria', fields.categoria); body.set('carpeta', fields.carpeta); if (fields.folder_id) body.set('folder_id', fields.folder_id);
     return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos`, { method: 'POST', body });
   },
   uploadProject(id: string, file: File, note = '') {
@@ -89,15 +111,11 @@ export const expedientesService = {
     return apiRequest(`/expedientes/${encodeURIComponent(id)}/entrega`, { method: 'POST', body: JSON.stringify(input) });
   },
   async downloadDocument(expedienteId: string, documentId: string, name: string) {
-    const headers = new Headers(); const token = tokenStore.get(); if (token) headers.set('Authorization', `Bearer ${token}`);
-    const response = await fetch(apiUrl(`/expedientes/${encodeURIComponent(expedienteId)}/documentos/${encodeURIComponent(documentId)}/descargar`), { credentials: 'include', headers });
-    if (!response.ok) throw new Error('No fue posible descargar el documento.');
-    const url = URL.createObjectURL(await response.blob()); const link = document.createElement('a'); link.href = url; link.download = name; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const blob = await apiBlobRequest(`/expedientes/${encodeURIComponent(expedienteId)}/documentos/${encodeURIComponent(documentId)}/descargar`);
+    const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = name; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   },
   async downloadProject(expedienteId: string, versionId: string, name: string) {
-    const headers = new Headers(); const token = tokenStore.get(); if (token) headers.set('Authorization', `Bearer ${token}`);
-    const response = await fetch(apiUrl(`/expedientes/${encodeURIComponent(expedienteId)}/proyecto/versions/${encodeURIComponent(versionId)}/descargar`), { credentials: 'include', headers });
-    if (!response.ok) throw new Error('No fue posible descargar esta versión del proyecto.');
-    const url = URL.createObjectURL(await response.blob()); const link = document.createElement('a'); link.href = url; link.download = name; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    const blob = await apiBlobRequest(`/expedientes/${encodeURIComponent(expedienteId)}/proyecto/versions/${encodeURIComponent(versionId)}/descargar`);
+    const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = name; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   },
 };

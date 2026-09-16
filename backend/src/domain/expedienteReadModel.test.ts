@@ -3,7 +3,7 @@ import { complianceAttention, complianceLabel, macrophaseForStatus, parseExpedie
 
 describe('modelo de lectura de expedientes', () => {
   it('normaliza paginación, filtros y orden sin aceptar valores arbitrarios', () => {
-    expect(parseExpedienteQuery({ page: '2', pageSize: '500', macrofase: 'firma', riesgo: 'attention', sort: 'folio:asc' })).toMatchObject({ page: 2, pageSize: 100, macrophase: 'FIRMA', risk: 'ATTENTION', sort: 'numero_pravia:asc' });
+    expect(parseExpedienteQuery({ page: '2', pageSize: '500', folio: 'EXP-0041', macrofase: 'firma', riesgo: 'attention', cumplimiento: 'pending', sort: 'folio:asc' })).toMatchObject({ page: 2, pageSize: 100, folio: 'EXP-0041', macrophase: 'FIRMA', risk: 'ATTENTION', compliance: 'PENDING', sort: 'numero_pravia:asc' });
     expect(parseExpedienteQuery({ page: '-1', sort: 'DROP TABLE' })).toMatchObject({ page: 1, sort: 'updated_at:desc' });
   });
 

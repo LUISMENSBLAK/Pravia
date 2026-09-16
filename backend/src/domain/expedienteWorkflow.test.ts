@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   assertExpedienteTransition,
+  assertSignatureRequirements,
   ExpedienteWorkflowError,
   getAllowedExpedienteTransitions,
   resolveFrozenWorkflowTransitions,
@@ -67,5 +68,22 @@ describe('flujo operativo del expediente', () => {
 
     expect(transitions[0]).toMatchObject({ status: 'LISTO_ENTREGA', label: 'Listo para entrega' });
     expect(transitions.some((transition) => transition.status === 'ENTREGADO')).toBe(false);
+  });
+
+  it('ignora relaciones desvinculadas al validar identidades para firma', () => {
+    expect(() => assertSignatureRequirements({
+      comparecientes: [
+        { datos_validados: true, estatus: 'ACTIVO', archived_at: null },
+        { datos_validados: false, estatus: 'INACTIVO', archived_at: new Date('2026-09-16T00:00:00Z') },
+      ],
+      requisitos_docs: [],
+    }, { fechaFirma: new Date('2026-09-17T12:00:00Z') })).not.toThrow();
+  });
+
+  it('mantiene el bloqueo para una relación activa sin validar', () => {
+    expect(() => assertSignatureRequirements({
+      comparecientes: [{ datos_validados: false, estatus: 'ACTIVO', archived_at: null }],
+      requisitos_docs: [],
+    }, { fechaFirma: new Date('2026-09-17T12:00:00Z') })).toThrow(/1 compareciente/);
   });
 });

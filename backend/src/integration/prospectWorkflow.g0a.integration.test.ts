@@ -3,6 +3,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
 import { ProspectWorkflowService } from '../services/prospectWorkflow.service';
+import { CotizacionWorkflowService } from '../services/cotizacionWorkflow.service';
+import { CotizacionConversionService } from '../services/cotizacionConversion.service';
+import { ExpedienteBudgetService } from '../services/expedienteBudget.service';
 import { tenantIsolationMiddleware } from '../config/tenantPrisma';
 import { runWithActorContext } from '../auth/actorContext';
 
@@ -23,10 +26,13 @@ const actor = (n: number): Actor => ({
   membershipId: `93000000-0000-4000-8000-00000000000${n}`,
   sessionId: randomUUID(), rol: 'ADMINISTRACION', nombre: 'Corrección', apellido: String(n),
   email: `correction-001-${n}@example.test`, scope: 'GLOBAL', requiresPasswordChange: false,
-  permissions: ['prospectos.read', 'prospectos.write', 'documentos.read', 'documentos.write', 'documentos.unlink', 'cotizaciones.read', 'cotizaciones.write'],
+  permissions: ['prospectos.read', 'prospectos.write', 'documentos.read', 'documentos.write', 'documentos.unlink', 'cotizaciones.read', 'cotizaciones.write', 'expedientes.read', 'expedientes.write', 'finanzas.read', 'finanzas.write'],
 });
 const primary = actor(1);
 const foreign = actor(2);
+const quoteWorkflow = new CotizacionWorkflowService(scoped);
+const quoteConversion = new CotizacionConversionService(scoped);
+const expedienteBudget = new ExpedienteBudgetService(scoped);
 const run = <T>(who: Actor, fn: () => T) => runWithActorContext({
   userId: who.id, organizationId: who.organizationId, membershipId: who.membershipId,
   sessionId: who.sessionId, role: who.rol, permissions: who.permissions, scope: who.scope,
@@ -44,6 +50,17 @@ const ready = async (who = primary) => {
   await act(prospect.id, 'COMENZAR_INTEGRACION', who);
   await act(prospect.id, 'MARCAR_LISTO_PARA_COTIZAR', who);
   return prospect;
+};
+const actQuote = async (id: string, action: string, extra: Record<string, unknown> = {}) => {
+  const current = await run(primary, () => quoteWorkflow.read(primary, id));
+  return run(primary, () => quoteWorkflow.act(primary, id, {
+    action,
+    expectedVersion: current.version,
+    confirm: true,
+    idempotencyKey: randomUUID(),
+    effectiveAt: new Date().toISOString(),
+    ...extra,
+  }));
 };
 
 describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 · PostgreSQL aislado Prospecto → Cotización', () => {
@@ -140,16 +157,122 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
     await act(prospect.id, 'COMENZAR_INTEGRACION');
     await act(prospect.id, 'MARCAR_LISTO_PARA_COTIZAR');
     const result = await act(prospect.id, 'CONVERTIR');
-    const quote = await db.cotizacion.findUniqueOrThrow({ where: { id: result.quoteId! }, include: { prospecto: true, versiones: true } });
+    const quote = await db.cotizacion.findUniqueOrThrow({
+      where: { id: result.quoteId! },
+      include: { prospecto: true, conceptos: { orderBy: { orden: 'asc' } }, versiones: { include: { conceptos: { orderBy: { orden: 'asc' } } } } },
+    });
     expect(quote.numero_cotizacion).toMatch(/^COT-\d{4}-\d{4}$/);
     expect(quote).toMatchObject({ prospecto_id: prospect.id, user_id: primary.id, organization_id: primary.organizationId });
     expect(quote.prospecto).toMatchObject({ telefono: '3111002000', email: 'cliente@example.test', tipo_acto: 'Compraventa', necesidad: 'Operación directa' });
     expect(quote.total_cliente?.toString()).toBe('1160');
     expect(quote.versiones).toHaveLength(1);
+    expect(quote.conceptos.map((item: any) => [item.concepto, item.categoria, item.importe.toString()])).toEqual([
+      ['Honorarios', 'HONORARIOS', '1000'],
+      ['Impuestos y derechos', 'IMPUESTOS_DERECHOS', '160'],
+    ]);
+    expect(quote.versiones[0].conceptos.map((item: any) => item.categoria)).toEqual(['HONORARIOS', 'IMPUESTOS_DERECHOS']);
     expect(await db.documento.count({ where: { storage_key: document.storage_key } })).toBe(1);
     expect(await db.documento.count({ where: { id: document.id, prospecto_id: prospect.id } })).toBe(1);
     expect((await read(prospect.id)).stage).toBe('CONVERTIDO_EN_COTIZACION');
   });
+
+  it('Corrección 002 conserva snapshot, convierte una vez y crea una copia operativa independiente', async () => {
+    const prospect = await create();
+    await run(primary, () => service.update(primary, prospect.id, {
+      expectedVersion: 1,
+      telefono: '3111002000',
+      email: 'cotizacion-002@example.test',
+      servicio_catalogo_codigo: 'COMPRAVENTA',
+      necesidad: 'Conversión completa a expediente',
+      honorarios_estimados: '1000',
+      impuestos_derechos_estimados: '160',
+      total_estimado: '1160',
+    }));
+    const document = await db.documento.create({ data: {
+      organization_id: primary.organizationId,
+      prospecto_id: prospect.id,
+      subido_por_id: primary.id,
+      tipo: 'OTRO',
+      categoria: 'PROYECTO',
+      nombre_original: 'soporte-cotizacion-002.pdf',
+      nombre_interno: randomUUID(),
+      storage_key: `local-synthetic/${randomUUID()}`,
+      mime_type: 'application/pdf',
+      size_bytes: 48,
+    } });
+    await act(prospect.id, 'COMENZAR_INTEGRACION');
+    await act(prospect.id, 'MARCAR_LISTO_PARA_COTIZAR');
+    const prospectConversion = await act(prospect.id, 'CONVERTIR');
+    const quoteId = prospectConversion.quoteId!;
+    const approvedVersion = await db.cotizacionVersion.findFirstOrThrow({
+      where: { cotizacion_id: quoteId },
+      include: { conceptos: { orderBy: { orden: 'asc' } } },
+    });
+    await db.cotizacionVersion.update({ where: { id: approvedVersion.id }, data: { aprobada: true } });
+
+    expect(await run(primary, () => quoteWorkflow.read(primary, quoteId))).toMatchObject({ stage: 'BORRADOR' });
+    const started = await actQuote(quoteId, 'COMENZAR_ELABORACION');
+    expect(started).toMatchObject({ idempotent: false, eventId: expect.any(String) });
+    expect(await db.cotizacionTransicion.findUnique({ where: { id: started.eventId } })).toMatchObject({
+      cotizacion_id: quoteId,
+      accion: 'COMENZAR_ELABORACION',
+      etapa_nueva: 'EN_ELABORACION',
+    });
+    expect(await run(primary, () => quoteWorkflow.read(primary, quoteId))).toMatchObject({ stage: 'EN_ELABORACION' });
+    await actQuote(quoteId, 'ENVIAR_CLIENTE', {
+      channel: 'Correo', recipient: 'cotizacion-002@example.test', evidence: 'Entrega confirmada', versionId: approvedVersion.id,
+    });
+    await actQuote(quoteId, 'INICIAR_SEGUIMIENTO');
+    await actQuote(quoteId, 'ACEPTAR', { versionId: approvedVersion.id });
+    const accepted = await run(primary, () => quoteWorkflow.read(primary, quoteId));
+    expect(accepted).toMatchObject({ stage: 'ACEPTADA' });
+    expect(accepted.events.at(-1)).toMatchObject({ action: 'ACEPTAR', quoteVersion: { id: approvedVersion.id } });
+
+    const actType = await db.tipoActo.findFirstOrThrow({ where: { codigo_catalogo: 'COMPRAVENTA' } });
+    const request = (key: string) => run(primary, () => quoteConversion.convert({
+      cotizacionId: quoteId,
+      actorUserId: primary.id,
+      actorOrganizationId: primary.organizationId,
+      actorSessionId: primary.sessionId,
+      actor: primary,
+      expectedVersion: accepted.version,
+      idempotencyKey: key,
+      confirm: true,
+      effectiveAt: new Date().toISOString(),
+      tipoActoId: actType.id,
+    }));
+    const [first, second] = await Promise.all([request(randomUUID()), request(randomUUID())]);
+    expect(first.expediente.id).toBe(second.expediente.id);
+    expect([first.alreadyConverted, second.alreadyConverted].sort()).toEqual([false, true]);
+    expect(await db.expediente.count({ where: { cotizacion_id: quoteId } })).toBe(1);
+    expect(await db.expedienteDocumento.count({ where: { expediente_id: first.expediente.id, documento_id: document.id, estatus: 'ACTIVO' } })).toBe(1);
+    expect(await db.documento.count({ where: { storage_key: document.storage_key } })).toBe(1);
+
+    const operational = await run(primary, () => expedienteBudget.read(primary, first.expediente.id));
+    expect(operational.quote_origin).toMatchObject({ quote_id: quoteId, quote_version_id: approvedVersion.id, immutable: true });
+    expect(operational.concepts.map((item: any) => [item.concepto, item.categoria, item.importe])).toEqual([
+      ['Honorarios', 'HONORARIOS', '1000.00'],
+      ['Impuestos y derechos', 'IMPUESTOS_DERECHOS', '160.00'],
+    ]);
+    await run(primary, () => expedienteBudget.save(primary, first.expediente.id, {
+      expected_version: operational.version,
+      concepts: [
+        { concepto: 'Honorarios ajustados en expediente', categoria: 'HONORARIOS', importe: '1250.00' },
+        { concepto: 'Impuestos y derechos', categoria: 'IMPUESTOS_DERECHOS', importe: '175.00' },
+      ],
+    }));
+    const acceptedAfterExpEdit = await db.cotizacionVersion.findUniqueOrThrow({
+      where: { id: approvedVersion.id },
+      include: { conceptos: { orderBy: { orden: 'asc' } } },
+    });
+    expect(acceptedAfterExpEdit.conceptos.map((item: any) => [item.concepto, item.importe.toString()])).toEqual([
+      ['Honorarios', '1000'],
+      ['Impuestos y derechos', '160'],
+    ]);
+    expect(await run(primary, () => quoteWorkflow.read(primary, quoteId))).toMatchObject({
+      stage: 'CONVERTIDA_EXPEDIENTE', linkedCase: { id: first.expediente.id }, originProspect: { id: prospect.id },
+    });
+  }, 30_000);
 
   it('double click/retry con la misma clave produce exactamente una cotización', async () => {
     const prospect = await ready();

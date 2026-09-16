@@ -39,7 +39,7 @@ describe('CFG-001 v2 · pruebas contractuales A–R', () => {
     expect(items.find((item) => item.concept === 'SOLVENCIA_OBTENCION')?.durationOverride).toBe(90);
     expect(items.find((item) => item.concept === 'RPP_OBTENCION')?.durationOverride).toBe(50);
   });
-  it('H — Rectificación de otros datos excluye CLG y solvencia', () => expect(rule('Rectificación de escritura de otros datos')?.exclusions).toEqual(expect.arrayContaining(['SOLICITUD_CLG', 'OBTENCION_CLG', 'SOLVENCIA_OBTENCION'])));
+  it('H — Rectificación de otros datos excluye CLG y solvencia', () => expect(rule('Rectificación de escritura — otros datos')?.exclusions).toEqual(expect.arrayContaining(['SOLICITUD_CLG', 'OBTENCION_CLG', 'SOLVENCIA_OBTENCION'])));
   it('I — Poder/Testamento: revisión 2, proyección 1, firma 3 y cierre paralelo', () => {
     const items = standardFlowSpecs['Poder sin registro'];
     expect(items.find((item) => item.concept === 'REVISION_INICIAL')?.durationOverride).toBe(2);
@@ -59,7 +59,7 @@ describe('CFG-001 v2 · pruebas contractuales A–R', () => {
   });
   it('M — Poder persona moral excluye aviso dominio y conserva registro', () => expect(rule('Poder de persona moral')?.exclusions).toEqual(['AVISO_DOMINIO']));
   it('N — Asamblea vulnerable hereda la no vulnerable y Cumplimiento es la fuente jurídica', () => {
-    expect(rule('Protocolización del acta de asamblea vulnerable')?.base).toBe('Protocolización del acta de asamblea no vulnerable');
+    expect(rule('Protocolización de acta de asamblea — vulnerable')?.base).toBe('Protocolización de acta de asamblea — no vulnerable');
     expect(tracking).toContain('Cumplimiento remains the sole source of legal obligations'); expect(tracking).toContain("fuente_tiempo_snapshot: 'REGLA_JURIDICA'");
   });
   it('O — espera externa no se autocumple ni desbloquea downstream', () => {

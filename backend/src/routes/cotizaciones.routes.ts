@@ -8,6 +8,7 @@ import {
   createCotizacionVersion,
   aprobarVersion,
   extractPresupuesto,
+  generateCotizacionDocument,
   registrarAnticipo,
   validarAnticipo,
   convertToExpediente,
@@ -33,6 +34,7 @@ router.put('/:id/estado', updateCotizacionEstado);
 router.post('/:id/versiones', createCotizacionVersion);
 router.post('/version/:versionId/aprobar', aprobarVersion);
 router.post('/extraer-presupuesto', upload.single('archivo'), extractPresupuesto);
+router.post('/:id/generar-documento', generateCotizacionDocument);
 router.post('/:id/anticipo', requirePermission('finanzas.write'), registrarAnticipo);
 router.post('/pago/:pagoId/validar', requirePermission('finanzas.validate'), validarAnticipo);
 router.post('/:id/convertir', requirePermission('expedientes.write'), convertToExpediente);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Check, Download, FileText, LoaderCircle, Pencil, Send, X } from 'lucide-react';
+import { ArrowLeft, Check, Download, FilePlus2, FileText, LoaderCircle, Pencil, Send, X } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { ConvertQuoteDialog } from './components/ConvertQuoteDialog';
@@ -7,6 +7,7 @@ import { EditQuoteVersionDrawer } from './components/EditQuoteVersionDrawer';
 import { QuoteActivity } from './components/QuoteActivity';
 import { QuoteConcepts } from './components/QuoteConcepts';
 import { QuoteContractActionDialog } from './components/QuoteContractActionDialog';
+import { QuoteProgress } from './components/QuoteProgress';
 import { QuoteStatusBadge } from './components/QuoteStatusBadge';
 import { QuoteVersions } from './components/QuoteVersions';
 import { QuotesLoading } from './components/QuotesLoading';
@@ -16,7 +17,7 @@ import { quotesService } from './quotes.service';
 import type { Quote, QuoteContractAction, QuoteState, QuoteVersion } from './quotes.types';
 import styles from './Quotes.module.css';
 
-type ContractDialogAction = 'REGISTRAR_ACEPTACION_ANTICIPO' | 'SUSPENDER' | 'CANCELAR';
+type ContractDialogAction = 'COMENZAR_ELABORACION' | 'INICIAR_SEGUIMIENTO' | 'ACEPTAR' | 'RECHAZAR' | 'SUSPENDER' | 'CANCELAR';
 
 export function QuoteDetailPage() {
   const { id = '' } = useParams();
@@ -58,6 +59,13 @@ export function QuoteDetailPage() {
     } catch { notify('No hay un PDF disponible para esta cotización.'); }
     finally { setBusy(''); }
   };
+  const generateDocument = async () => {
+    if (!quote) return;
+    setBusy('generate');
+    try { await quotesService.generateDocument(quote.id); await load(); notify('Nueva versión documental generada desde ADM-001.'); }
+    catch (cause) { notify(cause instanceof Error ? cause.message : 'No fue posible generar la cotización.'); }
+    finally { setBusy(''); }
+  };
 
   if (status === 'loading') return <QuotesLoading />;
   if (status === 'error' || !quote) return <section className={styles.pageState} role="alert"><span><FileText /></span><h1>No pudimos abrir esta cotización.</h1><p>Puede que ya no exista o que no tengas acceso.</p><Link className={styles.secondaryButton} to="/cotizaciones">Volver a Cotizaciones</Link></section>;
@@ -68,14 +76,15 @@ export function QuoteDetailPage() {
   const canonical = Boolean(quote.workflow?.stage);
   const actions = (quote.workflow?.actions ?? []).map((action) => typeof action === 'string' ? action : action.code) as QuoteContractAction[];
   const hasPdf = Boolean(currentVersion?.pdf_url || quote.documentos?.some((item) => item.mime_type === 'application/pdf' || item.nombre_original.toLowerCase().endsWith('.pdf')));
-  const accepted = quote.workflow?.stage === 'ACEPTO_ANTICIPO' || (!canonical && quote.estado === 'ACEPTADA');
+  const accepted = quote.workflow?.stage === 'ACEPTADA' || quote.workflow?.stage === 'ACEPTO_ANTICIPO' || (!canonical && quote.estado === 'ACEPTADA');
 
   return <div className={styles.detailPage} data-ai-trigger={accepted && !quote.expediente ? 'COTIZACION_ACEPTADA_SIN_EXPEDIENTE' : undefined}>
     <Link className={styles.backLink} to="/cotizaciones"><ArrowLeft size={17} />Cotizaciones</Link>
     <header className={styles.detailHeader}>
       <div><div className={styles.detailEyebrow}><QuoteStatusBadge quote={quote} /><span>Versión actual v{quote.version_actual}</span>{!canonical && <span>Registro histórico</span>}</div><h1>{quote.numero_cotizacion || quote.numero_solicitud || 'Cotización'}</h1><p>{quote.prospecto?.nombre || 'Prospecto no disponible'} · {quote.prospecto?.tipo_acto || 'Acto sin especificar'}</p></div>
       <div className={styles.detailActions}>
-        {canWrite && <button type="button" className={styles.secondaryButton} onClick={() => setEdit(true)}><Pencil size={17} />Editar versión</button>}
+        {canWrite && !accepted && quote.workflow?.stage !== 'CONVERTIDA_EXPEDIENTE' && <button type="button" className={styles.secondaryButton} onClick={() => setEdit(true)}><Pencil size={17} />Editar presupuesto</button>}
+        {canWrite && !accepted && currentVersion?.conceptos?.length && <button type="button" className={styles.primaryButton} onClick={() => void generateDocument()} disabled={busy === 'generate'}>{busy === 'generate' ? <LoaderCircle className={styles.spin} size={17} /> : <FilePlus2 size={17} />}Generar cotización</button>}
         <button type="button" className={styles.secondaryButton} onClick={download} disabled={!hasPdf || busy === 'download'}>{busy === 'download' ? <LoaderCircle className={styles.spin} size={17} /> : <Download size={17} />}Descargar</button>
         {canonical && canWrite && actions.includes('ENVIAR_CLIENTE') && <button type="button" className={styles.primaryButton} onClick={() => setDelivery('CLIENTE')}><Send size={17} />Registrar envío al cliente</button>}
         {canonical && canWrite && actions.includes('REENVIAR_CLIENTE') && <button type="button" className={styles.secondaryButton} onClick={() => setDelivery('CLIENTE')}><Send size={17} />Registrar reenvío</button>}
@@ -83,6 +92,8 @@ export function QuoteDetailPage() {
         {!canonical && canWrite && legacyAllowed.includes('ENVIADA_CLIENTE') && <button type="button" className={styles.secondaryButton} onClick={() => setDelivery('CLIENTE')}><Send size={17} />Enviar a cliente</button>}
       </div>
     </header>
+
+    <QuoteProgress quote={quote} />
 
     <section className={styles.detailOverview} aria-label="Resumen de cotización">
       <article><small>Cliente</small><strong>{quote.prospecto?.nombre || 'Sin cliente visible'}</strong><span>{quote.prospecto?.email || quote.prospecto?.telefono || 'Sin contacto visible'}</span></article>
@@ -99,7 +110,10 @@ export function QuoteDetailPage() {
       </main>
       <aside>
         <section className={styles.detailSection}><header><div><h2>Acciones de negocio</h2><p>{canonical ? 'Acciones contractuales disponibles para el hito actual.' : 'Compatibilidad operativa del registro histórico.'}</p></div></header><div className={styles.businessActions}>
-          {canonical && canWrite && actions.includes('REGISTRAR_ACEPTACION_ANTICIPO') && <button type="button" className={styles.primaryButton} onClick={() => setContractAction('REGISTRAR_ACEPTACION_ANTICIPO')}><Check size={17} />Registrar Aceptó / Anticipo</button>}
+          {canonical && canWrite && actions.includes('COMENZAR_ELABORACION') && <button type="button" className={styles.primaryButton} onClick={() => setContractAction('COMENZAR_ELABORACION')}>Comenzar elaboración</button>}
+          {canonical && canWrite && actions.includes('INICIAR_SEGUIMIENTO') && <button type="button" className={styles.primaryButton} onClick={() => setContractAction('INICIAR_SEGUIMIENTO')}>Iniciar seguimiento</button>}
+          {canonical && canWrite && actions.includes('ACEPTAR') && <button type="button" className={styles.primaryButton} onClick={() => setContractAction('ACEPTAR')}><Check size={17} />Registrar aceptación</button>}
+          {canonical && canWrite && actions.includes('RECHAZAR') && <button type="button" className={styles.dangerAction} onClick={() => setContractAction('RECHAZAR')}><X size={17} />Registrar rechazo</button>}
           {canonical && canConvert && actions.includes('CONVERTIR') && !quote.expediente && <button type="button" className={styles.primaryButton} onClick={() => setConvert(true)}>Convertir en expediente</button>}
           {canonical && canWrite && actions.includes('SUSPENDER') && <button type="button" onClick={() => setContractAction('SUSPENDER')}>Suspender cotización</button>}
           {canonical && canWrite && actions.includes('CANCELAR') && <button type="button" className={styles.dangerAction} onClick={() => setContractAction('CANCELAR')}><X size={17} />Cancelar cotización</button>}
@@ -117,7 +131,7 @@ export function QuoteDetailPage() {
 
     {edit && <EditQuoteVersionDrawer quote={quote} onClose={() => setEdit(false)} onCreated={(version: QuoteVersion) => { setEdit(false); setQuote((current) => current ? { ...current, versiones: [version, ...current.versiones], version_actual: version.version, total_cliente: version.total_cliente, total_notaria: version.total_notaria, honorarios_pravia: version.honorarios_pravia } : current); notify(`Versión v${version.version} creada.`); }} />}
     {delivery && <RegisterDeliveryDialog quote={quote} target={delivery} onClose={() => setDelivery(null)} onDone={() => { setDelivery(null); void load(); notify(canonical && quote.workflow?.stage === 'ENVIADA_CLIENTE' ? 'Reenvío registrado sin cambiar el primer envío.' : 'Envío registrado con evidencia.'); }} />}
-    {contractAction && <QuoteContractActionDialog quote={quote} action={contractAction} onClose={() => setContractAction(null)} onDone={() => { const completed = contractAction; setContractAction(null); void load(); notify(completed === 'REGISTRAR_ACEPTACION_ANTICIPO' ? 'Hito Aceptó / Anticipo registrado.' : completed === 'SUSPENDER' ? 'Cotización suspendida.' : 'Cotización cancelada.'); }} />}
+    {contractAction && <QuoteContractActionDialog quote={quote} action={contractAction} onClose={() => setContractAction(null)} onDone={() => { const completed = contractAction; setContractAction(null); void load(); notify(completed === 'ACEPTAR' ? 'Aceptación registrada.' : completed === 'SUSPENDER' ? 'Cotización suspendida.' : 'Acción registrada.'); }} />}
     {convert && <ConvertQuoteDialog quote={quote} onClose={() => setConvert(false)} onDone={(result) => { setConvert(false); notify(result.idempotent ? 'La cotización ya tenía expediente.' : 'Expediente creado correctamente.'); navigate(`/expedientes/${result.id}`); }} />}
     <div className={`${styles.toast} ${toast ? styles.toastVisible : ''}`} role="status" aria-live="polite">{toast}</div>
   </div>;

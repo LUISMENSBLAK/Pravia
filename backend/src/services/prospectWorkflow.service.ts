@@ -229,21 +229,49 @@ export class ProspectWorkflowService {
           impuestos_derechos: p.impuestos_derechos_estimados?.toString() ?? null,
           total: p.total_estimado?.toString() ?? null,
         });
+        const inheritedConcepts = p.total_estimado && p.honorarios_estimados && p.impuestos_derechos_estimados
+          ? [
+            { concepto: 'Honorarios', categoria: 'HONORARIOS' as const, importe: p.honorarios_estimados, orden: 0 },
+            { concepto: 'Impuestos y derechos', categoria: 'IMPUESTOS_DERECHOS' as const, importe: p.impuestos_derechos_estimados, orden: 1 },
+          ]
+          : [];
         const quote = await tx.cotizacion.create({ data: { organization_id: actor.organizationId, prospecto_id: id, user_id: p.user_id,
           numero_cotizacion: quoteFolio, estado: 'BORRADOR', cuerpo_correo_cliente: template.body,
-          honorarios_pravia: p.honorarios_estimados, total_notaria: p.total_estimado, total_cliente: p.total_estimado } });
+          honorarios_pravia: p.honorarios_estimados, total_notaria: p.total_estimado, total_cliente: p.total_estimado,
+        } });
+        if (inheritedConcepts.length) {
+          await tx.cotizacionConcepto.createMany({ data: inheritedConcepts.map((concept) => ({
+            organization_id: actor.organizationId,
+            cotizacion_id: quote.id,
+            concepto: concept.concepto,
+            categoria: concept.categoria,
+            importe: concept.importe,
+            orden: concept.orden,
+            origen: 'MANUAL',
+          })) });
+        }
         if (p.total_estimado && p.honorarios_estimados && p.impuestos_derechos_estimados) {
-          await tx.cotizacionVersion.create({ data: {
+          const quoteVersion = await tx.cotizacionVersion.create({ data: {
             organization_id: actor.organizationId, cotizacion_id: quote.id, version: 1,
             total_cliente: p.total_estimado, total_notaria: p.total_estimado,
             honorarios_pravia: p.honorarios_estimados, creada_por_id: actor.id, aprobada: false,
             notas: 'Preparación económica heredada del prospecto.',
-            desglose_notaria: { template: template.id, rubros: [
-              { categoria: 'HONORARIOS', concepto: 'Honorarios', monto: p.honorarios_estimados.toString() },
-              { categoria: 'IMPUESTOS', concepto: 'Impuestos y derechos', monto: p.impuestos_derechos_estimados.toString() },
-            ] },
+            desglose_notaria: { template: template.id, rubros: inheritedConcepts.map((concept) => ({
+              categoria: concept.categoria,
+              concepto: concept.concepto,
+              monto: concept.importe.toString(),
+            })) },
             desglose_pravia: { participacion_pravia: p.honorarios_estimados.toString() },
           } });
+          await tx.cotizacionVersionConcepto.createMany({ data: inheritedConcepts.map((concept) => ({
+              organization_id: actor.organizationId,
+              cotizacion_version_id: quoteVersion.id,
+              concepto: concept.concepto,
+              categoria: concept.categoria,
+              importe: concept.importe,
+              orden: concept.orden,
+              origen: 'MANUAL',
+          })) });
         }
         await initializeQuoteContractInTransaction(tx, actor, quote, {
           effectiveAt: recordedAt,

@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from 'crypto';
+import path from 'path';
+import JSZip from 'jszip';
 import { ExpedienteDocumentoOrigen, Prisma, PrismaClient } from '@prisma/client';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
-import { fileExists, getSignedUrl } from './supabase.service';
+import { downloadFile, fileExists, getSignedUrl } from './supabase.service';
 
 export type AppendixActor = {
   id: string;
@@ -42,6 +44,8 @@ type Candidate = {
   incorporatedAt: Date;
   provenance: Record<string, unknown>;
   expedienteDocumentoId?: string | null;
+  folderId?: string | null;
+  visualName?: string | null;
   legacyName?: string;
   legacyType?: string;
   legacyStorageKey?: string | null;
@@ -57,6 +61,26 @@ const sourceKey = (origin: ExpedienteDocumentoOrigen, entityType: string, entity
   `${origin}:${entityType}:${entityId}:${documentId}:${context}`.slice(0, 320);
 const notaryQuote = (document: CanonicalDocument, linkType = '') =>
   /PRESUPUESTO[_\s-]*NOTARIA|COTIZACI[ÓO]N[_\s-]*NOTARIA|NOTARIA[_\s-]*QUOTE/i.test(`${document.tipo} ${linkType}`);
+const snapshotFolderId = (folderPath: string) => `snapshot-${digest(folderPath).slice(0, 32)}`;
+
+const snapshotFolders = (items: Array<{ folder_path_snapshot?: string | null }>) => {
+  const folders = new Map<string, { id: string; parent_id: string | null; nombre: string; orden: number; path: string }>();
+  for (const item of items) {
+    const segments = (item.folder_path_snapshot || '').split('/').map((segment) => segment.trim()).filter(Boolean);
+    for (let index = 0; index < segments.length; index += 1) {
+      const currentPath = segments.slice(0, index + 1).join('/');
+      const parentPath = index ? segments.slice(0, index).join('/') : null;
+      if (!folders.has(currentPath)) folders.set(currentPath, {
+        id: snapshotFolderId(currentPath),
+        parent_id: parentPath ? snapshotFolderId(parentPath) : null,
+        nombre: segments[index],
+        orden: folders.size,
+        path: currentPath,
+      });
+    }
+  }
+  return [...folders.values()];
+};
 
 const documentSelect = {
   id: true, nombre_original: true, tipo: true, categoria: true, storage_key: true,
@@ -74,7 +98,108 @@ export class ExpedienteDocumentAppendixService {
     });
     if (snapshot) return this.snapshotResponse(snapshot);
     const candidates = await this.buildCandidates(this.prisma, actor, expedienteId);
-    return this.liveResponse(candidates);
+    return this.liveResponse(candidates, actor, expedienteId);
+  }
+
+  async importCurrent(actor: Actor, expedienteId: string, origin: 'COMPARECIENTE' | 'PREDIO') {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp004-import:${expedienteId}:${origin}`}))`);
+      const expediente = await this.assertExpediente(tx, actor, expedienteId);
+      if (frozenStatuses.has(expediente.estatus)) throw new ExpedienteDocumentAppendixError(409, 'EXP004_APPENDIX_FROZEN', 'El apéndice quedó congelado al firmar y ya no admite importaciones.');
+      const sources = await this.discoverCurrentSources(tx, actor, expedienteId, origin);
+      let created = 0; let updated = 0; let unchanged = 0;
+      for (const source of sources) {
+        if (!source.document) continue;
+        const existing = await tx.expedienteDocumento.findFirst({ where: {
+          organization_id: actor.organizationId, expediente_id: expedienteId, source_key: source.sourceKey,
+        } });
+        if (!existing) {
+          await tx.expedienteDocumento.create({ data: {
+            organization_id: actor.organizationId, expediente_id: expedienteId, documento_id: source.document.id,
+            tipo_vinculo: `IMPORT_${origin}_${source.sourceEntityId}`.slice(0, 180), creado_por_id: actor.id,
+            origen: origin, source_entity_type: source.sourceEntityType, source_entity_id: source.sourceEntityId,
+            source_context: source.sourceContext, source_key: source.sourceKey, document_version: source.documentVersion,
+            provenance: json(source.provenance),
+          } });
+          created += 1;
+          continue;
+        }
+        if (existing.documento_id !== source.document.id || existing.document_version !== source.documentVersion || existing.estatus !== 'ACTIVO') {
+          await tx.expedienteDocumento.update({ where: { id: existing.id }, data: {
+            documento_id: source.document.id, document_version: source.documentVersion, source_context: source.sourceContext,
+            provenance: json({ ...source.provenance, previous_document_id: existing.documento_id, source_changed: existing.documento_id !== source.document.id }),
+            estatus: 'ACTIVO', inactivado_at: null, inactivado_por_id: null, motivo_inactivacion: null,
+          } });
+          updated += 1;
+        } else unchanged += 1;
+      }
+      await tx.auditLog.create({ data: {
+        organization_id: actor.organizationId, user_id: actor.id, accion: `IMPORT_EXPEDIENT_${origin}_DOCUMENTS`, entidad: 'Expediente', entidad_id: expedienteId,
+        valores_nuevos: json({ origin, new: created, updated, unchanged, duplicates_created: 0, historical_imported: 0, blob_copies: 0 }),
+        correlation_id: randomUUID(), session_id: actor.sessionId,
+      } });
+      const candidates = await this.buildCandidates(tx, actor, expedienteId);
+      return { ...(await this.liveResponse(candidates, actor, expedienteId, tx)), import: { origin, new: created, updated, unchanged, duplicates_created: 0, historical_imported: 0, blob_copies: 0 } };
+    }, { timeout: 20_000 });
+  }
+
+  async createFolder(actor: Actor, expedienteId: string, name: string, parentId?: string | null) {
+    const clean = name.trim().replace(/[\\/:*?"<>|]/g, '-').slice(0, 180);
+    if (!clean) throw new ExpedienteDocumentAppendixError(400, 'EXP004_FOLDER_NAME_REQUIRED', 'Escribe un nombre para la carpeta.');
+    return this.prisma.$transaction(async (tx) => {
+      const expediente = await this.assertMutable(tx, actor, expedienteId);
+      if (parentId) await this.assertFolder(tx, actor, expedienteId, parentId);
+      const folder = await tx.expedienteDocumentoCarpeta.create({ data: { organization_id: actor.organizationId, expediente_id: expediente.id, parent_id: parentId || null, nombre: clean, created_by_id: actor.id } });
+      await this.audit(tx, actor, expedienteId, 'CREATE_EXPEDIENT_DOCUMENT_FOLDER', folder.id, { name: clean, parent_id: parentId || null });
+      return folder;
+    });
+  }
+
+  async renameFolder(actor: Actor, expedienteId: string, folderId: string, name: string) {
+    const clean = name.trim().replace(/[\\/:*?"<>|]/g, '-').slice(0, 180);
+    if (!clean) throw new ExpedienteDocumentAppendixError(400, 'EXP004_FOLDER_NAME_REQUIRED', 'Escribe un nombre para la carpeta.');
+    return this.prisma.$transaction(async (tx) => {
+      await this.assertMutable(tx, actor, expedienteId); await this.assertFolder(tx, actor, expedienteId, folderId);
+      const folder = await tx.expedienteDocumentoCarpeta.update({ where: { id: folderId }, data: { nombre: clean } });
+      await this.audit(tx, actor, expedienteId, 'RENAME_EXPEDIENT_DOCUMENT_FOLDER', folderId, { name: clean });
+      return folder;
+    });
+  }
+
+  async archiveFolder(actor: Actor, expedienteId: string, folderId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.assertMutable(tx, actor, expedienteId);
+      const folder = await this.assertFolder(tx, actor, expedienteId, folderId);
+      const [childCount, documentCount] = await Promise.all([
+        tx.expedienteDocumentoCarpeta.count({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, parent_id: folderId, archived_at: null } }),
+        tx.expedienteDocumento.count({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, carpeta_id: folderId, estatus: 'ACTIVO' } }),
+      ]);
+      if (childCount || documentCount) throw new ExpedienteDocumentAppendixError(409, 'EXP004_FOLDER_NOT_EMPTY', 'La carpeta debe estar vacía antes de eliminarla.');
+      await tx.expedienteDocumentoCarpeta.update({ where: { id: folder.id }, data: { archived_at: new Date() } });
+      await this.audit(tx, actor, expedienteId, 'ARCHIVE_EXPEDIENT_DOCUMENT_FOLDER', folder.id, { name: folder.nombre, soft_delete: true });
+      return { id: folder.id, archived: true };
+    });
+  }
+
+  async move(actor: Actor, expedienteId: string, input: { document_ids?: string[]; folder_ids?: string[]; target_folder_id?: string | null }) {
+    const documentIds = [...new Set(input.document_ids || [])]; const folderIds = [...new Set(input.folder_ids || [])];
+    if (!documentIds.length && !folderIds.length) throw new ExpedienteDocumentAppendixError(400, 'EXP004_MOVE_SELECTION_REQUIRED', 'Selecciona archivos o carpetas para mover.');
+    return this.prisma.$transaction(async (tx) => {
+      await this.assertMutable(tx, actor, expedienteId);
+      if (input.target_folder_id) await this.assertFolder(tx, actor, expedienteId, input.target_folder_id);
+      if (documentIds.length) {
+        const count = await tx.expedienteDocumento.count({ where: { id: { in: documentIds }, organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO' } });
+        if (count !== documentIds.length) throw new ExpedienteDocumentAppendixError(403, 'EXP004_MOVE_DOCUMENT_ACCESS_DENIED', 'La selección contiene archivos fuera del expediente.');
+        await tx.expedienteDocumento.updateMany({ where: { id: { in: documentIds } }, data: { carpeta_id: input.target_folder_id || null, moved_at: new Date(), moved_by_id: actor.id } });
+      }
+      for (const folderId of folderIds) {
+        await this.assertFolder(tx, actor, expedienteId, folderId);
+        if (folderId === input.target_folder_id || await this.isDescendant(tx, folderId, input.target_folder_id || null)) throw new ExpedienteDocumentAppendixError(409, 'EXP004_FOLDER_CYCLE', 'Una carpeta no puede moverse dentro de sí misma ni de una descendiente.');
+        await tx.expedienteDocumentoCarpeta.update({ where: { id: folderId }, data: { parent_id: input.target_folder_id || null } });
+      }
+      await this.audit(tx, actor, expedienteId, 'MOVE_EXPEDIENT_DOCUMENT_ITEMS', expedienteId, { document_ids: documentIds, folder_ids: folderIds, target_folder_id: input.target_folder_id || null });
+      return { moved_documents: documentIds.length, moved_folders: folderIds.length };
+    });
   }
 
   async sync(actor: Actor, expedienteId: string) {
@@ -156,7 +281,7 @@ export class ExpedienteDocumentAppendixService {
         valores_nuevos: json({ revision, created, reactivated, inactivated, candidate_count: candidates.length, blob_copies: 0 }),
         correlation_id: randomUUID(), session_id: actor.sessionId,
       } });
-      return { ...(await this.liveResponse(candidates)), sync: { created, reactivated, inactivated, blob_copies: 0 } };
+      return { ...(await this.liveResponse(candidates, actor, expedienteId, tx)), sync: { created, reactivated, inactivated, blob_copies: 0 } };
     }, { timeout: 20_000 });
   }
 
@@ -185,10 +310,13 @@ export class ExpedienteDocumentAppendixService {
         ? fileExists(candidate.document.storage_key).catch(() => false)
         : false
     )));
-    const linkByKey = new Map((await tx.expedienteDocumento.findMany({
+    const activeLinks = await tx.expedienteDocumento.findMany({
       where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO' },
-      select: { id: true, source_key: true },
-    })).map((item) => [item.source_key, item.id]));
+      select: { id: true, source_key: true, carpeta_id: true },
+    });
+    const linkByKey = new Map(activeLinks.map((item) => [item.source_key, item.id]));
+    const folderPaths = await this.folderPaths(tx, actor, expedienteId);
+    const linkFolders = new Map(activeLinks.map((item) => [item.source_key, item.carpeta_id ? folderPaths.get(item.carpeta_id) || null : null]));
     const snapshot = await tx.expedienteDocumentoSnapshot.create({ data: {
       organization_id: actor.organizationId,
       expediente_id: expedienteId,
@@ -207,7 +335,7 @@ export class ExpedienteDocumentAppendixService {
         source_entity_id: candidate.sourceEntityId,
         source_context: candidate.sourceContext,
         document_version: candidate.documentVersion,
-        nombre_snapshot: candidate.document?.nombre_original || candidate.legacyName || 'Registro documental',
+        nombre_snapshot: candidate.visualName || candidate.document?.nombre_original || candidate.legacyName || 'Registro documental',
         tipo_snapshot: candidate.document?.tipo || candidate.legacyType || 'DOCUMENTO',
         categoria_snapshot: candidate.document?.categoria || null,
         estado_snapshot: candidate.document?.estatus || 'REGISTRO_EXISTENTE_ARCHIVO_NO_DISPONIBLE',
@@ -218,6 +346,7 @@ export class ExpedienteDocumentAppendixService {
         file_availability_snapshot: fileAvailability[index] ? 'DISPONIBLE' : 'NO_DISPONIBLE',
         incorporated_at_snapshot: candidate.incorporatedAt,
         provenance_snapshot: json(candidate.provenance),
+        folder_path_snapshot: candidate.expedienteDocumentoId ? (candidate.folderId ? folderPaths.get(candidate.folderId) || null : null) : linkFolders.get(candidate.sourceKey) || null,
         metadata_snapshot: json({ source_name: candidate.sourceName, canonical_blob_reused: Boolean(candidate.document), blob_copied: false }),
       })) },
     }, include: { items: true } });
@@ -257,6 +386,152 @@ export class ExpedienteDocumentAppendixService {
     return { url: await getSignedUrl(storageKey, 600), expires_in: 600, file_name: fileName, mime_type: mimeType };
   }
 
+  async file(actor: Actor, expedienteId: string, itemId: string) {
+    await this.assertExpediente(this.prisma, actor, expedienteId);
+    const snapshot = await this.prisma.expedienteDocumentoSnapshot.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId } });
+    const item = snapshot
+      ? await this.prisma.expedienteDocumentoSnapshotItem.findFirst({ where: { id: itemId, organization_id: actor.organizationId, snapshot_id: snapshot.id }, select: { storage_key_snapshot: true, nombre_snapshot: true, mime_type_snapshot: true } })
+      : await this.prisma.expedienteDocumento.findFirst({ where: { id: itemId, organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO' }, select: { documento: { select: { storage_key: true, nombre_original: true, mime_type: true } }, nombre_visual: true } });
+    if (!item) throw new ExpedienteDocumentAppendixError(403, 'EXP004_DOCUMENT_ACCESS_DENIED', 'No tienes acceso a este documento del expediente.');
+    const storageKey = 'documento' in item ? item.documento.storage_key : item.storage_key_snapshot;
+    const name = 'documento' in item ? item.nombre_visual || item.documento.nombre_original : item.nombre_snapshot;
+    const mime = 'documento' in item ? item.documento.mime_type : item.mime_type_snapshot || 'application/octet-stream';
+    if (!storageKey || !(await fileExists(storageKey))) throw new ExpedienteDocumentAppendixError(404, 'EXP004_FILE_UNAVAILABLE', 'El registro existe, pero el archivo no está disponible.');
+    return { buffer: await downloadFile(storageKey), name, mime };
+  }
+
+  async archive(actor: Actor, expedienteId: string, input: { folder_id?: string | null; folder_ids?: string[]; item_ids?: string[] }) {
+    await this.assertExpediente(this.prisma, actor, expedienteId);
+    const snapshot = await this.prisma.expedienteDocumentoSnapshot.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId }, include: { items: true } });
+    const requested = new Set(input.item_ids || []);
+    const requestedFolders = new Set(input.folder_ids || []);
+    const zip = new JSZip(); const used = new Map<string, number>();
+    let files: Array<{ id: string; name: string; storage: string | null; folder: string | null }> = [];
+    if (snapshot) {
+      files = snapshot.items.map((item) => ({ id: item.id, name: item.nombre_snapshot, storage: item.storage_key_snapshot, folder: item.folder_path_snapshot }));
+      const folders = snapshotFolders(snapshot.items);
+      const paths = new Map(folders.map((folder) => [folder.id, folder.path]));
+      const targetPath = input.folder_id ? paths.get(input.folder_id) : null;
+      if (input.folder_id && !targetPath) throw new ExpedienteDocumentAppendixError(404, 'EXP004_FOLDER_NOT_FOUND', 'La carpeta congelada ya no existe.');
+      const selectedFolderPaths = [...requestedFolders].map((id) => paths.get(id)).filter((value): value is string => Boolean(value));
+      if (selectedFolderPaths.length !== requestedFolders.size) throw new ExpedienteDocumentAppendixError(404, 'EXP004_FOLDER_NOT_FOUND', 'La selección contiene una carpeta congelada inexistente.');
+      if (targetPath) files = files.filter((item) => item.folder === targetPath || item.folder?.startsWith(`${targetPath}/`));
+      if (requested.size || requestedFolders.size) files = files.filter((item) => requested.has(item.id) || selectedFolderPaths.some((folderPath) => item.folder === folderPath || item.folder?.startsWith(`${folderPath}/`)));
+    } else {
+      const paths = await this.folderPaths(this.prisma, actor, expedienteId);
+      const links = await this.prisma.expedienteDocumento.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO' }, include: { documento: true } });
+      const targetPath = input.folder_id ? paths.get(input.folder_id) : null;
+      if (input.folder_id && !targetPath) throw new ExpedienteDocumentAppendixError(404, 'EXP004_FOLDER_NOT_FOUND', 'La carpeta ya no existe.');
+      const selectedFolderPaths = [...requestedFolders].map((id) => paths.get(id)).filter((value): value is string => Boolean(value));
+      if (selectedFolderPaths.length !== requestedFolders.size) throw new ExpedienteDocumentAppendixError(404, 'EXP004_FOLDER_NOT_FOUND', 'La selección contiene una carpeta que ya no existe.');
+      files = links.filter((link) => !targetPath || (link.carpeta_id && (paths.get(link.carpeta_id) === targetPath || paths.get(link.carpeta_id)?.startsWith(`${targetPath}/`)))).map((link) => ({ id: link.id, name: link.nombre_visual || link.documento.nombre_original, storage: link.documento.storage_key, folder: link.carpeta_id ? paths.get(link.carpeta_id) || null : null }));
+      if (requested.size || requestedFolders.size) files = files.filter((item) => requested.has(item.id) || selectedFolderPaths.some((folderPath) => item.folder === folderPath || item.folder?.startsWith(`${folderPath}/`)));
+    }
+    if (!files.length) throw new ExpedienteDocumentAppendixError(400, 'EXP004_ARCHIVE_EMPTY', 'La selección no contiene archivos descargables.');
+    for (const file of files) {
+      if (!file.storage || !(await fileExists(file.storage))) throw new ExpedienteDocumentAppendixError(409, 'EXP004_ARCHIVE_FILE_UNAVAILABLE', `El archivo ${file.name} no está disponible.`);
+      const safeFolder = (file.folder || 'Sin carpeta').split('/').map(this.safeName).join('/');
+      const original = this.safeName(path.basename(file.name || `documento-${file.id}`));
+      const logical = `${safeFolder}/${original}`;
+      const count = (used.get(logical) || 0) + 1; used.set(logical, count);
+      const extension = path.extname(original); const base = path.basename(original, extension);
+      const unique = count === 1 ? logical : `${safeFolder}/${base} (${count})${extension}`;
+      zip.file(unique, await downloadFile(file.storage));
+    }
+    const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+    await this.prisma.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: 'DOWNLOAD_EXPEDIENT_DOCUMENT_ZIP', entidad: 'Expediente', entidad_id: expedienteId, valores_nuevos: json({ count: files.length, folder_id: input.folder_id || null, selected_files: requested.size, selected_folders: requestedFolders.size }), correlation_id: randomUUID(), session_id: actor.sessionId } });
+    return { buffer, name: input.folder_id ? 'carpeta-documental.zip' : requested.size || requestedFolders.size ? 'seleccion-documental.zip' : 'expediente-documental.zip' };
+  }
+
+  private async discoverCurrentSources(db: Db, actor: Actor, expedienteId: string, origin: 'COMPARECIENTE' | 'PREDIO'): Promise<Candidate[]> {
+    if (origin === 'COMPARECIENTE') {
+      const relations = await db.expedienteCompareciente.findMany({
+        where: { organization_id: actor.organizationId, expediente_id: expedienteId, archived_at: null, estatus: 'ACTIVO' },
+        select: {
+          compareciente_id: true,
+          compareciente: {
+            select: {
+              nombre_busqueda: true,
+              documentos: {
+                where: { archived_at: null, estatus: 'ACTIVO', documento: { estatus: { in: ['PENDIENTE', 'VIGENTE', 'POR_VENCER'] } } },
+                select: { id: true, categoria: true, subcategoria: true, documento: { select: documentSelect } },
+              },
+            },
+          },
+        },
+      });
+      return relations.flatMap((relation) => relation.compareciente.documentos.map((link) => ({
+        sourceKey: `IMPORT:COMPARECIENTE:${link.id}`, origin, sourceEntityType: 'COMPARECIENTE', sourceEntityId: relation.compareciente_id,
+        sourceContext: link.subcategoria || link.categoria, sourceName: relation.compareciente.nombre_busqueda, document: link.documento,
+        documentVersion: versionOf(link.documento), incorporatedAt: link.documento.fecha_carga,
+        provenance: { origin, source_link_id: link.id, source_name: relation.compareciente.nombre_busqueda, current_only: true, explicit_import: true },
+      })));
+    }
+    const relations = await db.expedientePredio.findMany({
+      where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO' },
+      select: {
+        predio_id: true,
+        predio: {
+          select: {
+            apodo: true, ubicacion_texto: true, clave_catastral: true, folio_real: true,
+            documentos: {
+              where: { estatus: 'ACTIVO', vigencia: 'VIGENTE', documento: { estatus: { in: ['PENDIENTE', 'VIGENTE', 'POR_VENCER'] } } },
+              select: { id: true, tipo_vinculo: true, documento: { select: documentSelect } },
+            },
+          },
+        },
+      },
+    });
+    return relations.flatMap((relation) => {
+      const name = relation.predio.apodo || relation.predio.ubicacion_texto || relation.predio.clave_catastral || relation.predio.folio_real || 'Inmueble';
+      return relation.predio.documentos.map((link) => ({
+        sourceKey: `IMPORT:PREDIO:${link.id}`, origin, sourceEntityType: 'PREDIO', sourceEntityId: relation.predio_id,
+        sourceContext: link.tipo_vinculo, sourceName: name, document: link.documento, documentVersion: versionOf(link.documento), incorporatedAt: link.documento.fecha_carga,
+        provenance: { origin, source_link_id: link.id, source_name: name, current_only: true, explicit_import: true },
+      }));
+    });
+  }
+
+  private async assertMutable(db: Db, actor: Actor, expedienteId: string) {
+    const expediente = await this.assertExpediente(db, actor, expedienteId);
+    if (frozenStatuses.has(expediente.estatus)) throw new ExpedienteDocumentAppendixError(409, 'EXP004_APPENDIX_FROZEN', 'El apéndice quedó congelado al firmar.');
+    return expediente;
+  }
+
+  private async assertFolder(db: Db, actor: Actor, expedienteId: string, folderId: string) {
+    const folder = await db.expedienteDocumentoCarpeta.findFirst({ where: { id: folderId, organization_id: actor.organizationId, expediente_id: expedienteId, archived_at: null } });
+    if (!folder) throw new ExpedienteDocumentAppendixError(403, 'EXP004_FOLDER_ACCESS_DENIED', 'La carpeta no pertenece al expediente activo.');
+    return folder;
+  }
+
+  private async isDescendant(db: Db, folderId: string, targetId: string | null) {
+    let cursor = targetId;
+    for (let depth = 0; cursor && depth < 64; depth += 1) {
+      if (cursor === folderId) return true;
+      cursor = (await db.expedienteDocumentoCarpeta.findUnique({ where: { id: cursor }, select: { parent_id: true } }))?.parent_id || null;
+    }
+    return false;
+  }
+
+  private async folderPaths(db: Db, actor: Actor, expedienteId: string) {
+    const folders = await db.expedienteDocumentoCarpeta.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, archived_at: null }, select: { id: true, parent_id: true, nombre: true } });
+    const byId = new Map(folders.map((folder) => [folder.id, folder])); const result = new Map<string, string>();
+    const resolve = (id: string, seen = new Set<string>()): string => {
+      if (result.has(id)) return result.get(id)!; if (seen.has(id)) return 'Carpeta inválida'; seen.add(id);
+      const folder = byId.get(id); if (!folder) return '';
+      const parent = folder.parent_id ? resolve(folder.parent_id, seen) : '';
+      const value = parent ? `${parent}/${folder.nombre}` : folder.nombre; result.set(id, value); return value;
+    };
+    for (const folder of folders) resolve(folder.id);
+    return result;
+  }
+
+  private async audit(db: Db, actor: Actor, expedienteId: string, action: string, entityId: string, values: Record<string, unknown>) {
+    await db.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: action, entidad: 'ExpedienteDocumento', entidad_id: entityId, valores_nuevos: json({ expediente_id: expedienteId, ...values }), correlation_id: randomUUID(), session_id: actor.sessionId } });
+  }
+
+  private safeName(value: string) { return value.replace(/[\\/:*?"<>|]/g, '-').replace(/\.\./g, '-').trim() || 'sin-nombre'; }
+
   private async assertExpediente(db: Db, actor: Actor, expedienteId: string) {
     const expediente = await db.expediente.findFirst({
       where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor as any) },
@@ -272,14 +547,6 @@ export class ExpedienteDocumentAppendixService {
       select: {
         id: true, cotizacion_id: true,
         cotizacion: { select: { id: true, prospecto_id: true } },
-        comparecientes: { where: { archived_at: null, estatus: 'ACTIVO' }, select: {
-          compareciente_id: true,
-          compareciente: { select: { nombre_busqueda: true, documentos: { where: { archived_at: null, estatus: 'ACTIVO', documento: { estatus: 'VIGENTE' } }, select: { categoria: true, subcategoria: true, documento: { select: documentSelect } } } } },
-        } },
-        predios: { where: { estatus: 'ACTIVO' }, select: { predio_id: true, predio: { select: {
-          apodo: true, ubicacion_texto: true, clave_catastral: true, folio_real: true,
-          documentos: { where: { estatus: 'ACTIVO', documento: { estatus: { in: ['VIGENTE', 'POR_VENCER'] } } }, select: { tipo_vinculo: true, documento: { select: documentSelect } } },
-        } } } },
         calculosISR: { where: { archived_at: null }, select: { id: true, folio: true, documentos: { where: { estatus: 'ACTIVO' }, select: { documento: { select: documentSelect } } } } },
         movimientosFinancieros: { where: { estatus: { notIn: ['CANCELADO', 'REVERTIDO'] } }, select: {
           id: true, folio: true, fecha_movimiento: true, comprobante_url: true, factura_url: true,
@@ -295,23 +562,23 @@ export class ExpedienteDocumentAppendixService {
       add({ sourceKey: key, origin, sourceEntityType: entityType, sourceEntityId: entityId, sourceContext: context, sourceName, document, documentVersion: versionOf(document), incorporatedAt: document.fecha_carga, provenance: { origin, source_entity_type: entityType, source_entity_id: entityId, source_name: sourceName, ...extra } });
     };
 
-    const directLinks = await db.expedienteDocumento.findMany({
+    const existingLinks = await db.expedienteDocumento.findMany({
       where: {
         organization_id: actor.organizationId,
         expediente_id: expedienteId,
         estatus: 'ACTIVO',
-        origen: 'EXPEDIENTE',
-        documento: { estatus: { in: ['VIGENTE', 'POR_VENCER'] } },
+        documento: { estatus: { in: ['PENDIENTE', 'VIGENTE', 'POR_VENCER'] } },
       },
       include: { documento: { select: documentSelect } },
     });
-    for (const link of directLinks) {
+    for (const link of existingLinks) {
       const key = link.source_key || sourceKey('EXPEDIENTE', 'EXPEDIENTE', expedienteId, link.documento.id, link.tipo_vinculo);
-      add({ sourceKey: key, origin: 'EXPEDIENTE', sourceEntityType: 'EXPEDIENTE', sourceEntityId: expedienteId, sourceContext: link.tipo_vinculo, sourceName: 'Carga del expediente', document: link.documento, documentVersion: link.document_version || versionOf(link.documento), incorporatedAt: link.fecha_vinculo, provenance: { origin: 'EXPEDIENTE', direct_upload: true }, expedienteDocumentoId: link.id });
+      const provenance = (link.provenance && typeof link.provenance === 'object' ? link.provenance : {}) as Record<string, unknown>;
+      add({ sourceKey: key, origin: link.origen, sourceEntityType: link.source_entity_type || 'EXPEDIENTE', sourceEntityId: link.source_entity_id || expedienteId, sourceContext: link.source_context || link.tipo_vinculo, sourceName: String(provenance.source_name || (link.origen === 'EXPEDIENTE' ? 'Carga del expediente' : link.origen === 'COMPARECIENTE' ? 'Compareciente importado' : link.origen === 'PREDIO' ? 'Inmueble importado' : link.origen)), document: link.documento, documentVersion: link.document_version || versionOf(link.documento), incorporatedAt: link.fecha_vinculo, provenance, expedienteDocumentoId: link.id, folderId: link.carpeta_id, visualName: link.nombre_visual });
     }
-    const linkedDirectIds = new Set(directLinks.map((link) => link.documento_id));
+    const linkedDirectIds = new Set(existingLinks.filter((link) => link.origen === 'EXPEDIENTE').map((link) => link.documento_id));
     const directDocuments = await db.documento.findMany({
-      where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: { in: ['VIGENTE', 'POR_VENCER'] } },
+      where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: { in: ['PENDIENTE', 'VIGENTE', 'POR_VENCER'] } },
       select: documentSelect,
     });
     for (const document of directDocuments) if (!linkedDirectIds.has(document.id)) addDocument('EXPEDIENTE', 'EXPEDIENTE', expedienteId, 'CARGA_DIRECTA', 'Carga del expediente', document, { direct_upload: true });
@@ -322,7 +589,7 @@ export class ExpedienteDocumentAppendixService {
           organization_id: actor.organizationId,
           cotizacion_id: expediente.cotizacion.id,
           estatus: 'ACTIVO',
-          documento: { estatus: { in: ['VIGENTE', 'POR_VENCER'] } },
+          documento: { estatus: { in: ['PENDIENTE', 'VIGENTE', 'POR_VENCER'] } },
         },
         include: { documento: { select: documentSelect } },
       });
@@ -332,7 +599,7 @@ export class ExpedienteDocumentAppendixService {
       }
       const quoteLinkDocumentIds = new Set(quoteLinks.map((link) => link.documento_id));
       const quoteDirect = await db.documento.findMany({
-        where: { organization_id: actor.organizationId, cotizacion_id: expediente.cotizacion.id, estatus: { in: ['VIGENTE', 'POR_VENCER'] } },
+        where: { organization_id: actor.organizationId, cotizacion_id: expediente.cotizacion.id, estatus: { in: ['PENDIENTE', 'VIGENTE', 'POR_VENCER'] } },
         select: documentSelect,
       });
       for (const document of quoteDirect) if (!quoteLinkDocumentIds.has(document.id)) {
@@ -345,19 +612,15 @@ export class ExpedienteDocumentAppendixService {
             organization_id: actor.organizationId,
             prospecto_id: expediente.cotizacion.prospecto_id,
             estatus: 'ACTIVO',
-            documento: { estatus: { in: ['VIGENTE', 'POR_VENCER'] } },
+            documento: { estatus: { in: ['PENDIENTE', 'VIGENTE', 'POR_VENCER'] } },
           },
           include: { documento: { select: documentSelect } },
         });
         for (const link of prospectLinks) addDocument('PROSPECTO', 'PROSPECTO', expediente.cotizacion.prospecto_id, link.tipo_vinculo, 'Prospecto', link.documento);
       }
     }
-    for (const relation of expediente.comparecientes) for (const link of relation.compareciente.documentos) {
-      addDocument('COMPARECIENTE', 'COMPARECIENTE', relation.compareciente_id, link.subcategoria || link.categoria, relation.compareciente.nombre_busqueda, link.documento, { current_only: true });
-    }
-    for (const relation of expediente.predios) for (const link of relation.predio.documentos) {
-      addDocument('PREDIO', 'PREDIO', relation.predio_id, link.tipo_vinculo, relation.predio.apodo || relation.predio.ubicacion_texto || relation.predio.clave_catastral || relation.predio.folio_real || 'Inmueble', link.documento);
-    }
+    // Corrección 006: vincular comparecientes o predios nunca importa sus archivos.
+    // Esos documentos sólo entran mediante importCurrent(), acción explícita y auditable.
     for (const calculation of expediente.calculosISR) for (const link of calculation.documentos) {
       addDocument('ISR', 'CALCULO_ISR', calculation.id, 'CALCULO_ISR', calculation.folio, link.documento);
     }
@@ -373,17 +636,23 @@ export class ExpedienteDocumentAppendixService {
         add({ sourceKey: key, origin: 'FINANZAS', sourceEntityType: 'MOVIMIENTO_FINANCIERO', sourceEntityId: movement.id, sourceContext: legacy.type, sourceName: movement.folio || 'Movimiento financiero', document: null, documentVersion: digest([key, legacy.ref]), incorporatedAt: movement.fecha_movimiento, provenance: { origin: 'FINANZAS', legacy_reference: true, file_available: false }, legacyName: legacy.type === 'COMPROBANTE' ? 'Comprobante registrado' : 'Factura registrada', legacyType: legacy.type, legacyStorageKey: legacy.ref });
       }
     }
-    // CFG-002 sólo aporta archivos cuando exista una ejecución documental real.
-    // EXP-006 aún no existe: no convertimos plantillas maestras en documentos de operación.
+    // CFG-002 sólo aporta archivos cuando exista una ejecución documental real;
+    // las plantillas maestras nunca se presentan como documentos de operación.
     return [...candidates.values()].sort((a, b) => `${a.origin}:${a.sourceName}:${a.document?.nombre_original || a.legacyName}`.localeCompare(`${b.origin}:${b.sourceName}:${b.document?.nombre_original || b.legacyName}`, 'es'));
   }
 
   private revision(candidates: Candidate[]) {
-    return digest(candidates.map((item) => [item.sourceKey, item.documentVersion, item.document?.estatus || 'MISSING']).sort());
+    return digest(candidates.map((item) => [
+      item.sourceKey, item.documentVersion, item.document?.estatus || 'MISSING', item.folderId || null, item.visualName || null,
+    ]).sort());
   }
 
-  private async liveResponse(candidates: Candidate[]) {
+  private async liveResponse(candidates: Candidate[], actor: Actor, expedienteId: string, db: Db = this.prisma) {
     const availability = await Promise.all(candidates.map(async (candidate) => candidate.document?.storage_key ? fileExists(candidate.document.storage_key).catch(() => false) : false));
+    const folders = await db.expedienteDocumentoCarpeta.findMany({
+      where: { organization_id: actor.organizationId, expediente_id: expedienteId, archived_at: null },
+      orderBy: [{ orden: 'asc' }, { nombre: 'asc' }], select: { id: true, parent_id: true, nombre: true, orden: true },
+    });
     return {
       state: 'SINCRONIZADO_PREFIRMA' as const,
       frozen_at: null,
@@ -397,18 +666,21 @@ export class ExpedienteDocumentAppendixService {
         source_entity_id: candidate.sourceEntityId,
         source_context: candidate.sourceContext,
         document_version: candidate.documentVersion,
-        name: candidate.document?.nombre_original || candidate.legacyName || 'Registro documental',
+        name: candidate.visualName || candidate.document?.nombre_original || candidate.legacyName || 'Registro documental',
         type: candidate.document?.tipo || candidate.legacyType || 'DOCUMENTO',
         status: candidate.document?.estatus || 'REGISTRO_EXISTENTE',
         incorporated_at: candidate.incorporatedAt,
         file_available: availability[index],
         snapshot: false,
+        folder_id: candidate.folderId || null,
       }))),
+      folders,
     };
   }
 
   private async snapshotResponse(snapshot: any) {
     const availability = await Promise.all(snapshot.items.map((item: any) => item.storage_key_snapshot ? fileExists(item.storage_key_snapshot).catch(() => false) : false));
+    const folders = snapshotFolders(snapshot.items);
     return {
       state: 'CONGELADO_AL_FIRMAR' as const,
       frozen_at: snapshot.frozen_at,
@@ -420,7 +692,10 @@ export class ExpedienteDocumentAppendixService {
         source_context: item.source_context, document_version: item.document_version,
         name: item.nombre_snapshot, type: item.tipo_snapshot, status: item.estado_snapshot,
         incorporated_at: item.incorporated_at_snapshot, file_available: availability[index], snapshot: true,
+        folder_path: item.folder_path_snapshot || null,
+        folder_id: item.folder_path_snapshot ? snapshotFolderId(item.folder_path_snapshot) : null,
       }))),
+      folders,
     };
   }
 

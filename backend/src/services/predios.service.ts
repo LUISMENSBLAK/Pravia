@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
 import { predioObjectWhere, canAccessDocumento } from './objectAccess.service';
+import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { downloadFile } from './supabase.service';
 import { extraerPredioDesdeDocumento, getOpenAIModelName } from './openaiDocument.service';
 import { recordAIFailure, recordAIUsage } from './aiUsage.service';
@@ -31,7 +32,38 @@ const decimal = (value: unknown, field: string, scale = 4) => {
   if (result.isNegative()) throw new PredioError(400, 'PREDIO_NUMERIC_NEGATIVE', `${field} no puede ser negativo.`);
   return result.toDecimalPlaces(scale);
 };
+
+/** AI evidence may preserve harmless presentation tokens from the document.
+ * Normalize only known numeric adornments; ordinary user-entered values keep
+ * using the stricter decimal() parser above. */
+export const normalizeAIProposalDecimal = (value: unknown) => {
+  if (typeof value === 'number') return String(value);
+  let normalized = String(value ?? '').trim().toUpperCase()
+    .replace(/MXN/g, '')
+    .replace(/\$/g, '')
+    .replace(/(?:M2|M²)$/u, '')
+    .replace(/\s+/g, '');
+  if (!/^\d[\d.,]*$/.test(normalized)) throw new PredioError(400, 'PREDIO_AI_NUMERIC_INVALID', 'La propuesta numérica de IA no tiene un formato reconocible.');
+  const lastComma = normalized.lastIndexOf(',');
+  const lastDot = normalized.lastIndexOf('.');
+  if (lastComma >= 0 && lastDot >= 0) {
+    const decimalSeparator = lastComma > lastDot ? ',' : '.';
+    const thousandsSeparator = decimalSeparator === ',' ? /\./g : /,/g;
+    normalized = normalized.replace(thousandsSeparator, '');
+    if (decimalSeparator === ',') normalized = normalized.replace(',', '.');
+  } else if (lastComma >= 0) {
+    const commaCount = (normalized.match(/,/g) || []).length;
+    const decimalDigits = normalized.length - lastComma - 1;
+    normalized = commaCount === 1 && decimalDigits !== 3 ? normalized.replace(',', '.') : normalized.replace(/,/g, '');
+  }
+  return normalized;
+};
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+const proposalValue = (value: unknown) => {
+  if (value == null) return null;
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+};
 
 const scalarFields = [
   'apodo', 'clave_catastral', 'cuenta_predial', 'folio_real', 'ubicacion_texto', 'calle', 'numero_exterior',
@@ -42,6 +74,7 @@ const decimalFields = [
   'valor_catastral', 'valor_avaluo', 'valor_operacion',
 ] as const;
 const aiFields = new Set<string>([...scalarFields, ...decimalFields, 'datos_registrales', 'colindancias']);
+const currentDocumentStatuses = ['PENDIENTE', 'VIGENTE', 'POR_VENCER'] as const;
 
 function normalizeInput(input: PredioInput) {
   const data: Record<string, unknown> = {};
@@ -142,14 +175,17 @@ export class PrediosService {
     });
   }
 
-  async addDocument(actor: Actor, predioId: string, documentoId: string, tipo: string, observaciones?: string | null) {
+  async addDocument(actor: Actor, predioId: string, documentoId: string, tipo: string, observaciones?: string | null, options: { vigencia?: 'VIGENTE' | 'HISTORICO'; principal?: boolean; origen?: string; sourceExpedienteDocumentoId?: string | null } = {}) {
     return this.prisma.$transaction(async (tx) => {
       await this.assertAccess(tx, actor, predioId);
       const document = await tx.documento.findFirst({ where: { id: documentoId, organization_id: actor.organizationId }, select: { id: true, nombre_original: true } });
       if (!document) throw new PredioError(403, 'PREDIO_DOCUMENT_ACCESS_DENIED', 'El documento no pertenece a la organización activa.');
+      if (options.principal && options.vigencia !== 'HISTORICO') await tx.predioDocumento.updateMany({ where: { organization_id: actor.organizationId, predio_id: predioId, estatus: 'ACTIVO', es_antecedente_principal: true }, data: { es_antecedente_principal: false, updated_at: new Date() } });
       const link = await tx.predioDocumento.create({ data: {
         organization_id: actor.organizationId, predio_id: predioId, documento_id: documentoId,
         tipo_vinculo: text(tipo, 120) || 'OTRO', observaciones: text(observaciones, 1_000), creado_por_id: actor.id,
+        vigencia: options.vigencia || 'VIGENTE', es_antecedente_principal: Boolean(options.principal && options.vigencia !== 'HISTORICO'),
+        origen: text(options.origen, 60) || 'CARGA_DIRECTA', source_expediente_documento_id: options.sourceExpedienteDocumentoId || null,
       } });
       await tx.auditLog.create({ data: {
         organization_id: actor.organizationId, user_id: actor.id, accion: 'LINK_PROPERTY_DOCUMENT', entidad: 'PredioDocumento', entidad_id: link.id,
@@ -159,42 +195,88 @@ export class PrediosService {
     });
   }
 
-  async proposeFromDocument(actor: Actor, predioId: string, documentoId: string) {
+  async updateDocument(actor: Actor, predioId: string, linkId: string, input: { vigencia?: 'VIGENTE' | 'HISTORICO'; es_antecedente_principal?: boolean; tipo_vinculo?: string }) {
+    return this.prisma.$transaction(async (tx) => {
+      await this.assertAccess(tx, actor, predioId);
+      const link = await tx.predioDocumento.findFirst({ where: { id: linkId, organization_id: actor.organizationId, predio_id: predioId, estatus: 'ACTIVO' } });
+      if (!link) throw new PredioError(404, 'PREDIO_DOCUMENT_NOT_FOUND', 'El vínculo documental ya no está disponible.');
+      const vigencia = input.vigencia || link.vigencia; const principal = vigencia === 'VIGENTE' ? Boolean(input.es_antecedente_principal ?? link.es_antecedente_principal) : false;
+      if (principal) await tx.predioDocumento.updateMany({ where: { organization_id: actor.organizationId, predio_id: predioId, estatus: 'ACTIVO', es_antecedente_principal: true, id: { not: linkId } }, data: { es_antecedente_principal: false, updated_at: new Date() } });
+      const updated = await tx.predioDocumento.update({ where: { id: linkId }, data: { vigencia, es_antecedente_principal: principal, tipo_vinculo: text(input.tipo_vinculo ?? link.tipo_vinculo, 120) || link.tipo_vinculo, version: { increment: 1 }, updated_at: new Date() } });
+      await tx.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: 'CLASSIFY_PROPERTY_DOCUMENT', entidad: 'PredioDocumento', entidad_id: linkId, valores_anteriores: json({ vigencia: link.vigencia, principal: link.es_antecedente_principal, tipo: link.tipo_vinculo }), valores_nuevos: json({ vigencia, principal, tipo: updated.tipo_vinculo }), correlation_id: crypto.randomUUID(), session_id: actor.sessionId } });
+      return updated;
+    });
+  }
+
+  async listExpedienteDocuments(actor: Actor, predioId: string, expedienteId: string) {
+    await this.assertAccess(this.prisma, actor, predioId);
+    const expediente = await this.prisma.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor as any) }, select: { id: true } });
+    if (!expediente) throw new PredioError(403, 'PREDIO_EXPEDIENT_ACCESS_DENIED', 'No tienes acceso al expediente de origen.');
+    const links = await this.prisma.expedienteDocumento.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', documento: { estatus: { in: [...currentDocumentStatuses] } } }, include: { documento: { select: { id: true, nombre_original: true, mime_type: true, size_bytes: true, fecha_carga: true } } }, orderBy: { fecha_vinculo: 'desc' } });
+    return links.map((link) => ({ id: link.id, origin: link.origen, source_name: (link.provenance as any)?.source_name || link.source_context || link.tipo_vinculo, document: link.documento }));
+  }
+
+  async importExpedienteDocument(actor: Actor, predioId: string, expedienteId: string, expedienteDocumentoId: string, tipo: string, principal = false) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:predio-document-import:${predioId}:${expedienteDocumentoId}`}))`);
+      await this.assertAccess(tx, actor, predioId);
+      const expediente = await tx.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor as any) }, select: { id: true } });
+      if (!expediente) throw new PredioError(403, 'PREDIO_EXPEDIENT_ACCESS_DENIED', 'No tienes acceso al expediente de origen.');
+      const source = await tx.expedienteDocumento.findFirst({ where: { id: expedienteDocumentoId, organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', documento: { estatus: { in: [...currentDocumentStatuses] } } }, select: { id: true, documento_id: true } });
+      if (!source) throw new PredioError(404, 'PREDIO_IMPORT_SOURCE_NOT_FOUND', 'El documento específico ya no está vigente en el expediente.');
+      const existing = await tx.predioDocumento.findFirst({ where: { organization_id: actor.organizationId, predio_id: predioId, documento_id: source.documento_id, estatus: 'ACTIVO' } });
+      if (existing) return { link: existing, idempotent: true, blob_copies: 0 };
+      if (principal) await tx.predioDocumento.updateMany({ where: { organization_id: actor.organizationId, predio_id: predioId, estatus: 'ACTIVO', es_antecedente_principal: true }, data: { es_antecedente_principal: false, updated_at: new Date() } });
+      const link = await tx.predioDocumento.create({ data: {
+        organization_id: actor.organizationId, predio_id: predioId, documento_id: source.documento_id,
+        tipo_vinculo: text(tipo, 120) || 'ANTECEDENTE', creado_por_id: actor.id, vigencia: 'VIGENTE', es_antecedente_principal: principal,
+        origen: 'IMPORT_EXPEDIENTE', source_expediente_documento_id: source.id,
+      } });
+      await tx.auditLog.create({ data: {
+        organization_id: actor.organizationId, user_id: actor.id, accion: 'IMPORT_PROPERTY_DOCUMENT_FROM_EXPEDIENT', entidad: 'PredioDocumento', entidad_id: link.id,
+        valores_nuevos: json({ predio_id: predioId, expediente_id: expedienteId, expediente_documento_id: source.id, documento_id: source.documento_id, blob_copies: 0 }),
+        correlation_id: crypto.randomUUID(), session_id: actor.sessionId,
+      } });
+      return { link, idempotent: false, blob_copies: 0 };
+    }, { timeout: 20_000 });
+  }
+
+  async proposeFromDocument(actor: Actor, predioId: string, documentoIds: string[]) {
     const started = Date.now();
     const current = await this.get(actor, predioId);
-    const link = current.documentos.find((item) => item.documento_id === documentoId && item.estatus === 'ACTIVO');
-    if (!link || !(await canAccessDocumento(actor, documentoId))) throw new PredioError(403, 'PREDIO_AI_SOURCE_DENIED', 'Selecciona un documento autorizado y vinculado a este inmueble.');
+    const ids = [...new Set(documentoIds.filter(Boolean))];
+    if (!ids.length) throw new PredioError(400, 'PREDIO_AI_SOURCE_REQUIRED', 'Selecciona al menos un documento vigente.');
+    const links = current.documentos.filter((item) => ids.includes(item.documento_id) && item.estatus === 'ACTIVO' && item.vigencia === 'VIGENTE');
+    if (links.length !== ids.length || !(await Promise.all(ids.map((id) => canAccessDocumento(actor, id)))).every(Boolean)) throw new PredioError(403, 'PREDIO_AI_SOURCE_DENIED', 'Selecciona únicamente documentos vigentes, autorizados y vinculados a este inmueble.');
     try {
-      const buffer = await downloadFile(link.documento.storage_key);
-      const result = await extraerPredioDesdeDocumento({
-        buffer, mimeType: link.documento.mime_type, tipoDocumento: link.tipo_vinculo,
-        documentoId, nombreOriginal: link.documento.nombre_original,
-      });
+      const results = await Promise.all(links.map(async (link) => extraerPredioDesdeDocumento({ buffer: await downloadFile(link.documento.storage_key), mimeType: link.documento.mime_type, tipoDocumento: link.tipo_vinculo, documentoId: link.documento_id, nombreOriginal: link.documento.nombre_original })));
       const extractionId = crypto.randomUUID();
       const currentData = current as unknown as Record<string, unknown>;
-      const proposals = result.campos.filter((field) => aiFields.has(field.campo) && text(field.valor, 5_000)).map((field) => ({
-        campo: field.campo, valor_actual: currentData[field.campo] == null ? null : String(currentData[field.campo]), valor_propuesto: text(field.valor, 5_000),
-        pagina: field.pagina || null, seccion: text(field.seccion, 180), fragmento_fuente: text(field.fragmento, 800), confianza: field.confianza,
-      }));
-      if (result.colindancias.length) proposals.push({
-        campo: 'colindancias', valor_actual: JSON.stringify(current.colindancias), valor_propuesto: JSON.stringify(result.colindancias),
-        pagina: null, seccion: null, fragmento_fuente: null, confianza: 'LECTURA_DUDOSA',
+      const candidates = results.flatMap((result, index) => result.campos.filter((field) => aiFields.has(field.campo) && text(field.valor, 5_000)).map((field) => ({ ...field, documento_id: links[index].documento_id, documento_nombre: links[index].documento.nombre_original })));
+      const proposals = [...new Set(candidates.map((field) => field.campo))].map((campo) => {
+        const values = candidates.filter((field) => field.campo === campo); const unique = [...new Set(values.map((field) => text(field.valor, 5_000)).filter(Boolean))]; const chosen = values[0];
+        return { campo, valor_actual: proposalValue(currentData[campo]), valor_propuesto: unique.length === 1 ? unique[0] : null, pagina: chosen.pagina || null, seccion: text(chosen.seccion, 180), fragmento_fuente: text(chosen.fragmento, 800), confianza: chosen.confianza, fuentes: values.map((field) => ({ documento_id: field.documento_id, nombre: field.documento_nombre, valor: text(field.valor, 5_000) })), conflicto: unique.length > 1 };
       });
+      const boundaries = results.flatMap((result, index) => result.colindancias.map((item) => ({ ...item, documento_id: links[index].documento_id })));
+      if (boundaries.length) proposals.push({ campo: 'colindancias', valor_actual: JSON.stringify(current.colindancias), valor_propuesto: JSON.stringify(boundaries), pagina: null, seccion: null, fragmento_fuente: null, confianza: 'LECTURA_DUDOSA', fuentes: links.map((link) => ({ documento_id: link.documento_id, nombre: link.documento.nombre_original, valor: 'Colindancias propuestas' })), conflicto: false });
       await this.prisma.$transaction(async (tx) => {
         for (const proposal of proposals) await tx.predioDatoFuente.create({ data: {
-          organization_id: actor.organizationId, predio_id: predioId, extraccion_id: extractionId, documento_id: documentoId,
-          proveedor_ia: result.proveedor, modelo_ia: result.modelo, estado: proposal.valor_actual && proposal.valor_actual !== proposal.valor_propuesto ? 'EN_CONFLICTO' : 'PENDIENTE_CONFIRMACION', ...proposal,
+          organization_id: actor.organizationId, predio_id: predioId, extraccion_id: extractionId, documento_id: proposal.fuentes[0].documento_id, source_document_ids: json(proposal.fuentes.map((source) => source.documento_id)),
+          proveedor_ia: results[0].proveedor, modelo_ia: results[0].modelo,
+          estado: proposal.conflicto || (proposal.valor_actual && proposal.valor_actual !== proposal.valor_propuesto) ? 'EN_CONFLICTO' : 'PENDIENTE_CONFIRMACION',
+          campo: proposal.campo, valor_actual: proposal.valor_actual, valor_propuesto: proposal.valor_propuesto,
+          pagina: proposal.pagina, seccion: proposal.seccion, fragmento_fuente: proposal.fragmento_fuente, confianza: proposal.confianza,
         } });
         await tx.auditLog.create({ data: {
           organization_id: actor.organizationId, user_id: actor.id, accion: 'PROPOSE_PROPERTY_FIELDS_AI', entidad: 'Predio', entidad_id: predioId,
-          valores_nuevos: json({ extraccion_id: extractionId, documento_id: documentoId, campos: proposals.map((item) => item.campo), persistencia_maestra: false }),
+          valores_nuevos: json({ extraccion_id: extractionId, documento_ids: ids, campos: proposals.map((item) => item.campo), conflictos: proposals.filter((item) => item.conflicto).map((item) => item.campo), persistencia_maestra: false }),
           correlation_id: crypto.randomUUID(), session_id: actor.sessionId,
         } });
       });
-      await recordAIUsage(result.uso, { operacion: 'PROPERTY_DOCUMENT_EXTRACTION', usuarioId: actor.id, metadata: { predio_id: predioId, documento_id: documentoId, source_count: 1 } });
-      return { extraccion_id: extractionId, documento: { id: documentoId, nombre: link.documento.nombre_original }, propuestas: proposals, alertas: result.alertas, persisted_master: false };
+      for (const result of results) await recordAIUsage(result.uso, { operacion: 'PROPERTY_DOCUMENT_EXTRACTION', usuarioId: actor.id, metadata: { predio_id: predioId, documento_ids: ids, source_count: ids.length } });
+      return { extraccion_id: extractionId, documentos: links.map((link) => ({ id: link.documento_id, nombre: link.documento.nombre_original })), propuestas: proposals, alertas: [...new Set(results.flatMap((result) => result.alertas))], conflictos: proposals.filter((item) => item.conflicto).map((item) => ({ campo: item.campo, fuentes: item.fuentes })), persisted_master: false };
     } catch (error) {
-      await recordAIFailure({ operacion: 'PROPERTY_DOCUMENT_EXTRACTION', usuarioId: actor.id, modelo: getOpenAIModelName(), durationMs: Date.now() - started, metadata: { predio_id: predioId, documento_id: documentoId } });
+      await recordAIFailure({ operacion: 'PROPERTY_DOCUMENT_EXTRACTION', usuarioId: actor.id, modelo: getOpenAIModelName(), durationMs: Date.now() - started, metadata: { predio_id: predioId, documento_ids: ids } });
       throw error;
     }
   }
@@ -212,7 +294,7 @@ export class PrediosService {
         if (!decision) throw new PredioError(400, 'PREDIO_AI_DECISION_REQUIRED', 'Decide aceptar o conservar cada campo propuesto.');
         if (decision === 'ACCEPT' && proposal.valor_propuesto != null) {
           if (proposal.campo === 'colindancias') boundaries = JSON.parse(proposal.valor_propuesto);
-          else if (decimalFields.includes(proposal.campo as typeof decimalFields[number])) updates[proposal.campo] = decimal(proposal.valor_propuesto, proposal.campo, proposal.campo.startsWith('valor_') ? 2 : 4);
+          else if (decimalFields.includes(proposal.campo as typeof decimalFields[number])) updates[proposal.campo] = decimal(normalizeAIProposalDecimal(proposal.valor_propuesto), proposal.campo, proposal.campo.startsWith('valor_') ? 2 : 4);
           else if (proposal.campo === 'datos_registrales') updates[proposal.campo] = json({ referencia: proposal.valor_propuesto });
           else if (aiFields.has(proposal.campo)) updates[proposal.campo] = text(proposal.valor_propuesto, proposal.campo === 'descripcion' ? 5_000 : 500);
         }

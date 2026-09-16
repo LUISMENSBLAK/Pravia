@@ -59,7 +59,8 @@ describe('EXP-007 — 51 casos forenses contractuales', () => {
 
   it('A. Cotización estructurada → presupuesto inicial correcto', async () => {
     const create = vi.fn().mockResolvedValue({ id: 'budget-a' }); const distribution = vi.fn().mockResolvedValue({});
-    const tx: any = { expedientePresupuesto: { create }, expedientePresupuestoDistribucion: { create: distribution } };
+    const createMany = vi.fn().mockResolvedValue({ count: 3 });
+    const tx: any = { expedientePresupuesto: { create }, expedientePresupuestoConcepto: { createMany }, expedientePresupuestoDistribucion: { create: distribution } };
     await new ExpedienteBudgetService({} as any).createFromQuoteInTransaction(tx, {
       actor: actor(), expedienteId: 'exp-a', quoteVersion: { id: 'quote-version-a', total_cliente: '166.42', honorarios_pravia: '70.00', desglose_notaria: { rubros: [
         { concepto: 'Honorarios', categoria: 'HONORARIOS', monto: '100.10' },
@@ -69,8 +70,10 @@ describe('EXP-007 — 51 casos forenses contractuales', () => {
     });
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
       expediente_id: 'exp-a', cotizacion_version_origen_id: 'quote-version-a', total: '166.42',
-      conceptos: { create: expect.arrayContaining([expect.objectContaining({ categoria: 'IVA_HONORARIOS', importe: '16.02' })]) },
     }) }));
+    expect(createMany).toHaveBeenCalledWith({ data: expect.arrayContaining([
+      expect.objectContaining({ presupuesto_id: 'budget-a', categoria: 'IVA_HONORARIOS', importe: '16.02' }),
+    ]) });
     expect(distribution).toHaveBeenCalledOnce();
   });
 

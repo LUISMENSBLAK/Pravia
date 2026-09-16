@@ -1,5 +1,5 @@
 import { apiRequest } from '../../services/api/client';
-import type { CreateQuoteVersionInput, NotaryOption, ProspectCandidate, Quote, QuoteContractAction, QuoteDocument, QuoteFollowUp, QuoteListFilters, QuoteListResult, QuoteState, QuoteVersion } from './quotes.types';
+import type { CreateQuoteVersionInput, NotaryOption, ProspectCandidate, Quote, QuoteBudgetExtraction, QuoteContractAction, QuoteDocument, QuoteFollowUp, QuoteListFilters, QuoteListResult, QuoteState, QuoteVersion } from './quotes.types';
 
 const asObject = (value: unknown): Record<string, unknown> | null => value && typeof value === 'object' ? value as Record<string, unknown> : null;
 const queryString = (filters: QuoteListFilters) => {
@@ -55,6 +55,13 @@ export const quotesService = {
   },
   async createVersion(id: string, input: CreateQuoteVersionInput): Promise<{ version: QuoteVersion; cotizacion: Quote }> {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/versiones`, { method: 'POST', body: JSON.stringify(input) });
+  },
+  async extractBudget(file: File): Promise<QuoteBudgetExtraction> {
+    const body = new FormData(); body.append('archivo', file);
+    return apiRequest('/cotizaciones/extraer-presupuesto', { method: 'POST', body });
+  },
+  async generateDocument(id: string): Promise<QuoteDocument> {
+    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/generar-documento`, { method: 'POST' });
   },
   async approveVersion(versionId: string): Promise<QuoteVersion> {
     return apiRequest(`/cotizaciones/version/${encodeURIComponent(versionId)}/aprobar`, { method: 'POST' });

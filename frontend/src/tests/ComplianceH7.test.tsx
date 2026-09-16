@@ -63,9 +63,10 @@ describe('H7 CUM-CIE frontend', () => {
   });
 
   it('renders only simple Vulnerable and Cumplimiento indicators in desktop and mobile list surfaces', () => {
-    const table = render(<MemoryRouter><ExpedienteTable items={[item]} /></MemoryRouter>);
+    const table = render(<MemoryRouter><ExpedienteTable items={[item]} values={{}} facets={{ actTypes: [], responsibles: [], notaries: [], stages: [] }} onChange={vi.fn()} /></MemoryRouter>);
     expect(screen.getByRole('columnheader', { name: 'Vulnerable' })).toBeInTheDocument(); expect(screen.getByRole('columnheader', { name: 'Cumplimiento' })).toBeInTheDocument();
-    expect(screen.getByText('Sí')).toBeInTheDocument(); expect(screen.getByText('Vencido')).toBeInTheDocument();
+    const row = screen.getByRole('row', { name: 'Abrir expediente EXP-0001-2026' });
+    expect(within(row).getByText('Sí')).toBeInTheDocument(); expect(within(row).getByText('Vencido')).toBeInTheDocument();
     table.unmount(); render(<MemoryRouter><ExpedienteMobileCard item={item} /></MemoryRouter>);
     expect(screen.getByText('Vulnerable')).toBeInTheDocument(); expect(screen.getByText('Cumplimiento')).toBeInTheDocument();
   });

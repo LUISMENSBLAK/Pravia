@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import { actsAndTimesService, CatalogConfigurationError, templatesAndFormatsService } from '../services/configurationCatalog.service';
 import { configurationCatalogV2Service } from '../services/configurationCatalogV2.service';
 import { configurationCatalogV4Service } from '../services/configurationCatalogV4.service';
+import { questionnaireCatalogService } from '../services/questionnaireCatalog.service';
+import { QuestionnaireError } from '../domain/questionnaire';
 
 const actor = (req: Request) => {
   if (!req.user) throw new CatalogConfigurationError(401, 'AUTH_REQUIRED', 'Inicia sesión para continuar.');
@@ -17,6 +19,7 @@ const multipartBody = (req: Request) => {
 
 export function catalogError(error: unknown) {
   if (error instanceof CatalogConfigurationError) return { status: error.status, body: { code: error.code, error: error.message } };
+  if (error instanceof QuestionnaireError) return { status: error.status, body: { code: error.code, error: error.message } };
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') return { status: 409, body: { code: 'CATALOG_DUPLICATE', error: 'Ya existe un registro con esos datos.' } };
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') return { status: 409, body: { code: 'CATALOG_REFERENCE_IN_USE', error: 'La configuración está en uso y no puede eliminarse.' } };
   return { status: 500, body: { code: 'CATALOG_INTERNAL_ERROR', error: 'No fue posible completar la operación de catálogo.' } };
@@ -65,4 +68,10 @@ export const configurationCatalogController = {
   bootstrapLibraryV4: (req: Request) => configurationCatalogV4Service.bootstrap(actor(req), String(req.get('Idempotency-Key') || '').trim() || undefined),
   previewArtifactImport: (req: Request) => configurationCatalogV4Service.preview(actor(req), req.files as Express.Multer.File[] || []),
   confirmArtifactImport: (req: Request) => configurationCatalogV4Service.confirm(actor(req), multipartBody(req), req.files as Express.Multer.File[] || [], String(req.get('Idempotency-Key') || '').trim()),
+  listQuestionnaires: (req: Request) => questionnaireCatalogService.list(actor(req), String(req.query.search || '')),
+  questionnaireSupporting: (req: Request) => questionnaireCatalogService.supporting(actor(req)),
+  createQuestionnaire: (req: Request) => questionnaireCatalogService.create(actor(req), req.body),
+  versionQuestionnaire: (req: Request) => questionnaireCatalogService.version(actor(req), req.params.questionnaireId, req.body),
+  duplicateQuestionnaire: (req: Request) => questionnaireCatalogService.duplicate(actor(req), req.params.questionnaireId),
+  setQuestionnaireActive: (req: Request) => questionnaireCatalogService.setActive(actor(req), req.params.questionnaireId, req.body?.active === true),
 };

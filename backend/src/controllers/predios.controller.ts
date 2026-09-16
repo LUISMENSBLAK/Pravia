@@ -56,7 +56,7 @@ export const uploadPredioDocumento = async (req: Request, res: Response) => {
       observaciones: String(req.body.observaciones || '').trim() || null, subido_por_id: user.id,
     } });
     documentId = document.id;
-    await service.addDocument(user, req.params.id, document.id, req.body.tipo || 'DOCUMENTO_INMUEBLE', req.body.observaciones);
+    await service.addDocument(user, req.params.id, document.id, req.body.tipo || 'DOCUMENTO_INMUEBLE', req.body.observaciones, { vigencia: req.body.vigencia === 'HISTORICO' ? 'HISTORICO' : 'VIGENTE', principal: req.body.es_antecedente_principal === 'true' });
     return res.status(201).json({ data: await service.get(user, req.params.id) });
   } catch (error) {
     if (documentId) await prisma.documento.deleteMany({ where: { id: documentId } }).catch(() => undefined);
@@ -91,10 +91,30 @@ export const unlinkPredioDocumento = async (req: Request, res: Response) => {
 };
 
 export const proposePredioFromDocument = async (req: Request, res: Response) => {
-  try { return res.json({ data: await service.proposeFromDocument(actor(req), req.params.id, String(req.body?.documento_id || '')) }); }
+  try {
+    const ids = Array.isArray(req.body?.documento_ids) ? req.body.documento_ids.map(String) : [String(req.body?.documento_id || '')];
+    return res.json({ data: await service.proposeFromDocument(actor(req), req.params.id, ids) });
+  }
   catch (error) { return respondError(res, error); }
 };
 export const applyPredioProposal = async (req: Request, res: Response) => {
   try { return res.json({ data: await service.applyProposal(actor(req), req.params.id, req.params.extraccionId, req.body || {}) }); }
   catch (error) { return respondError(res, error); }
+};
+
+export const updatePredioDocumento = async (req: Request, res: Response) => {
+  try { await service.updateDocument(actor(req), req.params.id, req.params.linkId, req.body || {}); return res.json({ data: await service.get(actor(req), req.params.id) }); }
+  catch (error) { return respondError(res, error); }
+};
+
+export const listPredioExpedienteDocuments = async (req: Request, res: Response) => {
+  try { return res.json({ data: await service.listExpedienteDocuments(actor(req), req.params.id, req.params.expedienteId) }); }
+  catch (error) { return respondError(res, error); }
+};
+
+export const importPredioExpedienteDocument = async (req: Request, res: Response) => {
+  try {
+    const user = actor(req); const result = await service.importExpedienteDocument(user, req.params.id, req.params.expedienteId, String(req.body?.expediente_documento_id || ''), String(req.body?.tipo || 'ANTECEDENTE'), Boolean(req.body?.es_antecedente_principal));
+    return res.status(result.idempotent ? 200 : 201).json({ data: await service.get(user, req.params.id), import: result });
+  } catch (error) { return respondError(res, error); }
 };

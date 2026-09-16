@@ -8,6 +8,7 @@ describe('motor único de apertura de expedientes', () => {
   it('reserva folio, congela versiones e inicializa exclusivamente desde cotización', async () => {
     const tx: any = {
       $executeRaw: vi.fn().mockResolvedValue(1),
+      $queryRaw: vi.fn().mockResolvedValue([{ numero_pravia: 'EXP-2026-0040' }]),
       tipoActo: { findFirst: vi.fn().mockResolvedValue({ id: 'act-1', tipoActoCaracteresCompareciente: [{ caracter_id: 'char-1', caracter: { id: 'char-1' } }] }) },
       user: { findFirst: vi.fn().mockResolvedValueOnce({ id: 'actor-1' }).mockResolvedValueOnce({ id: 'lawyer-1', organizationMemberships: [{ rol: 'ABOGADO' }] }) },
       formularioVersion: { findFirst: vi.fn().mockResolvedValue({ id: 'form-v1' }) },
@@ -15,7 +16,6 @@ describe('motor único de apertura de expedientes', () => {
       plantillaDocumentalVersion: { findFirst: vi.fn().mockResolvedValue({ id: 'docs-v1', requisitos_json: [{ nombre: 'Identificación', categoria: 'FIRMA', obligatorio: true }] }) },
       compareciente: { findFirst: vi.fn().mockResolvedValue({ id: 'party-1' }) },
       expediente: {
-        findMany: vi.fn().mockResolvedValue([{ numero_pravia: 'EXP-2026-0040' }]),
         findFirst: vi.fn().mockResolvedValue({ id: 'exp-1', organization_id: TEST_ORGANIZATION_ID, abogado_id: 'lawyer-1', notaria_id: null, notaria: null, datos_operacion: null, predios: [], actos: [{ id: 'exp-act-1', tipo_acto_id: 'act-1' }] }),
         create: vi.fn().mockImplementation(async ({ data }) => ({ id: 'exp-1', version: 1, ...data })),
         update: vi.fn().mockImplementation(async ({ data }) => ({ id: 'exp-1', numero_pravia: 'EXP-0041-2026', version: 1, ...data })),

@@ -44,7 +44,7 @@ const SYNONYMS_CATALOG = [
   { concepto: 'Gestoría', category: 'GASTOS_TERCEROS', regex: /gestor/i },
   { concepto: 'Misceláneos', category: 'IMPUESTOS_DERECHOS', regex: /miscel|folio|papeler|varios/i },
   { concepto: 'ISR', category: 'IMPUESTOS_DERECHOS', regex: /isr|impuesto.*renta/i },
-  { concepto: 'IVA', category: 'HONORARIOS', regex: /iva|impuesto.*valor.*agregado/i }
+  { concepto: 'IVA', category: 'IVA_HONORARIOS', regex: /iva|impuesto.*valor.*agregado/i }
 ];
 
 const BLACKLIST_PATTERNS = [
@@ -149,12 +149,15 @@ export const extractPresupuestoData = async (pdfBuffer: Buffer, filename = 'Docu
           continue;
         }
 
-        let matchedConcept = rawName;
-        let category = 'IMPUESTOS_DERECHOS';
+        // Unknown rows remain explicitly pending. Assigning every unknown amount
+        // to taxes/rights would invent an economic classification.
+        const matchedConcept = rawName;
+        let category = 'PENDIENTE_CLASIFICACION';
 
         for (const item of SYNONYMS_CATALOG) {
           if (item.regex.test(rawName)) {
-            matchedConcept = item.concepto;
+            // Keep the source wording. The catalog match only proposes a category
+            // and the user still reviews it before persisting the common model.
             category = item.category;
             break;
           }

@@ -39,6 +39,13 @@ router.post('/activities/:activityId/exceptions', manageActs, endpoint(configura
 router.patch('/exceptions/:exceptionId', manageActs, endpoint(configurationCatalogController.updateException));
 router.get('/activities/:activityId/resolve', read, endpoint(configurationCatalogController.resolveTiming));
 
+router.get('/questionnaires', read, endpoint(configurationCatalogController.listQuestionnaires));
+router.get('/questionnaires-supporting', read, endpoint(configurationCatalogController.questionnaireSupporting));
+router.post('/questionnaires', manageArtifacts, endpoint(configurationCatalogController.createQuestionnaire, 201));
+router.post('/questionnaires/:questionnaireId/versions', manageArtifacts, endpoint(configurationCatalogController.versionQuestionnaire, 201));
+router.post('/questionnaires/:questionnaireId/duplicate', manageArtifacts, endpoint(configurationCatalogController.duplicateQuestionnaire, 201));
+router.patch('/questionnaires/:questionnaireId/status', manageArtifacts, endpoint(configurationCatalogController.setQuestionnaireActive));
+
 router.get('/artifacts/root', read, endpoint(configurationCatalogController.artifactsRoot));
 router.post('/artifacts/library/bootstrap', manageArtifacts, endpoint(configurationCatalogController.bootstrapLibraryV4, 201));
 router.post('/artifacts/import/preview', manageArtifacts, importUpload.array('files', 100), endpoint(configurationCatalogController.previewArtifactImport));

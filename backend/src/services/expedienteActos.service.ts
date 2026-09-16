@@ -185,10 +185,14 @@ export class ExpedienteActosService {
       },
     });
     if (!expediente) throw new ExpedienteActoError(404, 'EXPEDIENTE_NOT_FOUND', 'Expediente no encontrado.');
-    const operationalTracking = await db.expedienteSeguimientoActividad.findMany({
-      where: { organization_id: actor.organizationId, expediente_id: expedienteId },
-      select: { id: true, expediente_acto_id: true, estado: true, version: true, updated_at: true, excepcion_operativa: true },
-    });
+    const [operationalTracking, activePartyRelations, activePropertyRelations] = await Promise.all([
+      db.expedienteSeguimientoActividad.findMany({
+        where: { organization_id: actor.organizationId, expediente_id: expedienteId },
+        select: { id: true, expediente_acto_id: true, estado: true, version: true, updated_at: true, excepcion_operativa: true },
+      }),
+      db.expedienteCompareciente.count({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, expediente_acto_id: command.expediente_acto_id || undefined, archived_at: null, estatus: 'ACTIVO' } }),
+      db.expedienteActoPredio.count({ where: { organization_id: actor.organizationId, expediente_acto_id: command.expediente_acto_id || undefined, estatus: 'ACTIVO', expedientePredio: { expediente_id: expedienteId, estatus: 'ACTIVO' } } }),
+    ]);
     const currentSlots: ActSlot[] = expediente.actos.map((act) => ({ id: act.id, tipo_acto_id: act.tipo_acto_id }));
     const targetCurrent = command.expediente_acto_id
       ? currentSlots.find((act) => act.id === command.expediente_acto_id)
@@ -223,14 +227,16 @@ export class ExpedienteActosService {
     const removed = [...currentMap.values()].filter((item) => !projectedMap.has(item.key));
     const retained = [...projectedMap.values()].filter((item) => currentMap.has(item.key));
     const protectedOperationalCount = operationalTracking.filter((item) => item.estado !== 'NO_INICIADO' || item.excepcion_operativa).length;
-    const protectedCount = Object.values(expediente._count).reduce((sum, count) => sum + count, 0) + protectedOperationalCount;
-    const affectsExisting = command.operation !== 'ADD' && protectedCount > 0 && removed.length > 0;
+    const activeActRelations = command.operation === 'ADD' ? 0 : activePartyRelations + activePropertyRelations;
+    const protectedCount = Object.values(expediente._count).reduce((sum, count) => sum + count, 0) + protectedOperationalCount + activeActRelations;
+    const affectsExisting = command.operation !== 'ADD' && ((protectedCount > 0 && removed.length > 0) || activeActRelations > 0);
     const immutablePhase = ['FIRMADO', 'POST_FIRMA', 'LISTO_ENTREGA', 'ENTREGADO'].includes(expediente.estatus);
-    const classification = affectsExisting && immutablePhase ? 'BLOCKED' : affectsExisting ? 'REVIEW_REQUIRED' : 'SAFE';
+    const classification = activeActRelations > 0 || (affectsExisting && immutablePhase) ? 'BLOCKED' : affectsExisting ? 'REVIEW_REQUIRED' : 'SAFE';
     const fingerprint = createHash('sha256').update(JSON.stringify({
       expediente_id: expediente.id, version: expediente.version, updated_at: expediente.updated_at.toISOString(),
       acts: expediente.actos.map((act) => [act.id, act.tipo_acto_id, act.updated_at.toISOString()]),
       operational_tracking: operationalTracking.map((item) => [item.id, item.expediente_acto_id, item.estado, item.version, item.updated_at.toISOString()]),
+      active_act_relations: { comparecientes: activePartyRelations, predios: activePropertyRelations },
       operation: command.operation, target: command.expediente_acto_id || null, type: targetAct?.id || null,
       impact: {
         current: currentImpact.map((item) => [item.key, item.name]),

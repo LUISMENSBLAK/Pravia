@@ -10,8 +10,16 @@ import { ExpedienteSeguimientoService } from '../services/expedienteSeguimiento.
 
 const explicitUrl = process.env.CFG001_DATABASE_URL || '';
 const url = new URL(explicitUrl || 'postgresql://invalid.invalid/blocked');
-if (process.env.CFG001_RUN_ISOLATED === '1' && (url.hostname !== '127.0.0.1' || url.port !== '55481' || url.pathname !== '/pravia_cfg001_qa')) {
-  throw new Error('CFG-001 PostgreSQL tests only accept the explicit isolated local database.');
+const runtimeUrl = new URL(process.env.DATABASE_URL || 'postgresql://invalid.invalid/blocked');
+if (process.env.CFG001_RUN_ISOLATED === '1' && (
+  url.hostname !== '127.0.0.1'
+  || url.port !== '55481'
+  || url.pathname !== '/pravia_cfg001_qa'
+  || runtimeUrl.hostname !== '127.0.0.1'
+  || runtimeUrl.port !== '55481'
+  || runtimeUrl.pathname !== '/pravia_cfg001_qa'
+)) {
+  throw new Error('CFG-001 PostgreSQL tests require both CFG001_DATABASE_URL and DATABASE_URL to target the isolated local database.');
 }
 const db = new PrismaClient({ datasources: { db: { url: explicitUrl } } });
 type Actor = NonNullable<Request['user']>;
@@ -34,11 +42,11 @@ const requiredActs = [
   'Cancelación de hipoteca', 'Compraventa con crédito y garantía hipotecaria', 'Compraventa con crédito sin garantía hipotecaria',
   'Constitución de fideicomiso', 'Cesión de derechos fideicomisarios', 'Reversión de fideicomiso',
   'Extinción / ejecución de fines de fideicomiso', 'Transmisión en ejecución de fideicomiso',
-  'Transmisión en ejecución de fideicomiso + constitución de nuevo fideicomiso', 'Protocolización de subdivisión',
-  'Protocolización de fusión', 'Protocolización de homologación', 'Protocolización de documentos cuando corresponda',
-  'Rectificación de escritura de medidas', 'Rectificación de escritura de otros datos', 'Poder sin registro', 'Testamento',
+  'Transmisión en ejecución + constitución de nuevo fideicomiso', 'Protocolización de subdivisión',
+  'Protocolización de fusión', 'Protocolización de homologación', 'Protocolización de documentos',
+  'Rectificación de escritura de medidas', 'Rectificación de escritura — otros datos', 'Poder sin registro', 'Testamento',
   'Ratificación de firmas', 'Testimonial', 'Poder para actos de dominio limitado', 'Poder para actos de dominio',
-  'Poder de persona moral', 'Protocolización del acta de asamblea no vulnerable', 'Protocolización del acta de asamblea vulnerable',
+  'Poder de persona moral', 'Protocolización de acta de asamblea — no vulnerable', 'Protocolización de acta de asamblea — vulnerable',
 ];
 
 describe.runIf(process.env.CFG001_RUN_ISOLATED === '1')('CFG-001 v2 · PostgreSQL aislado', () => {
@@ -69,8 +77,8 @@ describe.runIf(process.env.CFG001_RUN_ISOLATED === '1')('CFG-001 v2 · PostgreSQ
 
   it('crea un acto tenant-owned con código único y sus cinco etapas iniciales', async () => {
     const name = `Acto QA ${randomUUID()}`;
-    const created = await run(primary, () => actsAndTimesService.create(primary, { nombre: name, descripcion: 'UAT local' }));
-    expect(created).toMatchObject({ organization_id: primary.organizationId, nombre: name, activo: true });
+    const created = await run(primary, () => actsAndTimesService.create(primary, { nombre: name, descripcion: 'UAT local', clasificacion: 'NO TRASLATIVOS', familia: 'Actos QA' }));
+    expect(created).toMatchObject({ organization_id: primary.organizationId, nombre: name, activo: true, configuration: { clasificacion: 'NO TRASLATIVOS', familia: 'Actos QA' } });
     expect(created.codigo_catalogo).toMatch(/^ACTO_QA_[A-F0-9_-]+$/);
     expect(created.configuration.etapas.map((stage: any) => stage.nombre)).toEqual(['Prefirma', 'Firma', 'Postfirma', 'Registro', 'Cierre']);
     expect((await run(primary, () => actsAndTimesService.get(primary, created.id))).effective_stages.map((stage: any) => stage.nombre)).toEqual(['Prefirma', 'Firma', 'Postfirma', 'Registro', 'Cierre']);

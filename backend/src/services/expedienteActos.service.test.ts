@@ -4,7 +4,7 @@ import { ExpedienteActoError, ExpedienteActosService } from './expedienteActos.s
 const actor: any = { id: 'user-1', organizationId: 'org-1', sessionId: 'session-1', rol: 'ADMINISTRACION', permissions: ['expedientes.read', 'expedientes.write'], scope: 'ALL_OBJECTS' };
 const now = new Date('2026-08-26T12:00:00.000Z');
 
-function database(input: { acts?: any[]; count?: Record<string, number>; status?: string; expedienteFound?: boolean; prior?: any } = {}) {
+function database(input: { acts?: any[]; count?: Record<string, number>; status?: string; expedienteFound?: boolean; prior?: any; partyRelations?: number; propertyRelations?: number } = {}) {
   const acts = input.acts || [];
   const expediente = input.expedienteFound === false ? null : { id: 'exp-1', organization_id: 'org-1', abogado_id: 'user-1', notaria_id: null, notaria: null, datos_operacion: null, predios: [], estatus: input.status || 'EN_PROCESO', version: 3, updated_at: now, actos: acts, _count: input.count || { etapas: 0, tareas: 0, expedienteDocumentos: 0, requisitos_docs: 0 } };
   const tx: any = {
@@ -19,6 +19,8 @@ function database(input: { acts?: any[]; count?: Record<string, number>; status?
     tipoActo: { findFirst: vi.fn().mockResolvedValue({ id: 'type-1', nombre: 'Compraventa' }) },
     configuracionActo: { findMany: vi.fn().mockResolvedValue([]) },
     catalogoArtefacto: { findMany: vi.fn().mockResolvedValue([]) },
+    expedienteCompareciente: { count: vi.fn().mockResolvedValue(input.partyRelations || 0) },
+    expedienteActoPredio: { count: vi.fn().mockResolvedValue(input.propertyRelations || 0) },
     expedienteSeguimientoActividad: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn(), upsert: vi.fn() },
     expedienteSeguimientoDependencia: { findMany: vi.fn().mockResolvedValue([]), upsert: vi.fn() },
     expedienteSeguimientoHistorial: { count: vi.fn().mockResolvedValue(0), create: vi.fn() },
@@ -83,6 +85,14 @@ describe('EXP-002 actos canónicos del expediente', () => {
     expect(tx.expedienteActividad.create).toHaveBeenCalled();
     expect(tx.auditLog.create).toHaveBeenCalled();
     expect(tx.domainEventOutbox.create).toHaveBeenCalled();
+  });
+
+  it('bloquea retirar un acto con relaciones operativas activas aunque no tenga configuración', async () => {
+    const act = { id: 'link-1', tipo_acto_id: 'type-1', tipo_acto: { id: 'type-1', nombre: 'Compraventa' }, updated_at: now };
+    const { prisma } = database({ acts: [act], partyRelations: 1, propertyRelations: 1 });
+    const preview = await new ExpedienteActosService(prisma).preview(actor, 'exp-1', { operation: 'REMOVE', expediente_acto_id: 'link-1', reason: 'Acto cancelado' });
+    expect(preview.classification).toBe('BLOCKED');
+    expect(preview.impact.protected_work).toMatchObject({ count: 2, requires_human_confirmation: false });
   });
 
   it('expone errores de dominio estables', () => {

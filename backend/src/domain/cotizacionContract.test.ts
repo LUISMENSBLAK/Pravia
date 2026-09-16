@@ -16,17 +16,26 @@ import {
 import { evaluateConversionEligibility } from './cotizacionWorkflow';
 
 describe('COT-001 contrato comercial canónico', () => {
-  it('nombra las seis etapas con etiquetas humanas', () => {
-    expect([Stage.BORRADOR, Stage.ENVIADA_CLIENTE, Stage.ACEPTO_ANTICIPO, Stage.SUSPENDIDA, Stage.CANCELADA, Stage.CONVERTIDA_EXPEDIENTE].map(quoteStageLabel))
-      .toEqual(['Borrador', 'Enviada al cliente', 'Aceptó / Anticipo', 'Suspendida', 'Cancelada', 'Convertida en expediente']);
+  it('nombra las etapas operativas y conserva el hito anterior sólo como histórico', () => {
+    expect([Stage.BORRADOR, Stage.EN_ELABORACION, Stage.ENVIADA_CLIENTE, Stage.EN_SEGUIMIENTO, Stage.ACEPTADA, Stage.RECHAZADA, Stage.ACEPTO_ANTICIPO, Stage.CANCELADA, Stage.CONVERTIDA_EXPEDIENTE].map(quoteStageLabel))
+      .toEqual(['Borrador', 'En elaboración', 'Enviada al cliente', 'En seguimiento', 'Aceptada', 'Rechazada', 'Aceptó / Anticipo (histórico)', 'Cancelada', 'Convertida en expediente']);
   });
-  it('sólo permite enviar, suspender o cancelar desde Borrador', () => expect(allowedQuoteActions(Stage.BORRADOR)).toEqual(['ENVIAR_CLIENTE', 'SUSPENDER', 'CANCELAR']));
-  it('permite reenvío y un único hito Aceptó / Anticipo desde Enviada', () => expect(allowedQuoteActions(Stage.ENVIADA_CLIENTE)).toEqual(['REENVIAR_CLIENTE', 'REGISTRAR_ACEPTACION_ANTICIPO', 'SUSPENDER', 'CANCELAR']));
-  it('habilita conversión sólo después del hito', () => expect(allowedQuoteActions(Stage.ACEPTO_ANTICIPO)).toContain('CONVERTIR'));
-  it.each([Stage.SUSPENDIDA, Stage.CANCELADA, Stage.CONVERTIDA_EXPEDIENTE])('cierra acciones en %s', (stage) => expect(allowedQuoteActions(stage)).toEqual([]));
+  it('comienza la elaboración desde Borrador', () => expect(allowedQuoteActions(Stage.BORRADOR)).toEqual(['COMENZAR_ELABORACION', 'SUSPENDER', 'CANCELAR']));
+  it('envía al cliente sólo después de entrar en elaboración', () => expect(allowedQuoteActions(Stage.EN_ELABORACION)).toEqual(['ENVIAR_CLIENTE', 'SUSPENDER', 'CANCELAR']));
+  it('permite seguimiento, reenvío y decisión humana desde Enviada', () => expect(allowedQuoteActions(Stage.ENVIADA_CLIENTE)).toEqual(['INICIAR_SEGUIMIENTO', 'REENVIAR_CLIENTE', 'ACEPTAR', 'RECHAZAR', 'SUSPENDER', 'CANCELAR']));
+  it('mantiene las decisiones humanas durante seguimiento', () => expect(allowedQuoteActions(Stage.EN_SEGUIMIENTO)).toEqual(['REENVIAR_CLIENTE', 'ACEPTAR', 'RECHAZAR', 'SUSPENDER', 'CANCELAR']));
+  it.each([Stage.ACEPTADA, Stage.ACEPTO_ANTICIPO])('habilita conversión desde aceptación canónica o histórica %s', (stage) => expect(allowedQuoteActions(stage)).toEqual(['CONVERTIR']));
+  it.each([Stage.RECHAZADA, Stage.SUSPENDIDA, Stage.CANCELADA, Stage.CONVERTIDA_EXPEDIENTE])('cierra acciones en %s', (stage) => expect(allowedQuoteActions(stage)).toEqual([]));
   it('distingue reenvío sin cambiar etapa', () => expect(quoteActionResult(Stage.ENVIADA_CLIENTE, 'REENVIAR_CLIENTE')).toEqual({ next: Stage.ENVIADA_CLIENTE, changesStage: false }));
+  it('un reenvío durante seguimiento tampoco altera la etapa', () => expect(quoteActionResult(Stage.EN_SEGUIMIENTO, 'REENVIAR_CLIENTE')).toEqual({ next: Stage.EN_SEGUIMIENTO, changesStage: false }));
   it('bloquea el bypass de transición', () => expect(() => quoteActionResult(Stage.BORRADOR, 'CONVERTIR')).toThrow(/no corresponde/i));
   it('proyecta el hito conjunto sin crear una etapa financiera', () => expect(quoteLegacyProjection(Stage.ACEPTO_ANTICIPO)).toBe(CotizacionEstado.ACEPTADA));
+  it('proyecta las nuevas etapas al enum compartido sin cambiar el contrato persistido', () => {
+    expect(quoteLegacyProjection(Stage.EN_ELABORACION)).toBe(CotizacionEstado.BORRADOR);
+    expect(quoteLegacyProjection(Stage.EN_SEGUIMIENTO)).toBe(CotizacionEstado.EN_NEGOCIACION);
+    expect(quoteLegacyProjection(Stage.ACEPTADA)).toBe(CotizacionEstado.ACEPTADA);
+    expect(quoteLegacyProjection(Stage.RECHAZADA)).toBe(CotizacionEstado.RECHAZADA);
+  });
   it('no mapea Rechazada ni Vencida a salidas canónicas', () => expect([CotizacionEstado.RECHAZADA, CotizacionEstado.VENCIDA]).not.toContain(quoteLegacyProjection(Stage.SUSPENDIDA)));
   it('marca legacy sin inventar estado', () => expect(quoteKnowledge(null)).toBe('UNKNOWN_LEGACY'));
   it('exige versión optimista', () => expect(() => assertQuoteVersion(undefined, 1)).toThrow(/actualiza/i));
