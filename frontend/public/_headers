@@ -4,7 +4,7 @@
   Referrer-Policy: no-referrer
   Permissions-Policy: camera=(), microphone=(self), geolocation=()
   Strict-Transport-Security: max-age=31536000
-  Content-Security-Policy: default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https:; worker-src 'self' blob:; manifest-src 'self'
+  Content-Security-Policy: default-src 'self'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https: blob:; worker-src 'self' blob:; manifest-src 'self'
 
 /sw.js
   Cache-Control: no-cache, no-store, must-revalidate
