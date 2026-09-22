@@ -39,6 +39,7 @@ export default defineConfig(({ mode }) => {
     test: {
       environment: 'jsdom',
       setupFiles: './src/test/setup.ts',
+      exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
       css: true,
       // Los archivos ejercitan la aplicación completa. Un solo worker evita
       // transformar en paralelo los mismos route chunks y mantiene cada prueba

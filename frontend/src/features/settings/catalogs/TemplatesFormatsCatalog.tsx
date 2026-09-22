@@ -7,10 +7,13 @@ import {
   FileStack,
   FileText,
   Folder,
+  FolderInput,
   FolderPlus,
   Landmark,
   LoaderCircle,
   Plus,
+  Power,
+  Pencil,
   UploadCloud,
 } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
@@ -25,6 +28,9 @@ import type {
   OwnerType,
   SupportingCatalogs,
   CatalogImportPreview,
+  FunctionalDestinationOption,
+  FunctionalDestination,
+  ArtifactDestination,
 } from "./catalogs.types";
 import { CatalogModal } from "./CatalogModal";
 import styles from "./Catalogs.module.css";
@@ -36,7 +42,7 @@ type Selection = {
   folderId?: string | null;
 };
 type ModalState =
-  "institution" | "folder" | "import" | { version: CatalogArtifact } | null;
+  "institution" | "folder" | "quick" | "import" | { renameFolder: true } | { organize: CatalogArtifact } | { version: CatalogArtifact } | { destinations: CatalogArtifact } | null;
 type Multiplicity =
   "EXPEDIENTE" | "COMPARECIENTE" | "INMUEBLE" | "CANTIDAD_FIJA";
 type FileOverride = {
@@ -58,6 +64,7 @@ type FileOverride = {
   requiere_pep?: boolean;
   requiere_perfil?: boolean;
   requiere_alto_riesgo?: boolean;
+  destinos_funcionales?: FunctionalDestination[];
 };
 const ownerLabel = (owner: CatalogOwner) =>
   owner.numero_notaria
@@ -87,6 +94,7 @@ export function TemplatesFormatsCatalog() {
     institutions: CatalogOwner[];
   }>({ notaria: null, institutions: [] });
   const [support, setSupport] = useState<SupportingCatalogs | null>(null);
+  const [destinationCatalog, setDestinationCatalog] = useState<FunctionalDestinationOption[]>([]);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [explorer, setExplorer] = useState<ExplorerPayload | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
@@ -100,6 +108,14 @@ export function TemplatesFormatsCatalog() {
   });
   const [folderName, setFolderName] = useState("");
   const [versionFile, setVersionFile] = useState<File | null>(null);
+  const [quickFile, setQuickFile] = useState<File | null>(null);
+  const [quickName, setQuickName] = useState("");
+  const [quickDestination, setQuickDestination] = useState<FunctionalDestination | "">("");
+  const [quickDefault, setQuickDefault] = useState(true);
+  const [quickActive, setQuickActive] = useState(true);
+  const [manageName, setManageName] = useState("");
+  const [manageFolderId, setManageFolderId] = useState("");
+  const [destinationDraft, setDestinationDraft] = useState<ArtifactDestination[]>([]);
   const [importFiles, setImportFiles] = useState<File[]>([]);
   const [preview, setPreview] = useState<CatalogImportPreview | null>(null);
   const [overrides, setOverrides] = useState<Record<string, FileOverride>>({});
@@ -122,18 +138,21 @@ export function TemplatesFormatsCatalog() {
     requiere_pep: false,
     requiere_perfil: false,
     requiere_alto_riesgo: false,
+    destinos_funcionales: [] as FunctionalDestination[],
   });
 
   const loadRoot = async () => {
     setLoading(true);
     setError("");
     try {
-      const [data, supporting] = await Promise.all([
+      const [data, supporting, destinations] = await Promise.all([
         settingsService.catalogArtifactRoot(),
         settingsService.catalogSupporting(),
+        settingsService.functionalDestinations(),
       ]);
       setRoot(data);
       setSupport(supporting);
+      setDestinationCatalog(destinations);
     } catch {
       setError("No pudimos cargar el repositorio privado.");
     } finally {
@@ -236,6 +255,39 @@ export function TemplatesFormatsCatalog() {
       setBusy(false);
     }
   };
+  const createQuickArtifact = (event: FormEvent) => {
+    event.preventDefault();
+    if (!selection?.kind || !quickFile || !quickDestination) return;
+    void run(
+      () => settingsService.createCatalogArtifact({
+        tipo: selection.kind,
+        propietario_tipo: selection.ownerType,
+        notaria_id: selection.ownerType === "NOTARIA" ? selection.owner.id : null,
+        institucion_id: selection.ownerType === "INSTITUCION" ? selection.owner.id : null,
+        carpeta_id: selection.folderId || null,
+        nombre: quickName.trim(),
+        activo: quickActive,
+        destinos_funcionales: [{ destino: quickDestination, activo: quickActive, predeterminado: quickDefault }],
+      }, quickFile),
+      `${selection.kind === "PLANTILLA" ? "Plantilla" : "Formato"} creado en la carpeta actual.`,
+    );
+  };
+  const renameCurrentFolder = (event: FormEvent) => {
+    event.preventDefault();
+    if (!explorer?.folder) return;
+    void run(
+      () => settingsService.updateCatalogFolder(explorer.folder!.id, { nombre: manageName.trim() }),
+      "Carpeta renombrada; sus destinos funcionales permanecen intactos.",
+    );
+  };
+  const organizeArtifact = (event: FormEvent) => {
+    event.preventDefault();
+    if (!modal || typeof modal === "string" || !("organize" in modal)) return;
+    void run(
+      () => settingsService.updateCatalogArtifact(modal.organize.id, { nombre: manageName.trim(), carpeta_id: manageFolderId || null }),
+      "Archivo organizado sin cambiar sus conexiones funcionales.",
+    );
+  };
   const confirmImport = async () => {
     if (!selection?.kind || !preview) return;
     const makeRule = (override: FileOverride = {}) => ({
@@ -280,6 +332,7 @@ export function TemplatesFormatsCatalog() {
           act_ids: override.act_ids ?? bulk.act_ids,
           rules: [makeRule(override)],
           normative: makeNormative(override),
+          destinos_funcionales: (override.destinos_funcionales ?? bulk.destinos_funcionales).map((destino, index) => ({ destino, activo: true, predeterminado: index === 0 })),
         },
       ]),
     );
@@ -295,6 +348,7 @@ export function TemplatesFormatsCatalog() {
               act_ids: bulk.act_ids,
               rules: [makeRule()],
               normative: makeNormative(),
+              destinos_funcionales: bulk.destinos_funcionales.map((destino, index) => ({ destino, activo: true, predeterminado: index === 0 })),
             },
             overrides: fileOverrides,
           },
@@ -308,7 +362,7 @@ export function TemplatesFormatsCatalog() {
   };
   const addVersion = (event: FormEvent) => {
     event.preventDefault();
-    if (!versionFile || !modal || typeof modal === "string") return;
+    if (!versionFile || !modal || typeof modal === "string" || !("version" in modal)) return;
     void run(
       () =>
         settingsService.addCatalogArtifactVersion(
@@ -317,6 +371,11 @@ export function TemplatesFormatsCatalog() {
         ),
       "Nueva versión guardada sin sobrescribir el histórico.",
     );
+  };
+  const saveDestinations = (event: FormEvent) => {
+    event.preventDefault();
+    if (!modal || typeof modal === "string" || !("destinations" in modal)) return;
+    void run(() => settingsService.assignFunctionalDestinations(modal.destinations.id, destinationDraft), "Conexiones funcionales actualizadas.");
   };
   const openVersion = async (id: string) => {
     try {
@@ -668,10 +727,39 @@ export function TemplatesFormatsCatalog() {
           </div>
           {canManage && (
             <div className={styles.headerActions}>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setQuickFile(null);
+                  setQuickName("");
+                  setQuickDestination("");
+                  setQuickDefault(true);
+                  setQuickActive(true);
+                  setError("");
+                  setModal("quick");
+                }}
+              >
+                <Plus />
+                {current.kind === "PLANTILLA"
+                  ? "Nueva plantilla"
+                  : "Nuevo formato"}
+              </Button>
               <Button variant="secondary" onClick={() => setModal("folder")}>
                 <FolderPlus />
                 Nueva carpeta
               </Button>
+              {explorer?.folder && (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setManageName(explorer.folder!.nombre);
+                    setModal({ renameFolder: true });
+                  }}
+                >
+                  <Pencil />
+                  Renombrar carpeta
+                </Button>
+              )}
               <Button
                 onClick={() => {
                   setError("");
@@ -760,6 +848,7 @@ export function TemplatesFormatsCatalog() {
           <span>
             {artifact.revisionesNormativas?.length || 0} revisión normativa
           </span>
+          {artifact.destinosFuncionales?.map((item) => <span key={item.destino}>{destinationCatalog.find((option) => option.value === item.destino)?.label || item.destino}{item.predeterminado ? " · principal" : ""}</span>)}
         </div>
         <div className={styles.versionList}>
           {artifact.versiones.map((version) => (
@@ -786,6 +875,30 @@ export function TemplatesFormatsCatalog() {
             >
               <UploadCloud />
               Nueva versión
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setManageName(artifact.nombre);
+                setManageFolderId(artifact.carpeta_id || "");
+                setModal({ organize: artifact });
+              }}
+            >
+              <FolderInput />
+              Organizar
+            </button>
+            <button type="button" onClick={() => { setDestinationDraft(artifact.destinosFuncionales || []); setModal({ destinations: artifact }); }}>
+              Conectar a módulos
+            </button>
+            <button
+              type="button"
+              onClick={() => void run(
+                () => settingsService.updateCatalogArtifact(artifact.id, { activo: !artifact.activo }),
+                artifact.activo ? "Archivo desactivado; su histórico permanece intacto." : "Archivo activado.",
+              )}
+            >
+              <Power />
+              {artifact.activo ? "Desactivar" : "Activar"}
             </button>
           </footer>
         )}
@@ -820,6 +933,51 @@ export function TemplatesFormatsCatalog() {
               </Button>
               <Button type="submit">Crear carpeta</Button>
             </footer>
+          </form>
+        </CatalogModal>
+      );
+    if (modal === "quick")
+      return (
+        <CatalogModal
+          title={current.kind === "PLANTILLA" ? "Nueva plantilla" : "Nuevo formato"}
+          description="Carga el archivo en la carpeta actual y conecta su punto de uso mediante un destino controlado."
+          onClose={() => setModal(null)}
+        >
+          <form className={styles.modalForm} onSubmit={createQuickArtifact}>
+            <label>Nombre<input required value={quickName} onChange={(event) => setQuickName(event.target.value)} /></label>
+            <label className={styles.fileField}>Archivo<input required type="file" accept=".docx,.pdf,.xlsx,.xls,.odt,.txt,.rtf" onChange={(event) => setQuickFile(event.target.files?.[0] || null)} /><span><UploadCloud />{quickFile?.name || "Seleccionar archivo"}</span></label>
+            <label>Destino funcional<select required value={quickDestination} onChange={(event) => setQuickDestination(event.target.value as FunctionalDestination)}><option value="">Selecciona un punto de uso</option>{destinationCatalog.filter((item) => item.artifactTypes.includes(current.kind!)).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+            <label><input type="checkbox" checked={quickActive} onChange={(event) => setQuickActive(event.target.checked)} />Activo</label>
+            <label><input type="checkbox" checked={quickDefault} onChange={(event) => setQuickDefault(event.target.checked)} />Predeterminado para este destino</label>
+            {error && <p className={styles.error} role="alert">{error}</p>}
+            <footer><Button type="button" variant="secondary" onClick={() => setModal(null)}>Cancelar</Button><Button type="submit" disabled={busy || !quickFile || !quickName.trim() || !quickDestination}>{busy ? "Guardando…" : "Guardar"}</Button></footer>
+          </form>
+        </CatalogModal>
+      );
+    if (modal && typeof modal !== "string" && "renameFolder" in modal)
+      return (
+        <CatalogModal
+          title="Renombrar carpeta"
+          description="El nombre organiza la biblioteca; no modifica destinos ni reglas funcionales."
+          onClose={() => setModal(null)}
+        >
+          <form className={styles.modalForm} onSubmit={renameCurrentFolder}>
+            <label>Nombre<input required value={manageName} onChange={(event) => setManageName(event.target.value)} /></label>
+            <footer><Button type="button" variant="secondary" onClick={() => setModal(null)}>Cancelar</Button><Button type="submit" disabled={busy || !manageName.trim()}>Guardar</Button></footer>
+          </form>
+        </CatalogModal>
+      );
+    if (modal && typeof modal !== "string" && "organize" in modal)
+      return (
+        <CatalogModal
+          title={`Organizar · ${modal.organize.nombre}`}
+          description="Mover o renombrar no altera los destinos funcionales ni la versión vigente."
+          onClose={() => setModal(null)}
+        >
+          <form className={styles.modalForm} onSubmit={organizeArtifact}>
+            <label>Nombre<input required value={manageName} onChange={(event) => setManageName(event.target.value)} /></label>
+            <label>Carpeta<select value={manageFolderId} onChange={(event) => setManageFolderId(event.target.value)}><option value="">Raíz de {current.kind === "PLANTILLA" ? "Plantillas" : "Formatos"}</option>{(explorer?.all_folders || []).map((folder) => <option key={folder.id} value={folder.id}>{folder.nombre}</option>)}</select></label>
+            <footer><Button type="button" variant="secondary" onClick={() => setModal(null)}>Cancelar</Button><Button type="submit" disabled={busy || !manageName.trim()}>Guardar organización</Button></footer>
           </form>
         </CatalogModal>
       );
@@ -868,7 +1026,25 @@ export function TemplatesFormatsCatalog() {
           </div>
         </CatalogModal>
       );
-    if (modal && typeof modal !== "string")
+    if (modal && typeof modal !== "string" && "destinations" in modal)
+      return (
+        <CatalogModal title={`Destinos funcionales · ${modal.destinations.nombre}`} description="Las carpetas organizan; estas conexiones determinan dónde se usa el archivo." onClose={() => setModal(null)}>
+          <form className={styles.modalForm} onSubmit={saveDestinations}>
+            <fieldset className={styles.choiceList}>
+              <legend>Puntos de uso</legend>
+              {destinationCatalog.filter((item) => item.artifactTypes.includes(modal.destinations.tipo)).map((option) => {
+                const currentDestination = destinationDraft.find((item) => item.destino === option.value);
+                return <div key={option.value}>
+                  <label><input type="checkbox" checked={Boolean(currentDestination)} onChange={(event) => setDestinationDraft((current) => event.target.checked ? [...current, { destino: option.value, activo: true, predeterminado: current.length === 0 }] : current.filter((item) => item.destino !== option.value))} />{option.label}</label>
+                  {currentDestination && <label><input type="checkbox" checked={currentDestination.predeterminado} onChange={(event) => setDestinationDraft((current) => current.map((item) => item.destino === option.value ? { ...item, predeterminado: event.target.checked } : item))} />Predeterminado para este destino</label>}
+                </div>;
+              })}
+            </fieldset>
+            <footer><Button type="button" variant="secondary" onClick={() => setModal(null)}>Cancelar</Button><Button type="submit" disabled={busy}>Guardar conexiones</Button></footer>
+          </form>
+        </CatalogModal>
+      );
+    if (modal && typeof modal !== "string" && "version" in modal)
       return (
         <CatalogModal
           title={`Nueva versión · ${modal.version.nombre}`}
@@ -1197,6 +1373,10 @@ export function TemplatesFormatsCatalog() {
                 <span>{act.nombre}</span>
               </label>
             ))}
+          </fieldset>
+          <fieldset className={styles.choiceList}>
+            <legend>Destinos funcionales</legend>
+            {destinationCatalog.filter((item) => item.artifactTypes.includes(current.kind!)).map((option) => <label key={option.value}><input type="checkbox" checked={bulk.destinos_funcionales.includes(option.value)} onChange={(event) => setBulk((value) => ({ ...value, destinos_funcionales: event.target.checked ? [...value.destinos_funcionales, option.value] : value.destinos_funcionales.filter((item) => item !== option.value) }))} />{option.label}</label>)}
           </fieldset>
           <div className={styles.formColumns}>
             <label>

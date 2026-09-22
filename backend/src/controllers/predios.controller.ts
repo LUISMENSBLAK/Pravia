@@ -45,7 +45,7 @@ export const uploadPredioDocumento = async (req: Request, res: Response) => {
     await service.get(user, req.params.id);
     const file = req.file;
     if (!file) throw new PredioError(400, 'PREDIO_DOCUMENT_REQUIRED', 'Selecciona un documento.');
-    const accepted = ['application/pdf', 'image/jpeg', 'image/png', 'application/vnd.openxmlformats-officedocument.wordprocessingml'];
+    const accepted = ['application/pdf', 'image/jpeg', 'image/png', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
     if (!accepted.includes(file.mimetype)) throw new PredioError(400, 'PREDIO_DOCUMENT_TYPE_INVALID', 'Carga un PDF, imagen o documento Word compatible.');
     const ext = path.extname(file.originalname).toLowerCase() || '.bin';
     storageKey = `organizations/${user.organizationId}/documentos/${crypto.randomUUID()}${ext}`;

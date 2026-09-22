@@ -87,7 +87,7 @@ describe('EXP-004 apéndice documental', () => {
     const changed = vi.fn();
     render(<DocumentsTab expediente={expediente} onChanged={changed} />);
     await screen.findByText('Pre-firma · Organización editable');
-    await userEvent.click(screen.getByRole('button', { name: 'Importar documentos vigentes de comparecientes' }));
+    await userEvent.click(screen.getByRole('button', { name: /(?:Importar documentos vigentes de|Actualizar desde) comparecientes/ }));
     await waitFor(() => expect(api.importDocumentSource).toHaveBeenCalledWith('exp-1', 'compareciente'));
     expect(changed).toHaveBeenCalled();
   });
@@ -98,14 +98,18 @@ describe('EXP-004 apéndice documental', () => {
     expect(await screen.findByText('Apéndice congelado al firmar')).toBeInTheDocument();
     expect(screen.getByTitle('Archivo no disponible')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Descargar Comprobante/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Importar documentos vigentes de comparecientes' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /(?:Importar documentos vigentes de|Actualizar desde) comparecientes/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Subir' })).not.toBeInTheDocument();
   });
 
   it('abre una vista previa PDF real mediante URL privada temporal', async () => {
     render(<DocumentsTab expediente={expediente} onChanged={vi.fn()} />);
     await userEvent.click(await screen.findByText('Identificación vigente.pdf'));
-    expect(await screen.findByTitle('Vista previa de Identificación vigente.pdf')).toHaveAttribute('src', 'https://signed.example.test/file');
+    const visualize = await screen.findByRole('button', { name: 'Visualizar' });
+    await waitFor(() => expect(visualize).toBeEnabled());
+    await userEvent.click(visualize);
+    expect(await screen.findByRole('dialog', { name: 'Identificación vigente.pdf' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Vista previa de Identificación vigente.pdf')).toBeInTheDocument();
     expect(api.appendixSignedUrl).toHaveBeenCalledWith('exp-1', 'item-1');
   });
 

@@ -29,6 +29,7 @@ const ISRWorkspacePage = lazy(() => import('../features/isr/ISRWorkspacePage').t
 const SettingsPage = lazy(() => import('../features/settings/SettingsPage').then((module) => ({ default: module.SettingsPage })));
 const UserDetailPage = lazy(() => import('../features/settings/UserDetailPage').then((module) => ({ default: module.UserDetailPage })));
 const PropertyWorkspace = lazy(() => import('../features/properties/PropertyWorkspace').then((module) => ({ default: module.PropertyWorkspace })));
+const PropertiesPage = lazy(() => import('../features/properties/PropertiesPage').then((module) => ({ default: module.PropertiesPage })));
 const ActivationPage = lazy(() => import('../features/settings/ActivationPage').then((module) => ({ default: module.ActivationPage })));
 
 export function TenantScopedShell() {
@@ -54,6 +55,7 @@ export function App() {
               <Route path="/cotizaciones/:id" element={<QuoteDetailPage />} />
               <Route path="/expedientes" element={<ExpedientesPage />} />
               <Route path="/expedientes/:id" element={<ExpedienteWorkspace />} />
+              <Route path="/predios" element={<PropertiesPage />} />
               <Route path="/predios/nuevo" element={<PropertyWorkspace />} />
               <Route path="/predios/:id" element={<PropertyWorkspace />} />
               <Route path="/comparecientes" element={<ComparecientesPage />} />

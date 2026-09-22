@@ -1,69 +1,70 @@
-import { ArrowDown, ArrowUp, ClipboardList, Copy, Plus, Save, Search, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ArrowDown, ArrowUp, ClipboardList, Plus, Save, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '../../../components/ui/Button';
 import { settingsService } from '../settings.service';
-import type { QuestionnaireCatalogItem, QuestionnaireDefinition, QuestionnaireQuestion, QuestionnaireType } from './catalogs.types';
+import type { QuestionnaireBank, QuestionnaireQuestion, QuestionnaireType } from './catalogs.types';
 import styles from './Catalogs.module.css';
 
 const types: Array<[QuestionnaireType, string]> = [
-  ['SHORT_TEXT', 'Texto corto'], ['LONG_TEXT', 'Texto largo'], ['NUMBER', 'Número'], ['CURRENCY', 'Moneda'], ['PERCENTAGE', 'Porcentaje'], ['DATE', 'Fecha'],
-  ['YES_NO', 'Sí / No'], ['SINGLE_CHOICE', 'Opción única'], ['MULTIPLE_CHOICE', 'Opción múltiple'], ['CATALOG', 'Catálogo'], ['PERSON', 'Persona / Compareciente'],
-  ['INSTITUTION', 'Institución'], ['SUPPORT_FILE', 'Archivo / documento soporte'], ['REPEATABLE_TABLE', 'Tabla repetible'],
+  ['TEXT', 'Texto'], ['NUMBER', 'Número'], ['BOOLEAN', 'Sí / No'], ['DATE', 'Fecha'],
+  ['CHOICE', 'Opción única'], ['MULTI_CHOICE', 'Opción múltiple'],
 ];
-const uid = (prefix: string) => `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
-const emptyDefinition = (): QuestionnaireDefinition => ({
-  title: '', description: '', purpose: '', scope: 'EXPEDIENTE', applicableActIds: [], stageId: null, formatMappings: [],
-  sections: [{ id: uid('section'), title: 'Identificación', order: 0, questions: [] }],
-});
-const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
-const normalizeOrder = (definition: QuestionnaireDefinition) => ({ ...definition, sections: definition.sections.map((section, sectionIndex) => ({ ...section, order: sectionIndex, questions: section.questions.map((question, questionIndex) => ({ ...question, order: questionIndex })) })) });
+const blank = (): Omit<QuestionnaireQuestion, 'id'> => ({ label: '', type: 'TEXT', required: false, active: true });
 
 export function QuestionnairesCatalog() {
-  const [items, setItems] = useState<QuestionnaireCatalogItem[]>([]);
-  const [supporting, setSupporting] = useState<{ acts: Array<{ id: string; nombre: string }>; stages: Array<{ id: string; nombre: string }>; formats: Array<{ id: string; nombre: string }> }>({ acts: [], stages: [], formats: [] });
-  const [search, setSearch] = useState(''); const [loading, setLoading] = useState(true); const [error, setError] = useState('');
-  const [selectedId, setSelectedId] = useState<string | null>(null); const [draft, setDraft] = useState<QuestionnaireDefinition | null>(null); const [saving, setSaving] = useState(false); const [message, setMessage] = useState('');
+  const [banks, setBanks] = useState<QuestionnaireBank[]>([]);
+  const [active, setActive] = useState<'PERSONAL' | 'OPERACION'>('PERSONAL');
+  const [draft, setDraft] = useState<(Partial<QuestionnaireQuestion> & { id?: string }) | null>(null);
+  const [loading, setLoading] = useState(true); const [busy, setBusy] = useState(false); const [message, setMessage] = useState('');
   const load = useCallback(async () => {
-    setLoading(true); setError('');
-    try { const [questionnaires, catalogs] = await Promise.all([settingsService.catalogQuestionnaires(search), settingsService.questionnaireSupporting()]); setItems(questionnaires); setSupporting(catalogs); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'No fue posible cargar los cuestionarios.'); }
+    setLoading(true); setMessage('');
+    try { setBanks((await settingsService.questionnaireBanks()).banks); }
+    catch (cause) { setMessage(cause instanceof Error ? cause.message : 'No fue posible cargar los bancos de preguntas.'); }
     finally { setLoading(false); }
-  }, [search]);
-  useEffect(() => { const timer = window.setTimeout(() => void load(), 180); return () => window.clearTimeout(timer); }, [load]);
-  const selected = useMemo(() => items.find((item) => item.id === selectedId) || null, [items, selectedId]);
-  const edit = (item: QuestionnaireCatalogItem) => { setSelectedId(item.id); setDraft(clone(item.versiones[0].definition_json)); setMessage(''); };
-  const create = () => { setSelectedId(null); setDraft(emptyDefinition()); setMessage(''); };
-  const updateSection = (index: number, patch: Partial<QuestionnaireDefinition['sections'][number]>) => setDraft((current) => current && ({ ...current, sections: current.sections.map((section, position) => position === index ? { ...section, ...patch } : section) }));
-  const moveSection = (index: number, direction: number) => setDraft((current) => {
-    if (!current) return current; const target = index + direction; if (target < 0 || target >= current.sections.length) return current;
-    const sections = [...current.sections]; [sections[index], sections[target]] = [sections[target], sections[index]]; return normalizeOrder({ ...current, sections });
-  });
-  const updateQuestion = (sectionIndex: number, questionIndex: number, patch: Partial<QuestionnaireQuestion>) => setDraft((current) => current && ({ ...current, sections: current.sections.map((section, position) => position === sectionIndex ? { ...section, questions: section.questions.map((question, qPosition) => qPosition === questionIndex ? { ...question, ...patch } : question) } : section) }));
-  const moveQuestion = (sectionIndex: number, questionIndex: number, direction: number) => setDraft((current) => {
-    if (!current) return current; const target = questionIndex + direction; const section = current.sections[sectionIndex]; if (target < 0 || target >= section.questions.length) return current;
-    const questions = [...section.questions]; [questions[questionIndex], questions[target]] = [questions[target], questions[questionIndex]];
-    return normalizeOrder({ ...current, sections: current.sections.map((item, index) => index === sectionIndex ? { ...item, questions } : item) });
-  });
-  const addQuestion = (sectionIndex: number) => updateSection(sectionIndex, { questions: [...draft!.sections[sectionIndex].questions, { id: uid('question'), label: 'Nueva pregunta', type: 'SHORT_TEXT', required: false, order: draft!.sections[sectionIndex].questions.length, mappings: [] }] });
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  const current = banks.find((item) => item.key === active);
   const save = async () => {
-    if (!draft) return; setSaving(true); setMessage('');
-    try { const payload = normalizeOrder(draft); if (selectedId) await settingsService.versionQuestionnaire(selectedId, payload); else await settingsService.createQuestionnaire(payload); setMessage(selectedId ? 'Nueva versión publicada. Las respuestas históricas conservan su snapshot.' : 'Cuestionario creado.'); setDraft(null); setSelectedId(null); await load(); }
-    catch (cause) { setMessage(cause instanceof Error ? cause.message : 'No fue posible guardar el cuestionario.'); }
-    finally { setSaving(false); }
+    if (!draft?.label?.trim()) { setMessage('Escribe la pregunta.'); return; }
+    setBusy(true); setMessage('');
+    try {
+      if (draft.id) await settingsService.updateQuestionnaireBankQuestion(active, draft.id, draft);
+      else await settingsService.addQuestionnaireBankQuestion(active, draft);
+      setDraft(null); setMessage('Pregunta guardada en una nueva versión del banco.'); await load();
+    } catch (cause) { setMessage(cause instanceof Error ? cause.message : 'No fue posible guardar la pregunta.'); }
+    finally { setBusy(false); }
+  };
+  const reorder = async (index: number, direction: number) => {
+    if (!current) return; const target = index + direction; if (target < 0 || target >= current.questions.length) return;
+    const questions = [...current.questions]; [questions[index], questions[target]] = [questions[target], questions[index]];
+    setBusy(true); try { await settingsService.reorderQuestionnaireBank(active, questions.map((item) => item.id)); await load(); } finally { setBusy(false); }
   };
   return <div className={styles.questionnaireLayout}>
-    <section className={styles.questionnaireCatalog} aria-label="Catálogo de cuestionarios">
-      <div className={styles.catalogToolbar}><label className={styles.searchField}><Search size={17} /><input aria-label="Buscar cuestionarios" placeholder="Buscar cuestionario…" value={search} onChange={(event) => setSearch(event.target.value)} /></label><Button onClick={create}><Plus size={17} />Nuevo cuestionario</Button></div>
-      {loading ? <div className={styles.catalogState} role="status">Cargando cuestionarios…</div> : error ? <div className={styles.catalogState} role="alert">{error}<Button variant="secondary" onClick={() => void load()}>Reintentar</Button></div> : items.length === 0 ? <div className={styles.catalogState}><ClipboardList /><strong>No hay cuestionarios</strong><span>Crea el primero para capturar información estructurada.</span></div> : <div className={styles.questionnaireList}>{items.map((item) => <article key={item.id} className={`${styles.questionnaireCard} ${selectedId === item.id ? styles.questionnaireSelected : ''}`}><button type="button" onClick={() => edit(item)}><span className={item.activo ? styles.activeDot : styles.inactiveDot} /><span><strong>{item.nombre}</strong><small>{item.descripcion || 'Sin descripción'} · v{item.versiones[0]?.version || 0}</small><em>{item.activo ? 'Activo' : 'Inactivo'} · {item.versiones[0]?.definition_json.scope === 'COMPARECIENTE' ? 'Por compareciente' : item.versiones[0]?.definition_json.scope === 'INMUEBLE' ? 'Por inmueble' : 'Por expediente'}</em></span></button><div><button type="button" onClick={async () => { await settingsService.duplicateQuestionnaire(item.id); await load(); }} aria-label={`Duplicar ${item.nombre}`}><Copy size={16} /></button><button type="button" onClick={async () => { await settingsService.setQuestionnaireActive(item.id, !item.activo); await load(); }} aria-label={item.activo ? `Desactivar ${item.nombre}` : `Activar ${item.nombre}`}>{item.activo ? 'Desactivar' : 'Activar'}</button></div></article>)}</div>}
+    <section className={styles.questionnaireCatalog} aria-label="Bancos de preguntas">
+      <div className={styles.catalogToolbar}>
+        <div role="tablist" aria-label="Banco de preguntas">
+          {banks.map((item) => <button key={item.key} type="button" role="tab" aria-selected={active === item.key} onClick={() => { setActive(item.key); setDraft(null); }}>{item.label}</button>)}
+        </div>
+        <Button onClick={() => setDraft(blank())}><Plus size={17} />Nueva pregunta</Button>
+      </div>
+      <p className={styles.catalogState}>La aplicabilidad la determina exclusivamente Cumplimiento PLD/UIF. Aquí sólo se administran las preguntas de los dos bancos globales.</p>
+      {loading ? <div className={styles.catalogState} role="status">Cargando preguntas…</div> : message && !banks.length ? <div className={styles.catalogState} role="alert">{message}</div> : !current?.questions.length ? <div className={styles.catalogState}><ClipboardList /><strong>Sin preguntas</strong><span>Usa “Nueva pregunta” para comenzar este banco.</span></div> : <div className={styles.questionnaireList}>
+        {current.questions.map((item, index) => <article key={item.id} className={styles.questionnaireCard}>
+          <button type="button" onClick={() => setDraft({ ...item })}><span className={item.active === false ? styles.inactiveDot : styles.activeDot} /><span><strong>{item.label}</strong><small>{types.find(([type]) => type === item.type)?.[1]} · {item.required ? 'Obligatoria' : 'Opcional'}</small><em>{item.active === false ? 'Inactiva' : 'Activa'} · v{current.version}</em></span></button>
+          <div><button type="button" onClick={() => void reorder(index, -1)} disabled={busy || index === 0} aria-label={`Subir ${item.label}`}><ArrowUp size={16} /></button><button type="button" onClick={() => void reorder(index, 1)} disabled={busy || index === current.questions.length - 1} aria-label={`Bajar ${item.label}`}><ArrowDown size={16} /></button><button type="button" onClick={async () => { await settingsService.updateQuestionnaireBankQuestion(active, item.id, { active: item.active === false }); await load(); }} aria-label={item.active === false ? `Activar ${item.label}` : `Desactivar ${item.label}`}>{item.active === false ? 'Activar' : 'Desactivar'}</button><button type="button" onClick={async () => { await settingsService.removeQuestionnaireBankQuestion(active, item.id); await load(); }} aria-label={`Eliminar ${item.label}`}><Trash2 size={16} /></button></div>
+        </article>)}
+      </div>}
     </section>
-    {draft && <section className={styles.questionnaireEditor} aria-label={selected ? `Editar ${selected.nombre}` : 'Nuevo cuestionario'}>
-      <header><div><small>{selected ? `NUEVA VERSIÓN · ACTUAL v${selected.versiones[0]?.version}` : 'NUEVO CUESTIONARIO'}</small><h2>{selected ? selected.nombre : 'Definir cuestionario'}</h2><p>Las secciones, preguntas y mapeos quedan versionados y auditados.</p></div><Button onClick={() => void save()} disabled={saving}><Save size={17} />{saving ? 'Guardando…' : selected ? 'Publicar versión' : 'Crear cuestionario'}</Button></header>
+    {draft && <section className={styles.questionnaireEditor} aria-label={draft.id ? 'Editar pregunta' : 'Nueva pregunta'}>
+      <header><div><small>{active === 'PERSONAL' ? 'BANCO PERSONAL' : 'BANCO ACTO / OPERACIÓN'}</small><h2>{draft.id ? 'Editar pregunta' : 'Nueva pregunta'}</h2><p>El cambio crea una versión inmutable; las respuestas anteriores conservan su snapshot.</p></div><Button onClick={() => void save()} disabled={busy}><Save size={17} />{busy ? 'Guardando…' : 'Guardar'}</Button></header>
       {message && <p className={styles.editorMessage} aria-live="polite">{message}</p>}
-      <div className={styles.questionnaireBasics}><label>Nombre<input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} required /></label><label>Descripción<textarea value={draft.description || ''} onChange={(event) => setDraft({ ...draft, description: event.target.value })} /></label><label>Propósito<input value={draft.purpose || ''} onChange={(event) => setDraft({ ...draft, purpose: event.target.value })} placeholder="Información que alimentará el formato" /></label><label>Multiplicidad<select value={draft.scope} onChange={(event) => setDraft({ ...draft, scope: event.target.value as QuestionnaireDefinition['scope'] })}><option value="EXPEDIENTE">Por expediente</option><option value="COMPARECIENTE">Por compareciente</option><option value="INMUEBLE">Por inmueble</option></select></label><label>Etapa aplicable<select value={draft.stageId || ''} onChange={(event) => setDraft({ ...draft, stageId: event.target.value || null })}><option value="">Cualquier etapa</option>{supporting.stages.map((stage) => <option key={stage.id} value={stage.id}>{stage.nombre}</option>)}</select></label></div>
-      <fieldset className={styles.questionnaireChecks}><legend>Actos aplicables</legend>{supporting.acts.map((act) => <label key={act.id}><input type="checkbox" checked={draft.applicableActIds?.includes(act.id)} onChange={(event) => setDraft({ ...draft, applicableActIds: event.target.checked ? [...(draft.applicableActIds || []), act.id] : (draft.applicableActIds || []).filter((id) => id !== act.id) })} />{act.nombre}</label>)}</fieldset>
-      <fieldset className={styles.questionnaireChecks}><legend>Formatos CFG-002 vinculados</legend>{supporting.formats.length ? supporting.formats.map((format) => <label key={format.id}><input type="checkbox" checked={draft.formatMappings?.some((item) => item.formatId === format.id)} onChange={(event) => setDraft({ ...draft, formatMappings: event.target.checked ? [...(draft.formatMappings || []), { formatId: format.id, mappings: {} }] : (draft.formatMappings || []).filter((item) => item.formatId !== format.id) })} />{format.nombre}</label>) : <span>No hay formatos activos disponibles.</span>}</fieldset>
-      <div className={styles.questionnaireSections}>{draft.sections.map((section, sectionIndex) => <article key={section.id} className={styles.questionnaireSection}><header><input aria-label={`Nombre de sección ${sectionIndex + 1}`} value={section.title} onChange={(event) => updateSection(sectionIndex, { title: event.target.value })} /><div><button type="button" onClick={() => moveSection(sectionIndex, -1)} disabled={sectionIndex === 0} aria-label="Subir sección"><ArrowUp size={16} /></button><button type="button" onClick={() => moveSection(sectionIndex, 1)} disabled={sectionIndex === draft.sections.length - 1} aria-label="Bajar sección"><ArrowDown size={16} /></button><button type="button" onClick={() => setDraft({ ...draft, sections: draft.sections.filter((_, index) => index !== sectionIndex) })} disabled={draft.sections.length === 1} aria-label="Eliminar sección"><Trash2 size={16} /></button></div></header><div className={styles.questionnaireQuestions}>{section.questions.map((question, questionIndex) => <div className={styles.questionnaireQuestion} key={question.id}><div className={styles.questionMain}><label>Pregunta<input value={question.label} onChange={(event) => updateQuestion(sectionIndex, questionIndex, { label: event.target.value })} /></label><label>Tipo<select value={question.type} onChange={(event) => updateQuestion(sectionIndex, questionIndex, { type: event.target.value as QuestionnaireType })}>{types.map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>Ayuda<input value={question.help || ''} onChange={(event) => updateQuestion(sectionIndex, questionIndex, { help: event.target.value })} /></label><label>Mapea a (separado por coma)<input value={(question.mappings || []).join(', ')} onChange={(event) => updateQuestion(sectionIndex, questionIndex, { mappings: event.target.value.split(',').map((value) => value.trim()).filter(Boolean) })} /></label></div><div className={styles.questionOptions}><label><input type="checkbox" checked={question.required || false} onChange={(event) => updateQuestion(sectionIndex, questionIndex, { required: event.target.checked })} />Requerida</label><select aria-label="Fuente de prellenado" value={question.prefill || ''} onChange={(event) => updateQuestion(sectionIndex, questionIndex, { prefill: (event.target.value || undefined) as QuestionnaireQuestion['prefill'] })}><option value="">Sin prellenado</option><option value="EXPEDIENTE_FOLIO">Folio de expediente</option><option value="EXPEDIENTE_CLIENTE">Cliente del expediente</option><option value="COMPARECIENTE_NOMBRE">Nombre de compareciente</option><option value="INMUEBLE_CLAVE_CATASTRAL">Clave catastral</option></select><select aria-label="Pregunta condicionante" value={question.condition?.questionId || ''} onChange={(event) => updateQuestion(sectionIndex, questionIndex, { condition: event.target.value ? { questionId: event.target.value, operator: 'EQUALS', value: true } : undefined })}><option value="">Siempre visible</option>{draft.sections.flatMap((item) => item.questions).filter((item) => item.id !== question.id).map((item) => <option key={item.id} value={item.id}>Si: {item.label}</option>)}</select><button type="button" onClick={() => moveQuestion(sectionIndex, questionIndex, -1)} disabled={questionIndex === 0} aria-label="Subir pregunta"><ArrowUp size={15} /></button><button type="button" onClick={() => moveQuestion(sectionIndex, questionIndex, 1)} disabled={questionIndex === section.questions.length - 1} aria-label="Bajar pregunta"><ArrowDown size={15} /></button><button type="button" onClick={() => updateSection(sectionIndex, { questions: section.questions.filter((_, index) => index !== questionIndex) })} aria-label="Eliminar pregunta"><Trash2 size={15} /></button></div></div>)}</div><Button variant="secondary" onClick={() => addQuestion(sectionIndex)}><Plus size={16} />Agregar pregunta</Button></article>)}</div>
-      <Button variant="secondary" onClick={() => setDraft({ ...draft, sections: [...draft.sections, { id: uid('section'), title: `Sección ${draft.sections.length + 1}`, order: draft.sections.length, questions: [] }] })}><Plus size={16} />Agregar sección</Button>
+      <div className={styles.questionnaireBasics}>
+        <label>Pregunta<textarea value={draft.label || ''} onChange={(event) => setDraft({ ...draft, label: event.target.value })} autoFocus /></label>
+        <label>Tipo<select value={draft.type || 'TEXT'} onChange={(event) => setDraft({ ...draft, type: event.target.value as QuestionnaireType })}>{types.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label><input type="checkbox" checked={draft.required === true} onChange={(event) => setDraft({ ...draft, required: event.target.checked })} />Obligatoria</label>
+        <label><input type="checkbox" checked={draft.active !== false} onChange={(event) => setDraft({ ...draft, active: event.target.checked })} />Activa</label>
+        {(draft.type === 'CHOICE' || draft.type === 'MULTI_CHOICE') && <label>Opciones (una por línea)<textarea value={(draft.options || []).map((item) => item.label).join('\n')} onChange={(event) => setDraft({ ...draft, options: event.target.value.split('\n').map((label) => label.trim()).filter(Boolean).map((label) => ({ code: label.toUpperCase().replace(/[^A-Z0-9]+/g, '_'), label })) })} /></label>}
+      </div>
     </section>}
   </div>;
 }

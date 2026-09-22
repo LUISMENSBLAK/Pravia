@@ -48,19 +48,31 @@ export class ExpedienteActosService {
   }
 
   async apply(actor: Actor, expedienteId: string, command: ExpedienteActoCommand) {
+    return this.prisma.$transaction(
+      (tx) => this.applyInTransaction(tx, actor, expedienteId, command),
+      { timeout: 20_000 },
+    );
+  }
+
+  async applyInTransaction(
+    tx: Prisma.TransactionClient,
+    actor: Actor,
+    expedienteId: string,
+    command: ExpedienteActoCommand,
+    options: { incrementExpedienteVersion?: boolean } = {},
+  ) {
     const idempotencyKey = clean(command.idempotency_key, 160);
     if (!idempotencyKey) throw new ExpedienteActoError(400, 'EXPEDIENTE_ACT_IDEMPOTENCY_REQUIRED', 'La operación requiere una clave de idempotencia.');
     if (!clean(command.preview_fingerprint, 128)) throw new ExpedienteActoError(400, 'EXPEDIENTE_ACT_PREVIEW_REQUIRED', 'Primero revisa el impacto de este cambio.');
 
-    return this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:expediente-actos:${expedienteId}`}))`);
-      await this.assertExpediente(tx, actor, expedienteId);
+    await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:expediente-actos:${expedienteId}`}))`);
+    await this.assertExpediente(tx, actor, expedienteId);
 
-      const prior = await tx.expedienteActo.findFirst({
-        where: { organization_id: actor.organizationId, expediente_id: expedienteId, OR: [{ idempotency_key: idempotencyKey }, { removal_idempotency_key: idempotencyKey }] },
-        include: activeActInclude,
-      });
-      if (prior) return { acto: prior, idempotent: true };
+    const prior = await tx.expedienteActo.findFirst({
+      where: { organization_id: actor.organizationId, expediente_id: expedienteId, OR: [{ idempotency_key: idempotencyKey }, { removal_idempotency_key: idempotencyKey }] },
+      include: activeActInclude,
+    });
+    if (prior) return { acto: prior, idempotent: true };
 
       const preview = await this.buildPreview(tx, actor, expedienteId, command);
       if (preview.fingerprint !== command.preview_fingerprint) {
@@ -120,7 +132,9 @@ export class ExpedienteActosService {
       );
       await new ExpedienteArtifactsService(this.prisma).reconcileContextChangeInTransaction(tx, actor, expedienteId, 'EXPEDIENTE_ACT_CHANGE');
 
-      const updated = await tx.expediente.update({ where: { id: expedienteId }, data: { version: { increment: 1 } }, select: { version: true } });
+      const updated = options.incrementExpedienteVersion === false
+        ? await tx.expediente.findUniqueOrThrow({ where: { id: expedienteId }, select: { version: true } })
+        : await tx.expediente.update({ where: { id: expedienteId }, data: { version: { increment: 1 } }, select: { version: true } });
       const action = command.operation === 'ADD' ? 'ADD_EXPEDIENTE_ACT' : command.operation === 'CHANGE' ? 'CHANGE_EXPEDIENTE_ACT' : 'UNLINK_EXPEDIENTE_ACT';
       const summary = {
         operation: command.operation,
@@ -147,7 +161,6 @@ export class ExpedienteActosService {
         aggregate_type: 'Expediente', aggregate_id: expedienteId, actor_user_id: actor.id, correlation_id: correlationId, payload: json(summary),
       } });
       return { acto: result, idempotent: false, version: updated.version };
-    }, { timeout: 20_000 });
   }
 
   async createInitial(tx: Prisma.TransactionClient, input: {

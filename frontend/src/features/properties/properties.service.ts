@@ -1,7 +1,8 @@
 import { apiRequest } from '../../services/api/client';
-import type { PropertyAIReview, PropertyForm, PropertyImportableDocument, PropertyRecord } from './properties.types';
+import type { PropertyAIReview, PropertyForm, PropertyImportableDocument, PropertyListItem, PropertyRecord } from './properties.types';
 
 export const propertiesService = {
+  list(search = '', signal?: AbortSignal) { const params = new URLSearchParams({ search, limit: '50' }); return apiRequest<{ data: PropertyListItem[] }>(`/predios?${params}`, { signal }); },
   get(id: string, signal?: AbortSignal) { return apiRequest<{ data: PropertyRecord }>(`/predios/${encodeURIComponent(id)}`, { signal }).then((payload) => payload.data); },
   create(input: PropertyForm) { return apiRequest<{ data: PropertyRecord }>('/predios', { method: 'POST', body: JSON.stringify(input) }).then((payload) => payload.data); },
   update(id: string, input: PropertyForm) { return apiRequest<{ data: PropertyRecord }>(`/predios/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }).then((payload) => payload.data); },

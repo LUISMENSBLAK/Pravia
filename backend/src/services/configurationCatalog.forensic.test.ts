@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => {
     configuracionDependencia: { findMany: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn() },
     configuracionExcepcion: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     catalogoInstitucion: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
-    catalogoCarpeta: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
+    catalogoCarpeta: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
     catalogoArtefacto: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn(), findUniqueOrThrow: vi.fn() },
     catalogoArtefactoVersion: { findFirst: vi.fn(), create: vi.fn() },
     catalogoArtefactoActo: { deleteMany: vi.fn(), createMany: vi.fn() },
@@ -264,6 +264,20 @@ describe('CFG-002 forensic behavior', () => {
     mocks.db.catalogoCarpeta.findMany.mockResolvedValue([]); mocks.db.catalogoArtefacto.findMany.mockResolvedValue([]);
     const result = await templatesAndFormatsService.explorer(actor, 'NOTARIA', 'notary-a', 'FORMATO', 'c');
     expect(result.breadcrumbs.map((item) => item.name)).toEqual(['A', 'B', 'C']);
+  });
+
+  it('renombra una carpeta sin tocar destinos y bloquea ciclos al moverla', async () => {
+    const folder = { id: 'folder-a', organization_id: actor.organizationId, nombre: 'Antes', parent_id: null, tipo: 'FORMATO', propietario_tipo: 'NOTARIA', notaria_id: 'notary-a', institucion_id: null };
+    mocks.db.catalogoCarpeta.findFirst.mockResolvedValueOnce(folder);
+    mocks.db.catalogoCarpeta.update.mockResolvedValue({ ...folder, nombre: 'Después' });
+    await templatesAndFormatsService.updateFolder(actor, 'folder-a', { nombre: 'Después' });
+    expect(mocks.db.catalogoCarpeta.update).toHaveBeenCalledWith({ where: { id: 'folder-a' }, data: { nombre: 'Después' } });
+    expect(mocks.db.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ accion: 'CFG_FOLDER_UPDATED' }) });
+
+    vi.clearAllMocks();
+    mocks.db.catalogoCarpeta.findFirst.mockResolvedValueOnce(folder);
+    await expect(templatesAndFormatsService.updateFolder(actor, 'folder-a', { parent_id: 'folder-a' }))
+      .rejects.toMatchObject({ code: 'FOLDER_HIERARCHY_CYCLE' });
   });
 
   it('preserva v1/v2 y crea v3 con un blob nuevo sin duplicar la regla maestra', async () => {

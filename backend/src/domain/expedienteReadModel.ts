@@ -31,6 +31,9 @@ export type ExpedienteQueryInput = {
   cumplimiento?: unknown;
   fecha_desde?: unknown;
   fecha_hasta?: unknown;
+  numero_escritura?: unknown;
+  fecha_escritura_desde?: unknown;
+  fecha_escritura_hasta?: unknown;
   page?: unknown;
   limit?: unknown;
   pageSize?: unknown;
@@ -51,9 +54,12 @@ export type ParsedExpedienteQuery = {
   compliance?: 'COMPLETE' | 'PENDING' | 'OVERDUE' | 'UNEVALUATED';
   updatedFrom?: Date;
   updatedTo?: Date;
+  deedNumber?: string;
+  deedDateFrom?: Date;
+  deedDateTo?: Date;
   page: number;
   pageSize: number;
-  sort: 'numero_pravia:asc' | 'numero_pravia:desc' | 'updated_at:asc' | 'updated_at:desc';
+  sort: 'numero_pravia:asc' | 'numero_pravia:desc' | 'updated_at:asc' | 'updated_at:desc' | 'numero_escritura:asc' | 'numero_escritura:desc' | 'fecha_escritura:asc' | 'fecha_escritura:desc';
 };
 
 const text = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : undefined;
@@ -73,7 +79,7 @@ export function parseExpedienteQuery(input: ExpedienteQueryInput): ParsedExpedie
   const riskValue = text(input.riesgo)?.toUpperCase() as ParsedExpedienteQuery['risk'];
   const complianceValue = text(input.cumplimiento)?.toUpperCase() as ParsedExpedienteQuery['compliance'];
   const requestedSort = text(input.sort)?.toLowerCase().replace('folio', 'numero_pravia').replace('actualizacion', 'updated_at');
-  const validSort = new Set<ParsedExpedienteQuery['sort']>(['numero_pravia:asc', 'numero_pravia:desc', 'updated_at:asc', 'updated_at:desc']);
+  const validSort = new Set<ParsedExpedienteQuery['sort']>(['numero_pravia:asc', 'numero_pravia:desc', 'updated_at:asc', 'updated_at:desc', 'numero_escritura:asc', 'numero_escritura:desc', 'fecha_escritura:asc', 'fecha_escritura:desc']);
   return {
     search: text(input.search),
     folio: text(input.folio),
@@ -88,6 +94,9 @@ export function parseExpedienteQuery(input: ExpedienteQueryInput): ParsedExpedie
     compliance: complianceValue && ['COMPLETE', 'PENDING', 'OVERDUE', 'UNEVALUATED'].includes(complianceValue) ? complianceValue : undefined,
     updatedFrom: date(input.fecha_desde),
     updatedTo: date(input.fecha_hasta, true),
+    deedNumber: text(input.numero_escritura),
+    deedDateFrom: date(input.fecha_escritura_desde),
+    deedDateTo: date(input.fecha_escritura_hasta, true),
     page,
     pageSize,
     sort: validSort.has(requestedSort as ParsedExpedienteQuery['sort'])

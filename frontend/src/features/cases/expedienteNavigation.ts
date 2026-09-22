@@ -1,5 +1,5 @@
 export const expedienteSections = [
-  'resumen', 'actos', 'comparecientes', 'predios', 'documentos', 'seguimiento',
+  'actos', 'comparecientes', 'predios', 'documentos', 'seguimiento',
   'plantillas', 'cuestionarios', 'presupuesto', 'proyecto', 'finanzas', 'isr', 'cumplimiento', 'actividad',
 ] as const;
 
@@ -9,7 +9,8 @@ const safeId = /^[A-Za-z0-9_-]{1,128}$/;
 
 export function normalizeExpedienteSection(value: string | null | undefined): ExpedienteSection {
   if (value === 'workflow') return 'seguimiento';
-  return expedienteSections.includes(value as ExpedienteSection) ? value as ExpedienteSection : 'resumen';
+  if (value === 'resumen') return 'actos';
+  return expedienteSections.includes(value as ExpedienteSection) ? value as ExpedienteSection : 'actos';
 }
 
 export function expedienteReturnParams(expedienteId: string, section: ExpedienteSection) {

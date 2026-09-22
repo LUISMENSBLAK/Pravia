@@ -1,7 +1,7 @@
 import type { LoginCredentials, SessionUser } from '../../features/auth/auth.types';
 import { normalizeUser } from '../../features/auth/auth.types';
 import { apiConfig } from './config';
-import { apiRequest, extractToken, tokenStore } from './client';
+import { apiRequest, extractToken, refreshSession, tokenStore } from './client';
 
 type AuthPayload = Record<string, unknown>;
 
@@ -25,6 +25,7 @@ export const authService = {
   },
 
   async currentUser(): Promise<SessionUser> {
+    if (!tokenStore.get() && tokenStore.hasSessionHint()) await refreshSession();
     const payload = await apiRequest<AuthPayload>(apiConfig.mePath);
     return requireUser(payload);
   },

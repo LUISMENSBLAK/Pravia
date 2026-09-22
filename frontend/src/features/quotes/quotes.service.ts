@@ -1,5 +1,5 @@
-import { apiRequest } from '../../services/api/client';
-import type { CreateQuoteVersionInput, NotaryOption, ProspectCandidate, Quote, QuoteBudgetExtraction, QuoteContractAction, QuoteDocument, QuoteFollowUp, QuoteListFilters, QuoteListResult, QuoteState, QuoteVersion } from './quotes.types';
+import { apiBlobRequest, apiRequest } from '../../services/api/client';
+import type { NotaryOption, ProspectCandidate, Quote, QuoteBudget, QuoteBudgetConcept, QuoteBudgetExtraction, QuoteContractAction, QuoteDocument, QuoteFollowUp, QuoteListFilters, QuoteListResult, QuoteState } from './quotes.types';
 
 const asObject = (value: unknown): Record<string, unknown> | null => value && typeof value === 'object' ? value as Record<string, unknown> : null;
 const queryString = (filters: QuoteListFilters) => {
@@ -53,9 +53,6 @@ export const quotesService = {
   async create(prospectId: string, notaryId?: string): Promise<Quote> {
     return apiRequest<Quote>('/cotizaciones', { method: 'POST', body: JSON.stringify({ prospecto_id: prospectId, ...(notaryId ? { notaria_id: notaryId } : {}) }) });
   },
-  async createVersion(id: string, input: CreateQuoteVersionInput): Promise<{ version: QuoteVersion; cotizacion: Quote }> {
-    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/versiones`, { method: 'POST', body: JSON.stringify(input) });
-  },
   async extractBudget(file: File): Promise<QuoteBudgetExtraction> {
     const body = new FormData(); body.append('archivo', file);
     return apiRequest('/cotizaciones/extraer-presupuesto', { method: 'POST', body });
@@ -63,8 +60,8 @@ export const quotesService = {
   async generateDocument(id: string): Promise<QuoteDocument> {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/generar-documento`, { method: 'POST' });
   },
-  async approveVersion(versionId: string): Promise<QuoteVersion> {
-    return apiRequest(`/cotizaciones/version/${encodeURIComponent(versionId)}/aprobar`, { method: 'POST' });
+  async updateBudget(id: string, input: { concepts: Array<Pick<QuoteBudgetConcept, 'categoria' | 'concepto' | 'importe'>>; origin: 'MANUAL' | 'IMPORTADO'; expectedUpdatedAt: string }): Promise<{ presupuesto: QuoteBudget; updated_at: string; stage: string | null }> {
+    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/presupuesto`, { method: 'PUT', body: JSON.stringify(input) });
   },
   async updateState(id: string, state: QuoteState): Promise<Quote> {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/estado`, { method: 'PUT', body: JSON.stringify({ estado: state }) });
@@ -72,7 +69,7 @@ export const quotesService = {
   async registerDelivery(id: string, input: { destino: 'NOTARIA' | 'CLIENTE'; canal: string; destinatario: string; resumen: string }) {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/registrar-envio`, { method: 'POST', body: JSON.stringify(input) });
   },
-  async contractAction(id: string, input: { action: Exclude<QuoteContractAction, 'CONVERTIR'>; expectedVersion: number; idempotencyKey: string; confirm: true; effectiveAt: string; channel?: string; recipient?: string; evidence?: string; versionId?: string; reason?: string }) {
+  async contractAction(id: string, input: { action: Exclude<QuoteContractAction, 'CONVERTIR'>; expectedVersion: number; idempotencyKey: string; confirm: true; effectiveAt: string; channel?: string; recipient?: string; evidence?: string; reason?: string }) {
     return apiRequest<{ idempotent: boolean; eventId: string }>(`/cotizaciones/${encodeURIComponent(id)}/acciones`, { method: 'POST', body: JSON.stringify(input) });
   },
   async convert(id: string, input?: { expectedVersion: number; idempotencyKey: string; confirm: true; effectiveAt: string }): Promise<{ id: string; numero_pravia?: string; idempotent?: boolean }> {
@@ -81,5 +78,19 @@ export const quotesService = {
   async documentUrl(documentId: string): Promise<string> {
     const payload = await apiRequest<{ url: string }>(`/documentos/${encodeURIComponent(documentId)}/url`);
     return payload.url;
+  },
+  async quoteDocumentPreviewUrl(quoteId: string, documentId: string): Promise<string> {
+    const blob = await apiBlobRequest(`/cotizaciones/${encodeURIComponent(quoteId)}/documentos/${encodeURIComponent(documentId)}/ver`);
+    return URL.createObjectURL(blob);
+  },
+  async downloadQuoteDocument(quoteId: string, document: QuoteDocument): Promise<void> {
+    const blob = await apiBlobRequest(`/cotizaciones/${encodeURIComponent(quoteId)}/documentos/${encodeURIComponent(document.id)}/descargar`);
+    const url = URL.createObjectURL(blob);
+    const link = window.document.createElement('a');
+    link.href = url; link.download = document.nombre_original; link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  },
+  async deleteQuoteDocument(quoteId: string, documentId: string): Promise<void> {
+    await apiRequest(`/cotizaciones/${encodeURIComponent(quoteId)}/documentos/${encodeURIComponent(documentId)}`, { method: 'DELETE' });
   },
 };

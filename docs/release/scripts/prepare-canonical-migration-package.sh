@@ -73,6 +73,9 @@ migrations=(
   20260911010000_cfg002_v4_legal_library
   20260912010000_correction002_cfg001_questionnaires
   20260915010000_corrections004005006
+  20260916010000_corrections003v2_007_expediente_header
+  20260919010000_corrections008_009_010_cmp_document_vigencia
+  20260920010000_corrections011_012_014
 )
 
 for migration in "${migrations[@]}"; do

@@ -47,8 +47,16 @@ const canonicalQuote = async (who = a) => {
   await actProspect(who, created.prospecto.id, 'REGISTRAR_RECEPCION', { documentId: doc.id, effectiveAt: new Date().toISOString() });
   const result = await actProspect(who, created.prospecto.id, 'CONVERTIR');
   const quote = await db.cotizacion.findUniqueOrThrow({ where: { id: result.quoteId! } });
-  await db.cotizacionVersion.create({ data: { organization_id: who.organizationId, cotizacion_id: quote.id, version: 1, total_cliente: 100,
-    total_notaria: 100, honorarios_pravia: 10, desglose_notaria: {}, desglose_pravia: {}, aprobada: true, creada_por_id: who.id } });
+  await db.cotizacionConcepto.create({ data: {
+    organization_id: who.organizationId,
+    cotizacion_id: quote.id,
+    concepto: 'Honorarios notariales QA',
+    categoria: 'HONORARIOS',
+    importe: 100,
+    orden: 0,
+    origen: 'MANUAL',
+  } });
+  await db.cotizacion.update({ where: { id: quote.id }, data: { total_cliente: 100, total_notaria: 100, honorarios_pravia: null } });
   return quote.id;
 };
 const actQuote = async (id: string, action: string, extra: Record<string, unknown> = {}, who = a, key = randomUUID()) => {

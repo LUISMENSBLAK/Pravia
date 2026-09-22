@@ -3,7 +3,7 @@ export type ExpedienteStatus = typeof EXPEDIENTE_STATUSES[number];
 export type ExpedienteMacrophase = 'INTEGRACION' | 'PROYECTO' | 'FIRMA' | 'POSTFIRMA' | 'ENTREGADO' | 'OTROS';
 export type PersonOption = { id: string; nombre: string; apellido?: string | null; rol?: string };
 export type NotaryOption = { id: string; nombre: string; numero_notaria?: string | null; municipio?: string | null; entidad_federativa?: string | null };
-export type ActTypeOption = { id: string; nombre: string; descripcion?: string | null; tipoActoCaracteresCompareciente?: Array<{ caracter_id: string; sugerido: boolean; caracter: { id: string; nombre: string } }> };
+export type ActTypeOption = { id: string; nombre: string; descripcion?: string | null; configuracionesOperativas?: Array<{ id: string; clasificacion?: string | null; familia?: string | null; nombre_personalizado?: string | null; descripcion_personalizada?: string | null; revision: number }>; tipoActoCaracteresCompareciente?: Array<{ caracter_id: string; sugerido: boolean; caracter: { id: string; nombre: string } }> };
 export type ExpedienteAct = {
   id: string; expediente_id: string; tipo_acto_id: string;
   origen: 'COTIZACION' | 'ADICIONAL' | 'LEGACY_MIGRATION';
@@ -96,10 +96,11 @@ export type ExpedienteArtifacts = {
 };
 
 export type ExpedienteQuestionnaireInstance = {
+  assessmentId: string; bank: 'PERSONAL' | 'OPERACION';
   artifact: { id: string; name: string }; version: { id: string; number: number };
   definition: import('../settings/catalogs/catalogs.types').QuestionnaireDefinition;
   subject: { key: string; label: string }; prefill: Record<string, unknown>;
-  latestResponse: null | { id: string; estado: 'BORRADOR' | 'FINALIZADO'; revision: number; answers_json: Record<string, unknown>; completeness_json: { complete: boolean; missing: string[] }; created_at: string };
+  latestResponse: null | { id: string; estado: 'BORRADOR' | 'FINALIZADO'; revision: number; answers_json: Record<string, unknown>; completeness_json: { complete: boolean; missing: string[] }; base_fingerprint: string; created_at: string };
   formats: Array<{ id: string; nombre: string }>;
 };
 
@@ -123,19 +124,20 @@ export type ExpedienteListItem = {
   id: string; numero_pravia: string; numero_notaria?: string | null; cliente_alias?: string | null; cliente_principal: string;
   comparecientes_adicionales: number; estatus: ExpedienteStatus; macrofase: ExpedienteMacrophase; version: number;
   etapa_actual_nombre?: string | null; proxima_accion?: string | null; fecha_limite_accion?: string | null;
-  fecha_estimada_firma?: string | null; updated_at: string; tipo_acto: { id: string; nombre: string };
+  fecha_estimada_firma?: string | null; fecha_estimada_entrega?: string | null; fecha_escritura?: string | null; numero_escritura?: string | null; folio_desde?: string | null; folio_hasta?: string | null; updated_at: string; tipo_acto: { id: string; nombre: string };
   abogado?: PersonOption | null; notaria?: NotaryOption | null;
   etapaActual?: { id: string; clave_snapshot: string; nombre_snapshot: string; orden_snapshot: number; fecha_inicio: string } | null;
   riesgo: { label: string; requires_attention: boolean; review_id?: string | null };
   vulnerable?: { value: boolean | null; label: string };
   cumplimiento?: { state: string | null; label: 'Completo' | 'Pendiente' | 'Vencido' | 'Sin evaluar' | 'Restringido'; pending_count: number };
+  etapa_operativa?: { id: string; nombre: string; etapa: string; estado: string } | null;
 };
 export type ExpedienteListResult = {
   data: ExpedienteListItem[]; metrics: ExpedienteMetric[];
   meta: { total: number; page: number; pageSize: number; limit: number; totalPages: number; hasPreviousPage: boolean; hasNextPage: boolean };
   facets: { actTypes: ActTypeOption[]; responsibles: PersonOption[]; notaries: NotaryOption[]; stages: string[] };
 };
-export type ExpedienteListFilters = { search?: string; folio?: string; macrophase?: string; stage?: string; responsible?: string; notary?: string; risk?: string; compliance?: string; dateFrom?: string; dateTo?: string; actType?: string; client?: string; status?: string; page?: number; pageSize?: number; sort?: string };
+export type ExpedienteListFilters = { search?: string; folio?: string; macrophase?: string; stage?: string; responsible?: string; notary?: string; risk?: string; compliance?: string; dateFrom?: string; dateTo?: string; deedNumber?: string; deedDateFrom?: string; deedDateTo?: string; actType?: string; client?: string; status?: string; page?: number; pageSize?: number; sort?: string };
 
 export type EligibleQuoteCandidate = {
   id: string;
@@ -166,6 +168,7 @@ export type ExpedienteDetail = ExpedienteListItem & {
   progress: { documental: number; operativo: number; financiero?: number; general: number; configuration?: Record<string, string> };
   readiness: { indicators: ReadinessIndicator[]; blockers: Array<{ type: string; label: string }>; complete: number };
   capabilities: { canWrite: boolean; canDeliver: boolean; canManagePostfirma: boolean; canReadProject: boolean; canReadFinance: boolean; canWriteFinance: boolean; canReadCaseFinance?: boolean; canReportCaseFinance?: boolean; canApplyCaseFinance?: boolean; canUploadDocuments: boolean; canReadDocuments: boolean; canDeleteDocuments: boolean };
+  header_options?: { responsibles: PersonOption[] };
 };
 
 export type ExpedienteActivityCategory = 'TODO' | 'OPERACION' | 'DOCUMENTOS' | 'FINANZAS' | 'SISTEMA';
@@ -191,5 +194,43 @@ export type ExpedienteActivityResponse = {
   canonical_source: 'ExpedienteActividad';
   technical_audit_source: false;
 };
-export type ProjectVersion = { id: string; version_numero: number; nombre_original?: string; nota_version?: string; es_vigente: boolean; es_version_final?: boolean; subido_por_nombre?: string; created_at: string };
-export type ProjectState = { vigente: ProjectVersion | null; historial: ProjectVersion[]; ultimoReporte?: unknown };
+export type ProjectGenerationObservation = {
+  kind: 'CONTRADICTION' | 'POSSIBLE_TEMPLATE_RESIDUE' | 'CONTEXT_CHRONOLOGY';
+  field?: string;
+  master_value?: string;
+  document_value?: string;
+  document_id?: string;
+  value?: string;
+  location?: string;
+  detail?: string;
+};
+export type ProjectVersion = { id: string; version_numero: number; nombre_original?: string; nota_version?: string; es_vigente: boolean; es_version_final?: boolean; subido_por_nombre?: string; created_at: string; pending_count?: number; generation_observations?: ProjectGenerationObservation[]; docx_structural_fidelity?: { status?: string; sections?: number; tables?: number; immutable_parts?: number } };
+export type ProjectObservation = {
+  id: string;
+  titulo: string;
+  nivel_riesgo: 'ALTO' | 'MEDIO' | 'INFORMATIVO';
+  dato_proyecto: string;
+  dato_fuente: string;
+  documento_fuente: string;
+  ubicacion: string;
+  tipo_discrepancia: string;
+  recomendacion: string;
+};
+export type ProjectReport = {
+  id: string;
+  proyecto_version_id: string;
+  proyecto_version_numero: number;
+  nombre_reporte: string;
+  documentos_analizados_count: number;
+  documentos_totales_count: number;
+  documentos_no_leidos: string[];
+  observaciones: ProjectObservation[];
+  solicitado_por: string;
+  created_at: string;
+};
+export type ProjectState = { vigente: ProjectVersion | null; historial: ProjectVersion[]; ultimoReporte?: ProjectReport | null };
+export type ProjectWorkspace = {
+  modes: Array<'GENERAR_PROYECTO' | 'REVISAR_PROYECTO'>;
+  templates: Array<{ id: string; name: string; default: boolean; applicable_act_ids: string[]; versions: Array<{ id: string; version: number; name?: string; checksum?: string | null }> }>;
+  sources: { structured: string[]; documents: Array<{ id: string; tipo_vinculo: string; source_context?: string | null; selected_by_default: boolean; documento: { id: string; nombre_original: string; mime_type: string; checksum_sha256?: string | null; tipo?: string | null; categoria?: string | null } }> };
+};

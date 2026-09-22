@@ -8,6 +8,7 @@ type Props = {
   readOnly: boolean;
   lockType?: boolean;
   sources?: Record<string, any>;
+  ineIdentifiers?: { cic?: string; ocr?: string };
   onChange(name: string, value: string): void;
 };
 
@@ -90,6 +91,7 @@ export function ComparecienteForm(props: Props) {
     <Section icon={FileBadge} title="Identificación oficial">
       <SelectField {...props} name="tipo_identificacion" label="Tipo de identificación" options={[["INE","INE"],["PASAPORTE","Pasaporte"],["CEDULA_PROFESIONAL","Cédula profesional"],["DOCUMENTO_MIGRATORIO","Documento migratorio"],["OTRA","Otra"]]} source={sources.tipo_identificacion} />
       <Field {...props} name="folio_identificacion" label="Folio" source={sources.folio_identificacion} />
+      {(props.ineIdentifiers?.cic||props.ineIdentifiers?.ocr)&&<fieldset className={styles.ineIdentifierSelector}><legend>Identificadores detectados en INE</legend>{props.ineIdentifiers.cic&&<label><input type="radio" name="ine-identifier" checked={draft.folio_identificacion===props.ineIdentifiers.cic} disabled={readOnly} onChange={()=>onChange('folio_identificacion',props.ineIdentifiers!.cic!)}/><span>CIC: <strong>{props.ineIdentifiers.cic}</strong></span></label>}{props.ineIdentifiers.ocr&&<label><input type="radio" name="ine-identifier" checked={draft.folio_identificacion===props.ineIdentifiers.ocr} disabled={readOnly} onChange={()=>onChange('folio_identificacion',props.ineIdentifiers!.ocr!)}/><span>OCR: <strong>{props.ineIdentifiers.ocr}</strong></span></label>}<small>Elige uno. Si ambos fueron detectados, PRAVIA no selecciona automáticamente.</small></fieldset>}
       <Field {...props} name="autoridad_emisora" label="Autoridad emisora" source={sources.autoridad_emisora} />
       <Field {...props} name="pais_emisor" label="País emisor" source={sources.pais_emisor} />
       <Field {...props} name="fecha_expedicion_identificacion" label="Fecha de expedición" type="date" source={sources.fecha_expedicion_identificacion} />

@@ -26,6 +26,12 @@ function database() {
     complianceStates: [{ state: 'PENDIENTE', pending_count: 2, currentReview: { legalRuleResults: [{ id: 'vulnerable-result' }] } }],
     _count: { requisitos_docs: 0, tareas: 0, tareas_externas: 0 },
   };
+  const tracking = [{
+    id: '00000000-0000-4000-8000-00000000b704', expediente_id: record.id,
+    estado: 'EN_PROCESO', etapa_orden_snapshot: 10, orden_operativo: 10,
+    created_at: new Date('2026-09-02T12:00:00.000Z'),
+    actividad_nombre_snapshot: 'Entregado', etapa_nombre_snapshot: 'Entrega',
+  }];
   return {
     expediente: { findMany: vi.fn().mockResolvedValue([record]), count: vi.fn().mockResolvedValue(1), groupBy: vi.fn().mockResolvedValue([{ estatus: 'ENTREGADO', _count: { _all: 1 } }]) },
     tipoActo: { findMany: vi.fn().mockResolvedValue([]) },
@@ -34,6 +40,8 @@ function database() {
     expedienteEtapa: { findMany: vi.fn().mockResolvedValue([]) },
     expedienteComplianceState: { findMany: vi.fn() },
     complianceRuleResult: { findMany: vi.fn() },
+    expedienteSeguimientoActividad: { findMany: vi.fn().mockResolvedValue(tracking) },
+    expedienteSeguimientoDependencia: { findMany: vi.fn().mockResolvedValue([]) },
   } as any;
 }
 
@@ -67,8 +75,9 @@ describe('H7 expediente list compliance projection', () => {
     await new ExpedienteReadService(db).list(user, { ...query, folio: 'EXP-0001', stage: 'Entregado', compliance: 'PENDING' });
     const where = JSON.stringify(db.expediente.findMany.mock.calls[0][0].where);
     expect(where).toContain('EXP-0001');
-    expect(where).toContain('Entregado');
+    expect(where).not.toContain('Entregado');
     expect(where).toContain('complianceStates');
     expect(where).toContain('PENDIENTE');
+    expect(db.expedienteSeguimientoActividad.findMany).toHaveBeenCalledTimes(1);
   });
 });

@@ -17,14 +17,53 @@ import prisma from '../config/prisma';
 import { projectRepository } from '../services/projectRepository.service';
 import { ComplianceH6Service } from '../services/complianceH6.service';
 import { configurationCatalogV4Service } from '../services/configurationCatalogV4.service';
+import { isDefaultProjectSource, ProjectGenerationError, projectGenerationService, reviewProjectAgainstTemplate } from '../services/projectGeneration.service';
 
 function assertPersistentProjectStorage() {
-  if (getStorageInfo().primary !== 'cloud') {
+  if (!['cloud', 'local'].includes(getStorageInfo().primary)) {
     const error: any = new Error('Los proyectos y reportes requieren el storage cloud persistente configurado.');
     error.code = 'PROJECT_PERSISTENT_STORAGE_REQUIRED';
     throw error;
   }
 }
+
+async function hasProjectCaseAccess(req: Request, expedienteId: string) {
+  if (!req.user) return false;
+  const expediente = await prisma.expediente.findFirst({
+    where: { id: expedienteId, organization_id: req.user.organizationId, archived_at: null },
+    select: { id: true },
+  });
+  return Boolean(expediente);
+}
+
+export const getProyectoWorkspace = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Usuario autenticado requerido.', code: 'AUTH_REQUIRED' });
+    return res.json(await projectGenerationService.workspace(req.user, req.params.id));
+  } catch (error: any) {
+    return res.status(error instanceof ProjectGenerationError ? error.status : 500).json({ error: error?.message || 'No fue posible preparar Proyecto.', code: error?.code || 'PROJECT_WORKSPACE_FAILED' });
+  }
+};
+
+export const generarProyectoContractual = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Usuario autenticado requerido.', code: 'AUTH_REQUIRED' });
+    return res.status(201).json(await projectGenerationService.generate(req.user, req.params.id, req.body));
+  } catch (error: any) {
+    return res.status(error instanceof ProjectGenerationError ? error.status : Number(error?.status || 500)).json({ error: error?.message || 'No fue posible generar el proyecto.', code: error?.code || 'PROJECT_GENERATION_FAILED' });
+  }
+};
+
+export const generarProyectoDesdeMachoteExcepcional = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Usuario autenticado requerido.', code: 'AUTH_REQUIRED' });
+    if (!req.file) return res.status(400).json({ error: 'Carga el machote DOCX.', code: 'PROJECT_TEMPLATE_DOCX_REQUIRED' });
+    const input = typeof req.body?.metadata === 'string' ? JSON.parse(req.body.metadata) : (req.body || {});
+    return res.status(201).json(await projectGenerationService.generateFromManualTemplate(req.user, req.params.id, input, req.file));
+  } catch (error: any) {
+    return res.status(error instanceof ProjectGenerationError ? error.status : Number(error?.status || 500)).json({ error: error?.message || 'No fue posible generar el proyecto.', code: error?.code || 'PROJECT_GENERATION_FAILED' });
+  }
+};
 
 const PROYECTOS_DIR = path.join(__dirname, '../../uploads/proyectos');
 const REPORTES_DIR = path.join(__dirname, '../../uploads/reportes_ia');
@@ -54,6 +93,9 @@ interface ProyectoVersionRecord {
   cargado_por_nombre: string;
   created_at: string;
   storage_backend?: 'SUPABASE' | 'LOCAL_LEGACY';
+  pending_count?: number;
+  generation_observations?: unknown[];
+  docx_structural_fidelity?: Record<string, unknown>;
 }
 
 interface IAReportRecord {
@@ -105,6 +147,45 @@ const projectMeta = (document: any) => {
   return value && typeof value === 'object' ? value : {};
 };
 
+const projectTemplateLineage = (metadata: Record<string, any>) => Object.fromEntries([
+  'template_artifact_id',
+  'template_version_id',
+  'template_version',
+  'template_checksum',
+  'generation_mode',
+  'source_document_ids',
+  'source_selection_explicit',
+].filter((key) => metadata[key] !== undefined).map((key) => [key, metadata[key]]));
+
+async function loadProjectTemplateBaseline(organizationId: string, expedienteId: string, projectVersionId: string) {
+  const project = await prisma.documento.findFirst({
+    where: { id: projectVersionId, organization_id: organizationId, expediente_id: expedienteId, tipo: 'PROYECTO_ESCRITURA' },
+    select: { datos_extraidos: true },
+  });
+  const metadata = projectMeta(project);
+  const templateVersionId = typeof metadata.template_version_id === 'string' ? metadata.template_version_id : null;
+  if (!templateVersionId) return null;
+  let baseline: { storage_key: string; nombre_original: string | null; checksum_sha256: string | null } | null = null;
+  if (metadata.generation_mode === 'MACHOTE_EXCEPCIONAL') {
+    baseline = await prisma.documento.findFirst({
+      where: { id: templateVersionId, organization_id: organizationId },
+      select: { storage_key: true, nombre_original: true, checksum_sha256: true },
+    });
+  } else {
+    baseline = await prisma.catalogoArtefactoVersion.findFirst({
+      where: { id: templateVersionId, organization_id: organizationId },
+      select: { storage_key: true, nombre_original: true, checksum_sha256: true },
+    }) as typeof baseline;
+  }
+  if (!baseline?.storage_key) return null;
+  const buffer = await downloadFile(baseline.storage_key);
+  const expectedChecksum = typeof metadata.template_checksum === 'string' ? metadata.template_checksum : baseline.checksum_sha256;
+  if (expectedChecksum && createHash('sha256').update(buffer).digest('hex') !== expectedChecksum) {
+    throw new ProjectGenerationError(409, 'PROJECT_TEMPLATE_BASELINE_CHECKSUM_MISMATCH', 'El machote de origen no coincide con la procedencia registrada del proyecto.');
+  }
+  return { buffer, name: baseline.nombre_original || 'Machote CFG-002' };
+}
+
 const mapDocumentProjectVersion = (document: any): ProyectoVersionRecord => {
   const meta = projectMeta(document);
   const link = document.expedienteVinculos?.[0];
@@ -122,6 +203,9 @@ const mapDocumentProjectVersion = (document: any): ProyectoVersionRecord => {
     cargado_por_nombre: document.subido_por ? `${document.subido_por.nombre} ${document.subido_por.apellido}` : 'Usuario PRAVIA',
     created_at: new Date(document.fecha_carga).toISOString(),
     storage_backend: 'SUPABASE',
+    pending_count: Number(meta.pending_count || 0),
+    generation_observations: Array.isArray(meta.generation_observations) ? meta.generation_observations : [],
+    docx_structural_fidelity: meta.docx_structural_fidelity && typeof meta.docx_structural_fidelity === 'object' && !Array.isArray(meta.docx_structural_fidelity) ? meta.docx_structural_fidelity : {},
   };
 };
 
@@ -151,6 +235,7 @@ async function loadProjectVersionBuffer(version: ProyectoVersionRecord) {
 export const getProyectoEscritura = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    if (!await hasProjectCaseAccess(req, id)) return res.status(404).json({ error: 'Expediente no encontrado.' });
     const state = loadProyectosState();
     const databaseVersions = await loadDatabaseProjectVersions(id);
     const legacyVersions = state.versiones
@@ -211,7 +296,7 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
     if (!userId) return res.status(401).json({ error: 'Usuario autenticado requerido para cargar una versión.' });
     const [user, expediente] = await Promise.all([
       prisma.user.findFirst({ where: { id: userId, activo: true }, select: { id: true, nombre: true, apellido: true } }),
-      prisma.expediente.findFirst({ where: { id, archived_at: null }, select: { id: true } }),
+      prisma.expediente.findFirst({ where: { id, organization_id: req.user!.organizationId, archived_at: null }, select: { id: true } }),
     ]);
     if (!user) return res.status(403).json({ error: 'El usuario no existe o está inactivo.' });
     if (!expediente) return res.status(404).json({ error: 'Expediente no encontrado o archivado.' });
@@ -222,6 +307,12 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
 
     const createdDocument = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:proyecto-version:${id}`}))`);
+      const previousActive = await tx.expedienteDocumento.findFirst({
+        where: { organization_id: req.user!.organizationId, expediente_id: id, tipo_vinculo: 'PROYECTO_ESCRITURA', estatus: 'ACTIVO' },
+        include: { documento: { select: { id: true, datos_extraidos: true } } },
+        orderBy: { fecha_vinculo: 'desc' },
+      });
+      const inheritedLineage = projectTemplateLineage(projectMeta(previousActive?.documento));
       const existing = await tx.documento.findMany({
         where: { expediente_id: id, tipo: 'PROYECTO_ESCRITURA' },
         select: { datos_extraidos: true },
@@ -251,9 +342,11 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
           observaciones: req.body.nota_version?.trim() || `Versión V${newVersionNum}`,
           datos_extraidos: {
             proyecto: {
+              ...inheritedLineage,
               version_numero: newVersionNum,
               es_version_final: false,
               nota_version: req.body.nota_version?.trim() || `Versión V${newVersionNum}`,
+              supersedes_project_version_id: previousActive?.documento.id || null,
             }
           },
         }
@@ -270,7 +363,7 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
           origen: 'EXPEDIENTE', source_entity_type: 'EXPEDIENTE', source_entity_id: id,
           source_context: 'PROYECTO_ESCRITURA', source_key: `EXPEDIENTE:EXPEDIENTE:${id}:${document.id}:PROYECTO_ESCRITURA`,
           document_version: `PROYECTO_ESCRITURA:V${newVersionNum}`,
-          provenance: { origin: 'EXPEDIENTE', project_version: newVersionNum },
+          provenance: { origin: 'EXPEDIENTE', project_version: newVersionNum, ...inheritedLineage, supersedes_project_version_id: previousActive?.documento.id || null },
           document_role: 'PROJECT_DRAFT',
         }
       });
@@ -311,6 +404,7 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
 export const updateProyectoVersion = async (req: Request, res: Response) => {
   try {
     const { id, versionId } = req.params;
+    if (!await hasProjectCaseAccess(req, id)) return res.status(404).json({ error: 'Expediente no encontrado.' });
     const { accion, nuevo_nombre, nota_version } = req.body;
 
     const databaseDocument = await prisma.documento.findFirst({
@@ -412,6 +506,7 @@ export const updateProyectoVersion = async (req: Request, res: Response) => {
 export const streamProyectoVersion = async (req: Request, res: Response) => {
   try {
     const { id, versionId } = req.params;
+    if (!await hasProjectCaseAccess(req, id)) return res.status(404).json({ error: 'Expediente no encontrado.' });
     const databaseVersion = (await loadDatabaseProjectVersions(id)).find(version => version.id === versionId);
     if (databaseVersion) {
       const buffer = await loadProjectVersionBuffer(databaseVersion);
@@ -440,6 +535,7 @@ export const streamProyectoVersion = async (req: Request, res: Response) => {
 export const downloadProyectoVersion = async (req: Request, res: Response) => {
   try {
     const { id, versionId } = req.params;
+    if (!await hasProjectCaseAccess(req, id)) return res.status(404).json({ error: 'Expediente no encontrado.' });
     const databaseVersion = (await loadDatabaseProjectVersions(id)).find(version => version.id === versionId);
     if (databaseVersion) {
       const buffer = await loadProjectVersionBuffer(databaseVersion);
@@ -478,6 +574,13 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
 
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
+    if (!await hasProjectCaseAccess(req, id)) return res.status(404).json({ error: 'Expediente no encontrado.' });
+    if (!process.env.OPENAI_API_KEY?.trim()) {
+      return res.status(503).json({
+        error: 'La revisión asistida no está configurada en este entorno.',
+        code: 'AI_PROVIDER_NOT_CONFIGURED',
+      });
+    }
     usageUserId = userId;
     let userName = 'Usuario no identificado';
 
@@ -490,6 +593,8 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
       where: { id },
       include: {
         actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: true }, orderBy: { created_at: 'asc' } },
+        comparecientes: { where: { estatus: 'ACTIVO' }, include: { caracter: true, compareciente: { include: { personaFisica: true, personaMoral: true } } }, orderBy: { orden_comparecencia: 'asc' } },
+        predios: { where: { estatus: 'ACTIVO' }, include: { predio: { include: { colindancias: true } } }, orderBy: { created_at: 'asc' } },
         requisitos_docs: true,
         movimientosFinancieros: true,
         expedienteDocumentos: {
@@ -514,13 +619,19 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
     }
 
     const docsActivos = exp.expedienteDocumentos
+      .filter(isDefaultProjectSource)
       .map(vinculo => vinculo.documento)
       .filter(documento => documento.estatus !== 'RECHAZADO');
     if (docsActivos.length === 0) {
       return res.status(400).json({ error: 'Se requiere al menos un documento activo cargado en el expediente' });
     }
 
-    const projectBuffer = await loadProjectVersionBuffer(vigente);
+    const [projectBuffer, templateBaseline] = await Promise.all([
+      loadProjectVersionBuffer(vigente),
+      vigente.storage_backend === 'SUPABASE'
+        ? loadProjectTemplateBaseline(req.user!.organizationId, id, vigente.id)
+        : Promise.resolve(null),
+    ]);
 
     const documentosParaIA: DocumentoParaExtraccion[] = [];
     const documentosNoDescargados: string[] = [];
@@ -557,7 +668,30 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
         documentoId: vigente.id,
         nombreOriginal: vigente.nombre_original
       },
-      documentosParaIA
+      documentosParaIA,
+      {
+        expediente: { folio: exp.numero_pravia, descripcion: exp.descripcion, cliente: exp.cliente_alias, valor_operacion: exp.valor_operacion?.toString() || null },
+        actos: exp.actos.map((acto) => ({ id: acto.id, nombre: acto.tipo_acto.nombre, estatus: acto.estatus })),
+        comparecientes: exp.comparecientes.map((link) => ({
+          id: link.compareciente.id,
+          nombre: link.compareciente.nombre_busqueda,
+          tipo_persona: link.compareciente.tipo_persona,
+          caracter: link.caracter.nombre,
+          rfc: link.compareciente.personaFisica?.rfc || link.compareciente.personaMoral?.rfc || null,
+          curp: link.compareciente.personaFisica?.curp || null,
+        })),
+        predios: exp.predios.map((link) => ({
+          id: link.predio.id,
+          apodo: link.predio.apodo,
+          direccion: link.predio.ubicacion_texto,
+          clave_catastral: link.predio.clave_catastral,
+          cuenta_predial: link.predio.cuenta_predial,
+          folio_real: link.predio.folio_real,
+          superficie_terreno_m2: link.predio.superficie_terreno_m2?.toString() || null,
+          superficie_construccion_m2: link.predio.superficie_construccion_m2?.toString() || null,
+          colindancias: link.predio.colindancias,
+        })),
+      },
     );
     await recordAIUsages(resultadoIA.uso ? [resultadoIA.uso] : [], {
       operacion: 'REVISION_PROYECTO_ESCRITURA',
@@ -568,7 +702,15 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
     }).catch((usageError) => console.error('[AI usage] No fue posible registrar el consumo:', usageError.message));
     aiRequestStarted = false;
 
-    const observaciones = resultadoIA.observaciones.map((observacion, index) => ({
+    const deterministicObservations = templateBaseline
+      ? await reviewProjectAgainstTemplate(projectBuffer, templateBaseline.buffer, exp.valor_operacion?.toString(), templateBaseline.name)
+      : [];
+    const deterministicCategories = new Set(deterministicObservations.map((observation) => observation.tipo_discrepancia));
+    const mergedObservations = [
+      ...deterministicObservations,
+      ...resultadoIA.observaciones.filter((observation) => !deterministicCategories.has(observation.tipo_discrepancia as any)),
+    ];
+    const observaciones = mergedObservations.map((observacion, index) => ({
       id: `obs_${index + 1}`,
       titulo: `OBSERVACIÓN ${String(index + 1).padStart(2, '0')} — Riesgo ${
         observacion.nivel_riesgo === 'ALTO'
@@ -756,6 +898,15 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
     res.status(201).json(reportRecord);
   } catch (error: any) {
     if (uploadedReportKey) await deleteFile(uploadedReportKey).catch(() => undefined);
+    console.error(JSON.stringify({
+      type: 'project_ai_review_failed',
+      level: 'error',
+      expediente_id: req.params.id,
+      correlation_id: req.correlationId,
+      error_name: error instanceof Error ? error.name : 'UnknownError',
+      error_code: error?.code || 'AI_PROJECT_REVIEW_FAILED',
+      error_message: error instanceof Error ? error.message : 'Fallo desconocido en revisión de proyecto',
+    }));
     if (aiRequestStarted) {
       await recordAIFailure({
         operacion: 'REVISION_PROYECTO_ESCRITURA',
@@ -774,6 +925,7 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
 export const streamIAReport = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    if (!await hasProjectCaseAccess(req, id)) return res.status(404).json({ error: 'Expediente no encontrado.' });
     const persistent = await projectRepository.loadLatestReportBuffer(id);
     if (persistent) {
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
@@ -802,6 +954,7 @@ export const streamIAReport = async (req: Request, res: Response) => {
 export const downloadIAReport = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
+    if (!await hasProjectCaseAccess(req, id)) return res.status(404).json({ error: 'Expediente no encontrado.' });
     const persistent = await projectRepository.loadLatestReportBuffer(id);
     if (persistent) {
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');

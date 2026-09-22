@@ -31,7 +31,7 @@ const checks: Array<[string, () => boolean]> = [
   ['EXP-002-08 · retry no duplica instancia', () => schema.includes('uq_expediente_actos_idempotency') && schema.includes('uq_expediente_actos_removal_idempotency')],
   ['EXP-002-09 · conversión crea acto inicial', () => opening.includes('.createInitial(tx,')],
   ['EXP-002-10 · conversión transaccional', () => opening.includes('openInTransaction(tx: Prisma.TransactionClient')],
-  ['EXP-002-11 · alta consulta catálogo maestro', () => service.includes('db.tipoActo.findFirst') && ui.includes('CatalogCombobox')],
+  ['EXP-002-11 · alta consulta catálogo maestro', () => service.includes('db.tipoActo.findFirst') && ui.includes('Selector CFG-001 de actos') && ui.includes('Buscar acto')],
   ['EXP-002-12 · alta calcula CFG-001', () => service.includes('db.configuracionActo.findMany')],
   ['EXP-002-13 · alta calcula CFG-002', () => service.includes('db.catalogoArtefacto.findMany')],
   ['EXP-002-14 · no hardcodea documentos', () => !service.includes('requisitos_docs: { create')],

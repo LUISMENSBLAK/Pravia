@@ -1,6 +1,5 @@
-import { AlertTriangle, FileText, LoaderCircle, Pencil, Plus, ShieldAlert, Trash2, X } from 'lucide-react';
+import { AlertTriangle, ChevronDown, FileText, LoaderCircle, Pencil, Plus, Search, ShieldAlert, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CatalogCombobox } from '../../../prospects/components/CatalogCombobox';
 import { ApiError } from '../../../../services/api/client';
 import { expedientesService } from '../../expedientes.service';
 import type { ActTypeOption, ExpedienteAct, ExpedienteActOperation, ExpedienteActPreview, ExpedienteDetail } from '../../expedientes.types';
@@ -22,8 +21,26 @@ export function ActsTab({ expediente, onChanged }: { expediente: ExpedienteDetai
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState('');
   const [idempotencyKey, setIdempotencyKey] = useState('');
+  const [search, setSearch] = useState('');
   const active = useMemo(() => acts.filter((act) => act.estatus === 'ACTIVO' && !act.removed_at), [acts]);
-  const options = useMemo(() => types.map((type) => ({ code: type.id, label: type.nombre })), [types]);
+  const groupedTypes = useMemo(() => {
+    const needle = search.trim().toLocaleLowerCase('es-MX');
+    const visible = types.filter((type) => {
+      const config = type.configuracionesOperativas?.[0];
+      return !needle || `${config?.nombre_personalizado || type.nombre} ${config?.descripcion_personalizada || type.descripcion || ''} ${config?.familia || ''} ${config?.clasificacion || ''}`.toLocaleLowerCase('es-MX').includes(needle);
+    });
+    const groups = new Map<string, Map<string, ActTypeOption[]>>();
+    visible.forEach((type) => {
+      const config = type.configuracionesOperativas?.[0];
+      const rawClassification = String(config?.clasificacion || 'NO_TRASLATIVOS').toUpperCase().replace(/\s+/g, '_');
+      const classification = rawClassification.includes('TRASLAT') && !rawClassification.startsWith('NO') ? 'TRASLATIVOS' : 'NO TRASLATIVOS';
+      const family = config?.familia || 'OTROS ACTOS';
+      if (!groups.has(classification)) groups.set(classification, new Map());
+      const families = groups.get(classification)!;
+      families.set(family, [...(families.get(family) || []), type]);
+    });
+    return groups;
+  }, [types, search]);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -36,7 +53,7 @@ export function ActsTab({ expediente, onChanged }: { expediente: ExpedienteDetai
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
 
   const open = (operation: ExpedienteActOperation, current?: ExpedienteAct) => {
-    setDialog({ operation, current }); setTypeId(operation === 'CHANGE' ? current?.tipo_acto_id || '' : ''); setReason(''); setPreview(null); setConfirmed(false); setMessage(''); setIdempotencyKey(crypto.randomUUID());
+    setDialog({ operation, current }); setTypeId(operation === 'CHANGE' ? current?.tipo_acto_id || '' : ''); setReason(''); setPreview(null); setConfirmed(false); setMessage(''); setSearch(''); setIdempotencyKey(crypto.randomUUID());
   };
   const close = () => { if (!working) setDialog(null); };
   const command = dialog ? { operation: dialog.operation, expediente_acto_id: dialog.current?.id, tipo_acto_id: dialog.operation === 'REMOVE' ? undefined : typeId, reason: dialog.operation === 'ADD' ? undefined : reason } : null;
@@ -84,7 +101,7 @@ export function ActsTab({ expediente, onChanged }: { expediente: ExpedienteDetai
     {dialog && <div className={styles.dialogBackdrop} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><section className={`${styles.dialog} ${styles.actDialog}`} role="dialog" aria-modal="true" aria-labelledby="act-dialog-title">
       <header><div><h2 id="act-dialog-title">{dialog.operation === 'ADD' ? 'Agregar acto' : dialog.operation === 'CHANGE' ? 'Cambiar acto' : 'Desvincular acto'}</h2><p>La operación se aplicará sólo después de revisar su impacto configurado.</p></div><button type="button" className={styles.iconButton} aria-label="Cerrar" onClick={close}><X size={18} /></button></header>
       <div className={styles.dialogBody}>
-        {dialog.operation !== 'REMOVE' && <CatalogCombobox label="Tipo de acto" required value={typeId} options={options} placeholder="Buscar en el catálogo de actos" onChange={(value) => { setTypeId(value); setPreview(null); }} />}
+        {dialog.operation !== 'REMOVE' && <section className={styles.actCatalog} aria-label="Selector CFG-001 de actos"><label className={styles.actCatalogSearch}><Search /><span className={styles.srOnly}>Buscar acto</span><input aria-label="Buscar acto" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nombre, familia o descripción" /></label><div className={styles.actCatalogTree}>{[...groupedTypes.entries()].map(([classification, families]) => <section key={classification}><h3>{classification}</h3>{[...families.entries()].map(([family, familyTypes]) => <details key={family} open><summary><ChevronDown />{family}<span>{familyTypes.length}</span></summary><div>{familyTypes.map((type) => { const config = type.configuracionesOperativas?.[0]; const selected = typeId === type.id; return <button key={type.id} type="button" aria-pressed={selected} className={selected ? styles.actCatalogSelected : ''} onClick={() => { setTypeId(type.id); setPreview(null); }}><strong>{config?.nombre_personalizado || type.nombre}</strong><small>{config?.descripcion_personalizada || type.descripcion || 'Acto configurado en CFG-001.'}</small><em>CFG-001 · revisión {config?.revision || 1}</em></button>; })}</div></details>)}</section>)}</div>{!groupedTypes.size && <p className={styles.sectionEmpty}>No hay actos activos que coincidan con la búsqueda.</p>}</section>}
         {dialog.operation !== 'ADD' && <label>Motivo<textarea rows={3} value={reason} onChange={(event) => { setReason(event.target.value); setPreview(null); }} placeholder="Explica por qué se realiza este cambio" /></label>}
         {message && <p className={styles.formError} role="alert">{message}</p>}
         {preview && <div className={styles.impactPreview} data-classification={preview.classification}>

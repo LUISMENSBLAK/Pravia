@@ -5,10 +5,9 @@ import {
   getCotizacionById, 
   createCotizacion, 
   updateCotizacionEstado, 
-  createCotizacionVersion,
-  aprobarVersion,
   extractPresupuesto,
   generateCotizacionDocument,
+  updateCotizacionPresupuesto,
   registrarAnticipo,
   validarAnticipo,
   convertToExpediente,
@@ -16,9 +15,10 @@ import {
   createCotizacionSeguimiento,
   registerCotizacionDelivery,
   actCotizacionContract,
-  updateParticipacionPravia,
   getCotizacionDocumentos,
-  unlinkCotizacionDocumento
+  unlinkCotizacionDocumento,
+  viewCotizacionDocumento,
+  downloadCotizacionDocumento,
 } from '../controllers/cotizaciones.controller';
 import { requirePermission } from '../middleware/auth.middleware';
 import { requireCotizacionObjectAccess, requireDocumentoObjectAccess } from '../middleware/objectAccess.middleware';
@@ -31,9 +31,8 @@ router.get('/', getCotizaciones);
 router.get('/:id', getCotizacionById);
 router.post('/', createCotizacion);
 router.put('/:id/estado', updateCotizacionEstado);
-router.post('/:id/versiones', createCotizacionVersion);
-router.post('/version/:versionId/aprobar', aprobarVersion);
 router.post('/extraer-presupuesto', upload.single('archivo'), extractPresupuesto);
+router.put('/:id/presupuesto', updateCotizacionPresupuesto);
 router.post('/:id/generar-documento', generateCotizacionDocument);
 router.post('/:id/anticipo', requirePermission('finanzas.write'), registrarAnticipo);
 router.post('/pago/:pagoId/validar', requirePermission('finanzas.validate'), validarAnticipo);
@@ -42,11 +41,10 @@ router.get('/:id/seguimientos', getCotizacionSeguimientos);
 router.post('/:id/seguimientos', createCotizacionSeguimiento);
 router.post('/:id/registrar-envio', registerCotizacionDelivery);
 router.post('/:id/acciones', actCotizacionContract);
-router.put('/:id/participacion-pravia', requirePermission('finanzas.write'), updateParticipacionPravia);
-router.patch('/:id/participacion-pravia', requirePermission('finanzas.write'), updateParticipacionPravia);
-
 // Documentos de Cotización (Heredados de Prospecto + Subidos en Cotización)
 router.get('/:id/documentos', getCotizacionDocumentos);
+router.get('/:id/documentos/:documentoId/ver', requireDocumentoObjectAccess, requirePermission('documentos.read'), viewCotizacionDocumento);
+router.get('/:id/documentos/:documentoId/descargar', requireDocumentoObjectAccess, requirePermission('documentos.read'), downloadCotizacionDocumento);
 router.delete('/:id/documentos/:documentoId', requireDocumentoObjectAccess, requirePermission('documentos.unlink'), unlinkCotizacionDocumento);
 
 export default router;

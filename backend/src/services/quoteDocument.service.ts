@@ -5,11 +5,15 @@ import { Prisma } from '@prisma/client';
 import type { Request } from 'express';
 import prisma from '../config/prisma';
 import { budgetTotals } from '../domain/expedienteBudget';
-import { CFG002_LIBRARY_CODE } from './configurationCatalogV4.domain';
-import { deleteFile, downloadFile, uploadFile } from './supabase.service';
+import {
+  AdministrativeQuoteTemplateError,
+  DOCX_MIME_TYPE,
+  resolveAdministrativeQuoteTemplate,
+} from './administrativeQuoteTemplate.service';
+import { deleteFile, uploadFile } from './supabase.service';
 
 type Actor = NonNullable<Request['user']>;
-const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const DOCX = DOCX_MIME_TYPE;
 
 export class QuoteDocumentError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
@@ -72,26 +76,19 @@ export class QuoteDocumentService {
       include: {
         prospecto: true, notaria: true,
         conceptos: { orderBy: { orden: 'asc' } },
-        versiones: { where: { aprobada: true }, orderBy: { version: 'desc' }, take: 1 },
         pagos: { where: { estatus: 'VALIDADO' } },
       },
     });
     if (!quote) throw new QuoteDocumentError(404, 'QUOTE_NOT_FOUND', 'No se encontró la cotización.');
     if (!quote.conceptos.length) throw new QuoteDocumentError(409, 'QUOTE_STRUCTURED_BUDGET_REQUIRED', 'Captura y confirma el presupuesto estructurado antes de generar la cotización.');
-    if (['ACEPTADA', 'ACEPTO_ANTICIPO', 'CONVERTIDA_EXPEDIENTE'].includes(String(quote.etapa_contractual))) {
-      throw new QuoteDocumentError(409, 'QUOTE_ACCEPTED_IMMUTABLE', 'La cotización aceptada conserva sus documentos históricos y no admite nuevas versiones.');
+    let resolvedTemplate: Awaited<ReturnType<typeof resolveAdministrativeQuoteTemplate>>;
+    try { resolvedTemplate = await resolveAdministrativeQuoteTemplate(prisma, actor.organizationId); }
+    catch (error) {
+      if (error instanceof AdministrativeQuoteTemplateError) throw new QuoteDocumentError(error.status, error.code.replace('ADMINISTRATIVE_', 'QUOTE_'), error.message);
+      throw error;
     }
-    const artifact = await prisma.catalogoArtefacto.findFirst({
-      where: { organization_id: actor.organizationId, codigo_biblioteca: `${CFG002_LIBRARY_CODE}:ADM-001`, tipo: 'FORMATO', activo: true },
-      include: { versiones: { where: { activa: true }, orderBy: { version: 'desc' }, take: 1 } },
-    });
-    const template = artifact?.versiones[0];
-    if (!artifact || !template?.storage_key || template.mime_type !== DOCX) throw new QuoteDocumentError(409, 'QUOTE_TEMPLATE_NOT_CONFIGURED', 'Configura el formato administrativo ADM-001 de cotización en Plantillas y formatos.');
-    const source = await downloadFile(template.storage_key);
-    if (template.size_bytes != null && source.length !== template.size_bytes) throw new QuoteDocumentError(409, 'QUOTE_TEMPLATE_SIZE_MISMATCH', 'La versión configurada de la plantilla no coincide con su registro.');
-    if (template.checksum_sha256 && createHash('sha256').update(source).digest('hex') !== template.checksum_sha256) throw new QuoteDocumentError(409, 'QUOTE_TEMPLATE_CHECKSUM_MISMATCH', 'No fue posible verificar la integridad de la plantilla configurada.');
+    const { artifact, version: template, source } = resolvedTemplate;
     const concepts = quote.conceptos.map((row) => ({ concepto: row.concepto, categoria: row.categoria, importeCents: BigInt(Math.round(Number(row.importe) * 100)) }));
-    const version = quote.versiones[0];
     const data = quoteTemplateData({
       folio: quote.numero_cotizacion || quote.numero_solicitud || quote.id,
       date: new Date(), client: quote.prospecto?.nombre || 'Cliente pendiente',
@@ -100,10 +97,10 @@ export class QuoteDocumentService {
     });
     let output: Buffer;
     try { output = renderQuoteTemplate(source, data); }
-    catch { throw new QuoteDocumentError(422, 'QUOTE_TEMPLATE_RENDER_FAILED', 'La plantilla ADM-001 no pudo combinarse con los datos estructurados.'); }
+    catch { throw new QuoteDocumentError(422, 'QUOTE_TEMPLATE_RENDER_FAILED', 'El formato configurado para Cotización no pudo combinarse con los datos estructurados.'); }
     const checksum = createHash('sha256').update(output).digest('hex');
     const sequence = await prisma.cotizacionDocumento.count({ where: { cotizacion_id: quote.id, tipo_vinculo: 'COTIZACION_GENERADA' } }) + 1;
-    const fileName = `${quote.numero_cotizacion || 'Cotizacion'}_V${sequence}.docx`;
+    const fileName = `${quote.numero_cotizacion || 'Cotizacion'}_Documento_${sequence}.docx`;
     const storageKey = `organizations/${actor.organizationId}/documentos/cotizaciones/${quote.id}/${randomUUID()}_${fileName}`;
     await uploadFile(output, storageKey, DOCX);
     try {
@@ -113,10 +110,10 @@ export class QuoteDocumentService {
           nombre_original: fileName, nombre_interno: storageKey, storage_key: storageKey,
           tipo: 'COTIZACION_GENERADA', categoria: 'OTROS', mime_type: DOCX, size_bytes: output.length,
           checksum_sha256: checksum, estatus: 'VIGENTE', subido_por_id: actor.id,
-          datos_extraidos: { generation: { source: 'CFG-002', artifact_id: artifact.id, artifact_version_id: template.id, artifact_version: template.version, cotizacion_version_id: version?.id || null, structured_budget_checksum: createHash('sha256').update(JSON.stringify(data)).digest('hex') } },
+          datos_extraidos: { generation: { source: 'CFG-002', artifact_id: artifact.id, artifact_version_id: template.id, artifact_version: template.version, structured_budget_checksum: createHash('sha256').update(JSON.stringify(data)).digest('hex') } },
         } });
-        await tx.cotizacionDocumento.create({ data: { organization_id: actor.organizationId, cotizacion_id: quote.id, documento_id: document.id, tipo_vinculo: 'COTIZACION_GENERADA', creado_por_id: actor.id, observaciones: `CFG-002 ADM-001 · versión ${template.version}` } });
-        await tx.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: 'QUOTE_DOCUMENT_GENERATED', entidad: 'Documento', entidad_id: document.id, valores_nuevos: { cotizacion_id: quote.id, cotizacion_version_id: version?.id || null, template_version_id: template.id, checksum }, session_id: actor.sessionId } });
+        await tx.cotizacionDocumento.create({ data: { organization_id: actor.organizationId, cotizacion_id: quote.id, documento_id: document.id, tipo_vinculo: 'COTIZACION_GENERADA', creado_por_id: actor.id, observaciones: `CFG-002 Cotización · versión ${template.version}` } });
+        await tx.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: 'QUOTE_DOCUMENT_GENERATED', entidad: 'Documento', entidad_id: document.id, valores_nuevos: { cotizacion_id: quote.id, template_version_id: template.id, checksum }, session_id: actor.sessionId } });
         return document;
       });
     } catch (error) { await deleteFile(storageKey).catch(() => undefined); throw error; }

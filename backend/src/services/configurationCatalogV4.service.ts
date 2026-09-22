@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import { readFile } from 'fs/promises';
 import path from 'path';
-import { CatalogoArtefactoTipo, CatalogoPropietarioTipo, Prisma } from '@prisma/client';
+import { CatalogoArtefactoTipo, CatalogoDestinoFuncional, CatalogoPropietarioTipo, Prisma } from '@prisma/client';
 import prisma from '../config/prisma';
 import { deleteFile, downloadFile, uploadFile } from './supabase.service';
 import { CatalogConfigurationError } from './configurationCatalogError';
@@ -23,6 +23,7 @@ type ImportAssignment = {
   act_ids?: string[];
   rules?: any[];
   normative?: Partial<LegalMetadata>;
+  destinos_funcionales?: Array<{ destino: CatalogoDestinoFuncional; activo?: boolean; predeterminado?: boolean; reglas_json?: unknown; mapeo_datos_json?: unknown }>;
 };
 
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -31,6 +32,14 @@ const safeSegment = (value: string) => value.normalize('NFKD').replace(/[\u0300-
 const displayName = (fileName: string) => fileName.replace(/\.[^.]+$/, '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
 const normalized = (value: string) => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, ' ').trim().toUpperCase();
 const uniqueStrings = (value: unknown) => [...new Set(Array.isArray(value) ? value.map(String).filter(Boolean) : [])];
+const standardDestinations = (code: string, type: CatalogoArtefactoTipo): CatalogoDestinoFuncional[] => {
+  if (code === 'ADM-001') return [CatalogoDestinoFuncional.COTIZACION_SERVICIOS, CatalogoDestinoFuncional.EXPEDIENTE_PRESUPUESTO];
+  if (code === 'ADM-002') return [CatalogoDestinoFuncional.FINANZAS_RECIBO_PAGO];
+  if (code === 'ADM-003') return [CatalogoDestinoFuncional.EXPEDIENTE_DOCUMENTO_GENERICO];
+  if (code.startsWith('PRY-') && type === 'PLANTILLA') return [CatalogoDestinoFuncional.PROYECTO_MACHOTE];
+  if (code.startsWith('PLD-')) return [CatalogoDestinoFuncional.CUMPLIMIENTO_PLD_UIF];
+  return [];
+};
 
 async function readLibrary() {
   const candidates = [
@@ -187,6 +196,19 @@ async function persistFiles(input: {
         if (actIds.length) await tx.catalogoArtefactoActo.createMany({ data: actIds.map((actId) => ({ organization_id: actor.organizationId, artefacto_id: artifact.id, tipo_acto_id: actId })) });
         const rules = Array.isArray(assignment.rules) ? assignment.rules : [];
         for (let index = 0; index < rules.length; index += 1) await tx.catalogoArtefactoRegla.create({ data: { ...ruleData(actor, artifact.id, normative.id, `${code}:${index + 1}`, rules[index]), codigo_regla: `${code}:RULE:${index + 1}` } });
+        const destinations: NonNullable<ImportAssignment['destinos_funcionales']> = Array.isArray(assignment.destinos_funcionales) && assignment.destinos_funcionales.length
+          ? assignment.destinos_funcionales
+          : standardDestinations(code, artifactType).map((destino, index) => ({ destino, activo: true, predeterminado: index === 0 }));
+        for (const [index, item] of destinations.entries()) {
+          if (!Object.values(CatalogoDestinoFuncional).includes(item.destino) || item.destino === CatalogoDestinoFuncional.SIN_ASIGNAR) throw new CatalogConfigurationError(400, 'CFG002_IMPORT_DESTINATION_INVALID', 'Uno o más destinos funcionales no son válidos.');
+          await tx.catalogoArtefactoDestino.create({ data: {
+            organization_id: actor.organizationId, artefacto_id: artifact.id, destino: item.destino,
+            activo: item.activo !== false, predeterminado: item.predeterminado ?? index === 0,
+            reglas_json: item.reglas_json == null ? undefined : json(item.reglas_json),
+            mapeo_datos_json: item.mapeo_datos_json == null ? undefined : json(item.mapeo_datos_json),
+            creado_por_id: actor.id, actualizado_por_id: actor.id,
+          } });
+        }
         createdArtifacts.push(artifact.id);
       }
       const result = { imported: createdArtifacts.length, files: files.length, artifacts: createdArtifacts, library_version: library ? CFG002_LIBRARY_VERSION : null };

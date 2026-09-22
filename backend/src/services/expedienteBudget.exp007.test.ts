@@ -13,11 +13,12 @@ import {
   renderClientBudgetPdf,
 } from '../domain/expedienteBudget';
 
-const storage = vi.hoisted(() => ({ upload: vi.fn(), remove: vi.fn(), signed: vi.fn() }));
+const storage = vi.hoisted(() => ({ upload: vi.fn(), remove: vi.fn(), signed: vi.fn(), download: vi.fn() }));
 vi.mock('../storage/storage.service', () => ({
   uploadFile: storage.upload,
   deleteFile: storage.remove,
   getSignedUrl: storage.signed,
+  downloadFile: storage.download,
 }));
 
 import { ExpedienteBudgetError, ExpedienteBudgetService, type BudgetActor } from './expedienteBudget.service';
@@ -25,6 +26,7 @@ import { ExpedienteBudgetError, ExpedienteBudgetService, type BudgetActor } from
 const root = resolve(process.cwd(), '..');
 const source = (path: string) => readFileSync(resolve(root, path), 'utf8');
 const serviceSource = () => source('backend/src/services/expedienteBudget.service.ts');
+const templateResolverSource = () => source('backend/src/services/administrativeQuoteTemplate.service.ts');
 const uiSource = () => source('frontend/src/features/cases/components/tabs/BudgetTab.tsx');
 const cssSource = () => source('frontend/src/features/cases/components/tabs/BudgetTab.module.css');
 const migrationSource = () => source('backend/prisma/migrations/20260829010000_create_exp007_case_budget/migration.sql');
@@ -111,9 +113,9 @@ describe('EXP-007 — 51 casos forenses contractuales', () => {
     expect(budgetTotals(concepts()).subtotal_honorarios).toBe('116.12');
   });
 
-  it('L. Distribución oculta por defecto', () => expect(uiSource()).toContain('useState(false)'));
-  it('M. Abrir distribución', () => expect(uiSource()).toContain('setExpanded((current) => !current)'));
-  it('N. Cerrar distribución', () => expect(uiSource()).toContain('aria-expanded={expanded}'));
+  it('L. Distribución interna retirada de la pantalla', () => expect(uiSource()).not.toMatch(/Distribución interna|Participación interna/));
+  it('M. No hay control de apertura de distribución', () => expect(uiSource()).not.toContain('setExpanded'));
+  it('N. Presupuesto usa una sola lista ordenable', () => { expect(uiSource()).toContain('Conceptos del presupuesto'); expect(uiSource()).toContain('move(index, -1)'); });
   it('O. Modificar monto → porcentaje recalcula', () => expect(percentageFromCents(3333n, 10000n)).toBe('33.3300'));
   it('P. Modificar porcentaje → monto recalcula', () => expect(centsFromPercentage(10001n, '33.3333')).toBe(3334n));
   it('Q. PRAVIA + Notaría cierra correctamente', () => {
@@ -140,7 +142,7 @@ describe('EXP-007 — 51 casos forenses contractuales', () => {
   it('V. No formulario genérico previo a generación', () => {
     expect(uiSource()).not.toContain('Datos del cliente'); expect(uiSource()).not.toContain('Capturar cliente');
   });
-  it('W. Generar PDF A usa Documento canónico', () => {
+  it('W. Generar documento A usa Documento canónico', () => {
     expect(serviceSource()).toContain('tx.documento.create'); expect(serviceSource()).toContain('tx.expedienteDocumento.create');
   });
   it('X. Editar presupuesto mantiene un único registro', () => {
@@ -158,7 +160,7 @@ describe('EXP-007 — 51 casos forenses contractuales', () => {
     expect(schemaSource()).not.toMatch(/model (BudgetVersion|ExpedientePresupuestoVersion)/);
   });
   it('AC. PDF histórico Ver', () => expect(routeSource()).toContain('/presupuesto/documentos/:historyId/url'));
-  it('AD. PDF histórico Descargar', () => expect(uiSource()).toContain('openPdf(item.id, true)'));
+  it('AD. Documento histórico Descargar', () => expect(uiSource()).toContain('budgetPdfUrl(expedienteId, item.id)'));
   it('AE. Eliminar según permiso', () => {
     expect(routeSource()).toContain('/presupuesto/documentos/:historyId'); expect(serviceSource()).toContain("can(actor, 'documentos.unlink')");
   });
@@ -199,16 +201,17 @@ describe('EXP-007 — 51 casos forenses contractuales', () => {
     const result = await new ExpedienteBudgetService(prisma).generatePdf(actor(), 'exp-a', { expected_version: 1, idempotency_key: 'retry-a' });
     expect(result).toMatchObject({ idempotent: true, item: { id: 'history-a' } }); expect(storage.upload).not.toHaveBeenCalled();
   });
-  it('AM. Fallo Storage no deja PDF activo roto', async () => {
-    storage.upload.mockRejectedValueOnce(new Error('storage unavailable'));
+  it('AM. Sin ADM-001 falla claramente y no usa fallback ni Storage', async () => {
     const budget = { id: 'budget-a', version: 1, requiere_clasificacion: false, conceptos: [], subtotal_honorarios: '0.00', subtotal_impuestos_derechos: '0.00', total: '0.00' };
     const prisma: any = {
-      expediente: { findFirst: vi.fn().mockResolvedValue({ id: 'exp-a', numero_pravia: 'EXP-0001-2026', cliente_alias: 'Cliente', notaria: { nombre: 'Notaría' } }) },
+      expediente: { findFirst: vi.fn().mockResolvedValue({ id: 'exp-a', numero_pravia: 'EXP-0001-2026', cliente_alias: 'Cliente', notaria: { nombre: 'Notaría' }, actos: [] }) },
       expedientePresupuestoDocumento: { findFirst: vi.fn().mockResolvedValue(null) }, expedientePresupuesto: { findFirst: vi.fn().mockResolvedValue(budget) },
-      catalogoArtefacto: { findFirst: vi.fn().mockResolvedValue(null) }, userPreference: { findUnique: vi.fn().mockResolvedValue(null) },
+      catalogoArtefactoDestino: { findMany: vi.fn().mockResolvedValue([]) },
       documento: { create: vi.fn() },
     };
-    await expect(new ExpedienteBudgetService(prisma).generatePdf(actor(), 'exp-a', { expected_version: 1, idempotency_key: 'new-a' })).rejects.toThrow('storage unavailable');
+    await expect(new ExpedienteBudgetService(prisma).generatePdf(actor(), 'exp-a', { expected_version: 1, idempotency_key: 'new-a' })).rejects.toMatchObject({ code: 'EXP007_QUOTE_TEMPLATE_NOT_CONFIGURED' });
+    expect(templateResolverSource()).not.toMatch(/SISTEMA_EXP007|fallback/i);
+    expect(storage.upload).not.toHaveBeenCalled();
     expect(prisma.documento.create).not.toHaveBeenCalled();
   });
   it('AN. Auditoría relevante generada', () => {
@@ -228,10 +231,10 @@ describe('EXP-007 — 51 casos forenses contractuales', () => {
     const migration = migrationSource(); expect(migration).toContain('EXP007_CROSS_TENANT_CONCEPT'); expect(migration).toContain('EXP007_CROSS_TENANT_DISTRIBUTION');
   });
   it('AX. Mobile 390', () => {
-    expect(cssSource()).toContain('@media(max-width:480px)'); expect(cssSource()).toContain('grid-template-columns:1fr 42px');
+    expect(cssSource()).toContain('@media (max-width: 480px)'); expect(cssSource()).toContain('grid-template-columns: 1fr');
   });
   it('AY. Mobile 320', () => {
-    expect(cssSource()).toContain('@media(max-width:350px)'); expect(cssSource()).toContain('.shareInputs{grid-template-columns:1fr}');
+    expect(cssSource()).toContain('@media (max-width: 350px)'); expect(cssSource()).toContain('.group > header { flex-direction: column; }');
   });
 });
 

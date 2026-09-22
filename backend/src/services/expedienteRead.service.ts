@@ -2,6 +2,7 @@ import { Prisma, PrismaClient, type ExpedienteEstatus } from '@prisma/client';
 import type { Request } from 'express';
 import { activeOrganizationMembershipWhere, organizationMembershipRoleSelect, usersWithEffectiveMembershipRoles } from '../auth/organizationMembership';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { resolveCurrentOperationalActivity } from '../domain/expedienteOperationalStage';
 import {
   complianceAttention,
   complianceLabel,
@@ -27,7 +28,6 @@ export class ExpedienteReadService {
     if (query.folio) AND.push({ numero_pravia: { contains: query.folio, mode: 'insensitive' } });
     if (query.status) AND.push({ estatus: query.status });
     else if (query.macrophase) AND.push({ estatus: { in: EXPEDIENTE_MACROPHASE_STATUSES[query.macrophase] } });
-    if (query.stage) AND.push({ etapaActual: { is: { nombre_snapshot: { equals: query.stage, mode: 'insensitive' } } } });
     if (query.responsibleId) AND.push({ abogado_id: query.responsibleId });
     if (query.notaryId) AND.push({ notaria_id: query.notaryId });
     if (query.actTypeId) AND.push({ actos: { some: { tipo_acto_id: query.actTypeId, estatus: 'ACTIVO', removed_at: null } } });
@@ -36,6 +36,8 @@ export class ExpedienteReadService {
       { comparecientes: { some: { archived_at: null, estatus: 'ACTIVO', compareciente: { nombre_busqueda: { contains: query.client, mode: 'insensitive' } } } } },
     ] });
     if (query.updatedFrom || query.updatedTo) AND.push({ updated_at: { gte: query.updatedFrom, lte: query.updatedTo } });
+    if (query.deedNumber) AND.push({ numero_escritura: { contains: query.deedNumber, mode: 'insensitive' } });
+    if (query.deedDateFrom || query.deedDateTo) AND.push({ fecha_escritura: { gte: query.deedDateFrom, lte: query.deedDateTo } });
     if (query.risk === 'UNEVALUATED') AND.push({ complianceReviews: { none: { resultado_json: { not: Prisma.JsonNull } } } });
     if (query.risk === 'EVALUATED') AND.push({ complianceReviews: { some: { resultado_json: { not: Prisma.JsonNull } } } });
     if (query.risk === 'ATTENTION') AND.push({ complianceReviews: { some: { OR: [
@@ -78,13 +80,13 @@ export class ExpedienteReadService {
 
   async list(user: AuthUser, query: ParsedExpedienteQuery) {
     const where = this.where(user, query);
-    const [sortField, sortDirection] = query.sort.split(':') as ['numero_pravia' | 'updated_at', 'asc' | 'desc'];
+    const [sortField, sortDirection] = query.sort.split(':') as ['numero_pravia' | 'updated_at' | 'numero_escritura' | 'fecha_escritura', 'asc' | 'desc'];
     const baseScope = scopeWhere(user);
-    const [records, total, grouped, actTypes, responsibles, notaries, stageRows] = await Promise.all([
+    const [records, total, grouped, actTypes, responsibles, notaries] = await Promise.all([
       this.prisma.expediente.findMany({
         where,
-        skip: (query.page - 1) * query.pageSize,
-        take: query.pageSize,
+        skip: query.stage ? 0 : (query.page - 1) * query.pageSize,
+        take: query.stage ? undefined : query.pageSize,
         orderBy: { [sortField]: sortDirection },
         include: {
           actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: { select: { id: true, nombre: true } } }, orderBy: { created_at: 'asc' } },
@@ -106,15 +108,30 @@ export class ExpedienteReadService {
       }),
       this.prisma.expediente.count({ where }),
       this.prisma.expediente.groupBy({ by: ['estatus'], where: baseScope, _count: { _all: true } }),
-      this.prisma.tipoActo.findMany({ where: { activo: true, archived_at: null, OR: [{ organization_id: null }, { organization_id: user.organizationId }] }, select: { id: true, nombre: true, descripcion: true }, orderBy: { nombre: 'asc' } }),
+      this.prisma.tipoActo.findMany({ where: { activo: true, archived_at: null, OR: [{ organization_id: null }, { organization_id: user.organizationId }], configuracionesOperativas: { some: { organization_id: user.organizationId, activa: true } } }, select: { id: true, nombre: true, descripcion: true }, orderBy: { nombre: 'asc' } }),
       this.prisma.user.findMany({
         where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(user.organizationId, ['DIRECCION', 'ADMINISTRACION', 'ABOGADO']) } },
         select: { id: true, nombre: true, apellido: true, ...organizationMembershipRoleSelect(user.organizationId) },
         orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }],
       }),
       this.prisma.notaria.findMany({ where: { organization_id: user.organizationId, activa: true, archived_at: null }, select: { id: true, nombre: true, numero_notaria: true, municipio: true }, orderBy: [{ predeterminada: 'desc' }, { nombre: 'asc' }], take: 150 }),
-      this.prisma.expedienteEtapa.findMany({ where: { expediente: baseScope }, distinct: ['nombre_snapshot'], select: { nombre_snapshot: true }, orderBy: { nombre_snapshot: 'asc' }, take: 100 }),
     ]);
+    const tracking = records.length ? await this.prisma.expedienteSeguimientoActividad.findMany({
+      where: { organization_id: user.organizationId, expediente_id: { in: records.map((record) => record.id) }, en_alcance: true },
+      orderBy: [{ etapa_orden_snapshot: 'asc' }, { orden_operativo: 'asc' }, { created_at: 'asc' }],
+    }) : [];
+    const dependencies = records.length ? await this.prisma.expedienteSeguimientoDependencia.findMany({
+      where: { organization_id: user.organizationId, expediente_id: { in: records.map((record) => record.id) }, bloqueante: true },
+    }) : [];
+    const trackingByExpediente = new Map<string, typeof tracking>();
+    tracking.forEach((item) => trackingByExpediente.set(item.expediente_id, [...(trackingByExpediente.get(item.expediente_id) || []), item]));
+    const dependencyByActivity = new Map<string, typeof dependencies>();
+    dependencies.forEach((item) => dependencyByActivity.set(item.actividad_id, [...(dependencyByActivity.get(item.actividad_id) || []), item]));
+    const operationalStage = (expedienteId: string) => {
+      const rows = trackingByExpediente.get(expedienteId) || [];
+      const current = resolveCurrentOperationalActivity(rows, rows.flatMap((item) => dependencyByActivity.get(item.id) || []));
+      return current ? { id: current.id, nombre: current.actividad_nombre_snapshot, etapa: current.etapa_nombre_snapshot, estado: current.estado } : null;
+    };
     const counts = new Map<ExpedienteEstatus, number>(grouped.map((item) => [item.estatus, item._count._all]));
     const macroCount = (key: keyof typeof EXPEDIENTE_MACROPHASE_STATUSES) => EXPEDIENTE_MACROPHASE_STATUSES[key].reduce((sum, status) => sum + (counts.get(status) || 0), 0);
     const totalRecords = grouped.reduce((sum, item) => sum + item._count._all, 0);
@@ -136,8 +153,13 @@ export class ExpedienteReadService {
         fecha_estimada_firma: record.fecha_estimada_firma,
         fecha_real_firma: record.fecha_real_firma,
         fecha_entrega_cliente: record.fecha_entrega_cliente,
+        fecha_estimada_entrega: record.fecha_estimada_entrega,
+        fecha_escritura: record.fecha_escritura,
         created_at: record.created_at,
         updated_at: record.updated_at,
+        numero_escritura: record.numero_escritura,
+        folio_desde: record.folio_desde,
+        folio_hasta: record.folio_hasta,
         tipo_acto: primaryAct,
         actos: record.actos,
         abogado: record.abogado,
@@ -154,11 +176,19 @@ export class ExpedienteReadService {
         cumplimiento: user.permissions.includes('compliance.read')
           ? { state: complianceState?.state || null, label: complianceState?.state === 'CUMPLIMIENTO_COMPLETO' ? 'Completo' : complianceState?.state === 'VENCIDO' ? 'Vencido' : complianceState ? 'Pendiente' : 'Sin evaluar', pending_count: complianceState?.pending_count || 0 }
           : { state: null, label: 'Restringido', pending_count: 0 },
+        etapa_operativa: operationalStage(record.id),
       };
     });
+    const filteredMapped = query.stage
+      ? mapped.filter((item) => item.etapa_operativa?.nombre.localeCompare(query.stage!, 'es-MX', { sensitivity: 'base' }) === 0)
+      : mapped;
+    const visibleMapped = query.stage
+      ? filteredMapped.slice((query.page - 1) * query.pageSize, query.page * query.pageSize)
+      : filteredMapped;
+    const effectiveTotal = query.stage ? filteredMapped.length : total;
     return {
-      data: mapped,
-      meta: { total, page: query.page, limit: query.pageSize, pageSize: query.pageSize, totalPages: Math.max(1, Math.ceil(total / query.pageSize)), hasPreviousPage: query.page > 1, hasNextPage: query.page * query.pageSize < total },
+      data: visibleMapped,
+      meta: { total: effectiveTotal, page: query.page, limit: query.pageSize, pageSize: query.pageSize, totalPages: Math.max(1, Math.ceil(effectiveTotal / query.pageSize)), hasPreviousPage: query.page > 1, hasNextPage: query.page * query.pageSize < effectiveTotal },
       metrics: [
         { key: 'INTEGRACION', label: 'Integración', value: macroCount('INTEGRACION') },
         { key: 'PROYECTO', label: 'Proyecto', value: macroCount('PROYECTO') },
@@ -167,7 +197,7 @@ export class ExpedienteReadService {
         { key: 'ENTREGADO', label: 'Entregado', value: macroCount('ENTREGADO') },
         { key: 'TOTAL', label: 'Total expedientes', value: totalRecords },
       ].map((metric) => ({ ...metric, percentage: totalRecords > 0 && metric.key !== 'TOTAL' ? Math.round((metric.value / totalRecords) * 100) : null })),
-      facets: { actTypes, responsibles: usersWithEffectiveMembershipRoles(responsibles), notaries, stages: stageRows.map((item) => item.nombre_snapshot) },
+      facets: { actTypes, responsibles: usersWithEffectiveMembershipRoles(responsibles), notaries, stages: [...new Set(tracking.map((item) => item.actividad_nombre_snapshot))].sort((a, b) => a.localeCompare(b, 'es-MX')) },
     };
   }
 }

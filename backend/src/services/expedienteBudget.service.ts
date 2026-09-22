@@ -1,12 +1,18 @@
 import { createHash, randomUUID } from 'crypto';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { CatalogoDestinoFuncional, Prisma, PrismaClient } from '@prisma/client';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import {
   budgetTotals, calculateDistribution, centsToMoney, moneyToCents, normalizeBudgetConcepts,
-  percentageFromCents, quoteCategoryToBudget, renderClientBudgetPdf, type BudgetCategory,
+  percentageFromCents, quoteCategoryToBudget, type BudgetCategory,
   type DistributionInput,
 } from '../domain/expedienteBudget';
 import { deleteFile, getSignedUrl, uploadFile } from '../storage/storage.service';
+import {
+  AdministrativeQuoteTemplateError,
+  DOCX_MIME_TYPE,
+  resolveAdministrativeQuoteTemplate,
+} from './administrativeQuoteTemplate.service';
+import { quoteTemplateData, renderQuoteTemplate } from './quoteDocument.service';
 
 export type BudgetActor = { id: string; organizationId: string; sessionId: string; rol: any; permissions: string[] };
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -20,10 +26,6 @@ export class ExpedienteBudgetError extends Error {
 }
 
 const can = (actor: BudgetActor, permission: string) => actor.permissions.includes(permission);
-const categoryLabel = (category: BudgetCategory) => category === 'IMPUESTOS_DERECHOS'
-  ? 'Impuestos y derechos'
-  : category === 'IVA_HONORARIOS' ? 'IVA de honorarios' : 'Honorarios';
-
 export class ExpedienteBudgetService {
   constructor(private readonly prisma: PrismaClient) {}
 
@@ -101,21 +103,32 @@ export class ExpedienteBudgetService {
     const budget = await this.budget(this.prisma, actor, expedienteId);
     if (budget.version !== input.expected_version) throw new ExpedienteBudgetError(409, 'EXP007_STALE_BUDGET', 'El presupuesto cambió. Recarga antes de generar el PDF.');
     if (budget.requiere_clasificacion) throw new ExpedienteBudgetError(409, 'EXP007_LEGACY_CLASSIFICATION_REQUIRED', 'Clasifica los conceptos históricos antes de generar un nuevo presupuesto.');
-    const format = await this.resolveFormat(actor.organizationId);
-    const preference = await this.prisma.userPreference.findUnique({ where: { user_id: actor.id }, select: { date_format: true, timezone: true } });
+    let resolvedTemplate: Awaited<ReturnType<typeof resolveAdministrativeQuoteTemplate>>;
+    try { resolvedTemplate = await resolveAdministrativeQuoteTemplate(this.prisma, actor.organizationId, CatalogoDestinoFuncional.EXPEDIENTE_PRESUPUESTO); }
+    catch (error) {
+      if (error instanceof AdministrativeQuoteTemplateError) throw new ExpedienteBudgetError(error.status, error.code.replace('ADMINISTRATIVE_', 'EXP007_'), error.message);
+      throw error;
+    }
     const generatedAt = new Date();
-    const generatedDate = this.formatDate(generatedAt, preference?.date_format, preference?.timezone);
-    const clientDto = {
-      folio: expediente.numero_pravia, client: expediente.cliente_alias || 'Cliente',
-      notary: expediente.notaria?.nombre || 'Notaría por confirmar', generatedDate,
-      concepts: budget.conceptos.map((item) => ({ concept: item.concepto, categoryLabel: categoryLabel(item.categoria), amount: money(item.importe) })),
-      subtotalHonorarios: money(budget.subtotal_honorarios), subtotalImpuestosDerechos: money(budget.subtotal_impuestos_derechos),
-      total: money(budget.total), optionalNote: note || undefined,
-    };
-    const buffer = renderClientBudgetPdf(clientDto);
-    const fileName = `Presupuesto_${safeName(expediente.numero_pravia)}_${generatedAt.toISOString().slice(0, 10)}.pdf`;
+    const templateData = quoteTemplateData({
+      folio: expediente.numero_pravia,
+      date: generatedAt,
+      client: expediente.cliente_alias || 'Cliente pendiente',
+      act: expediente.actos.map((item) => item.tipo_acto.nombre).join(', ') || 'Acto pendiente',
+      notary: expediente.notaria?.nombre || 'Notaría',
+      concepts: budget.conceptos.map((item) => ({
+        concepto: item.concepto,
+        categoria: item.categoria,
+        importeCents: moneyToCents(String(item.importe)),
+      })),
+      validatedAdvanceCents: 0n,
+    });
+    let buffer: Buffer;
+    try { buffer = renderQuoteTemplate(resolvedTemplate.source, templateData); }
+    catch { throw new ExpedienteBudgetError(422, 'EXP007_TEMPLATE_RENDER_FAILED', 'El formato configurado para Presupuesto no pudo combinarse con los datos estructurados.'); }
+    const fileName = `Presupuesto_${safeName(expediente.numero_pravia)}_${generatedAt.toISOString().slice(0, 10)}.docx`;
     const storageKey = `organizations/${actor.organizationId}/expedientes/${expedienteId}/presupuestos/${randomUUID()}_${fileName}`;
-    await uploadFile(buffer, storageKey, 'application/pdf');
+    await uploadFile(buffer, storageKey, DOCX_MIME_TYPE);
     try {
       const result = await this.prisma.$transaction(async (tx) => {
         await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp007-pdf:${actor.organizationId}:${expedienteId}`}))`);
@@ -125,14 +138,14 @@ export class ExpedienteBudgetService {
         if (current.version !== input.expected_version) throw new ExpedienteBudgetError(409, 'EXP007_STALE_BUDGET', 'El presupuesto cambió durante la generación. Vuelve a intentarlo.');
         const document = await tx.documento.create({ data: {
           organization_id: actor.organizationId, nombre_original: fileName, nombre_interno: `${randomUUID()}-${fileName}`,
-          tipo: 'EXP007_PRESUPUESTO_CLIENTE', categoria: 'OTROS', storage_key: storageKey, mime_type: 'application/pdf',
+          tipo: 'EXP007_PRESUPUESTO_CLIENTE', categoria: 'OTROS', storage_key: storageKey, mime_type: DOCX_MIME_TYPE,
           size_bytes: buffer.length, checksum_sha256: sha(buffer), estatus: 'VIGENTE', subido_por_id: actor.id, expediente_id: expedienteId,
           observaciones: note || null,
-          datos_extraidos: json({ exp007: { presupuesto_version: current.version, total: money(current.total), formato_fuente: format.source, formato_version_id: format.id } }),
+          datos_extraidos: json({ exp007: { presupuesto_version: current.version, total: money(current.total), formato_fuente: resolvedTemplate.sourceLabel, formato_version_id: resolvedTemplate.version.id } }),
         } });
         const history = await tx.expedientePresupuestoDocumento.create({ data: {
           organization_id: actor.organizationId, presupuesto_id: current.id, documento_id: document.id,
-          formato_version_id: format.id, formato_fuente: format.source, presupuesto_version: current.version,
+          formato_version_id: resolvedTemplate.version.id, formato_fuente: resolvedTemplate.sourceLabel, presupuesto_version: current.version,
           total_snapshot: money(current.total), nota: note || null, idempotency_key: idempotencyKey,
           generado_por_id: actor.id, generado_at: generatedAt,
         }, include: { documento: true } });
@@ -141,11 +154,11 @@ export class ExpedienteBudgetService {
           tipo_vinculo: 'EXP007_PRESUPUESTO', creado_por_id: actor.id, origen: 'EXPEDIENTE',
           source_entity_type: 'ExpedientePresupuestoDocumento', source_entity_id: history.id, source_context: 'PRESUPUESTO_CLIENTE',
           source_key: `EXPEDIENTE:ExpedientePresupuestoDocumento:${history.id}:${document.id}:PRESUPUESTO_CLIENTE`,
-          document_version: sha(buffer), provenance: json({ source: 'EXP-007', presupuesto_id: current.id, presupuesto_version: current.version, formato_fuente: format.source }),
+          document_version: sha(buffer), provenance: json({ source: 'EXP-007', presupuesto_id: current.id, presupuesto_version: current.version, formato_fuente: resolvedTemplate.sourceLabel }),
         } });
         await this.record(tx, actor, expedienteId, 'EXP007_GENERATE_PDF', history.id, null,
-          { document_id: document.id, budget_version: current.version, total: money(current.total), format_source: format.source },
-          'Presupuesto PDF generado', `Se generó un presupuesto por ${money(current.total)} MXN.`);
+          { document_id: document.id, budget_version: current.version, total: money(current.total), format_source: resolvedTemplate.sourceLabel },
+          'Presupuesto generado', `Se generó un presupuesto por ${money(current.total)} MXN con el destino CFG-002 Presupuesto.`);
         return { item: this.pdfItem(history), idempotent: false, discardUpload: false };
       }, { timeout: 20_000 });
       if (result.discardUpload) await deleteFile(storageKey).catch(() => undefined);
@@ -223,7 +236,10 @@ export class ExpedienteBudgetService {
   }
 
   private async assertExpediente(db: Db, actor: BudgetActor, expedienteId: string) {
-    const record = await db.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor as any) }, include: { notaria: { select: { nombre: true } } } });
+    const record = await db.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor as any) }, include: {
+      notaria: { select: { nombre: true } },
+      actos: { where: { estatus: 'ACTIVO', removed_at: null }, select: { tipo_acto: { select: { nombre: true } } }, orderBy: { created_at: 'asc' } },
+    } });
     if (!record) throw new ExpedienteBudgetError(403, 'EXP007_EXPEDIENTE_ACCESS_DENIED', 'No tienes acceso a este expediente.');
     return record;
   }
@@ -280,18 +296,6 @@ export class ExpedienteBudgetService {
 
   private pdfItem(item: any) { return { id: item.id, document_id: item.documento_id, generated_at: item.generado_at, total: money(item.total_snapshot), budget_version: item.presupuesto_version, note: item.nota, file_name: item.documento.nombre_original, mime_type: item.documento.mime_type, immutable: true }; }
   private auditSnapshot(budget: any) { return { version: budget.version, concepts: budget.conceptos.map((item: any) => ({ id: item.id, concept: item.concepto, category: item.categoria, amount: money(item.importe) })), totals: { honorarios: money(budget.subtotal_honorarios), impuestos_derechos: money(budget.subtotal_impuestos_derechos), total: money(budget.total) }, internal_distribution: budget.distribucion ? '[INTERNAL_REDACTED]' : null }; }
-
-  private async resolveFormat(organizationId: string) {
-    const artifact = await this.prisma.catalogoArtefacto.findFirst({ where: { organization_id: organizationId, activo: true, nombre: { contains: 'presupuesto', mode: 'insensitive' } }, include: { versiones: { where: { activa: true }, orderBy: { version: 'desc' }, take: 1 } }, orderBy: { updated_at: 'desc' } });
-    const version = artifact?.versiones[0];
-    return version ? { id: version.id, source: `CONFIGURACION:${artifact!.id}:V${version.version}` } : { id: null, source: 'SISTEMA_EXP007_V1' };
-  }
-
-  private formatDate(date: Date, format = 'DD/MM/YYYY', timeZone = 'America/Mexico_City') {
-    const parts = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone }).formatToParts(date);
-    const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-    return format === 'YYYY-MM-DD' ? `${value.year}-${value.month}-${value.day}` : `${value.day}/${value.month}/${value.year}`;
-  }
 
   private async record(tx: Prisma.TransactionClient, actor: BudgetActor, expedienteId: string, action: string, entityId: string, before: unknown, after: unknown, title: string, description: string) {
     const correlationId = randomUUID();

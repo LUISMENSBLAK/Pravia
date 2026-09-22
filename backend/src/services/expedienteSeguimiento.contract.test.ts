@@ -12,11 +12,12 @@ const acts = read('src/services/expedienteActos.service.ts');
 const workflow = read('src/services/expedienteWorkflow.service.ts');
 const routes = read('src/routes/expedientes.routes.ts');
 const ui = read('../frontend/src/features/cases/components/tabs/WorkflowTab.tsx');
-const summary = read('../frontend/src/features/cases/components/tabs/SummaryTab.tsx');
+const workspace = read('../frontend/src/features/cases/ExpedienteWorkspace.tsx');
+const navigation = read('../frontend/src/features/cases/expedienteNavigation.ts');
 
 const checks: Array<[string, () => boolean]> = [
   ['01 materialización desde CFG-001', () => service.includes('configuracionActo.findMany') && service.includes('materializeInTransaction')],
-  ['02 no checklist manual normal', () => !ui.includes('Nuevo trámite') && !summary.includes('PostfirmaPanel')],
+  ['02 no checklist manual normal', () => !ui.includes('Nuevo trámite') && !workspace.includes('PostfirmaPanel') && !navigation.includes("id: 'resumen'")],
   ['03 misma config produce copia', () => service.includes('configuracion_acto_id: config.id')],
   ['04 conserva referencias maestras', () => ['configuracion_acto_id', 'etapa_maestra_id', 'actividad_maestra_id'].every((text) => schema.includes(text))],
   ['05 CFG-001 no muta', () => !service.includes('configuracionActo.update') && !service.includes('configuracionActividad.update')],

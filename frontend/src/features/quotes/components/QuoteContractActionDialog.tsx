@@ -9,7 +9,7 @@ type DialogAction = 'COMENZAR_ELABORACION' | 'INICIAR_SEGUIMIENTO' | 'ACEPTAR' |
 const config: Record<DialogAction, { title: string; description: string; submit: string; destructive?: boolean }> = {
   COMENZAR_ELABORACION: { title: 'Comenzar elaboración', description: 'Inicia la preparación de la cotización y su presupuesto estructurado.', submit: 'Comenzar elaboración' },
   INICIAR_SEGUIMIENTO: { title: 'Iniciar seguimiento', description: 'Registra que la cotización enviada entra en seguimiento con el cliente.', submit: 'Iniciar seguimiento' },
-  ACEPTAR: { title: 'Registrar aceptación', description: 'Congela la versión vigente como evidencia histórica y habilita la conversión.', submit: 'Confirmar aceptación' },
+  ACEPTAR: { title: 'Registrar aceptación', description: 'Registra la aceptación comercial y conserva un snapshot inmutable de ese momento.', submit: 'Confirmar aceptación' },
   RECHAZAR: { title: 'Registrar rechazo', description: 'Conserva la cotización y su historia como registro rechazado.', submit: 'Registrar rechazo', destructive: true },
   SUSPENDER: { title: 'Suspender cotización', description: 'La cotización conservará su historia, fuente, documentos y relaciones.', submit: 'Suspender', destructive: true },
   CANCELAR: { title: 'Cancelar cotización', description: 'La cancelación no elimina la cotización ni sus documentos, pagos o auditoría.', submit: 'Cancelar cotización', destructive: true },
@@ -53,7 +53,7 @@ export function QuoteContractActionDialog({ quote, action, onClose, onDone }: {
       {error && <div className={styles.formError} role="alert">{error}</div>}
       <label><span>Fecha y hora efectiva</span><input type="datetime-local" max={localNow()} value={effectiveAt} onChange={(event) => setEffectiveAt(event.target.value)} required /></label>
       <label><span>Nota opcional</span><textarea rows={3} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Contexto operativo, si aplica." /></label>
-      {action === 'ACEPTAR' && <p className={styles.contractNotice}>La aceptación inmoviliza la versión vigente. Los cambios posteriores se harán únicamente en el presupuesto independiente del expediente.</p>}
+      {action === 'ACEPTAR' && <p className={styles.contractNotice}>La aceptación no bloquea la edición del presupuesto vigente. Si después se convierte en expediente, éste conservará su propio snapshot y no cambiará retroactivamente.</p>}
     </form>
   </QuoteActionDialog>;
 }

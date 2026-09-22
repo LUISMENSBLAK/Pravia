@@ -28,7 +28,7 @@ const definition = { schema_version: 1, scope: "GENERAL", sections: [{ id: "test
   questions: [{ id: "test-answer", label: "Dato sintético", type: "BOOLEAN", required: true }] }] };
 const definitionRow = { id: "definition-test", definition_json: definition, definition_checksum: semanticFingerprint(definition) };
 const review = { id: "review-test", organization_id: "org-test", expediente_id: "case-test", fecha_operacion: null, is_canonical_legal_engine: true };
-const requirement = { id: "requirement-test", requirement_key: "CUE:GENERAL", target_compareciente_id: null, source_snapshot: {}, status: "PENDIENTE" };
+const requirement = { id: "requirement-test", requirement_key: "CUE:GENERAL:act-test", target_compareciente_id: null, source_snapshot: {}, status: "PENDIENTE" };
 const assessment = { id: "assessment-test", review_id: review.id, definition_version_id: definitionRow.id, definitionVersion: definitionRow,
   requirement_id: requirement.id, requirement, scope: "GENERAL", target_compareciente_id: null,
   trigger_snapshot: [{ requirement_id: requirement.id }, { requirement_id: "second-trigger" }],
@@ -177,20 +177,24 @@ describe("H5 service behavioral security and lifecycle", () => {
       id: `result-${actId}`, actId, revisionId: "rule-test", checksum: "checksum-test", vulnerable: true,
       documents: [{ category: "CUESTIONARIOS_RIESGO", action: "GO_TO_QUESTIONNAIRE", target_scope: "EACH_RELEVANT_COMPARECIENTE" }, { category: "PAGOS_EVIDENCIAS", action: "GO_TO_PAYMENT_EVIDENCE", target_scope: "OPERATION" }],
     })), parties: [{ compareciente_id: "person-test", expediente_acto_id: null }, { compareciente_id: "person-test", expediente_acto_id: "act-a" }] };
-    it("deduplicates one general, one personal and one operation requirement across three acts", async () => {
-      await expect(ComplianceH5Service.materializeSourceRequirementsTx(mocks.db, actor, input)).resolves.toEqual(["PENDIENTE", "PENDIENTE", "PENDIENTE"]);
+    it("creates one operation questionnaire per applicable act and deduplicates the personal/payment requirements", async () => {
+      await expect(ComplianceH5Service.materializeSourceRequirementsTx(mocks.db, actor, input)).resolves.toEqual(["PENDIENTE", "PENDIENTE", "PENDIENTE", "PENDIENTE", "PENDIENTE"]);
       const creates = mocks.db.complianceRequirement.upsert.mock.calls.map(([request]: any) => request.create);
-      expect(creates.map((item: any) => item.requirement_key)).toEqual(["CUE:GENERAL", "CUE:PERSONAL:person-test", "PAG:OPERATION"]);
+      expect(creates.map((item: any) => item.requirement_key)).toEqual(["CUE:GENERAL:act-a", "CUE:PERSONAL:person-test", "PAG:OPERATION", "CUE:GENERAL:act-b", "CUE:GENERAL:act-c"]);
       for (const item of creates) {
-        expect(item.organization_id).toBe(actor.organizationId); expect(item.source_snapshot.triggers).toHaveLength(3);
+        expect(item.organization_id).toBe(actor.organizationId);
+        expect(item.source_snapshot.triggers).toHaveLength(item.requirement_key.startsWith("CUE:GENERAL:") ? 1 : 3);
         expect(item.requires_signed_document).toBe(false);
+        expect(item.is_documental).toBe(false);
       }
       expect(mocks.db.complianceQuestionnaireAssessment.create).not.toHaveBeenCalled();
     });
     it("does not infer a personal questionnaire or payment trigger without configured requirements", async () => {
       await ComplianceH5Service.materializeSourceRequirementsTx(mocks.db, actor, { ...input, results: input.results.map((item) => ({ ...item, documents: [] })) });
-      expect(mocks.db.complianceRequirement.upsert).toHaveBeenCalledOnce();
-      expect(mocks.db.complianceRequirement.upsert.mock.calls[0][0].create.requirement_key).toBe("CUE:GENERAL");
+      expect(mocks.db.complianceRequirement.upsert).toHaveBeenCalledTimes(3);
+      expect(mocks.db.complianceRequirement.upsert.mock.calls.map(([request]: any) => request.create.requirement_key)).toEqual([
+        "CUE:GENERAL:act-a", "CUE:GENERAL:act-b", "CUE:GENERAL:act-c",
+      ]);
     });
     it("does not create H5 requirements for non-vulnerable results", async () => {
       await expect(ComplianceH5Service.materializeSourceRequirementsTx(mocks.db, actor, { ...input, results: input.results.map((item) => ({ ...item, vulnerable: false })) })).resolves.toEqual([]);
@@ -390,11 +394,10 @@ describe("H5 service behavioral security and lifecycle", () => {
     mocks.db.complianceQuestionnaireAssessment.findFirst.mockResolvedValue({ ...assessment, currentRevision: { ...assessment.currentRevision, status: "FINALIZED" } });
     await expect(ComplianceH5Service.saveQuestionnaire(actor, assessment.id, { idempotency_key: "new-request", answers: {} }, false)).rejects.toMatchObject({ code: "H5_QUESTIONNAIRE_FINALIZED_IMMUTABLE" });
   });
-  it("does not repurpose an existing CFG FILE artifact", async () => {
-    mocks.db.catalogoArtefacto.findFirst.mockResolvedValue({ id: "artifact-test", purpose: null });
-    mocks.db.catalogoArtefactoVersion.findFirst.mockResolvedValue({ id: "file-test", content_kind: "FILE" });
-    await expect(ComplianceH5Service.publishQuestionnaireDefinition(actor, "artifact-test", { definition })).rejects.toMatchObject({ code: "H5_ARTIFACT_RECLASSIFICATION_BLOCKED" });
-    expect(mocks.db.catalogoArtefacto.update).not.toHaveBeenCalled();
+  it("retires the legacy publisher in favor of the two canonical Settings banks", async () => {
+    await expect(ComplianceH5Service.publishQuestionnaireDefinition(actor, "artifact-test", { definition })).rejects.toMatchObject({ code: "H5_QUESTIONNAIRE_EDITOR_RETIRED", status: 410 });
+    expect(mocks.db.catalogoArtefacto.findFirst).not.toHaveBeenCalled();
+    expect(mocks.db.catalogoArtefactoVersion.create).not.toHaveBeenCalled();
   });
   it("marks absent definition without creating a fake questionnaire", async () => {
     mocks.db.complianceRequirement.findMany.mockResolvedValue([requirement]);

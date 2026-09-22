@@ -7,8 +7,8 @@ import { deleteFile, downloadFile, uploadFile } from './supabase.service';
 import { extraerMultiplesDocumentos, getOpenAIModelName, type DocumentoParaExtraccion } from './openaiDocument.service';
 import { calculateISR, ISRCalculationInput, ISRRateBracket, ISRRuleSetSnapshot, ISRValidationError } from '../domain/isrTaxEngine';
 import { comparecienteObjectWhere } from './objectAccess.service';
-import { renderISRDeterminationPdf } from '../domain/isrDeterminationPdf';
 import { recordAIUsageInDb } from './aiUsage.service';
+import { FunctionalDocumentRenderError, renderConfiguredFunctionalDocument } from './functionalDocumentRenderer.service';
 
 type AuthUser = NonNullable<Request['user']>;
 type Db = typeof prisma;
@@ -306,21 +306,47 @@ export class ISRService {
     const latest = current.versiones[0];
     if (!latest || current.ultima_version < 1 || current.datos_modificados) throw new ISRValidationError('ISR_PDF_CALCULATION_REQUIRED', 'Calcula la versión vigente antes de generar el PDF.', undefined, 409);
     if (options.expectedVersion !== undefined && options.expectedVersion !== current.ultima_version) throw new ISRValidationError('ISR_STALE_VERSION', 'El cálculo cambió en otra sesión. Recarga antes de generar el PDF.', undefined, 409);
-    const artifact = await this.db.catalogoArtefacto.findFirst({
-      where: { organization_id: user.organizationId, activo: true, OR: [{ nombre: { contains: 'ISR', mode: 'insensitive' } }, { nombre: { contains: 'determinación fiscal', mode: 'insensitive' } }] },
-      include: { versiones: { where: { activa: true }, orderBy: { version: 'desc' }, take: 1 } }, orderBy: { updated_at: 'desc' },
+    const links = await this.db.catalogoArtefactoDestino.findMany({
+      where: { organization_id: user.organizationId, destino: 'CALCULO_ISR_MEMORIA', activo: true, artefacto: { activo: true, versiones: { some: { activa: true, storage_key: { not: null } } } } },
+      include: { artefacto: { include: { versiones: { where: { activa: true, storage_key: { not: null } }, orderBy: { version: 'desc' }, take: 1 } } } },
+      orderBy: [{ predeterminado: 'desc' }, { created_at: 'asc' }],
     });
-    const format = artifact?.versiones[0];
-    if (!format) throw new ISRValidationError('ISR_PDF_FORMAT_REQUIRED', 'Configura y activa el formato de determinación ISR antes de generar el PDF.', undefined, 409);
-    const formatSource = `CONFIGURACION:${artifact!.id}:V${format.version}`;
+    const defaults = links.filter((item) => item.predeterminado);
+    if (!links.length) throw new ISRValidationError('ISR_PDF_FORMAT_REQUIRED', 'Configura y activa el destino funcional “Memoria de cálculo ISR” antes de generar el PDF.', undefined, 409);
+    if (defaults.length > 1 || (!defaults.length && links.length > 1)) throw new ISRValidationError('ISR_PDF_FORMAT_AMBIGUOUS', 'Existe más de un formato ISR aplicable y no hay un único predeterminado.', undefined, 409);
+    const selected = defaults[0] || links[0];
+    const artifact = selected.artefacto;
+    const format = artifact.versiones[0];
+    if (!format) throw new ISRValidationError('ISR_PDF_FORMAT_REQUIRED', 'El formato ISR configurado no tiene una versión activa.', undefined, 409);
+    const formatSource = `CFG002:CALCULO_ISR_MEMORIA:${artifact.id}:V${format.version}`;
     const generatedAt = new Date();
     const input = safeInput(latest.input_snapshot);
     const result = latest.result as unknown as ReturnType<typeof calculateISR>;
-    const buffer = renderISRDeterminationPdf({ folio: current.folio, version: current.ultima_version, generatedDate: generatedAt.toISOString().slice(0, 10), input, result, formatSource });
+    let rendered: Awaited<ReturnType<typeof renderConfiguredFunctionalDocument>>;
+    try {
+      rendered = await renderConfiguredFunctionalDocument(format, {
+        'isr.folio': current.folio,
+        'isr.version': current.ultima_version,
+        'isr.fecha_generacion': generatedAt.toISOString().slice(0, 10),
+        'isr.ejercicio': current.ejercicio,
+        'isr.tipo_operacion': current.tipo_operacion,
+        'isr.valor_enajenacion': moneyString(input.salePrice),
+        'isr.costo_comprobado': moneyString(input.deductions.find((item) => item.treatment === 'COSTO_ADQUISICION_ACTUALIZADO')?.updatedAmount || ''),
+        'isr.resultado': moneyString((result as any).provisionalFederalISR ?? (result as any).taxDue ?? ''),
+        'isr.reglas_version': (result as any).ruleSet?.version || (result as any).ruleSetVersion || '',
+        'isr.datos_entrada': input,
+        'isr.desglose': (result as any).breakdown || result,
+        'formato.fuente': formatSource,
+      }, selected.mapeo_datos_json);
+    } catch (error) {
+      if (error instanceof FunctionalDocumentRenderError) throw new ISRValidationError(error.code, error.message, undefined, 422);
+      throw error;
+    }
+    const buffer = rendered.buffer;
     const safeFolio = current.folio.replace(/[^a-zA-Z0-9_.-]/g, '_');
-    const fileName = `Determinacion_ISR_${safeFolio}_V${current.ultima_version}.pdf`;
+    const fileName = `Determinacion_ISR_${safeFolio}_V${current.ultima_version}.${rendered.extension}`;
     const storageKey = `organizations/${user.organizationId}/isr/${id}/determinaciones/${crypto.randomUUID()}_${fileName}`;
-    await uploadFile(buffer, storageKey, 'application/pdf');
+    await uploadFile(buffer, storageKey, rendered.mimeType);
     try {
       const created = await this.db.$transaction(async (tx) => {
         await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:isr001-pdf:${user.organizationId}:${id}`}))`);
@@ -330,9 +356,9 @@ export class ISRService {
         if (!locked || locked.ultima_version !== current.ultima_version || locked.datos_modificados) throw new ISRValidationError('ISR_STALE_VERSION', 'El cálculo cambió durante la generación. Recarga e intenta nuevamente.', undefined, 409);
         const document = await tx.documento.create({ data: {
           organization_id: user.organizationId, nombre_original: fileName, nombre_interno: `${crypto.randomUUID()}-${fileName}`,
-          tipo: 'ISR_DETERMINACION', categoria: 'OTROS', storage_key: storageKey, mime_type: 'application/pdf', size_bytes: buffer.length,
+          tipo: 'ISR_DETERMINACION', categoria: 'OTROS', storage_key: storageKey, mime_type: rendered.mimeType, size_bytes: buffer.length,
           checksum_sha256: crypto.createHash('sha256').update(buffer).digest('hex'), estatus: 'VIGENTE', subido_por_id: user.id,
-          expediente_id: locked.expediente_id, datos_extraidos: json({ isr001: { calculo_id: id, version: current.ultima_version, format_source: formatSource, format_version_id: format.id, generated_at: generatedAt.toISOString() } }),
+          expediente_id: locked.expediente_id, datos_extraidos: json({ isr001: { calculo_id: id, version: current.ultima_version, format_source: formatSource, format_version_id: format.id, format_checksum: rendered.sourceChecksum, generated_at: generatedAt.toISOString() } }),
         } });
         await tx.calculoISRDocumento.create({ data: { organization_id: user.organizationId, calculo_id: id, documento_id: document.id, creado_por_id: user.id, idempotency_key: idempotencyKey, generated_from_version: current.ultima_version, format_source: formatSource } });
         if (locked.expediente_id) await tx.expedienteDocumento.create({ data: {

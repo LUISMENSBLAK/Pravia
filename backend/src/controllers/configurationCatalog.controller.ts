@@ -5,6 +5,8 @@ import { configurationCatalogV2Service } from '../services/configurationCatalogV
 import { configurationCatalogV4Service } from '../services/configurationCatalogV4.service';
 import { questionnaireCatalogService } from '../services/questionnaireCatalog.service';
 import { QuestionnaireError } from '../domain/questionnaire';
+import { functionalDestinationService } from '../services/functionalDestination.service';
+import { questionnaireBanksService } from '../services/questionnaireBanks.service';
 
 const actor = (req: Request) => {
   if (!req.user) throw new CatalogConfigurationError(401, 'AUTH_REQUIRED', 'Inicia sesión para continuar.');
@@ -55,6 +57,7 @@ export const configurationCatalogController = {
   createInstitution: (req: Request) => templatesAndFormatsService.createInstitution(actor(req), req.body),
   explorer: (req: Request) => templatesAndFormatsService.explorer(actor(req), req.query.owner_type, req.query.owner_id, req.query.type, req.query.folder_id),
   createFolder: (req: Request) => templatesAndFormatsService.createFolder(actor(req), req.body),
+  updateFolder: (req: Request) => templatesAndFormatsService.updateFolder(actor(req), req.params.folderId, req.body),
   createArtifact: (req: Request) => {
     if (!req.file) throw new CatalogConfigurationError(400, 'MASTER_FILE_REQUIRED', 'Selecciona el archivo maestro.');
     return templatesAndFormatsService.createArtifact(actor(req), multipartBody(req), req.file);
@@ -65,13 +68,24 @@ export const configurationCatalogController = {
   },
   updateArtifact: (req: Request) => templatesAndFormatsService.updateArtifact(actor(req), req.params.artifactId, req.body),
   artifactVersionUrl: (req: Request) => templatesAndFormatsService.signedUrl(actor(req), req.params.versionId),
+  functionalDestinations: (_req: Request) => Promise.resolve(functionalDestinationService.catalog()),
+  assignFunctionalDestinations: (req: Request) => functionalDestinationService.assign(actor(req), req.params.artifactId, req.body),
+  resolveFunctionalDestination: (req: Request) => functionalDestinationService.resolve(actor(req), req.params.destination, { tipoActoId: typeof req.query.tipo_acto_id === 'string' ? req.query.tipo_acto_id : null }),
   bootstrapLibraryV4: (req: Request) => configurationCatalogV4Service.bootstrap(actor(req), String(req.get('Idempotency-Key') || '').trim() || undefined),
   previewArtifactImport: (req: Request) => configurationCatalogV4Service.preview(actor(req), req.files as Express.Multer.File[] || []),
   confirmArtifactImport: (req: Request) => configurationCatalogV4Service.confirm(actor(req), multipartBody(req), req.files as Express.Multer.File[] || [], String(req.get('Idempotency-Key') || '').trim()),
   listQuestionnaires: (req: Request) => questionnaireCatalogService.list(actor(req), String(req.query.search || '')),
+  retiredQuestionnaireMutation: async (_req: Request) => {
+    throw new CatalogConfigurationError(410, 'LEGACY_QUESTIONNAIRE_EDITOR_RETIRED', 'Los cuestionarios se administran únicamente en los bancos Personal y Acto / Operación.');
+  },
   questionnaireSupporting: (req: Request) => questionnaireCatalogService.supporting(actor(req)),
   createQuestionnaire: (req: Request) => questionnaireCatalogService.create(actor(req), req.body),
   versionQuestionnaire: (req: Request) => questionnaireCatalogService.version(actor(req), req.params.questionnaireId, req.body),
   duplicateQuestionnaire: (req: Request) => questionnaireCatalogService.duplicate(actor(req), req.params.questionnaireId),
   setQuestionnaireActive: (req: Request) => questionnaireCatalogService.setActive(actor(req), req.params.questionnaireId, req.body?.active === true),
+  listQuestionnaireBanks: (req: Request) => questionnaireBanksService.list(actor(req)),
+  addQuestionnaireBankQuestion: (req: Request) => questionnaireBanksService.add(actor(req), req.params.bank, req.body),
+  updateQuestionnaireBankQuestion: (req: Request) => questionnaireBanksService.update(actor(req), req.params.bank, req.params.questionId, req.body),
+  removeQuestionnaireBankQuestion: (req: Request) => questionnaireBanksService.remove(actor(req), req.params.bank, req.params.questionId),
+  reorderQuestionnaireBank: (req: Request) => questionnaireBanksService.reorder(actor(req), req.params.bank, req.body?.question_ids),
 };

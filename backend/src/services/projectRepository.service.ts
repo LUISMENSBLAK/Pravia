@@ -14,6 +14,9 @@ export interface ProjectVersionRecord {
   nota_version?: string;
   cargado_por_nombre: string;
   created_at: string;
+  pending_count: number;
+  generation_observations: unknown[];
+  docx_structural_fidelity?: Record<string, unknown>;
 }
 
 export interface ProjectReportRecord {
@@ -49,6 +52,9 @@ export function mapProjectVersion(document: any): ProjectVersionRecord {
     nota_version: meta.nota_version || document.observaciones || undefined,
     cargado_por_nombre: document.subido_por ? `${document.subido_por.nombre} ${document.subido_por.apellido}` : 'Usuario PRAVIA',
     created_at: new Date(document.fecha_carga).toISOString(),
+    pending_count: Number(meta.pending_count || 0),
+    generation_observations: Array.isArray(meta.generation_observations) ? meta.generation_observations : [],
+    docx_structural_fidelity: metadataObject(meta.docx_structural_fidelity),
   };
 }
 

@@ -1,6 +1,6 @@
 import { apiRequest } from '../../services/api/client';
 import type { ManagedUser, NotificationItem, SearchResult, Session, UserPreferences } from './settings.types';
-import type { ActActivity, ActListPayload, ActivityConcept, CatalogAct, CatalogArtifact, CatalogFolder, CatalogOwner, ExplorerPayload, SupportingCatalogs, CatalogImportPreview, QuestionnaireCatalogItem, QuestionnaireDefinition } from './catalogs/catalogs.types';
+import type { ActActivity, ActListPayload, ActivityConcept, CatalogAct, CatalogArtifact, CatalogFolder, CatalogOwner, ExplorerPayload, SupportingCatalogs, CatalogImportPreview, QuestionnaireBanksPayload, QuestionnaireQuestion, FunctionalDestinationOption, ArtifactDestination } from './catalogs/catalogs.types';
 import type { PublishTimingPolicyInput, TimingPolicyDefinition, TimingPolicyRevision } from './timing/timing.types';
 
 const qs = (params: Record<string, string | number | undefined>) => {
@@ -76,10 +76,13 @@ export const settingsService = {
   upsertInstitutionResponseTime: (institutionId: string, data: Record<string, unknown>) => apiRequest(`/settings/catalogs/institutions/${institutionId}/response-times`, { method: 'PUT', body: JSON.stringify(data) }),
   createActsCatalogInstitution: (data: Record<string, unknown>) => apiRequest('/settings/catalogs/v2/institutions', { method: 'POST', body: JSON.stringify(data) }),
   catalogArtifactRoot: () => apiRequest<{ data: { notaria: CatalogOwner | null; institutions: CatalogOwner[]; legacy_notaries_hidden?: number } }>('/settings/catalogs/artifacts/root').then((payload) => payload.data),
+  functionalDestinations: () => apiRequest<{ data: FunctionalDestinationOption[] }>('/settings/catalogs/artifacts/functional-destinations').then((payload) => payload.data),
+  assignFunctionalDestinations: (id: string, destinos: ArtifactDestination[]) => apiRequest(`/settings/catalogs/artifacts/${id}/functional-destinations`, { method: 'PUT', body: JSON.stringify({ destinos }) }),
   catalogSupporting: () => apiRequest<{ data: SupportingCatalogs }>('/settings/catalogs/supporting').then((payload) => payload.data),
   createCatalogInstitution: (data: Record<string, unknown>) => apiRequest<{ data: CatalogOwner }>('/settings/catalogs/institutions', { method: 'POST', body: JSON.stringify(data) }).then((payload) => payload.data),
   catalogExplorer: (ownerType: string, ownerId: string, type: string, folderId?: string | null) => apiRequest<{ data: ExplorerPayload }>(`/settings/catalogs/explorer?owner_type=${ownerType}&owner_id=${encodeURIComponent(ownerId)}&type=${encodeURIComponent(type)}${folderId ? `&folder_id=${encodeURIComponent(folderId)}` : ''}`).then((payload) => payload.data),
   createCatalogFolder: (data: Record<string, unknown>) => apiRequest<{ data: CatalogFolder }>('/settings/catalogs/folders', { method: 'POST', body: JSON.stringify(data) }).then((payload) => payload.data),
+  updateCatalogFolder: (id: string, data: Record<string, unknown>) => apiRequest<{ data: CatalogFolder }>(`/settings/catalogs/folders/${id}`, { method: 'PATCH', body: JSON.stringify(data) }).then((payload) => payload.data),
   createCatalogArtifact: (metadata: Record<string, unknown>, file: File) => { const body = new FormData(); body.append('metadata', JSON.stringify(metadata)); body.append('file', file); return apiRequest<{ data: CatalogArtifact }>('/settings/catalogs/artifacts', { method: 'POST', body }).then((payload) => payload.data); },
   updateCatalogArtifact: (id: string, data: Record<string, unknown>) => apiRequest(`/settings/catalogs/artifacts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   addCatalogArtifactVersion: (id: string, file: File, version?: number) => { const body = new FormData(); body.append('metadata', JSON.stringify({ version })); body.append('file', file); return apiRequest(`/settings/catalogs/artifacts/${id}/versions`, { method: 'POST', body }); },
@@ -87,10 +90,9 @@ export const settingsService = {
   bootstrapCatalogLibraryV4: () => apiRequest('/settings/catalogs/artifacts/library/bootstrap', { method: 'POST', headers: { 'Idempotency-Key': 'PRAVIA_CFG002_STANDARD:v2-LEGAL' } }),
   previewCatalogImport: (files: File[]) => { const body = new FormData(); files.forEach((file) => body.append('files', file)); return apiRequest<{ data: CatalogImportPreview }>('/settings/catalogs/artifacts/import/preview', { method: 'POST', body }).then((payload) => payload.data); },
   confirmCatalogImport: (metadata: Record<string, unknown>, files: File[]) => { const body = new FormData(); body.append('metadata', JSON.stringify(metadata)); files.forEach((file) => body.append('files', file)); return apiRequest('/settings/catalogs/artifacts/import/confirm', { method: 'POST', headers: { 'Idempotency-Key': globalThis.crypto?.randomUUID?.() || `cfg002-${Date.now()}` }, body }); },
-  catalogQuestionnaires: (search = '') => apiRequest<{ data: QuestionnaireCatalogItem[] }>(`/settings/catalogs/questionnaires${search ? `?search=${encodeURIComponent(search)}` : ''}`).then((payload) => payload.data),
-  questionnaireSupporting: () => apiRequest<{ data: { acts: Array<{ id: string; nombre: string }>; stages: Array<{ id: string; nombre: string }>; formats: Array<{ id: string; nombre: string }> } }>('/settings/catalogs/questionnaires-supporting').then((payload) => payload.data),
-  createQuestionnaire: (definition: QuestionnaireDefinition) => apiRequest('/settings/catalogs/questionnaires', { method: 'POST', body: JSON.stringify({ definition }) }),
-  versionQuestionnaire: (id: string, definition: QuestionnaireDefinition) => apiRequest(`/settings/catalogs/questionnaires/${encodeURIComponent(id)}/versions`, { method: 'POST', body: JSON.stringify({ definition }) }),
-  duplicateQuestionnaire: (id: string) => apiRequest(`/settings/catalogs/questionnaires/${encodeURIComponent(id)}/duplicate`, { method: 'POST' }),
-  setQuestionnaireActive: (id: string, active: boolean) => apiRequest(`/settings/catalogs/questionnaires/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ active }) }),
+  questionnaireBanks: () => apiRequest<{ data: QuestionnaireBanksPayload }>('/settings/catalogs/questionnaire-banks').then((payload) => payload.data),
+  addQuestionnaireBankQuestion: (bank: string, input: Partial<QuestionnaireQuestion>) => apiRequest(`/settings/catalogs/questionnaire-banks/${encodeURIComponent(bank)}/questions`, { method: 'POST', body: JSON.stringify(input) }),
+  updateQuestionnaireBankQuestion: (bank: string, id: string, input: Partial<QuestionnaireQuestion>) => apiRequest(`/settings/catalogs/questionnaire-banks/${encodeURIComponent(bank)}/questions/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  removeQuestionnaireBankQuestion: (bank: string, id: string) => apiRequest(`/settings/catalogs/questionnaire-banks/${encodeURIComponent(bank)}/questions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  reorderQuestionnaireBank: (bank: string, questionIds: string[]) => apiRequest(`/settings/catalogs/questionnaire-banks/${encodeURIComponent(bank)}/order`, { method: 'PUT', body: JSON.stringify({ question_ids: questionIds }) }),
 };

@@ -21,6 +21,7 @@ import {
   validateMovementSemantics,
 } from '../domain/financialLedger';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { activeOrganizationMembershipWhere } from '../auth/organizationMembership';
 import { canAccessCotizacion, cotizacionObjectWhere } from '../services/objectAccess.service';
 import { complianceAttention, complianceLabel, macrophaseForStatus, parseExpedienteQuery } from '../domain/expedienteReadModel';
 import { ExpedienteReadService } from '../services/expedienteRead.service';
@@ -29,9 +30,11 @@ import { calculateFinanceAggregates, legacyFinanceAllocations, type EconomicNatu
 import { ExpedienteDocumentAppendixError } from '../services/expedienteDocumentAppendix.service';
 import { ExpedienteArtifactsService } from '../services/expedienteArtifacts.service';
 import { ComplianceH6Service } from '../services/complianceH6.service';
+import { ExpedienteActoError, ExpedienteActosService, type ExpedienteActoCommand } from '../services/expedienteActos.service';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
 const expedienteReadService = new ExpedienteReadService(prisma);
+const expedienteActosService = new ExpedienteActosService(prisma);
 
 async function assertRequestExpedienteScope(req: Request, expedienteId: string) {
   if (!req.user) throw new ExpedienteUpdateError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
@@ -302,6 +305,11 @@ export const getExpedienteById = async (req: Request, res: Response) => {
       canReadDocuments: Boolean(req.user?.permissions.includes('documentos.read')),
       canDeleteDocuments: Boolean(req.user?.permissions.includes('documentos.unlink')),
     };
+    const headerResponsibles = req.user ? await prisma.user.findMany({
+      where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(req.user.organizationId, ['DIRECCION', 'ADMINISTRACION', 'ABOGADO']) } },
+      select: { id: true, nombre: true, apellido: true },
+      orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }],
+    }) : [];
     if (req.user && ['RECEPCION', 'GESTORIA'].includes(req.user.rol)) {
       const isReception = req.user.rol === 'RECEPCION';
       const permittedTransitions = transitions.filter((item: any) => isReception
@@ -378,6 +386,7 @@ export const getExpedienteById = async (req: Request, res: Response) => {
       progress,
       readiness,
       capabilities,
+      header_options: { responsibles: headerResponsibles },
     });
   } catch (error: any) {
     res.status(500).json({ error: 'No fue posible obtener el detalle del expediente.', code: 'EXPEDIENTE_DETAIL_UNAVAILABLE' });
@@ -928,14 +937,49 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
       abogado_id,
       notaria_id,
       numero_escritura,
+      fecha_firma,
+      fecha_estimada_firma,
+      fecha_estimada_entrega,
+      fecha_escritura,
+      folio_desde,
+      folio_hasta,
+      valor_operacion,
+      act_change,
       budget_items,
       honorarios_pravia,
       version: expectedVersion,
     } = req.body;
     const cleanAlias = cliente_alias === undefined ? undefined : String(cliente_alias).trim();
     const cleanAbogadoId = abogado_id === undefined ? undefined : String(abogado_id).trim();
+    // Compatibilidad de dominio: la notaría ya no forma parte de la cabecera visual,
+    // pero el writer histórico sigue disponible para integraciones autorizadas.
     const cleanNotariaId = notaria_id === undefined ? undefined : (notaria_id ? String(notaria_id).trim() : null);
     const cleanNumeroEscritura = numero_escritura === undefined ? undefined : String(numero_escritura).trim();
+    const cleanFolioDesde = folio_desde === undefined ? undefined : String(folio_desde).trim();
+    const cleanFolioHasta = folio_hasta === undefined ? undefined : String(folio_hasta).trim();
+    const optionalDate = (value: unknown, label: string) => {
+      if (value === undefined) return undefined;
+      if (value === null || value === '') return null;
+      const parsed = new Date(String(value));
+      if (Number.isNaN(parsed.getTime())) throw new ExpedienteUpdateError(`${label} no es válida.`, 'EXPEDIENTE_DATE_INVALID');
+      return parsed;
+    };
+    const cleanFechaFirma = optionalDate(fecha_firma, 'La fecha de firma');
+    const cleanFechaEstimadaFirma = optionalDate(fecha_estimada_firma, 'La fecha estimada de firma');
+    const cleanFechaEstimadaEntrega = optionalDate(fecha_estimada_entrega, 'La fecha estimada de entrega');
+    const cleanFechaEscritura = optionalDate(fecha_escritura, 'La fecha de escritura');
+    let cleanValorOperacion: Prisma.Decimal | null | undefined;
+    try {
+      cleanValorOperacion = valor_operacion === undefined || valor_operacion === null || valor_operacion === ''
+        ? (valor_operacion === undefined ? undefined : null)
+        : new Prisma.Decimal(String(valor_operacion));
+    } catch {
+      throw new ExpedienteUpdateError('El valor de la operación no es válido.', 'EXPEDIENTE_VALUE_INVALID');
+    }
+    const actCommand = act_change === undefined ? undefined : act_change as ExpedienteActoCommand;
+    if (actCommand && !['ADD', 'CHANGE'].includes(String(actCommand.operation))) {
+      throw new ExpedienteUpdateError('La operación del acto principal no es válida.', 'EXPEDIENTE_ACT_OPERATION_INVALID');
+    }
 
     if (tipo_acto_id !== undefined || tipo_acto_nombre !== undefined) {
       throw new ExpedienteUpdateError(
@@ -958,10 +1002,13 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
     if (cleanAbogadoId !== undefined && cleanAbogadoId.length === 0) {
       throw new ExpedienteUpdateError('Selecciona un abogado activo para el expediente.', 'EXPEDIENTE_LAWYER_REQUIRED');
     }
+    if (cleanValorOperacion instanceof Prisma.Decimal && cleanValorOperacion.isNegative()) {
+      throw new ExpedienteUpdateError('El valor de la operación no puede ser negativo.', 'EXPEDIENTE_VALUE_INVALID');
+    }
 
     const updated = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:expediente-update:${id}`}))`);
-      const currentExp = await tx.expediente.findUnique({ where: { id } });
+      const currentExp = await tx.expediente.findFirst({ where: { id, organization_id: req.user!.organizationId, archived_at: null, ...expedienteAccessWhere(req.user!) } });
       if (!currentExp) throw new ExpedienteUpdateError('Expediente no encontrado.', 'EXPEDIENTE_NOT_FOUND', 404);
       if (expectedVersion !== undefined && Number(expectedVersion) !== currentExp.version) {
         throw new ExpedienteUpdateError(
@@ -972,11 +1019,19 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
       }
 
       if (cleanAbogadoId !== undefined) {
-        const lawyer = await tx.user.findFirst({ where: { id: cleanAbogadoId, activo: true }, select: { id: true } });
+        const lawyer = await tx.user.findFirst({ where: { id: cleanAbogadoId, activo: true, organizationMemberships: { some: { organization_id: req.user!.organizationId, status: 'ACTIVE' } } }, select: { id: true } });
         if (!lawyer) throw new ExpedienteUpdateError('El abogado seleccionado no existe o está inactivo.', 'EXPEDIENTE_LAWYER_INVALID');
       }
       if (cleanNotariaId) {
-        const notary = await tx.notaria.findFirst({ where: { id: cleanNotariaId, activa: true }, select: { id: true } });
+        const notary = await tx.notaria.findFirst({
+          where: {
+            id: cleanNotariaId,
+            activa: true,
+            archived_at: null,
+            OR: [{ organization_id: req.user!.organizationId }, { organization_id: null }],
+          },
+          select: { id: true },
+        });
         if (!notary) throw new ExpedienteUpdateError('La notaría seleccionada no existe o está inactiva.', 'EXPEDIENTE_NOTARY_INVALID');
       }
 
@@ -985,15 +1040,22 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
       const actor = await tx.user.findFirst({ where: { id: actorId, activo: true }, select: { id: true } });
       if (!actor) throw new ExpedienteUpdateError('No existe un usuario activo para registrar el cambio.', 'EXPEDIENTE_ACTOR_INVALID', 403);
 
-      const currentDatos = (currentExp.datos_operacion as Record<string, any> | null) || {};
-      const newDatos: Record<string, any> = { ...currentDatos };
-      if (cleanNumeroEscritura !== undefined) newDatos.numero_escritura = cleanNumeroEscritura || null;
-
       const changes: string[] = [];
       if (cleanAlias !== undefined && cleanAlias !== currentExp.cliente_alias) changes.push('Alias o identificación');
       if (cleanAbogadoId !== undefined && cleanAbogadoId !== currentExp.abogado_id) changes.push('Abogado encargado');
       if (cleanNotariaId !== undefined && cleanNotariaId !== currentExp.notaria_id) changes.push('Notaría');
-      if (cleanNumeroEscritura !== undefined && cleanNumeroEscritura !== (currentExp.numero_notaria || '')) changes.push('Número de escritura');
+      if (cleanNumeroEscritura !== undefined && cleanNumeroEscritura !== (currentExp.numero_escritura || '')) changes.push('Número de escritura');
+      if (cleanFechaFirma !== undefined && cleanFechaFirma?.getTime() !== currentExp.fecha_real_firma?.getTime()) changes.push('Fecha de firma');
+      if (cleanFechaEstimadaFirma !== undefined && cleanFechaEstimadaFirma?.getTime() !== currentExp.fecha_estimada_firma?.getTime()) changes.push('Fecha estimada de firma');
+      if (cleanFechaEstimadaEntrega !== undefined && cleanFechaEstimadaEntrega?.getTime() !== currentExp.fecha_estimada_entrega?.getTime()) changes.push('Fecha estimada de entrega');
+      if (cleanFechaEscritura !== undefined && cleanFechaEscritura?.getTime() !== currentExp.fecha_escritura?.getTime()) changes.push('Fecha de escritura');
+      if (cleanFolioDesde !== undefined && cleanFolioDesde !== (currentExp.folio_desde || '')) changes.push('Folio desde');
+      if (cleanFolioHasta !== undefined && cleanFolioHasta !== (currentExp.folio_hasta || '')) changes.push('Folio hasta');
+      if (cleanValorOperacion !== undefined && String(cleanValorOperacion ?? '') !== String(currentExp.valor_operacion ?? '')) changes.push('Valor de la operación');
+      if (actCommand) {
+        await expedienteActosService.applyInTransaction(tx, req.user!, id, actCommand, { incrementExpedienteVersion: false });
+        changes.push('Acto principal');
+      }
 
       const expediente = await tx.expediente.update({
         where: { id },
@@ -1001,14 +1063,25 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
           cliente_alias: cleanAlias,
           abogado_id: cleanAbogadoId,
           notaria_id: cleanNotariaId,
-          numero_notaria: cleanNumeroEscritura === undefined ? undefined : (cleanNumeroEscritura || null),
-          datos_operacion: newDatos,
+          numero_escritura: cleanNumeroEscritura === undefined ? undefined : (cleanNumeroEscritura || null),
+          fecha_real_firma: cleanFechaFirma,
+          fecha_estimada_firma: cleanFechaEstimadaFirma,
+          fecha_estimada_entrega: cleanFechaEstimadaEntrega,
+          fecha_escritura: cleanFechaEscritura,
+          folio_desde: cleanFolioDesde === undefined ? undefined : (cleanFolioDesde || null),
+          folio_hasta: cleanFolioHasta === undefined ? undefined : (cleanFolioHasta || null),
+          valor_operacion: cleanValorOperacion,
           version: { increment: 1 },
         },
       });
 
-      if (cleanNotariaId !== undefined && cleanNotariaId !== currentExp.notaria_id && req.user) {
-        await new ExpedienteArtifactsService(prisma).reconcileContextChangeInTransaction(tx, req.user, id, 'EXPEDIENTE_NOTARY_CHANGE');
+      if (cleanNotariaId !== undefined && cleanNotariaId !== currentExp.notaria_id) {
+        await new ExpedienteArtifactsService(prisma).reconcileContextChangeInTransaction(
+          tx,
+          req.user!,
+          id,
+          'EXPEDIENTE_NOTARY_CHANGE',
+        );
       }
 
       if (changes.length > 0) {
@@ -1040,6 +1113,9 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
 
     res.json(updated);
   } catch (error: any) {
+    if (error instanceof ExpedienteActoError) {
+      return res.status(error.status).json({ error: error.message, code: error.code });
+    }
     if (error instanceof ExpedienteUpdateError) {
       return res.status(error.status).json({ error: error.message, code: error.code });
     }
@@ -1956,9 +2032,19 @@ export const getTiposActo = async (req: Request, res: Response) => {
   try {
     if (!req.user) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
     const tipos = await prisma.tipoActo.findMany({
-      where: { activo: true, archived_at: null, OR: [{ organization_id: null }, { organization_id: req.user.organizationId }] },
+      where: {
+        activo: true,
+        archived_at: null,
+        OR: [{ organization_id: null }, { organization_id: req.user.organizationId }],
+        configuracionesOperativas: { some: { organization_id: req.user.organizationId, activa: true } },
+      },
       orderBy: { nombre: 'asc' },
       include: {
+        configuracionesOperativas: {
+          where: { organization_id: req.user.organizationId, activa: true },
+          select: { id: true, clasificacion: true, familia: true, nombre_personalizado: true, descripcion_personalizada: true, revision: true },
+          take: 1,
+        },
         tipoActoCaracteresCompareciente: {
           where: { caracter: { activo: true } },
           include: { caracter: true },

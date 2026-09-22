@@ -305,7 +305,10 @@ export class ExpedienteArtifactsService {
   }
 
   private masterArtifacts(db: Db, organizationId: string) {
-    return db.catalogoArtefacto.findMany({ where: { organization_id: organizationId, activo: true }, include: { actos: true, reglas: { where: { activa: true }, include: { normativaRevision: true } }, versiones: { where: { activa: true }, orderBy: { version: 'desc' } } } });
+    return db.catalogoArtefacto.findMany({
+      where: { organization_id: organizationId, activo: true, destinosFuncionales: { some: { destino: 'EXPEDIENTE_DOCUMENTO_GENERICO', activo: true } } },
+      include: { actos: true, reglas: { where: { activa: true }, include: { normativaRevision: true } }, versiones: { where: { activa: true }, orderBy: { version: 'desc' } } },
+    });
   }
 
   private async partySources(db: Db, actor: Exp006Actor, pending: any) {

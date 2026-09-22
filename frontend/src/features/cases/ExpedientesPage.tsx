@@ -11,12 +11,12 @@ import { EligibleQuoteSelector } from './components/EligibleQuoteSelector';
 import { useExpedientes } from './useExpedientes';
 import styles from './Expedientes.module.css';
 
-const fields = ['search', 'folio', 'macrophase', 'stage', 'responsible', 'notary', 'risk', 'compliance', 'dateFrom', 'dateTo', 'actType', 'client', 'status', 'sort'] as const;
+const fields = ['search', 'folio', 'macrophase', 'stage', 'responsible', 'notary', 'risk', 'compliance', 'dateFrom', 'dateTo', 'deedNumber', 'deedDateFrom', 'deedDateTo', 'actType', 'client', 'status', 'sort'] as const;
 export function ExpedientesPage() {
   const { user } = useAuth(); const navigate = useNavigate(); const [params, setParams] = useSearchParams(); const [open, setOpen] = useState(params.get('new') === '1'); const [toast, setToast] = useState('');
   const values = Object.fromEntries(fields.map((field) => [field, params.get(field) || ''])) as Record<string, string>; const page = Math.max(1, Number.parseInt(params.get('page') || '1', 10) || 1);
   const { result, status, reload } = useExpedientes({ ...values, page, pageSize: 20 }); const canWrite = user?.permissions?.includes('expedientes.write') || false;
-  const change = (field: string, value: string) => { const next = new URLSearchParams(params); if (field === 'dateRange') { next.delete('dateFrom'); next.delete('dateTo'); } else if (value) next.set(field, value); else next.delete(field); if (field !== 'page') next.delete('page'); next.delete('new'); setParams(next, { replace: true }); };
+  const change = (field: string, value: string) => { const next = new URLSearchParams(params); if (field === 'dateRange') { next.delete('dateFrom'); next.delete('dateTo'); } else if (field === 'deedDateRange') { next.delete('deedDateFrom'); next.delete('deedDateTo'); } else if (value) next.set(field, value); else next.delete(field); if (field !== 'page') next.delete('page'); next.delete('new'); setParams(next, { replace: true }); };
   const showQuoteSelector = () => { const next = new URLSearchParams(params); next.set('new', '1'); setParams(next, { replace: true }); setOpen(true); };
   const closeQuoteSelector = () => { const next = new URLSearchParams(params); next.delete('new'); setParams(next, { replace: true }); setOpen(false); };
   const clear = () => setParams(new URLSearchParams(), { replace: true }); const selectMetric = (key: string) => change('macrophase', key === 'TOTAL' ? '' : key);

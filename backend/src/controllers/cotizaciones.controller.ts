@@ -18,9 +18,12 @@ import { CotizacionWorkflowService } from '../services/cotizacionWorkflow.servic
 import { allowedQuoteActions, QuoteContractError, quoteKnowledge, quoteStageLabel } from '../domain/cotizacionContract';
 import { BudgetValidationError, budgetTotals, normalizeBudgetConcepts } from '../domain/expedienteBudget';
 import { QuoteDocumentError, quoteDocumentService } from '../services/quoteDocument.service';
+import { QuoteBudgetError, QuoteBudgetService } from '../services/quoteBudget.service';
+import { downloadFile } from '../services/supabase.service';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
 const cotizacionWorkflowService = new CotizacionWorkflowService(prisma);
+const quoteBudgetService = new QuoteBudgetService(prisma);
 const quoteFrozenStages = new Set<CotizacionEtapaContractual>([
   CotizacionEtapaContractual.ACEPTADA,
   CotizacionEtapaContractual.ACEPTO_ANTICIPO,
@@ -543,6 +546,19 @@ export const generateCotizacionDocument = async (req: Request, res: Response) =>
   }
 };
 
+export const updateCotizacionPresupuesto = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
+    const result = await quoteBudgetService.save(req.user, req.params.id, req.body ?? {});
+    return res.json(result);
+  } catch (error) {
+    if (error instanceof QuoteBudgetError) return res.status(error.status).json({ error: error.message, code: error.code });
+    if (error instanceof BudgetValidationError) return res.status(400).json({ error: error.message, code: error.code });
+    console.error('Quote budget update failed', error);
+    return res.status(500).json({ error: 'No fue posible guardar el presupuesto.', code: 'QUOTE_BUDGET_UPDATE_FAILED' });
+  }
+};
+
 export const registrarAnticipo = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -880,19 +896,23 @@ export const getCotizacionDocumentos = async (req: Request, res: Response) => {
 
     // 2. Add Cotización documents tagged as 'COTIZACION' (overriding or appending)
     cDocs.forEach(d => {
+      const inherited = resultDocsMap.get(d.id)?.origen_modulo === 'PROSPECTO';
       resultDocsMap.set(d.id, {
         ...d,
-        origen_modulo: resultDocsMap.has(d.id) ? 'PROSPECTO' : 'COTIZACION',
-        origen_etiqueta: resultDocsMap.has(d.id) ? 'Prospecto' : 'Cotización'
+        origen_modulo: inherited ? 'PROSPECTO' : 'COTIZACION',
+        origen_etiqueta: inherited ? 'Prospecto' : 'Cotización',
+        can_delete: true,
       });
     });
 
     cVinculos.forEach(v => {
       if (v.documento) {
+        const current = resultDocsMap.get(v.documento.id);
         resultDocsMap.set(v.documento.id, {
           ...v.documento,
-          origen_modulo: resultDocsMap.has(v.documento.id) ? 'PROSPECTO' : 'COTIZACION',
-          origen_etiqueta: resultDocsMap.has(v.documento.id) ? 'Prospecto' : 'Cotización'
+          origen_modulo: current?.origen_modulo ?? 'COTIZACION',
+          origen_etiqueta: current?.origen_etiqueta ?? 'Cotización',
+          can_delete: true,
         });
       }
     });
@@ -908,24 +928,68 @@ export const getCotizacionDocumentos = async (req: Request, res: Response) => {
   }
 };
 
+const cotizacionDocumento = async (req: Request, cotizacionId: string, documentoId: string) => {
+  const quote = await prisma.cotizacion.findFirst({
+    where: { id: cotizacionId, ...cotizacionObjectWhere(req.user!) },
+    select: { id: true, prospecto_id: true },
+  });
+  if (!quote) return null;
+  return prisma.documento.findFirst({ where: {
+    id: documentoId,
+    organization_id: req.user!.organizationId,
+    OR: [
+      { cotizacion_id: quote.id },
+      { cotizacionVinculos: { some: { cotizacion_id: quote.id, estatus: 'ACTIVO' as const } } },
+      ...(quote.prospecto_id ? [
+        { prospecto_id: quote.prospecto_id },
+        { prospectoVinculos: { some: { prospecto_id: quote.prospecto_id, estatus: 'ACTIVO' as const } } },
+      ] : []),
+    ],
+  } });
+};
+
+const streamCotizacionDocumento = async (req: Request, res: Response, disposition: 'inline' | 'attachment') => {
+  try {
+    const document = await cotizacionDocumento(req, req.params.id, req.params.documentoId);
+    if (!document) return res.status(404).json({ error: 'Documento no encontrado en esta cotización.', code: 'QUOTE_DOCUMENT_NOT_FOUND' });
+    const buffer = await downloadFile(document.storage_key);
+    res.setHeader('Content-Type', document.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Length', String(buffer.length));
+    res.setHeader('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(document.nombre_original)}`);
+    return res.send(buffer);
+  } catch (error) {
+    console.error('Quote document stream failed', error);
+    return res.status(500).json({ error: 'No fue posible obtener el documento.', code: 'QUOTE_DOCUMENT_STREAM_FAILED' });
+  }
+};
+
+export const viewCotizacionDocumento = (req: Request, res: Response) => streamCotizacionDocumento(req, res, 'inline');
+export const downloadCotizacionDocumento = (req: Request, res: Response) => streamCotizacionDocumento(req, res, 'attachment');
+
 // DESVINCULAR DOCUMENTO DE COTIZACIÓN (SIN BORRAR DEL PROSPECTO NI STORAGE)
 export const unlinkCotizacionDocumento = async (req: Request, res: Response) => {
   try {
     const { id, documentoId } = req.params;
 
-    // Desvincular de tabla junction CotizacionDocumento
-    await prisma.cotizacionDocumento.updateMany({
-      where: { cotizacion_id: id, documento_id: documentoId },
-      data: { estatus: 'INACTIVO', inactivado_at: new Date(), inactivado_por_id: req.user?.id }
+    const document = await prisma.documento.findFirst({ where: { id: documentoId, organization_id: req.user!.organizationId } });
+    if (!document) return res.status(404).json({ error: 'Documento no encontrado.', code: 'QUOTE_DOCUMENT_NOT_FOUND' });
+    const direct = document.cotizacion_id === id;
+    const linked = await prisma.cotizacionDocumento.count({ where: { cotizacion_id: id, documento_id: documentoId, estatus: 'ACTIVO' } });
+    if (!direct && !linked) return res.status(409).json({ error: 'El documento pertenece al Prospecto de origen y se conserva allí.', code: 'INHERITED_DOCUMENT_READ_ONLY' });
+    await prisma.$transaction(async (tx) => {
+      await tx.cotizacionDocumento.updateMany({
+        where: { cotizacion_id: id, documento_id: documentoId, estatus: 'ACTIVO' },
+        data: { estatus: 'INACTIVO', inactivado_at: new Date(), inactivado_por_id: req.user!.id, motivo_inactivacion: 'Retirado desde Cotizaciones.' },
+      });
+      await tx.documento.updateMany({ where: { id: documentoId, cotizacion_id: id }, data: { cotizacion_id: null } });
+      await tx.auditLog.create({ data: {
+        organization_id: req.user!.organizationId, user_id: req.user!.id, session_id: req.user!.sessionId,
+        accion: 'QUOTE_DOCUMENT_UNLINKED', entidad: 'Documento', entidad_id: documentoId,
+        valores_anteriores: { cotizacion_id: id, visible: true }, valores_nuevos: { cotizacion_id: null, visible: false },
+        detalles: { source: 'CORRECCION_002_V2', storage_deleted: false },
+      } });
     });
-
-    // Desvincular cotizacion_id directo si existe
-    await prisma.documento.updateMany({
-      where: { id: documentoId, cotizacion_id: id },
-      data: { cotizacion_id: null }
-    });
-
-    res.json({ message: 'Documento desvinculado de la cotización exitosamente' });
+    res.json({ message: 'Documento retirado de la cotización.', storage_deleted: false });
   } catch (error: any) {
     res.status(500).json({ error: 'Error al desvincular documento de cotización', detail: error.message });
   }

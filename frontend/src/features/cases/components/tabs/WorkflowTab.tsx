@@ -25,9 +25,29 @@ export function WorkflowTab({ expediente, onChanged }: { expediente: ExpedienteD
   const generatePending = async () => { setSaving(true); setError(''); try { await complianceService.h6GeneratePending(expediente.id); setError('Los formatos disponibles quedaron reconciliados. Los generados aún requieren revisión y firma.'); } catch (cause) { setError(cause instanceof Error ? cause.message : 'No fue posible generar los formatos pendientes.'); } finally { setSaving(false); } };
   const downloadPackage = async () => { setSaving(true); setError(''); try { const { blob } = await complianceService.h6SignaturePackage(expediente.id); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `paquete-firma-${expediente.numero_pravia}.${blob.type === 'application/pdf' ? 'pdf' : 'zip'}`; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (cause) { setError(cause instanceof Error ? cause.message : 'No fue posible preparar el paquete de firma.'); } finally { setSaving(false); } };
   return <div className={styles.tabStack}>
+    <DeedDateEditor expediente={expediente} onChanged={onChanged} />
     <OperationalFollowup expediente={expediente} />
     <section className={styles.sectionCard}><header><div><h2>Hitos contractuales</h2><p>Transición canónica del expediente y snapshot documental de EXP-004. Versión {expediente.flujoVersion?.version ?? '—'} congelada.</p></div><div className={styles.complianceDocumentHeaderActions}>{transition?.status === 'FIRMADO' && expediente.capabilities.canWrite && <button type="button" disabled={saving} onClick={() => void generatePending()}><FileCog />Generar formatos pendientes</button>}<button type="button" disabled={saving} onClick={() => void downloadPackage()}><Download />Descargar paquete</button>{actionable && <button type="button" className={styles.primaryButton} disabled={saving} onClick={startTransition}>{saving ? <LoaderCircle className={styles.spin} size={16} /> : <Play size={16} />}{transition.label}</button>}</div></header>{error && <div className={styles.inlineError} role="status">{error}</div>}<div className={styles.workflowSummary}><span>{macroLabels[expediente.macrofase]}</span><strong>{expediente.etapaActual?.nombre_snapshot || expediente.etapa_actual_nombre || 'Sin etapa'}</strong><small>{expediente.workflow.current_status_label}</small></div>{stages.length ? <ol className={styles.timeline}>{stages.map((stage: any) => { const instance: any = completed.get(stage.clave); const current = stage.clave === expediente.etapaActual?.clave_snapshot; const done = Boolean(instance?.completada); return <li key={stage.clave} className={current ? styles.timelineCurrent : done ? styles.timelineDone : ''}><span>{done ? <Check size={14} /> : <Circle size={12} />}</span><div><strong>{stage.nombre}</strong><small>{stage.estado_general_relacionado?.replaceAll('_', ' ').toLocaleLowerCase('es-MX')}{stage.obligatoria ? ' · Obligatoria' : ' · Opcional'}</small></div><time>{instance?.fecha_fin ? dateTime(instance.fecha_fin) : current ? 'En curso' : 'Próxima'}</time></li>; })}</ol> : <p className={styles.sectionEmpty}>Este expediente no tiene hitos macro configurados.</p>}{dialog && transition && <TransitionDateDialog mode={dialog} preflight={signaturePreflight} onClose={() => { setDialog(null); setSignaturePreflight(null); }} onGoToCompliance={() => { window.location.hash = 'cumplimiento'; }} onSave={(data) => void advance(transition, data)} saving={saving} />}</section>
   </div>;
+}
+
+function DeedDateEditor({ expediente, onChanged }: { expediente: ExpedienteDetail; onChanged(): void }) {
+  const persisted = expediente.fecha_escritura?.slice(0, 10) || '';
+  const [value, setValue] = useState(persisted);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  useEffect(() => setValue(persisted), [persisted]);
+  const save = async () => {
+    setSaving(true); setMessage('');
+    try {
+      await expedientesService.updateHeader(expediente.id, { fecha_escritura: value || null, version: expediente.version });
+      setMessage('Fecha de escritura guardada.');
+      onChanged();
+    } catch {
+      setMessage('No fue posible guardar la fecha de escritura. Recarga y vuelve a intentarlo.');
+    } finally { setSaving(false); }
+  };
+  return <section className={styles.sectionCard} aria-labelledby="deed-date-title"><header><div><h2 id="deed-date-title">Datos de escrituración</h2><p>Fecha estructurada independiente de la firma y de la actualización del expediente.</p></div></header><div className={styles.inlineFields}><label>Fecha de escritura<input type="date" value={value} disabled={!expediente.capabilities.canWrite} onChange={(event) => { setValue(event.target.value); setMessage(''); }} /></label>{expediente.capabilities.canWrite && <button type="button" className={styles.primaryButton} disabled={saving || value === persisted} onClick={() => void save()}>{saving && <LoaderCircle className={styles.spin} size={15} />}Guardar fecha</button>}</div>{message && <p role="status" className={message.startsWith('No ') ? styles.inlineError : styles.inlineSuccess}>{message}</p>}</section>;
 }
 
 function OperationalFollowup({ expediente }: { expediente: ExpedienteDetail }) {

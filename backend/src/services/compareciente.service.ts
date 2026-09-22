@@ -1051,6 +1051,7 @@ export class ComparecienteService {
     fechaEmision?: string;
     fechaVencimiento?: string;
     observaciones?: string;
+    vigencia?: 'VIGENTE' | 'HISTORICO';
   }) {
     const { comparecienteId, userId, buffer, fileName, mimeType } = params;
     const categoria = params.categoria || 'OTROS';
@@ -1113,6 +1114,7 @@ export class ComparecienteService {
             fecha_documento: fechaEmision,
             fecha_vencimiento: fechaVencimiento,
             observaciones: params.observaciones,
+            vigencia: params.vigencia === 'HISTORICO' ? 'HISTORICO' : 'VIGENTE',
             creado_por_id: actor.id,
           },
         });
@@ -1137,6 +1139,22 @@ export class ComparecienteService {
       }
       throw error;
     }
+  }
+
+  /** Reclasifica la relación documental sin alterar ni duplicar el blob. */
+  public async actualizarVigenciaDocumentoMaster(comparecienteId: string, documentoId: string, vigencia: 'VIGENTE' | 'HISTORICO', actorUserId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const link = await tx.comparecienteDocumento.findFirst({ where: { compareciente_id: comparecienteId, documento_id: documentoId, archived_at: null, estatus: 'ACTIVO' } });
+      if (!link) throw new Error('El documento no está disponible para este compareciente.');
+      if (link.vigencia === vigencia) return link;
+      const updated = await tx.comparecienteDocumento.update({ where: { id: link.id }, data: { vigencia } });
+      await tx.auditLog.create({ data: {
+        user_id: actorUserId, accion: 'CLASIFICAR_DOCUMENTO_COMPARECIENTE', entidad: 'ComparecienteDocumento', entidad_id: link.id,
+        valores_anteriores: { vigencia: link.vigencia }, valores_nuevos: { vigencia },
+        detalles: { modulo: 'COMPARECIENTES', compareciente_id: comparecienteId, documento_id: documentoId }, correlation_id: crypto.randomUUID(),
+      } });
+      return updated;
+    });
   }
 
   /** Retiro lógico auditable: conserva el archivo maestro y su trazabilidad. */
@@ -1164,7 +1182,7 @@ export class ComparecienteService {
    */
   public async extraerDocumentosExistentesConIA(comparecienteId: string, actorUserId: string) {
     const links = await this.prisma.comparecienteDocumento.findMany({
-      where: { compareciente_id: comparecienteId, archived_at: null, estatus: 'ACTIVO' },
+      where: { compareciente_id: comparecienteId, archived_at: null, estatus: 'ACTIVO', vigencia: 'VIGENTE' },
       include: { documento: true },
     });
     if (!links.length) throw new Error('Carga al menos un documento antes de extraer información.');
@@ -1184,6 +1202,15 @@ export class ComparecienteService {
     const started = Date.now();
     try {
       const extraction = await extraerMultiplesDocumentos(readable);
+      const ineIdentifiers = {
+        cic: extraction.identificadores_ine?.cic
+          ? (extraction.identificadores_ine.cic.toUpperCase().startsWith('IDMEX') ? extraction.identificadores_ine.cic.toUpperCase() : `IDMEX${extraction.identificadores_ine.cic.toUpperCase()}`)
+          : undefined,
+        ocr: extraction.identificadores_ine?.ocr?.trim() || undefined,
+      };
+      // When both identifiers are present there is deliberately no default.
+      // Folio is selected by the human in the existing identification field.
+      if (ineIdentifiers.cic && ineIdentifiers.ocr) extraction.campos = (extraction.campos || []).filter((field) => field.campo !== 'folio_identificacion');
       const consolidated = consolidateExtractedFields(extraction.campos || []);
       await recordAIUsages(extraction.usos || (extraction.uso ? [extraction.uso] : []), {
         operacion: 'COMPARECIENTE_DOCUMENT_EXTRACTION', usuarioId: actorUserId,
@@ -1201,6 +1228,15 @@ export class ComparecienteService {
             } });
           }
         }
+        for (const [field, value] of Object.entries({ ine_cic: ineIdentifiers.cic, ine_ocr: ineIdentifiers.ocr })) {
+          if (!value) continue;
+          const existing = await tx.comparecienteDatoFuente.findFirst({ where: { compareciente_id: comparecienteId, campo: field, archived_at: null, valor_detectado: value }, select: { id: true } });
+          if (!existing) await tx.comparecienteDatoFuente.create({ data: {
+            compareciente_id: comparecienteId, campo: field, entidad_destino: 'ComparecienteWorkspace', valor_detectado: value,
+            proveedor_ia: extraction.proveedor, modelo_ia: extraction.modelo, confianza: 'LECTURA_CLARA',
+            estado: 'PENDIENTE_CONFIRMACION', correlation_id: crypto.randomUUID(),
+          } });
+        }
         await tx.auditLog.create({ data: {
           user_id: actorUserId, accion: 'EXTRAER_DATOS_COMPARECIENTE_IA', entidad: 'Compareciente', entidad_id: comparecienteId,
           valores_nuevos: { campos_propuestos: Object.keys(consolidated.proposals), conflictos: consolidated.conflicts.length, documentos: readable.length },
@@ -1210,6 +1246,7 @@ export class ComparecienteService {
       return {
         values: consolidated.values, proposals: consolidated.proposals, conflicts: consolidated.conflicts,
         domicilios_detectados: extraction.domicilios_detectados || [], documentos_omitidos: skipped,
+        identificadores_ine: ineIdentifiers,
       };
     } catch (error) {
       await recordAIFailure({ operacion: 'COMPARECIENTE_DOCUMENT_EXTRACTION', usuarioId: actorUserId, modelo: process.env.OPENAI_DOCUMENT_MODEL || 'configured-document-model', durationMs: Date.now() - started, metadata: { compareciente_id: comparecienteId } });

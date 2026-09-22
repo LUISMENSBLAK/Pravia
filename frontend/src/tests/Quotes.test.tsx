@@ -9,7 +9,7 @@ import type { Quote, QuoteContractStage, QuoteListResult, QuoteWorkflow } from '
 import quoteCss from '../features/quotes/Quotes.module.css?inline';
 
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
-const session = (permissions = ['cotizaciones.read', 'cotizaciones.write', 'prospectos.read', 'notarias.read', 'expedientes.write']) => ({ user: { id: 'user-1', name: 'Andrea Ruiz', role: 'ADMINISTRACION', permissions } });
+const session = (permissions = ['cotizaciones.read', 'cotizaciones.write', 'prospectos.read', 'notarias.read', 'expedientes.write', 'documentos.read', 'documentos.unlink']) => ({ user: { id: 'user-1', name: 'Andrea Ruiz', role: 'ADMINISTRACION', permissions } });
 const version = { id: 'version-1', version: 1, desglose_notaria: { rubros: [{ categoria: 'HONORARIOS', concepto: 'Honorarios notariales', monto: 120000 }] }, desglose_pravia: { participacion_pravia: 20000 }, total_notaria: 120000, honorarios_pravia: 20000, total_cliente: 120000, aprobada: true, created_at: '2026-08-01T10:00:00.000Z', pdf_url: null };
 const workflow = (stage: QuoteContractStage, actions: QuoteWorkflow['actions'], versionNumber = 1): QuoteWorkflow => ({
   stage, stageLabel: stage === 'ACEPTO_ANTICIPO' ? 'Aceptó / Anticipo (histórico)' : stage === 'ACEPTADA' ? 'Aceptada' : stage === 'EN_SEGUIMIENTO' ? 'En seguimiento' : stage === 'ENVIADA_CLIENTE' ? 'Enviada al cliente' : stage === 'EN_ELABORACION' ? 'En elaboración' : 'Borrador',
@@ -20,6 +20,7 @@ const quote = (overrides: Partial<Quote> = {}): Quote => ({
   id: 'quote-1', numero_solicitud: 'SOL-2026-001', numero_cotizacion: 'COT-2026-001', version_actual: 1, prospecto_id: 'prospect-1', user_id: 'user-1', notaria_id: 'notary-1', estado: 'ENVIADA_CLIENTE',
   fecha_solicitud_notaria: '2026-08-01T10:00:00.000Z', fecha_presupuesto_recibido: '2026-08-03T10:00:00.000Z', fecha_enviada_cliente: '2026-08-05T10:00:00.000Z', total_notaria: 120000, honorarios_pravia: 20000, total_cliente: 120000,
   created_at: '2026-08-01T10:00:00.000Z', updated_at: '2026-08-05T10:00:00.000Z', prospecto: { id: 'prospect-1', nombre: 'Constructora Horizonte', tipo_acto: 'Compraventa', email: 'cliente@horizonte.mx' }, notaria: { id: 'notary-1', nombre: 'Notaría 12', correo_proyectos: 'proyectos@notaria.mx' }, creada_por: { id: 'user-1', nombre: 'Andrea', apellido: 'Ruiz' }, versiones: [version], seguimientos: [], documentos: [], pagos: [], expediente: null,
+  presupuesto: { concepts: [{ id: 'c-1', concepto: 'Honorarios notariales', categoria: 'HONORARIOS', importe: 120000, orden: 0, origen: 'MANUAL' }], totals: { honorarios: '120000.00', iva_honorarios: '0.00', subtotal_honorarios: '120000.00', impuestos_derechos: '0.00', total: '120000.00' } },
   transiciones_permitidas: ['EN_NEGOCIACION', 'ACEPTADA', 'RECHAZADA', 'VENCIDA'], conversion: { eligible: false, accepted: false, approvedVersion: true, validatedAdvance: false, validatedAdvanceTotal: 0, notConverted: true, linkedProspect: true, failures: ['La cotización debe estar ACEPTADA por el cliente.'] }, ...overrides,
 });
 const list = (quotes = [quote()]): QuoteListResult => ({ data: quotes, meta: { page: 1, pageSize: 12, total: quotes.length, totalPages: 1, hasNextPage: false, hasPreviousPage: false, countsByState: { ENVIADA_CLIENTE: quotes.length }, metrics: { sent: quotes.length, accepted: 0, totalAmount: quotes.reduce((sum, item) => sum + Number(item.total_cliente || 0), 0), conversionRate: 0 } }, facets: { acts: ['Compraventa'], responsibles: [{ id: 'user-1', name: 'Andrea Ruiz' }] }, analytics: [{ key: '2026-08', label: 'ago', sentAmount: 120000, acceptedAmount: 0, sentCount: 1, acceptedCount: 0, rate: 0 }] });
@@ -33,8 +34,7 @@ const mockApi = (options: MockOptions = {}) => {
     if (url.includes('/prospectos?')) return response({ data: [{ id: 'prospect-2', nombre: 'Nueva Empresa', tipo_acto: 'Hipoteca', email: 'nueva@empresa.mx' }], meta: { total: 1 }, facets: { services: [], sources: [] } });
     if (url.includes('/notarias?')) return response([{ id: 'notary-1', nombre: 'Notaría 12', numero_notaria: '12', municipio: 'Tepic', entidad_federativa: 'Nayarit', activa: true }]);
     if (url.endsWith('/cotizaciones') && init?.method === 'POST') return response(quote({ id: 'created-quote', numero_cotizacion: 'COT-2026-002', prospecto_id: 'prospect-2', prospecto: { nombre: 'Nueva Empresa', tipo_acto: 'Hipoteca' }, versiones: [] }), 201);
-    if (url.endsWith('/cotizaciones/created-quote/versiones')) return response({ version: { ...version, id: 'created-version' }, cotizacion: quote({ id: 'created-quote', numero_cotizacion: 'COT-2026-002' }) }, 201);
-    if (url.endsWith('/cotizaciones/quote-1/versiones')) return response({ version: { ...version, id: 'imported-version', version: 2, conceptos: [{ id: 'concept-imported', concepto: 'Derecho registral corregido', categoria: 'IMPUESTOS_DERECHOS', importe: 8500, orden: 1, origen: 'IMPORTADO' }] }, cotizacion: quote({ version_actual: 2 }) }, 201);
+    if (url.endsWith('/cotizaciones/quote-1/presupuesto') && init?.method === 'PUT') return response({ presupuesto: { concepts: JSON.parse(String(init.body)).concepts, totals: { honorarios: '0.00', iva_honorarios: '0.00', subtotal_honorarios: '0.00', impuestos_derechos: '8500.00', total: '8500.00' } }, updated_at: '2026-08-05T10:01:00.000Z', stage: quotes[0]?.workflow?.stage ?? null });
     if (url.endsWith('/cotizaciones/extraer-presupuesto')) return response({ rubros: [{ id: 'row-1', concepto: 'Derecho registral', nombre_original: 'Derecho registral', monto: 8500, categoria: 'PENDIENTE_CLASIFICACION' }], total_notaria: 8500, total_pdf_declarado: 8500, suma_valida: true, mensaje_validacion: 'Suma verificada', diferencia_monto: 0 });
     if (url.endsWith('/cotizaciones/quote-1/generar-documento')) return response({ id: 'generated-doc', nombre_original: 'COT-2026-001-v1.docx', mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }, 201);
     if (url.endsWith('/cotizaciones/quote-1/seguimientos')) return response(quotes[0]?.seguimientos ?? []);
@@ -43,7 +43,8 @@ const mockApi = (options: MockOptions = {}) => {
     if (url.endsWith('/cotizaciones/quote-1/acciones')) return response({ idempotent: false, eventId: 'event-1' }, 201);
     if (url.endsWith('/cotizaciones/quote-1/convertir')) return options.convertError ? response({ error: 'La cotización ya fue convertida.', code: 'CONVERSION_INTEGRITY_ERROR' }, 409) : response({ id: 'exp-1', numero_pravia: 'EXP-2026-001', idempotent: false }, 201);
     if (url.endsWith('/cotizaciones/quote-1/estado')) return response(quote({ estado: JSON.parse(String(init?.body)).estado }), 200);
-    if (url.endsWith('/documentos/doc-pdf/url')) return response({ url: 'https://example.test/cotizacion.pdf' });
+    if (url.includes('/cotizaciones/quote-1/documentos/doc-pdf/') && init?.method !== 'DELETE') return new Response(new Blob(['documento'], { type: 'application/pdf' }), { status: 200, headers: { 'Content-Type': 'application/pdf' } });
+    if (url.endsWith('/cotizaciones/quote-1/documentos/doc-pdf') && init?.method === 'DELETE') return response({ message: 'Documento retirado' });
     if (url.endsWith('/cotizaciones/quote-1')) return response(quotes[0]);
     if (url.includes('/cotizaciones?')) return options.failList ? response({ error: 'Unavailable' }, 500) : response(result);
     return response({}, 204);
@@ -59,7 +60,7 @@ describe('Cotizaciones', () => {
     expect(mobileRules).toMatch(/dangerButton[\s\S]*businessActions[\s\S]*min-height: 44px/);
     expect(mobileRules).toMatch(/dialog[\s\S]*header > button \{ width: 44px; height: 44px; \}/);
   });
-  beforeEach(() => { vi.restoreAllMocks(); });
+  beforeEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
   it('renderiza cinco KPIs, lista, tabla y analítica con importes reales', async () => {
     mockApi(); render(<MemoryRouter initialEntries={['/cotizaciones']}><App /></MemoryRouter>);
@@ -103,8 +104,8 @@ describe('Cotizaciones', () => {
     expect(screen.queryByText('La cotización se crea en borrador; el envío a notaría se registrará después con evidencia.')).not.toBeInTheDocument();
   });
 
-  it('muestra detalle, conceptos, versiones y actividad reales', async () => {
-    mockApi(); render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>); expect(await screen.findByRole('heading', { name: 'COT-2026-001' })).toBeInTheDocument(); expect(screen.getByText('Honorarios notariales')).toBeInTheDocument(); expect(screen.getByText('v1 · Vigente')).toBeInTheDocument(); expect(screen.getByText('Envío a cliente registrado')).toBeInTheDocument();
+  it('muestra una sola cotización estructurada editable y actividad real', async () => {
+    mockApi(); render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>); expect(await screen.findByRole('heading', { name: 'COT-2026-001' })).toBeInTheDocument(); expect(screen.getByDisplayValue('Honorarios notariales')).toBeInTheDocument(); expect(screen.queryByText(/v1 · Vigente/i)).not.toBeInTheDocument(); expect(screen.queryByText(/Participación interna PRAVIA/i)).not.toBeInTheDocument(); expect(screen.getByText('Envío a cliente registrado')).toBeInTheDocument();
   });
 
   it('muestra el avance operativo desde la etapa contractual persistida', async () => {
@@ -118,14 +119,14 @@ describe('Cotizaciones', () => {
   });
 
   it('muestra subtotales humanos por rubro y el total general', async () => {
-    mockApi({ quotes: [quote({ versiones: [{ ...version, conceptos: [
-      { id: 'c-1', concepto: 'Honorarios notariales', categoria: 'HONORARIOS', importe: 30000, orden: 1, origen: 'MANUAL' },
-      { id: 'c-2', concepto: 'Registro Público', categoria: 'IMPUESTOS_DERECHOS', importe: 8500, orden: 2, origen: 'MANUAL' },
-    ] }] })] });
+    mockApi({ quotes: [quote({ presupuesto: { concepts: [
+      { id: 'c-1', concepto: 'Honorarios notariales', categoria: 'HONORARIOS', importe: 30000, orden: 0, origen: 'MANUAL' },
+      { id: 'c-2', concepto: 'Registro Público', categoria: 'IMPUESTOS_DERECHOS', importe: 8500, orden: 1, origen: 'MANUAL' },
+    ], totals: { honorarios: '30000.00', iva_honorarios: '0.00', subtotal_honorarios: '30000.00', impuestos_derechos: '8500.00', total: '38500.00' } } })] });
     render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>);
     await screen.findByRole('heading', { name: 'COT-2026-001' });
-    expect(screen.getByText('Subtotal · Honorarios')).toBeInTheDocument();
-    expect(screen.getByText('Subtotal · Impuestos y derechos')).toBeInTheDocument();
+    expect(screen.getAllByText('Honorarios').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Impuestos y derechos').length).toBeGreaterThan(0);
     expect(screen.queryByText('IMPUESTOS_DERECHOS')).not.toBeInTheDocument();
   });
 
@@ -134,43 +135,47 @@ describe('Cotizaciones', () => {
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>);
     await screen.findByRole('heading', { name: 'COT-2026-001' });
-    await user.click(screen.getByRole('button', { name: 'Editar presupuesto' }));
     fireEvent.change(screen.getByLabelText(/Importar documento/i), { target: { files: [new File(['%PDF-test'], 'presupuesto.pdf', { type: 'application/pdf' })] } });
     expect(await screen.findByText(/1 renglones detectados/i)).toBeInTheDocument();
     expect(screen.getByLabelText('Categoría concepto 1')).toHaveValue('');
     await user.selectOptions(screen.getByLabelText('Categoría concepto 1'), 'IMPUESTOS_DERECHOS');
-    await user.clear(screen.getByLabelText('Descripción concepto 1'));
-    await user.type(screen.getByLabelText('Descripción concepto 1'), 'Derecho registral corregido');
-    await user.clear(screen.getByLabelText('Participación interna PRAVIA'));
-    await user.type(screen.getByLabelText('Participación interna PRAVIA'), '1000');
-    await user.click(screen.getByRole('button', { name: 'Crear versión' }));
-    await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/versiones'), expect.objectContaining({ method: 'POST' })));
-    const call = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/cotizaciones/quote-1/versiones'));
-    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ origen: 'IMPORTADO', conceptos: [{ categoria: 'IMPUESTOS_DERECHOS', concepto: 'Derecho registral corregido', importe: 8500 }] });
+    await user.clear(screen.getByLabelText('Concepto 1'));
+    await user.type(screen.getByLabelText('Concepto 1'), 'Derecho registral corregido');
+    expect(screen.queryByText('Participación interna PRAVIA')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Guardar cambios' }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/presupuesto'), expect.objectContaining({ method: 'PUT' })));
+    const call = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/cotizaciones/quote-1/presupuesto'));
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ origin: 'IMPORTADO', concepts: [{ categoria: 'IMPUESTOS_DERECHOS', concepto: 'Derecho registral corregido', importe: 8500 }] });
   });
 
   it('genera el documento desde el endpoint canónico de CFG-002', async () => {
-    mockApi({ quotes: [quote({ versiones: [{ ...version, conceptos: [{ id: 'c-1', concepto: 'Honorarios notariales', categoria: 'HONORARIOS', importe: 120000, orden: 1, origen: 'MANUAL' }] }] })] });
+    mockApi();
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>);
     await screen.findByRole('heading', { name: 'COT-2026-001' });
     await user.click(screen.getByRole('button', { name: 'Generar cotización' }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/generar-documento'), expect.objectContaining({ method: 'POST' })));
-    expect(await screen.findByText('Nueva versión documental generada desde ADM-001.')).toBeInTheDocument();
+    expect(await screen.findByText('Documento de cotización generado desde ADM-001.')).toBeInTheDocument();
   });
 
-  it('abre el PDF real vinculado y no genera uno en frontend', async () => {
-    const open = vi.fn(); vi.stubGlobal('open', open); mockApi({ quotes: [quote({ documentos: [{ id: 'doc-pdf', nombre_original: 'cotizacion.pdf', mime_type: 'application/pdf' }] })] }); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>); await screen.findByRole('heading', { name: 'COT-2026-001' }); await user.click(screen.getByRole('button', { name: 'Descargar' })); await waitFor(() => expect(open).toHaveBeenCalledWith('https://example.test/cotizacion.pdf', '_blank', 'noopener,noreferrer'));
+  it('ofrece ver, descargar y eliminar el documento real según permisos', async () => {
+    vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:test'), revokeObjectURL: vi.fn() }); vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined); vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockApi({ quotes: [quote({ documentos: [{ id: 'doc-pdf', nombre_original: 'cotizacion.pdf', mime_type: 'application/pdf', can_delete: true }] })] }); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>); await screen.findByRole('heading', { name: 'COT-2026-001' });
+    await user.click(screen.getByRole('button', { name: 'Ver cotizacion.pdf' })); await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/documentos/doc-pdf/ver'), expect.anything()));
+    expect(await screen.findByRole('dialog', { name: 'cotizacion.pdf' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Cerrar vista previa' }));
+    await user.click(screen.getByRole('button', { name: 'Descargar cotizacion.pdf' })); await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/documentos/doc-pdf/descargar'), expect.anything()));
+    await user.click(screen.getByRole('button', { name: 'Eliminar cotizacion.pdf' })); await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/documentos/doc-pdf'), expect.objectContaining({ method: 'DELETE' })));
   });
 
   it('registra envío manual sin afirmar entrega del proveedor', async () => {
     mockApi({ quotes: [quote({ estado: 'BORRADOR', workflow: workflow('EN_ELABORACION', ['ENVIAR_CLIENTE', 'SUSPENDER', 'CANCELAR']) })] }); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>); await screen.findByRole('heading', { name: 'COT-2026-001' }); await user.click(screen.getByRole('button', { name: 'Registrar envío al cliente' })); expect(screen.getByText(/no garantiza que el destinatario haya recibido/i)).toBeInTheDocument(); await user.type(screen.getByLabelText('Evidencia / nota de entrega'), 'Enviado desde Outlook a las 10:00.'); await user.click(screen.getByRole('button', { name: 'Registrar envío' })); expect(await screen.findByText('Envío registrado con evidencia.')).toBeInTheDocument();
     const call = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/cotizaciones/quote-1/acciones'));
-    expect(call?.[1]).toMatchObject({ method: 'POST' }); expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ action: 'ENVIAR_CLIENTE', expectedVersion: 1, confirm: true, channel: 'correo', recipient: 'cliente@horizonte.mx', versionId: 'version-1' });
+    expect(call?.[1]).toMatchObject({ method: 'POST' }); expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ action: 'ENVIAR_CLIENTE', expectedVersion: 1, confirm: true, channel: 'correo', recipient: 'cliente@horizonte.mx' });
   });
 
-  it('registra la aceptación humana y congela la versión vigente sin aplicar finanzas', async () => {
-    mockApi({ quotes: [quote({ workflow: workflow('EN_SEGUIMIENTO', ['REENVIAR_CLIENTE', 'ACEPTAR', 'RECHAZAR', 'SUSPENDER', 'CANCELAR'], 2) })] }); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>); await screen.findByRole('heading', { name: 'COT-2026-001' }); await user.click(screen.getByRole('button', { name: 'Registrar aceptación' })); expect(screen.getByText(/inmoviliza la versión vigente/i)).toBeInTheDocument(); await user.click(screen.getByRole('button', { name: 'Confirmar aceptación' }));
+  it('registra la aceptación humana sin bloquear la edición inline ni aplicar finanzas', async () => {
+    mockApi({ quotes: [quote({ workflow: workflow('EN_SEGUIMIENTO', ['REENVIAR_CLIENTE', 'ACEPTAR', 'RECHAZAR', 'SUSPENDER', 'CANCELAR'], 2) })] }); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>); await screen.findByRole('heading', { name: 'COT-2026-001' }); await user.click(screen.getByRole('button', { name: 'Registrar aceptación' })); expect(screen.getByText(/no bloquea la edición del presupuesto vigente/i)).toBeInTheDocument(); await user.click(screen.getByRole('button', { name: 'Confirmar aceptación' }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/acciones'), expect.objectContaining({ method: 'POST' })));
     const call = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/cotizaciones/quote-1/acciones'));
     expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ action: 'ACEPTAR', expectedVersion: 2, confirm: true });

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import {
   CatalogoArtefactoTipo,
+  CatalogoDestinoFuncional,
   CatalogoInstitucionTipo,
   CatalogoMultiplicidad,
   CatalogoPropietarioTipo,
@@ -558,8 +559,28 @@ export const actsAndTimesService = {
 const artifactInclude = {
   versiones: { orderBy: { version: 'desc' as const } },
   actos: { orderBy: { created_at: 'asc' as const } },
+  destinosFuncionales: { orderBy: [{ destino: 'asc' as const }, { predeterminado: 'desc' as const }] },
   reglas: { include: { normativaRevision: true }, orderBy: { created_at: 'asc' as const } },
   revisionesNormativas: { orderBy: { revision: 'desc' as const } },
+};
+
+const destinationData = (actor: Actor, value: any) => ({
+  organization_id: actor.organizationId,
+  destino: enumValue(CatalogoDestinoFuncional, value?.destino, 'Destino funcional'),
+  activo: booleanValue(value?.activo, true),
+  predeterminado: booleanValue(value?.predeterminado, false),
+  reglas_json: value?.reglas_json === undefined || value?.reglas_json === null ? undefined : jsonSafe(value.reglas_json),
+  mapeo_datos_json: value?.mapeo_datos_json === undefined || value?.mapeo_datos_json === null ? undefined : jsonSafe(value.mapeo_datos_json),
+  creado_por_id: actor.id,
+  actualizado_por_id: actor.id,
+});
+
+const destinationList = (actor: Actor, value: unknown) => {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new CatalogConfigurationError(400, 'FUNCTIONAL_DESTINATIONS_INVALID', 'Los destinos funcionales deben enviarse como una lista.');
+  const parsed = value.map((item) => destinationData(actor, item));
+  if (new Set(parsed.map((item) => item.destino)).size !== parsed.length) throw new CatalogConfigurationError(400, 'FUNCTIONAL_DESTINATION_DUPLICATE', 'Un destino funcional sólo puede asignarse una vez al mismo formato.');
+  return parsed;
 };
 
 async function validateFolder(actor: Actor, folderId: string | null, ownerType: CatalogoPropietarioTipo, ownerId: string, type: CatalogoArtefactoTipo) {
@@ -570,7 +591,7 @@ async function validateFolder(actor: Actor, folderId: string | null, ownerType: 
 }
 
 async function validateRulesAndActs(actor: Actor, actIds: string[], rules: any[]) {
-  if (!actIds.length) throw new CatalogConfigurationError(400, 'ARTIFACT_ACT_REQUIRED', 'Selecciona al menos un acto aplicable.');
+  if (!actIds.length && rules.length) throw new CatalogConfigurationError(400, 'ARTIFACT_ACT_REQUIRED', 'Las reglas por acto requieren al menos un acto aplicable.');
   const acts = await prisma.tipoActo.findMany({ where: { id: { in: actIds }, activo: true, archived_at: null }, select: { id: true } });
   if (acts.length !== actIds.length) throw new CatalogConfigurationError(400, 'ARTIFACT_ACT_INVALID', 'Uno o más actos no son válidos.');
   const stageIds = Array.from(new Set(rules.flatMap((rule) => [rule.etapa_requerida_id, rule.momento_limite_etapa_id]).filter(Boolean).map(String)));
@@ -654,9 +675,10 @@ export const templatesAndFormatsService = {
     if (folderId && !folder) throw new CatalogConfigurationError(404, 'FOLDER_NOT_FOUND', 'Carpeta no encontrada.');
     await validateFolder(actor, folderId, ownerType, ownerId, type);
     const ownerWhere = ownerType === 'NOTARIA' ? { notaria_id: ownerId } : { institucion_id: ownerId };
-    const [folders, artifacts] = await Promise.all([
+    const [folders, allFolders, artifacts] = await Promise.all([
       prisma.catalogoCarpeta.findMany({ where: { organization_id: actor.organizationId, propietario_tipo: ownerType, tipo: type, ...ownerWhere, parent_id: folderId, activa: true }, select: { id: true, tipo: true, nombre: true, parent_id: true, created_at: true }, orderBy: { nombre: 'asc' } }),
-      prisma.catalogoArtefacto.findMany({ where: { organization_id: actor.organizationId, propietario_tipo: ownerType, tipo: type, ...ownerWhere, carpeta_id: folderId, activo: true }, include: artifactInclude, orderBy: { nombre: 'asc' } }),
+      prisma.catalogoCarpeta.findMany({ where: { organization_id: actor.organizationId, propietario_tipo: ownerType, tipo: type, ...ownerWhere, activa: true }, select: { id: true, tipo: true, nombre: true, parent_id: true, created_at: true }, orderBy: { nombre: 'asc' } }),
+      prisma.catalogoArtefacto.findMany({ where: { organization_id: actor.organizationId, propietario_tipo: ownerType, tipo: type, ...ownerWhere, carpeta_id: folderId }, include: artifactInclude, orderBy: [{ activo: 'desc' }, { nombre: 'asc' }] }),
     ]);
     const breadcrumbs: Array<{ id: string | null; name: string }> = [];
     let current = folder;
@@ -668,7 +690,7 @@ export const templatesAndFormatsService = {
       breadcrumbs.unshift({ id: current.id, name: current.nombre });
       current = current.parent_id ? await prisma.catalogoCarpeta.findFirst({ where: { id: current.parent_id, organization_id: actor.organizationId }, select: { id: true, nombre: true, parent_id: true, tipo: true, propietario_tipo: true, notaria_id: true, institucion_id: true } }) : null;
     }
-    return { owner_type: ownerType, owner_id: ownerId, type, folder, breadcrumbs, folders, artifacts, allows_templates: ownerType === 'NOTARIA' };
+    return { owner_type: ownerType, owner_id: ownerId, type, folder, breadcrumbs, folders, all_folders: allFolders, artifacts, allows_templates: ownerType === 'NOTARIA' };
   },
 
   async createFolder(actor: Actor, input: any) {
@@ -683,6 +705,36 @@ export const templatesAndFormatsService = {
     return prisma.$transaction(async (tx) => { const folder = await tx.catalogoCarpeta.create({ data }); await audit(tx, actor, 'CFG_FOLDER_CREATED', 'CatalogoCarpeta', folder.id, undefined, folder); return folder; });
   },
 
+  async updateFolder(actor: Actor, folderId: string, input: any) {
+    const before = await prisma.catalogoCarpeta.findFirst({ where: { id: folderId, organization_id: actor.organizationId } });
+    if (!before) throw new CatalogConfigurationError(404, 'FOLDER_NOT_FOUND', 'Carpeta no encontrada.');
+    const ownerId = before.propietario_tipo === 'NOTARIA' ? before.notaria_id : before.institucion_id;
+    if (!ownerId) throw new CatalogConfigurationError(409, 'FOLDER_OWNER_INVALID', 'La carpeta no tiene un propietario válido.');
+    let parentId = before.parent_id;
+    if (input.parent_id !== undefined) {
+      parentId = optionalText(input.parent_id, 64);
+      if (parentId === folderId) throw new CatalogConfigurationError(409, 'FOLDER_HIERARCHY_CYCLE', 'Una carpeta no puede contenerse a sí misma.');
+      await validateFolder(actor, parentId, before.propietario_tipo, ownerId, before.tipo);
+      let currentId = parentId;
+      const visited = new Set<string>();
+      while (currentId) {
+        if (currentId === folderId || visited.has(currentId)) throw new CatalogConfigurationError(409, 'FOLDER_HIERARCHY_CYCLE', 'El movimiento crearía un ciclo en la jerarquía de carpetas.');
+        visited.add(currentId);
+        const current = await prisma.catalogoCarpeta.findFirst({ where: { id: currentId, organization_id: actor.organizationId }, select: { parent_id: true } });
+        currentId = current?.parent_id || null;
+      }
+    }
+    const data = {
+      ...(input.nombre !== undefined ? { nombre: requiredText(input.nombre, 'Nombre de la carpeta') } : {}),
+      ...(input.parent_id !== undefined ? { parent_id: parentId } : {}),
+    };
+    return prisma.$transaction(async (tx) => {
+      const after = await tx.catalogoCarpeta.update({ where: { id: folderId }, data });
+      await audit(tx, actor, 'CFG_FOLDER_UPDATED', 'CatalogoCarpeta', folderId, before, after);
+      return after;
+    });
+  },
+
   async createArtifact(actor: Actor, input: any, file: Express.Multer.File) {
     const type = enumValue(CatalogoArtefactoTipo, input.tipo, 'Tipo de archivo maestro');
     const ownerType = enumValue(CatalogoPropietarioTipo, input.propietario_tipo, 'Tipo de propietario');
@@ -692,6 +744,7 @@ export const templatesAndFormatsService = {
     const folderId = optionalText(input.carpeta_id, 64);
     await validateFolder(actor, folderId, ownerType, ownerId, type);
     const actIds = idList(input.act_ids); const rules = Array.isArray(input.rules) ? input.rules : [];
+    const destinations = destinationList(actor, input.destinos_funcionales) || [];
     await validateRulesAndActs(actor, actIds, rules);
     const version = positive(input.version || 1, 'Versión');
     const checksum = createHash('sha256').update(file.buffer).digest('hex');
@@ -706,6 +759,7 @@ export const templatesAndFormatsService = {
           versiones: { create: { organization_id: actor.organizationId, version, nombre_original: file.originalname, storage_key: storageKey, mime_type: file.mimetype || 'application/octet-stream', size_bytes: file.size, checksum_sha256: checksum, origen: 'CARGA_USUARIO', creado_por_id: actor.id } },
           actos: { create: actIds.map((tipoActoId) => ({ organization_id: actor.organizationId, tipo_acto_id: tipoActoId })) },
           reglas: rules.length ? { create: rules.map((rule: any) => ruleData(actor, rule)) } : undefined,
+          destinosFuncionales: destinations.length ? { create: destinations } : undefined,
         }, include: artifactInclude });
         await audit(tx, actor, 'CFG_ARTIFACT_CREATED', 'CatalogoArtefacto', artifact.id, undefined, redactPrivateArtifactData(artifact));
         return artifact;
@@ -735,12 +789,24 @@ export const templatesAndFormatsService = {
     if (!before) throw new CatalogConfigurationError(404, 'ARTIFACT_NOT_FOUND', 'Archivo maestro no encontrado.');
     const actIds = input.act_ids === undefined ? before.actos.map((item) => item.tipo_acto_id) : idList(input.act_ids);
     const rules = input.rules === undefined ? null : Array.isArray(input.rules) ? input.rules : [];
+    const destinations = destinationList(actor, input.destinos_funcionales);
     if (rules !== null) await validateRulesAndActs(actor, actIds, rules);
     else await validateRulesAndActs(actor, actIds, before.reglas);
+    let folderId = before.carpeta_id;
+    if (input.carpeta_id !== undefined) {
+      folderId = optionalText(input.carpeta_id, 64);
+      const ownerId = before.propietario_tipo === 'NOTARIA' ? before.notaria_id : before.institucion_id;
+      if (!ownerId) throw new CatalogConfigurationError(409, 'ARTIFACT_OWNER_INVALID', 'El archivo maestro no tiene un propietario válido.');
+      await validateFolder(actor, folderId, before.propietario_tipo, ownerId, before.tipo);
+    }
     return prisma.$transaction(async (tx) => {
-      await tx.catalogoArtefacto.update({ where: { id: artifactId }, data: { ...(input.nombre !== undefined ? { nombre: requiredText(input.nombre, 'Nombre') } : {}), ...(input.descripcion !== undefined ? { descripcion: optionalText(input.descripcion) } : {}), ...(input.activo !== undefined ? { activo: Boolean(input.activo) } : {}), actualizado_por_id: actor.id } });
+      await tx.catalogoArtefacto.update({ where: { id: artifactId }, data: { ...(input.nombre !== undefined ? { nombre: requiredText(input.nombre, 'Nombre') } : {}), ...(input.descripcion !== undefined ? { descripcion: optionalText(input.descripcion) } : {}), ...(input.activo !== undefined ? { activo: Boolean(input.activo) } : {}), ...(input.carpeta_id !== undefined ? { carpeta_id: folderId } : {}), actualizado_por_id: actor.id } });
       if (input.act_ids !== undefined) { await tx.catalogoArtefactoActo.deleteMany({ where: { artefacto_id: artifactId } }); await tx.catalogoArtefactoActo.createMany({ data: actIds.map((id) => ({ organization_id: actor.organizationId, artefacto_id: artifactId, tipo_acto_id: id })) }); }
       if (rules !== null) { await tx.catalogoArtefactoRegla.deleteMany({ where: { artefacto_id: artifactId } }); if (rules.length) await tx.catalogoArtefactoRegla.createMany({ data: rules.map((rule: any) => ({ artefacto_id: artifactId, ...ruleData(actor, rule) })) }); }
+      if (destinations !== undefined) {
+        await tx.catalogoArtefactoDestino.deleteMany({ where: { organization_id: actor.organizationId, artefacto_id: artifactId } });
+        if (destinations.length) await tx.catalogoArtefactoDestino.createMany({ data: destinations.map((item) => ({ ...item, artefacto_id: artifactId })) });
+      }
       const after = await tx.catalogoArtefacto.findUniqueOrThrow({ where: { id: artifactId }, include: artifactInclude });
       await audit(tx, actor, 'CFG_ARTIFACT_UPDATED', 'CatalogoArtefacto', artifactId, redactPrivateArtifactData(before), redactPrivateArtifactData(after));
       return after;

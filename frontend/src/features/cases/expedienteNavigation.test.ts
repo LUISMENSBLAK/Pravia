@@ -13,7 +13,7 @@ describe('navegación segura de regreso al expediente', () => {
 
   it('rechaza IDs manipulados y nunca acepta una URL arbitraria', () => {
     expect(resolveExpedienteReturn('?fromExpediente=https%3A%2F%2Fevil.test&fromSection=isr')).toBeNull();
-    expect(resolveExpedienteReturn('?fromExpediente=exp-1&fromSection=https%3A%2F%2Fevil.test')).toBe('/expedientes/exp-1#resumen');
+    expect(resolveExpedienteReturn('?fromExpediente=exp-1&fromSection=https%3A%2F%2Fevil.test')).toBe('/expedientes/exp-1#actos');
     expect(() => expedienteReturnParams('../otro', 'isr')).toThrow('Identificador de expediente inválido.');
   });
 

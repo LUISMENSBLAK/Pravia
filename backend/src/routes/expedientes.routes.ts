@@ -43,6 +43,9 @@ import {
   getDatosDetectadosMatrix,
   generarProyectoConIA,
   saveProyectoAsNotaryTemplate,
+  getProyectoWorkspace,
+  generarProyectoContractual,
+  generarProyectoDesdeMachoteExcepcional,
 } from '../controllers/proyectos.controller';
 import { requireExpedienteAccess, requirePermission } from '../middleware/auth.middleware';
 import { applyExpedienteActoChange, listExpedienteActos, previewExpedienteActoChange } from '../controllers/expedienteActos.controller';
@@ -105,7 +108,7 @@ import {
   verifyExpedientePraviaReceipt, voidExpedienteIncome, voidExpedientePaymentRequest,
 } from '../controllers/expedienteFinance.controller';
 import { addExpedienteActivityNote, listExpedienteActivity } from '../controllers/expedienteActivity.controller';
-import { listExpedienteQuestionnaireAnswers, listExpedienteQuestionnaires, saveExpedienteQuestionnaireAnswers } from '../controllers/expedienteQuestionnaires.controller';
+import { ensureExpedienteQuestionnaires, listExpedienteQuestionnaireAnswers, listExpedienteQuestionnaires, saveExpedienteQuestionnaireAnswers } from '../controllers/expedienteQuestionnaires.controller';
 
 const router = express.Router();
 router.param('id', requireExpedienteAccess);
@@ -117,9 +120,10 @@ router.get('/', getExpedientes);
 router.get('/:id', getExpedienteById);
 router.get('/:id/actividad', requirePermission('expedientes.read'), listExpedienteActivity);
 router.post('/:id/actividad/notas', requirePermission('expedientes.write'), addExpedienteActivityNote);
-router.get('/:id/cuestionarios', requirePermission('expedientes.read'), listExpedienteQuestionnaires);
+router.get('/:id/cuestionarios', requirePermission('expedientes.read'), requirePermission('compliance.read'), requirePermission('compliance.sensitive.read'), listExpedienteQuestionnaires);
+router.post('/:id/cuestionarios/asegurar', requirePermission('expedientes.write'), requirePermission('compliance.write'), requirePermission('compliance.sensitive.read'), ensureExpedienteQuestionnaires);
 router.get('/:id/cuestionarios/respuestas', requirePermission('expedientes.read'), listExpedienteQuestionnaireAnswers);
-router.post('/:id/cuestionarios/respuestas', requirePermission('expedientes.write'), saveExpedienteQuestionnaireAnswers);
+router.post('/:id/cuestionarios/respuestas', requirePermission('expedientes.write'), requirePermission('compliance.write'), requirePermission('compliance.sensitive.read'), saveExpedienteQuestionnaireAnswers);
 router.get('/:id/actos', listExpedienteActos);
 router.post('/:id/actos/preview', requirePermission('expedientes.write'), previewExpedienteActoChange);
 router.post('/:id/actos/aplicar', requirePermission('expedientes.write'), applyExpedienteActoChange);
@@ -165,7 +169,7 @@ router.delete('/:id/finanzas-operativas/documentos/:linkId', requirePermission('
 router.post('/:id/finanzas-operativas/ingresos/:incomeId/anular', requirePermission('finanzas.validate'), voidExpedienteIncome);
 router.post('/:id/finanzas-operativas/solicitudes/:requestId/anular', requirePermission('finanzas.validate'), voidExpedientePaymentRequest);
 router.post('/', createExpediente);
-router.patch('/:id', updateExpedienteHeader);
+router.patch('/:id', requirePermission('expedientes.write'), updateExpedienteHeader);
 router.post('/convertir-cotizacion', convertCotizacionToExpediente);
 router.post('/:id/transicion-estatus', requirePermission('expedientes.write'), transitionEstatus);
 router.post('/:id/entrega', registerFinalDelivery);
@@ -204,14 +208,17 @@ router.get('/:id/documentos/:documentoId/descargar', requirePermission('document
 
 // Proyecto de Escritura & IA Analysis Reports
 router.get('/:id/proyecto', requirePermission('expedientes.project.read'), getProyectoEscritura);
+router.get('/:id/proyecto/workspace', requirePermission('expedientes.project.read'), getProyectoWorkspace);
 router.get('/:id/proyecto/matriz-datos', requirePermission('expedientes.project.read'), getDatosDetectadosMatrix);
-router.post('/:id/proyecto/generar-ia', requirePermission('ia.execute'), generarProyectoConIA);
-router.post('/:id/proyecto/upload', uploadProyectoMulter.single('file'), uploadProyectoVersion);
-router.patch('/:id/proyecto/versions/:versionId', updateProyectoVersion);
+router.post('/:id/proyecto/generar-ia', requirePermission('expedientes.write'), requirePermission('documentos.write'), requirePermission('ia.execute'), generarProyectoConIA);
+router.post('/:id/proyecto/generar', requirePermission('expedientes.write'), requirePermission('documentos.write'), requirePermission('ia.execute'), generarProyectoContractual);
+router.post('/:id/proyecto/generar-desde-machote', requirePermission('expedientes.write'), requirePermission('documentos.write'), requirePermission('ia.execute'), uploadProyectoMulter.single('file'), generarProyectoDesdeMachoteExcepcional);
+router.post('/:id/proyecto/upload', requirePermission('expedientes.write'), requirePermission('documentos.write'), uploadProyectoMulter.single('file'), uploadProyectoVersion);
+router.patch('/:id/proyecto/versions/:versionId', requirePermission('expedientes.write'), requirePermission('documentos.write'), updateProyectoVersion);
 router.get('/:id/proyecto/versions/:versionId/visualizar', requirePermission('expedientes.project.read'), streamProyectoVersion);
 router.get('/:id/proyecto/versions/:versionId/descargar', requirePermission('expedientes.project.read'), downloadProyectoVersion);
 router.post('/:id/proyecto/versions/:versionId/guardar-como-plantilla', requirePermission('expedientes.project.read'), requirePermission('configuracion.plantillas_formatos.manage'), saveProyectoAsNotaryTemplate);
-router.post('/:id/proyecto/analizar-ia', requirePermission('ia.execute'), analizarProyectoConIA);
+router.post('/:id/proyecto/analizar-ia', requirePermission('documentos.write'), requirePermission('ia.execute'), analizarProyectoConIA);
 router.get('/:id/proyecto/reporte-ia/visualizar', requirePermission('expedientes.project.read'), streamIAReport);
 router.get('/:id/proyecto/reporte-ia/descargar', requirePermission('expedientes.project.read'), downloadIAReport);
 

@@ -40,13 +40,22 @@ router.patch('/exceptions/:exceptionId', manageActs, endpoint(configurationCatal
 router.get('/activities/:activityId/resolve', read, endpoint(configurationCatalogController.resolveTiming));
 
 router.get('/questionnaires', read, endpoint(configurationCatalogController.listQuestionnaires));
+router.get('/questionnaire-banks', read, endpoint(configurationCatalogController.listQuestionnaireBanks));
+router.post('/questionnaire-banks/:bank/questions', manageArtifacts, endpoint(configurationCatalogController.addQuestionnaireBankQuestion, 201));
+router.patch('/questionnaire-banks/:bank/questions/:questionId', manageArtifacts, endpoint(configurationCatalogController.updateQuestionnaireBankQuestion));
+router.delete('/questionnaire-banks/:bank/questions/:questionId', manageArtifacts, endpoint(configurationCatalogController.removeQuestionnaireBankQuestion));
+router.put('/questionnaire-banks/:bank/order', manageArtifacts, endpoint(configurationCatalogController.reorderQuestionnaireBank));
 router.get('/questionnaires-supporting', read, endpoint(configurationCatalogController.questionnaireSupporting));
-router.post('/questionnaires', manageArtifacts, endpoint(configurationCatalogController.createQuestionnaire, 201));
-router.post('/questionnaires/:questionnaireId/versions', manageArtifacts, endpoint(configurationCatalogController.versionQuestionnaire, 201));
-router.post('/questionnaires/:questionnaireId/duplicate', manageArtifacts, endpoint(configurationCatalogController.duplicateQuestionnaire, 201));
-router.patch('/questionnaires/:questionnaireId/status', manageArtifacts, endpoint(configurationCatalogController.setQuestionnaireActive));
+// Corrección 012: el catálogo legacy permanece disponible sólo para lectura
+// histórica. Ningún write nuevo puede crear un tercer workflow de cuestionarios.
+router.post('/questionnaires', manageArtifacts, endpoint(configurationCatalogController.retiredQuestionnaireMutation));
+router.post('/questionnaires/:questionnaireId/versions', manageArtifacts, endpoint(configurationCatalogController.retiredQuestionnaireMutation));
+router.post('/questionnaires/:questionnaireId/duplicate', manageArtifacts, endpoint(configurationCatalogController.retiredQuestionnaireMutation));
+router.patch('/questionnaires/:questionnaireId/status', manageArtifacts, endpoint(configurationCatalogController.retiredQuestionnaireMutation));
 
 router.get('/artifacts/root', read, endpoint(configurationCatalogController.artifactsRoot));
+router.get('/artifacts/functional-destinations', read, endpoint(configurationCatalogController.functionalDestinations));
+router.get('/artifacts/resolve/:destination', read, endpoint(configurationCatalogController.resolveFunctionalDestination));
 router.post('/artifacts/library/bootstrap', manageArtifacts, endpoint(configurationCatalogController.bootstrapLibraryV4, 201));
 router.post('/artifacts/import/preview', manageArtifacts, importUpload.array('files', 100), endpoint(configurationCatalogController.previewArtifactImport));
 router.post('/artifacts/import/confirm', manageArtifacts, importUpload.array('files', 100), endpoint(configurationCatalogController.confirmArtifactImport, 201));
@@ -55,8 +64,10 @@ router.post('/institutions', manageArtifacts, endpoint(configurationCatalogContr
 router.put('/institutions/:institutionId/response-times', manageActs, endpoint(configurationCatalogController.upsertInstitutionResponse));
 router.get('/explorer', read, endpoint(configurationCatalogController.explorer));
 router.post('/folders', manageArtifacts, endpoint(configurationCatalogController.createFolder, 201));
+router.patch('/folders/:folderId', manageArtifacts, endpoint(configurationCatalogController.updateFolder));
 router.post('/artifacts', manageArtifacts, upload.single('file'), endpoint(configurationCatalogController.createArtifact, 201));
 router.patch('/artifacts/:artifactId', manageArtifacts, endpoint(configurationCatalogController.updateArtifact));
+router.put('/artifacts/:artifactId/functional-destinations', manageArtifacts, endpoint(configurationCatalogController.assignFunctionalDestinations));
 router.post('/artifacts/:artifactId/versions', manageArtifacts, upload.single('file'), endpoint(configurationCatalogController.addArtifactVersion, 201));
 router.get('/artifact-versions/:versionId/url', read, endpoint(configurationCatalogController.artifactVersionUrl));
 

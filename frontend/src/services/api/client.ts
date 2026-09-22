@@ -3,6 +3,7 @@ import { apiConfig, apiUrl } from './config';
 type TokenPayload = Record<string, unknown> | null;
 
 const ACCESS_TOKEN_KEY = 'pravia.access-token';
+const SESSION_HINT_KEY = 'pravia.session-active';
 let refreshInFlight: Promise<string | null> | null = null;
 let accessToken: string | null = null;
 
@@ -20,11 +21,14 @@ export const tokenStore = {
     // Retira versiones anteriores: el access token vive solo en memoria.
     localStorage.removeItem(ACCESS_TOKEN_KEY);
     sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+    sessionStorage.setItem(SESSION_HINT_KEY, '1');
   },
+  hasSessionHint: () => sessionStorage.getItem(SESSION_HINT_KEY) === '1',
   clear: () => {
     accessToken = null;
     localStorage.removeItem(ACCESS_TOKEN_KEY);
     sessionStorage.removeItem(ACCESS_TOKEN_KEY);
+    sessionStorage.removeItem(SESSION_HINT_KEY);
   },
 };
 

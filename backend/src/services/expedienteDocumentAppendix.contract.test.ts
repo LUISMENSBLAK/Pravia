@@ -21,7 +21,7 @@ const cases: Array<[string, () => void]> = [
   ['2 Cotización source contextual link', () => expect(service).toContain("'COTIZACION', expediente.cotizacion.id")],
   ['3 Cotización Notaría stays isolated', () => { expect(schema).toContain('COTIZACION_NOTARIA'); expect(service).toContain('isolated_notary_quote'); }],
   ['4 Compareciente vigente discoverable only for explicit import', () => { expect(service).toContain("async importCurrent"); expect(service).toContain("['PENDIENTE', 'VIGENTE', 'POR_VENCER']"); }],
-  ['5 Compareciente histórico excluded from import', () => expect(service).toContain("archived_at: null, estatus: 'ACTIVO'")],
+  ['5 Compareciente histórico excluded from import', () => expect(service).toContain("archived_at: null, estatus: 'ACTIVO', vigencia: 'VIGENTE'")],
   ['6 Vigente v1→v2 pre-firma sync', () => { expect(service).toContain('document_version: candidate.documentVersion'); expect(service).toContain("estatus: 'SUSTITUIDO'"); }],
   ['7 old historical file preserved master', () => expect(service).not.toContain('documento.delete')],
   ['8 Predio document requires explicit controlled import', () => { expect(service).toContain("origin: 'COMPARECIENTE' | 'PREDIO'"); expect(service).toContain("vigencia: 'VIGENTE'"); expect(service).toContain("['PENDIENTE', 'VIGENTE', 'POR_VENCER']"); expect(service).toContain('explicit_import: true'); }],
@@ -75,6 +75,10 @@ const cases: Array<[string, () => void]> = [
   ['56 EXP-009 not implemented', () => expect(service).not.toContain('EXP-009')],
   ['57 signed explorer rebuilds its immutable folder tree', () => { expect(service).toContain('snapshotFolderId'); expect(service).toContain('const folders = snapshotFolders(snapshot.items)'); expect(service).toContain('folder_id: item.folder_path_snapshot ? snapshotFolderId'); }],
   ['58 signed ZIP supports an immutable folder selection', () => { expect(service).toContain('const paths = new Map(folders.map((folder) => [folder.id, folder.path]))'); expect(service).toContain('requestedFolders.size'); }],
+  ['59 Predios import all current documents incrementally', () => { expect(service).toContain('IMPORT:PREDIO:${link.id}'); expect(documentTab).toContain('Actualizar desde Predios / Inmuebles'); expect(documentTab).toContain('no duplica blobs'); }],
+  ['60 Predio documents are grouped by master source', () => expect(service).toContain('`${labels[origin]} · ${name}`')],
+  ['61 live virtual sources resolve through the canonical explorer candidates', () => { expect(service).toContain('resolveLiveFile'); expect(service).toContain('item.sourceKey === itemId'); }],
+  ['62 live ZIP uses the same canonical explorer candidates', () => expect(service).toContain('const candidates = await this.buildCandidates(this.prisma, actor, expedienteId)')],
 ];
 
 describe('EXP-004 contrato atómico', () => {

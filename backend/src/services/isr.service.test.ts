@@ -37,7 +37,7 @@ function dbMock(current=record()) {
     fiscalRuleSet:{findFirst:vi.fn(async()=>rules)},
     expedienteActividad:{create:vi.fn(async({data}:any)=>data)},auditLog:{create:vi.fn(async({data}:any)=>data),
   }};
-  const db:any={calculoISR:{findFirst:vi.fn(async()=>current),findMany:vi.fn(async()=>[current]),count:vi.fn().mockResolvedValueOnce(1).mockResolvedValueOnce(0).mockResolvedValueOnce(1)},expediente:{findFirst:vi.fn(async()=>expediente)},compareciente:{findFirst:vi.fn(async()=>({id:'party-1',tipo_persona:'FISICA',nombre_busqueda:'Persona Controlada',personaFisica:{nombre_completo_calculado:'Persona Controlada',rfc:'AAAA800101AA1',curp:'AAAA800101HNELPR01'},personaMoral:null}))},fiscalRuleSet:{findFirst:vi.fn(async()=>rules)},catalogoArtefacto:{findFirst:vi.fn(async()=>null)},calculoISRPropuesta:tx.calculoISRPropuesta,aIUsageLog:tx.aIUsageLog,auditLog:tx.auditLog,$transaction:vi.fn(async(arg:any)=>typeof arg==='function'?arg(tx):Promise.all(arg))};
+  const db:any={calculoISR:{findFirst:vi.fn(async()=>current),findMany:vi.fn(async()=>[current]),count:vi.fn().mockResolvedValueOnce(1).mockResolvedValueOnce(0).mockResolvedValueOnce(1)},expediente:{findFirst:vi.fn(async()=>expediente)},compareciente:{findFirst:vi.fn(async()=>({id:'party-1',tipo_persona:'FISICA',nombre_busqueda:'Persona Controlada',personaFisica:{nombre_completo_calculado:'Persona Controlada',rfc:'AAAA800101AA1',curp:'AAAA800101HNELPR01'},personaMoral:null}))},fiscalRuleSet:{findFirst:vi.fn(async()=>rules)},catalogoArtefactoDestino:{findMany:vi.fn(async()=>[])},calculoISRPropuesta:tx.calculoISRPropuesta,aIUsageLog:tx.aIUsageLog,auditLog:tx.auditLog,$transaction:vi.fn(async(arg:any)=>typeof arg==='function'?arg(tx):Promise.all(arg))};
   return {db,tx};
 }
 

@@ -2,9 +2,10 @@ import type { Request } from 'express';
 import { Prisma } from '@prisma/client';
 import prisma from '../config/prisma';
 import {
-  evaluateQuestionnaire, questionnaireChecksum, QuestionnaireError,
+  questionnaireChecksum, QuestionnaireError,
   validateQuestionnaireDefinition, type QuestionnaireDefinition,
 } from '../domain/questionnaire';
+import { ComplianceH5Service } from './complianceH5.service';
 
 type Actor = NonNullable<Request['user']>;
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -115,32 +116,49 @@ export class QuestionnaireCatalogService {
   }
 
   async listApplicable(actor: Actor, expedienteId: string) {
-    const expediente = await prisma.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId }, select: {
-      id: true, numero_pravia: true, cliente_alias: true, tipo_acto_id: true,
-      actos: { where: { estatus: 'ACTIVO' }, select: { tipo_acto_id: true } },
-      comparecientes: { where: { estatus: 'ACTIVO' }, select: { compareciente_id: true, compareciente: { select: { nombre_busqueda: true } } } },
-      predios: { where: { estatus: 'ACTIVO' }, select: { predio_id: true, predio: { select: { apodo: true, clave_catastral: true } } } },
-    } });
-    if (!expediente) throw new QuestionnaireError(404, 'QUESTIONNAIRE_EXPEDIENTE_NOT_FOUND', 'No se encontró el expediente.');
-    const actIds = [...new Set([expediente.tipo_acto_id, ...expediente.actos.map((item) => item.tipo_acto_id)].filter(Boolean) as string[])];
-    const artifacts = await prisma.catalogoArtefacto.findMany({ where: { organization_id: actor.organizationId, purpose: 'QUESTIONNAIRE', activo: true, OR: [{ actos: { none: {} } }, { actos: { some: { tipo_acto_id: { in: actIds } } } }] }, include: { versiones: { where: { activa: true }, orderBy: { version: 'desc' } }, cuestionarioFormatos: { where: { activo: true }, include: { formato: { select: { id: true, nombre: true } } } } }, orderBy: { nombre: 'asc' } });
-    const prior = await prisma.expedienteCuestionarioRespuesta.findMany({ where: { organization_id: actor.organizationId, expediente_id: expediente.id }, orderBy: { revision: 'desc' } });
-    return artifacts.flatMap((artifact) => {
-      const newest = artifact.versiones[0]; if (!newest?.definition_json) return [];
-      const newestDefinition = validateQuestionnaireDefinition(newest.definition_json);
-      const subjects = newestDefinition.scope === 'EXPEDIENTE'
-        ? [{ subjectKey: expediente.id, subjectLabel: expediente.numero_pravia, facts: { EXPEDIENTE_FOLIO: expediente.numero_pravia, EXPEDIENTE_CLIENTE: expediente.cliente_alias || '' } as Record<string, string> }]
-        : newestDefinition.scope === 'COMPARECIENTE'
-          ? expediente.comparecientes.map((item) => ({ subjectKey: item.compareciente_id, subjectLabel: item.compareciente.nombre_busqueda, facts: { COMPARECIENTE_NOMBRE: item.compareciente.nombre_busqueda } as Record<string, string> }))
-          : expediente.predios.map((item) => ({ subjectKey: item.predio_id, subjectLabel: item.predio.apodo || item.predio.clave_catastral || 'Inmueble', facts: { INMUEBLE_CLAVE_CATASTRAL: item.predio.clave_catastral || '' } as Record<string, string> }));
-      return subjects.map((subject) => {
-        const existing = prior.find((row) => row.subject_key === subject.subjectKey && artifact.versiones.some((version) => version.id === row.artefacto_version_id));
-        const pinned = existing ? artifact.versiones.find((version) => version.id === existing.artefacto_version_id) || newest : newest;
-        const definition = validateQuestionnaireDefinition(pinned.definition_json);
-        const prefill = Object.fromEntries(definition.sections.flatMap((section) => section.questions).filter((question) => question.prefill).map((question) => [question.id, subject.facts[question.prefill!] ?? '']));
-        return { artifact: { id: artifact.id, name: artifact.nombre }, version: { id: pinned.id, number: pinned.version }, definition, subject: { key: subject.subjectKey, label: subject.subjectLabel }, prefill, latestResponse: existing || null, formats: artifact.cuestionarioFormatos.map((link) => link.formato) };
-      });
+    const state = await prisma.expedienteComplianceState.findFirst({
+      where: { organization_id: actor.organizationId, expediente_id: expedienteId },
+      select: { current_review_id: true },
     });
+    if (!state?.current_review_id) return [];
+    const workspace = await ComplianceH5Service.readWorkspace(actor, state.current_review_id);
+    return workspace.questionnaires.map((item: any) => ({
+      assessmentId: item.id,
+      bank: item.scope === 'PERSONAL' ? 'PERSONAL' : 'OPERACION',
+      artifact: {
+        id: item.definition_version_id,
+        name: item.scope === 'PERSONAL' ? 'Personal' : 'Acto / Operación',
+      },
+      version: { id: item.definitionVersion.id, number: item.definitionVersion.version || 1 },
+      definition: item.definitionVersion.definition_json,
+      subject: {
+        key: item.identity_key,
+        label: item.targetCompareciente?.nombre_busqueda || item.requirement?.label || 'Acto / Operación',
+      },
+      prefill: {},
+      latestResponse: item.currentRevision ? {
+        id: item.currentRevision.id,
+        estado: item.currentRevision.status === 'FINALIZED' ? 'FINALIZADO' : 'BORRADOR',
+        revision: item.currentRevision.revision_number,
+        answers_json: item.currentRevision.answers,
+        completeness_json: {
+          complete: item.currentRevision.completeness === 'COMPLETE',
+          missing: item.currentRevision.missing_question_ids,
+        },
+        base_fingerprint: item.currentRevision.semantic_fingerprint,
+        created_at: item.currentRevision.created_at,
+      } : null,
+      formats: [],
+    }));
+  }
+
+  async ensureApplicable(actor: Actor, expedienteId: string) {
+    const state = await prisma.expedienteComplianceState.findFirst({
+      where: { organization_id: actor.organizationId, expediente_id: expedienteId },
+      select: { current_review_id: true },
+    });
+    if (!state?.current_review_id) throw new QuestionnaireError(409, 'QUESTIONNAIRE_COMPLIANCE_REVIEW_REQUIRED', 'Primero debe existir una revisión de Cumplimiento vigente.');
+    return ComplianceH5Service.ensureQuestionnaires(actor, state.current_review_id);
   }
 
   async listAnswers(actor: Actor, expedienteId: string) {
@@ -148,34 +166,17 @@ export class QuestionnaireCatalogService {
   }
 
   async saveAnswers(actor: Actor, expedienteId: string, input: any) {
-    const version = await prisma.catalogoArtefactoVersion.findFirst({ where: { id: String(input.versionId || ''), organization_id: actor.organizationId, artefacto: { purpose: 'QUESTIONNAIRE', activo: true } } });
-    const expediente = await prisma.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId }, select: { id: true } });
-    if (!version?.definition_json || !expediente) throw new QuestionnaireError(404, 'QUESTIONNAIRE_CONTEXT_NOT_FOUND', 'No se encontró el cuestionario o expediente.');
-    const definition = validateQuestionnaireDefinition(version.definition_json);
-    const scope = String(input.scope || definition.scope);
-    const subjectKey = String(input.subjectKey || expedienteId).trim();
-    const idempotencyKey = requestKey(input.idempotencyKey);
-    if (scope !== definition.scope || !subjectKey) throw new QuestionnaireError(400, 'QUESTIONNAIRE_SUBJECT_INVALID', 'El sujeto no corresponde al alcance del cuestionario.');
-    if (scope === 'EXPEDIENTE' && subjectKey !== expedienteId) throw new QuestionnaireError(400, 'QUESTIONNAIRE_SUBJECT_INVALID', 'El sujeto no corresponde al expediente.');
-    if (scope === 'COMPARECIENTE' && !(await prisma.expedienteCompareciente.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, compareciente_id: subjectKey, estatus: 'ACTIVO' }, select: { id: true } }))) throw new QuestionnaireError(404, 'QUESTIONNAIRE_SUBJECT_NOT_FOUND', 'El compareciente no pertenece al expediente.');
-    if (scope === 'INMUEBLE' && !(await prisma.expedientePredio.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, predio_id: subjectKey, estatus: 'ACTIVO' }, select: { id: true } }))) throw new QuestionnaireError(404, 'QUESTIONNAIRE_SUBJECT_NOT_FOUND', 'El inmueble no pertenece al expediente.');
-    const answers = input.answers && typeof input.answers === 'object' && !Array.isArray(input.answers) ? input.answers : {};
-    const result = evaluateQuestionnaire(definition, answers);
-    if (input.finalize && !result.complete) throw new QuestionnaireError(409, 'QUESTIONNAIRE_INCOMPLETE', 'Completa las preguntas obligatorias antes de finalizar.');
-    return prisma.$transaction(async (tx) => {
-      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`questionnaire-response:${actor.organizationId}:${expedienteId}:${version.id}:${scope}:${subjectKey}`}))`);
-      const existing = await tx.expedienteCuestionarioRespuesta.findFirst({ where: { organization_id: actor.organizationId, idempotency_key: idempotencyKey } });
-      if (existing) {
-        if (existing.expediente_id !== expedienteId || existing.artefacto_version_id !== version.id || existing.scope !== scope || existing.subject_key !== subjectKey) {
-          throw new QuestionnaireError(409, 'QUESTIONNAIRE_KEY_REUSED', 'La clave del intento ya pertenece a otra respuesta de cuestionario.');
-        }
-        return existing;
-      }
-      const latest = await tx.expedienteCuestionarioRespuesta.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, artefacto_version_id: version.id, scope: scope as any, subject_key: subjectKey }, orderBy: { revision: 'desc' } });
-      const row = await tx.expedienteCuestionarioRespuesta.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, artefacto_version_id: version.id, scope: scope as any, subject_key: subjectKey, revision: (latest?.revision || 0) + 1, estado: input.finalize ? 'FINALIZADO' : 'BORRADOR', definition_snapshot: json(definition), answers_json: json(answers), mapped_values_json: json(result.mapped), completeness_json: json({ complete: result.complete, missing: result.missing }), idempotency_key: idempotencyKey, created_by_id: actor.id, finalized_at: input.finalize ? new Date() : null } });
-      await audit(tx, actor, input.finalize ? 'QUESTIONNAIRE_FINALIZED' : 'QUESTIONNAIRE_SAVED', 'ExpedienteCuestionarioRespuesta', row.id, latest?.answers_json, { scope, subjectKey, revision: row.revision, versionId: version.id, answers, mapped: result.mapped });
-      return row;
+    const assessmentId = String(input.assessmentId || '').trim();
+    const assessment = await prisma.complianceQuestionnaireAssessment.findFirst({
+      where: { id: assessmentId, organization_id: actor.organizationId, expediente_id: expedienteId },
+      select: { id: true },
     });
+    if (!assessment) throw new QuestionnaireError(404, 'QUESTIONNAIRE_CONTEXT_NOT_FOUND', 'No se encontró el cuestionario o expediente.');
+    return ComplianceH5Service.saveQuestionnaire(actor, assessment.id, {
+      answers: input.answers,
+      base_fingerprint: String(input.baseFingerprint || ''),
+      idempotency_key: requestKey(input.idempotencyKey),
+    }, input.finalize === true);
   }
 }
 

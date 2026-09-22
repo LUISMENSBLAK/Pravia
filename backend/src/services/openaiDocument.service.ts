@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import mammoth from 'mammoth';
+import { extractDocxText } from './docxText';
 dotenv.config();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,6 +42,7 @@ export interface DocumentExtractionResult {
   domicilios_detectados?: DomicilioDetectado[];
   actividades_economicas?: Array<{ actividad: string; porcentaje?: string; tipo?: string }>;
   regimenes?: string[];
+  identificadores_ine?: { cic?: string; ocr?: string };
   uso?: AIUsageMetrics;
   usos?: AIUsageMetrics[];
 }
@@ -156,7 +157,7 @@ export async function generateOperationalArtifactWithOpenAI(input: {
   if (input.sourceDocument) {
     const source = input.sourceDocument;
     if (source.mimeType.includes('officedocument.wordprocessingml')) {
-      sourceContent.push({ type: 'input_text', text: (await mammoth.extractRawText({ buffer: source.buffer })).value });
+      sourceContent.push({ type: 'input_text', text: await extractDocxText(source.buffer) });
     } else if (source.mimeType === 'application/pdf') {
       sourceContent.push({ type: 'input_file', filename: source.nombreOriginal, file_data: `data:application/pdf;base64,${source.buffer.toString('base64')}` });
     } else if (['image/png', 'image/jpeg'].includes(source.mimeType)) {
@@ -316,6 +317,13 @@ function getReasoningEffort(): 'none' | 'low' | 'medium' | 'high' | 'xhigh' {
     : 'high';
 }
 
+function getProjectReviewReasoningEffort(): 'none' | 'low' | 'medium' | 'high' | 'xhigh' {
+  const configured = (process.env.OPENAI_PROJECT_REVIEW_REASONING_EFFORT || 'low').trim().toLowerCase();
+  return ['none', 'low', 'medium', 'high', 'xhigh'].includes(configured)
+    ? configured as 'none' | 'low' | 'medium' | 'high' | 'xhigh'
+    : 'low';
+}
+
 const OPENAI_PRICING_USD_PER_MILLION: Record<string, { input: number; cached: number; output: number }> = {
   'gpt-5.4-nano': { input: 0.20, cached: 0.02, output: 1.25 },
   'gpt-5.4-nano-2026-03-17': { input: 0.20, cached: 0.02, output: 1.25 },
@@ -395,7 +403,7 @@ ${listaDocumentos}
 
 PRIORIDAD DE FUENTES DE INFORMACIÓN:
 1. Documento Word (Ficha de datos / Ficha notarial / Anexo): identidad (nombre, apellido_paterno, apellido_materno), estado_civil, ocupacion, lugar_nacimiento, pais_nacimiento, nacionalidad, fecha_nacimiento, curp, rfc, folio_identificacion.
-2. INE: tipo_identificacion, folio_identificacion, autoridad_emisora, vigencia_ine, seccion_electoral.
+2. INE: tipo_identificacion, autoridad_emisora, vigencia_ine y los identificadores CIC y OCR por separado.
 3. Constancia de Situación Fiscal (CSF): rfc, actividad_economica, domicilio fiscal, regimenes.
 4. Comprobante de domicilio (CFE/Agua): domicilio particular (comprobado).
 5. CURP: CURP y respaldo para fecha de nacimiento.
@@ -407,7 +415,7 @@ REGLAS CRÍTICAS DE EXTRACCIÓN:
 4. Si el documento contiene "Lugar y país de nacimiento: LA YESCA, NAYARIT, MÉXICO", separa:
    - lugar_nacimiento = "LA YESCA, NAYARIT"
    - pais_nacimiento = "MÉXICO"
-5. Para INE/reverso: el folio_identificacion es el número INMEDIATAMENTE DESPUÉS de "<<" en la línea MRZ que inicia con IDMEX.
+5. Para INE/reverso detecta CIC y OCR por separado. Conserva el CIC completo con su prefijo IDMEX cuando aparezca así. No elijas entre ambos ni copies ninguno a folio_identificacion cuando los dos estén disponibles: el usuario hará esa selección.
 6. Vigencia INE (ej. 2023-2033 o 2026-2036):
    - fecha_expedicion_identificacion = "01/01/AAAA_INICIAL"
    - fecha_vencimiento_identificacion = "31/12/AAAA_FINAL"
@@ -447,7 +455,8 @@ Responde EXCLUSIVAMENTE con este JSON estricto:
   "actividades_economicas": [
     { "actividad": "", "porcentaje": "", "tipo": "PRINCIPAL" }
   ],
-  "regimenes": []
+  "regimenes": [],
+  "identificadores_ine": { "cic": "IDMEX... o vacío", "ocr": "... o vacío" }
 }
 
 Campos permitidos en "campos": nombre, apellido_paterno, apellido_materno, curp, rfc, sexo,
@@ -455,7 +464,7 @@ fecha_nacimiento, lugar_nacimiento, pais_nacimiento, nacionalidad, estado_civil,
 folio_identificacion, fecha_expedicion_identificacion, fecha_vencimiento_identificacion,
 seccion_electoral, vigencia_ine, actividad_economica, giro, razon_social, autoridad_emisora,
 telefono, correo_electronico, correo, email, celular.
-PROHIBIDOS: clave_elector, ocr, cic, escolaridad, tratamiento.
+PROHIBIDOS dentro de "campos": clave_elector, ocr, cic, escolaridad, tratamiento. CIC y OCR sólo pueden devolverse en "identificadores_ine".
 
 REGLAS DE FORMATO ESTRICTAS:
 Responde EXCLUSIVAMENTE con un objeto JSON válido.
@@ -475,8 +484,7 @@ No agregues texto antes ni después del JSON.`;
 
     if (isDocx || isDoc) {
       try {
-        const extracted = await mammoth.extractRawText({ buffer: doc.buffer });
-        const textVal = (extracted.value || '').trim();
+        const textVal = (await extractDocxText(doc.buffer)).trim();
         if (textVal.length > 0) {
           content.push({
             type: 'input_text',
@@ -588,11 +596,16 @@ No agregues texto antes ni después del JSON.`;
           required: ['actividad', 'porcentaje', 'tipo']
         }
       },
-      regimenes: { type: 'array', items: { type: 'string' } }
+      regimenes: { type: 'array', items: { type: 'string' } },
+      identificadores_ine: {
+        type: 'object', additionalProperties: false,
+        properties: { cic: { type: 'string' }, ocr: { type: 'string' } },
+        required: ['cic', 'ocr']
+      }
     },
     required: [
       'tipo_persona_detectado', 'resumen_ejecutivo', 'alertas', 'campos',
-      'domicilios_detectados', 'actividades_economicas', 'regimenes'
+      'domicilios_detectados', 'actividades_economicas', 'regimenes', 'identificadores_ine'
     ]
   };
 
@@ -678,6 +691,10 @@ No agregues texto antes ni después del JSON.`;
     domicilios_detectados: parsed.domicilios_detectados || [],
     actividades_economicas: parsed.actividades_economicas || [],
     regimenes: parsed.regimenes || [],
+    identificadores_ine: {
+      cic: String(parsed.identificadores_ine?.cic || '').trim() || undefined,
+      ocr: String(parsed.identificadores_ine?.ocr || '').trim() || undefined,
+    },
     uso: buildUsageMetrics(data, model, startedAt, documentos.length, escalated),
   };
 }
@@ -725,12 +742,17 @@ export async function extraerMultiplesDocumentos(
       `Revisión escalada por: ${escalation.reasons.join('; ')}.`,
     ],
     usos: [primary.uso, escalated.uso].filter((usage): usage is AIUsageMetrics => Boolean(usage)),
+    identificadores_ine: {
+      cic: escalated.identificadores_ine?.cic || primary.identificadores_ine?.cic,
+      ocr: escalated.identificadores_ine?.ocr || primary.identificadores_ine?.ocr,
+    },
   };
 }
 
 export async function analizarProyectoNotarialConOpenAI(
   proyecto: DocumentoParaExtraccion,
-  documentosSoporte: DocumentoParaExtraccion[]
+  documentosSoporte: DocumentoParaExtraccion[],
+  contextoEstructurado?: Record<string, unknown>,
 ): Promise<ProyectoAnalysisResult> {
   const apiKey = process.env.OPENAI_API_KEY;
   const model = getOpenAIEscalationModelName();
@@ -739,8 +761,9 @@ export async function analizarProyectoNotarialConOpenAI(
 
   const content: any[] = [{
     type: 'input_text',
-    text: `Actúa como revisor jurídico-notarial mexicano. Compara el PROYECTO DE ESCRITURA con todos los DOCUMENTOS FUENTE. Detecta únicamente discrepancias comprobables, datos faltantes, contradicciones y riesgos. No inventes datos ni uses ejemplos. Cada observación debe indicar el dato exacto del proyecto, el dato exacto de la fuente, el documento fuente y una recomendación concreta. Si no hay discrepancias, devuelve observaciones vacías. Este análisis asiste al abogado y no sustituye su revisión profesional.`
+    text: `Actúa como revisor jurídico-notarial mexicano. Compara el PROYECTO DE ESCRITURA contra el CONTEXTO ESTRUCTURADO CANÓNICO y todos los DOCUMENTOS FUENTE. Detecta únicamente discrepancias comprobables, datos faltantes, contradicciones, residuos de otro asunto y riesgos. Revisa expresamente: (1) fórmulas de transcripción literal seguidas de texto vacío, resumido, alterado o incompleto; (2) personas ajenas al expediente; (3) superficies, folios y datos del predio frente al master; (4) cantidades ordinarias que deban expresarse en guarismo y letra según el machote; (5) títulos, mayúsculas, negritas y estructura alterados; (6) secuencia y coherencia de antecedentes; (7) hechos sin fuente; (8) datos residuales del machote. Para redacción ordinaria prevalece el contexto estructurado; para una transcripción literal prevalece el documento transcrito aunque contradiga un master, y la contradicción se reporta por separado. No inventes datos, cláusulas, documentos ni ejemplos. No modifiques el Word. Cada observación debe indicar el dato exacto del proyecto, el dato exacto de la fuente, el documento o master fuente, ubicación, tipo de discrepancia y recomendación manual concreta. Usa como tipo_discrepancia una categoría clara entre TRANSCRIPCION_INCOMPLETA, PERSONA_AJENA, PREDIO, CANTIDAD_FORMAL, ESTILO_ESTRUCTURA, CONTEXTO_ANTECEDENTES, RESIDUO, CONTRADICCION o FALTANTE. Si no hay discrepancias comprobables, devuelve observaciones vacías. Este análisis asiste al abogado y no sustituye su revisión profesional.`
   }];
+  if (contextoEstructurado) content.push({ type: 'input_text', text: `[CONTEXTO ESTRUCTURADO CANÓNICO — SOLO HECHOS PERSISTIDOS]\n${JSON.stringify(contextoEstructurado)}` });
   const documentosNoLeidos: string[] = [];
 
   const appendDocument = async (doc: DocumentoParaExtraccion, etiqueta: string) => {
@@ -751,10 +774,10 @@ export async function analizarProyectoNotarialConOpenAI(
 
     if (isDocx) {
       try {
-        const extracted = await mammoth.extractRawText({ buffer: doc.buffer });
+        const extracted = await extractDocxText(doc.buffer);
         content.push({
           type: 'input_text',
-          text: `[${etiqueta}: "${filename}"; ID: ${doc.documentoId}]\n${(extracted.value || '').trim()}`
+          text: `[${etiqueta}: "${filename}"; ID: ${doc.documentoId}]\n${extracted.trim()}`
         });
       } catch {
         documentosNoLeidos.push(filename);
@@ -827,8 +850,8 @@ export async function analizarProyectoNotarialConOpenAI(
       model,
       store: false,
       input: [{ role: 'user', content }],
-      reasoning: { effort: getReasoningEffort() },
-      max_output_tokens: 8192,
+      reasoning: { effort: getProjectReviewReasoningEffort() },
+      max_output_tokens: 24_576,
       text: {
         format: {
           type: 'json_schema',
@@ -889,8 +912,8 @@ export async function extraerPredioDesdeDocumento(
   const lowerName = documento.nombreOriginal.toLowerCase();
   const mime = documento.mimeType.toLowerCase();
   if (mime.includes('officedocument.wordprocessingml') || lowerName.endsWith('.docx')) {
-    const extracted = await mammoth.extractRawText({ buffer: documento.buffer });
-    content.push({ type: 'input_text', text: `[DOCUMENTO SELECCIONADO: ${documento.nombreOriginal}; ID: ${documento.documentoId}]\n${(extracted.value || '').trim()}` });
+    const extracted = await extractDocxText(documento.buffer);
+    content.push({ type: 'input_text', text: `[DOCUMENTO SELECCIONADO: ${documento.nombreOriginal}; ID: ${documento.documentoId}]\n${extracted.trim()}` });
   } else if (mime.includes('pdf') || lowerName.endsWith('.pdf')) {
     content.push({ type: 'input_file', filename: documento.nombreOriginal, file_data: `data:application/pdf;base64,${documento.buffer.toString('base64')}` });
   } else if (mime.includes('png') || lowerName.endsWith('.png')) {
@@ -965,8 +988,8 @@ export async function extraerFinanzasDesdeDocumento(documento: DocumentoParaExtr
   const lowerName = documento.nombreOriginal.toLowerCase();
   const mime = documento.mimeType.toLowerCase();
   if (mime.includes('officedocument.wordprocessingml') || lowerName.endsWith('.docx')) {
-    const extracted = await mammoth.extractRawText({ buffer: documento.buffer });
-    content.push({ type: 'input_text', text: `[DOCUMENTO FINANCIERO: ${documento.nombreOriginal}; ID: ${documento.documentoId}]\n${(extracted.value || '').trim()}` });
+    const extracted = await extractDocxText(documento.buffer);
+    content.push({ type: 'input_text', text: `[DOCUMENTO FINANCIERO: ${documento.nombreOriginal}; ID: ${documento.documentoId}]\n${extracted.trim()}` });
   } else if (mime.includes('pdf') || lowerName.endsWith('.pdf')) {
     content.push({ type: 'input_file', filename: documento.nombreOriginal, file_data: `data:application/pdf;base64,${documento.buffer.toString('base64')}` });
   } else if (mime.includes('png') || lowerName.endsWith('.png')) {

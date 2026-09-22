@@ -1,5 +1,5 @@
 import { AlertTriangle, Building2, LoaderCircle, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../auth/AuthProvider';
 import { propertiesService } from '../../../properties/properties.service';
@@ -14,13 +14,40 @@ const subtitle = (property: PredioSummary) => [property.clave_catastral && `Clav
 
 export function PropertiesTab({ expediente, onChanged = () => undefined }: { expediente: ExpedienteDetail; onChanged?: () => void }) {
   const location = useLocation(); const navigate = useNavigate(); const { user } = useAuth(); const returned = location.state as { prd001NewPredioId?: string } | null; const canWrite = Boolean(user?.permissions?.includes('expedientes.write'));
+  const handledReturnedPredio = useRef<string | null>(null);
   const [relations, setRelations] = useState<ExpedientePredioRelation[]>(expediente.predios || []); const [catalogs, setCatalogs] = useState<ExpedientePredioCatalogs | null>(null); const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [dialog, setDialog] = useState<DialogState | null>(null); const [search, setSearch] = useState(''); const [options, setOptions] = useState<PredioSummary[]>([]); const [property, setProperty] = useState<PredioSummary | null>(null); const [actIds, setActIds] = useState<string[]>([]); const [reason, setReason] = useState(''); const [preview, setPreview] = useState<ExpedientePredioPreview | null>(null); const [confirmed, setConfirmed] = useState(false); const [working, setWorking] = useState(false); const [message, setMessage] = useState(''); const [idempotencyKey, setIdempotencyKey] = useState('');
   const load = useCallback(async (signal?: AbortSignal) => { try { const [links, catalogData] = await Promise.all([expedientesService.listProperties(expediente.id, signal), expedientesService.propertyCatalogs(expediente.id, signal)]); setRelations(links.data); setCatalogs(catalogData); setStatus('ready'); } catch { setStatus('error'); } }, [expediente.id]);
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
   const reset = () => { setSearch(''); setOptions([]); setProperty(null); setActIds([]); setReason(''); setPreview(null); setConfirmed(false); setMessage(''); setIdempotencyKey(crypto.randomUUID()); };
   const open = (operation: DialogState['operation'], current?: ExpedientePredioRelation, selected?: PredioSummary) => { reset(); setDialog({ operation, current }); if (current) { setProperty(current.predio); setActIds(current.actos.map((item) => item.expediente_acto_id)); } if (selected) setProperty(selected); };
-  useEffect(() => { if (status !== 'ready' || !returned?.prd001NewPredioId) return; propertiesService.get(returned.prd001NewPredioId).then((data) => open('LINK', undefined, data)).catch(() => setMessage('El inmueble se guardó, pero no fue posible preparar el vínculo.')); navigate({ pathname: location.pathname, hash: '#predios' }, { replace: true, state: null }); }, [status, returned?.prd001NewPredioId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (status !== 'ready' || !returned?.prd001NewPredioId || !catalogs || handledReturnedPredio.current === returned.prd001NewPredioId) return;
+    let cancelled = false;
+    const propertyId = returned.prd001NewPredioId;
+    handledReturnedPredio.current = propertyId;
+    const actIdsForNewProperty = catalogs.acts.map((act) => act.id);
+    const idempotency = crypto.randomUUID();
+    void (async () => {
+      try {
+        const selected = await propertiesService.get(propertyId);
+        const directCommand: ExpedientePredioCommand = { operation: 'LINK', predio_id: propertyId, expediente_acto_ids: actIdsForNewProperty, idempotency_key: idempotency };
+        const directPreview = await expedientesService.previewProperty(expediente.id, directCommand);
+        if (cancelled) return;
+        if (directPreview.classification === 'SAFE') {
+          await expedientesService.applyProperty(expediente.id, { ...directCommand, preview_fingerprint: directPreview.fingerprint });
+          if (cancelled) return;
+          await load(); onChanged(); setMessage('Inmueble creado y vinculado automáticamente al expediente.');
+          navigate({ pathname: location.pathname, hash: '#predios' }, { replace: true, state: null });
+          return;
+        }
+        open('LINK', undefined, selected); setActIds(actIdsForNewProperty); setPreview(directPreview); setIdempotencyKey(idempotency);
+        setMessage(directPreview.classification === 'REVIEW_REQUIRED' ? 'El inmueble fue creado. Revisa el impacto antes de completar el vínculo.' : 'El inmueble fue creado, pero el vínculo requiere corrección.');
+        navigate({ pathname: location.pathname, hash: '#predios' }, { replace: true, state: null });
+      } catch (error) { if (!cancelled) { setMessage(error instanceof Error ? error.message : 'El inmueble se guardó, pero no fue posible completar el vínculo.'); navigate({ pathname: location.pathname, hash: '#predios' }, { replace: true, state: null }); } }
+    })();
+    return () => { cancelled = true; };
+  }, [status, returned?.prd001NewPredioId, catalogs, expediente.id, load, location.pathname, navigate, onChanged]);
   useEffect(() => { if (!dialog || dialog.operation !== 'LINK' || property) return; const controller = new AbortController(); const timer = window.setTimeout(() => { expedientesService.searchProperties(expediente.id, search, controller.signal).then((result) => { setOptions(result.data); setMessage(''); }).catch(() => { if (!controller.signal.aborted) setMessage('No pudimos buscar en el maestro inmobiliario.'); }); }, 180); return () => { window.clearTimeout(timer); controller.abort(); }; }, [dialog, expediente.id, property, search]);
   const command = (): ExpedientePredioCommand => ({ operation: dialog!.operation, relation_id: dialog?.current?.id, predio_id: property?.id, expediente_acto_ids: actIds, reason: reason || undefined, idempotency_key: idempotencyKey });
   const requestPreview = async () => { setWorking(true); setMessage(''); try { setPreview(await expedientesService.previewProperty(expediente.id, command())); } catch (error) { setMessage(error instanceof Error ? error.message : 'No fue posible calcular el impacto.'); } finally { setWorking(false); } };

@@ -182,11 +182,24 @@ export class ComparecienteController {
         fechaEmision: req.body.fecha_emision,
         fechaVencimiento: req.body.fecha_vencimiento,
         observaciones: req.body.observaciones,
+        vigencia: req.body.vigencia,
       });
 
       return res.status(201).json({ success: true, data: result });
     } catch (err: any) {
       return res.status(400).json({ success: false, error: err.message });
+    }
+  }
+
+  public static async actualizarVigenciaDocumentoMaster(req: Request, res: Response) {
+    try {
+      const actor = authenticatedActor(req);
+      if (!actor) return res.status(401).json({ success: false, error: 'Tu sesión no es válida.' });
+      if (!['VIGENTE', 'HISTORICO'].includes(req.body.vigencia)) return res.status(400).json({ success: false, error: 'Selecciona Vigente o Histórico.' });
+      const data = await comparecienteService.actualizarVigenciaDocumentoMaster(req.params.id, req.params.documentoId, req.body.vigencia, actor.id);
+      return res.status(200).json({ success: true, data });
+    } catch (err: any) {
+      return res.status(400).json({ success: false, error: err.message || 'No pudimos reclasificar el documento.' });
     }
   }
 

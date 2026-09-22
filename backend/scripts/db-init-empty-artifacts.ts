@@ -240,6 +240,12 @@ function droppedIndexName(statement: string) {
   return match ? postgresIdentifier(match[1].split('.').at(-1)!) : null;
 }
 
+function droppedConstraintName(statement: string) {
+  const normalized = withoutLeadingComments(statement);
+  const match = normalized.match(new RegExp(`^ALTER\\s+TABLE\\s+${qualifiedIdentifier}\\s+DROP\\s+CONSTRAINT(?:\\s+IF\\s+EXISTS)?\\s+(${identifier})`, 'i'));
+  return match ? postgresIdentifier(match[1]) : null;
+}
+
 function uniqueSorted(values: string[]) {
   return [...new Set(values)].sort();
 }
@@ -308,6 +314,13 @@ export async function buildHistoricalArtifactPlan(migrationsRoot: string, migrat
         for (let index = artifacts.length - 1; index >= 0; index -= 1) {
           const artifact = artifacts[index];
           if (artifact.kind === 'INDEX' && historicalArtifactObjectNames([artifact]).indexes.includes(retiredIndex)) artifacts.splice(index, 1);
+        }
+      }
+      const retiredConstraint = droppedConstraintName(statement);
+      if (retiredConstraint) {
+        for (let index = artifacts.length - 1; index >= 0; index -= 1) {
+          const artifact = artifacts[index];
+          if (artifact.kind === 'CHECK' && historicalArtifactObjectNames([artifact]).checks.includes(retiredConstraint)) artifacts.splice(index, 1);
         }
       }
       artifacts.push(...classify(statement, migration));

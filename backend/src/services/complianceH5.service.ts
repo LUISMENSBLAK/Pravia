@@ -488,7 +488,10 @@ export class ComplianceH5Service {
     };
     for (const result of input.results.filter((item) => item.vulnerable)) {
       const trigger = { rule_result_id: result.id, rule_revision_id: result.revisionId, checksum: result.checksum, expediente_acto_id: result.actId };
-      add("CUE:GENERAL", "CUE", null, "Cuestionario general de la operación", trigger);
+      // Corrección 012: existe un cuestionario de operación por cada acto al que
+      // Cumplimiento determina aplicabilidad. La clave del requisito es la
+      // identidad canónica; nunca se infiere aplicabilidad desde Configuración.
+      add(`CUE:GENERAL:${result.actId}`, "CUE", null, "Cuestionario del acto / operación", trigger);
       for (const document of result.documents) {
         if (document.action === "GO_TO_PAYMENT_EVIDENCE") add("PAG:OPERATION", "PAG", null, "Pagos de la operación y sus evidencias", trigger);
         if (document.action === "GO_TO_QUESTIONNAIRE" && document.target_scope === "EACH_RELEVANT_COMPARECIENTE") {
@@ -504,7 +507,10 @@ export class ComplianceH5Service {
         create: { organization_id: user.organizationId, expediente_id: input.expedienteId, state_id: input.stateId, review_id: input.reviewId,
           provider: value.provider, requirement_key: key, label: value.label, status: "PENDIENTE", target_compareciente_id: value.target,
           source_snapshot: json({ h5_contract: value.provider === "CUE" ? "CUM-CUE-001" : "CUM-PAG-001", triggers: value.triggers }),
-          is_documental: value.provider === "CUE", document_category: value.provider === "CUE" ? "CUESTIONARIOS_RIESGO" : "PAGOS_EVIDENCIAS",
+          // CUE is a structured questionnaire requirement, not an H2 DOC
+          // requirement. Its finalized PDF may later be registered as evidence,
+          // but the requirement itself must satisfy the non-documental shape.
+          is_documental: false, document_category: value.provider === "CUE" ? "CUESTIONARIOS_RIESGO" : "PAGOS_EVIDENCIAS",
           requires_signed_document: false, missing_action: value.provider === "CUE" ? "GO_TO_QUESTIONNAIRE" : "GO_TO_PAYMENT_EVIDENCE",
         }, update: {},
       });
@@ -527,7 +533,7 @@ export class ComplianceH5Service {
         where: { organization_id: user.organizationId, review_id: review.id, ...questionnaireObjectScope(user) },
         include: {
           currentRevision: true,
-          definitionVersion: { select: { id: true, definition_json: true, definition_checksum: true } },
+          definitionVersion: { select: { id: true, version: true, definition_json: true, definition_checksum: true } },
           targetCompareciente: { select: { id: true, nombre_busqueda: true } },
           requirement: { select: { id: true, label: true, status: true } },
         },
@@ -661,91 +667,15 @@ export class ComplianceH5Service {
     body: any,
     correlationId?: string,
   ) {
-    requireH5Permission(user, "compliance.rules.manage");
-    const definition = validateQuestionnaireDefinition(body.definition);
-    const checksum = semanticFingerprint(definition);
-    const purpose =
-      definition.scope === "GENERAL"
-        ? ("CUE_GENERAL" as const)
-        : ("CUE_PERSONAL" as const);
-    return prisma.$transaction(async (tx) => {
-      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`h5:definition:${user.organizationId}:${artifactId}`}))`);
-      const artifact = await tx.catalogoArtefacto.findFirst({
-        where: {
-          id: artifactId,
-          organization_id: user.organizationId,
-          activo: true,
-        },
-        select: { id: true, purpose: true },
-      });
-      if (!artifact)
-        throw new ComplianceError(
-          "El artefacto no está disponible.",
-          "H5_QUESTIONNAIRE_ARTIFACT_NOT_FOUND",
-          404,
-        );
-      const hasFile = await tx.catalogoArtefactoVersion.findFirst({
-        where: { organization_id: user.organizationId, artefacto_id: artifactId, content_kind: "FILE" },
-        select: { id: true },
-      });
-      if (hasFile || (artifact.purpose && artifact.purpose !== purpose))
-        throw new ComplianceError("No se puede reclasificar un artefacto existente.", "H5_ARTIFACT_RECLASSIFICATION_BLOCKED", 409);
-      const duplicate = await tx.catalogoArtefactoVersion.findFirst({
-        where: {
-          organization_id: user.organizationId,
-          artefacto_id: artifactId,
-          definition_checksum: checksum,
-        },
-      });
-      if (duplicate) return duplicate;
-      const latest = await tx.catalogoArtefactoVersion.findFirst({
-        where: {
-          organization_id: user.organizationId,
-          artefacto_id: artifactId,
-        },
-        orderBy: { version: "desc" },
-        select: { version: true },
-      });
-      await tx.catalogoArtefactoVersion.updateMany({
-        where: {
-          organization_id: user.organizationId,
-          artefacto_id: artifactId,
-          activa: true,
-        },
-        data: { activa: false },
-      });
-      await tx.catalogoArtefacto.update({
-        where: { id: artifactId },
-        data: { purpose, actualizado_por_id: user.id },
-      });
-      const version = await tx.catalogoArtefactoVersion.create({
-        data: {
-          organization_id: user.organizationId,
-          artefacto_id: artifactId,
-          version: (latest?.version || 0) + 1,
-          origen: "CONFIGURACION_H5",
-          content_kind: "STRUCTURED_QUESTIONNAIRE",
-          definition_json: json(definition),
-          definition_checksum: checksum,
-          schema_version: 1,
-          activa: true,
-          creado_por_id: user.id,
-        },
-      });
-      await tx.auditLog.create({
-        data: {
-          organization_id: user.organizationId,
-          user_id: user.id,
-          accion: "PUBLISH_H5_QUESTIONNAIRE_DEFINITION",
-          entidad: "CatalogoArtefactoVersion",
-          entidad_id: version.id,
-          valores_nuevos: json({ purpose, checksum, version: version.version }),
-          correlation_id: correlationId,
-          session_id: user.sessionId,
-        },
-      });
-      return version;
-    });
+    void user;
+    void artifactId;
+    void body;
+    void correlationId;
+    throw new ComplianceError(
+      "Los cuestionarios se administran únicamente en Configuración, mediante los bancos Personal y Acto / Operación.",
+      "H5_QUESTIONNAIRE_EDITOR_RETIRED",
+      410,
+    );
   }
 
   static async ensureQuestionnaires(
@@ -781,9 +711,21 @@ export class ComplianceH5Service {
           scope === "GENERAL"
             ? ("CUE_GENERAL" as const)
             : ("CUE_PERSONAL" as const);
+        const operationActId = !requirement.target_compareciente_id && requirement.requirement_key.startsWith("CUE:GENERAL:")
+          ? requirement.requirement_key.slice("CUE:GENERAL:".length)
+          : null;
+        if (!requirement.target_compareciente_id && !operationActId) {
+          // A pre-012 general requirement is historical evidence. It is kept
+          // readable but is not silently reinterpreted as an act assessment.
+          await tx.complianceRequirement.update({ where: { id: requirement.id }, data: {
+            status: "BLOQUEADO_POR_FALTA_DATOS",
+            source_snapshot: json({ ...(requirement.source_snapshot as object), reason: "LEGACY_GENERAL_REQUIREMENT_WITHOUT_ACT_ID" }),
+          } });
+          continue;
+        }
         const identity = requirement.target_compareciente_id
           ? `PERSONAL:${requirement.target_compareciente_id}`
-          : "GENERAL";
+          : `OPERACION:${operationActId}`;
         const existing = await tx.complianceQuestionnaireAssessment.findFirst({
           where: {
             organization_id: user.organizationId,

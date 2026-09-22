@@ -1,4 +1,4 @@
-import { Download, FileWarning, LoaderCircle, X } from 'lucide-react';
+import { Download, FileWarning, LoaderCircle, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import styles from './DocumentViewer.module.css';
 
@@ -16,7 +16,8 @@ type Props = {
 const previewKind = (mime = '', name = '') => {
   const value = `${mime} ${name}`.toLowerCase();
   if (value.includes('pdf') || value.endsWith('.pdf')) return 'pdf';
-  if (value.includes('image/') || /\.(png|jpe?g|bmp)$/.test(value)) return 'image';
+  if (value.includes('wordprocessingml') || value.includes('msword') || value.endsWith('.docx')) return 'docx';
+  if (value.includes('image/') || /\.(png|jpe?g|webp|bmp)$/.test(value)) return 'image';
   return 'unsupported';
 };
 
@@ -30,16 +31,16 @@ function PreviewFallback({ onDownload }: { onDownload?: () => void }) {
 }
 
 function PdfPreview({ url, name, onDownload }: { url: string; name: string; onDownload?: () => void }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [pages, setPages] = useState(0);
+  const [pages, setPages] = useState<Array<{ number: number; page: any }>>([]);
+  const [zoom, setZoom] = useState(1);
 
   useEffect(() => {
     let active = true;
     let loadingTask: { destroy(): Promise<void> } | undefined;
-    let renderTask: { cancel(): void } | undefined;
 
-    const renderFirstPage = async () => {
+    const loadPages = async () => {
       setState('loading');
       try {
         const [pdfjs, worker] = await Promise.all([
@@ -50,64 +51,82 @@ function PdfPreview({ url, name, onDownload }: { url: string; name: string; onDo
         const task = pdfjs.getDocument({ url });
         loadingTask = task;
         const pdf = await task.promise;
-        const page = await pdf.getPage(1);
-        if (!active || !canvasRef.current) return;
-
-        const canvas = canvasRef.current;
-        const baseViewport = page.getViewport({ scale: 1 });
-        const availableWidth = Math.max(280, (canvas.parentElement?.clientWidth || 860) - 56);
-        const viewport = page.getViewport({ scale: Math.min(1.55, availableWidth / baseViewport.width) });
-        const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-        const context = canvas.getContext('2d', { alpha: false });
-        if (!context) throw new Error('Canvas unavailable');
-
-        canvas.width = Math.floor(viewport.width * pixelRatio);
-        canvas.height = Math.floor(viewport.height * pixelRatio);
-        canvas.style.width = `${Math.floor(viewport.width)}px`;
-        canvas.style.height = `${Math.floor(viewport.height)}px`;
-        const pageRender = page.render({
-          canvas,
-          canvasContext: context,
-          viewport,
-          transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0],
-        });
-        renderTask = pageRender;
-        await pageRender.promise;
-        if (active) {
-          setPages(pdf.numPages);
-          setState('ready');
-        }
+        const loaded = await Promise.all(Array.from({ length: pdf.numPages }, async (_, index) => ({ number: index + 1, page: await pdf.getPage(index + 1) })));
+        if (active) { setPages(loaded); setState('ready'); }
       } catch (error) {
         if (active && !(error instanceof Error && error.name === 'RenderingCancelledException')) setState('error');
       }
     };
 
-    void renderFirstPage();
+    void loadPages();
     return () => {
       active = false;
-      renderTask?.cancel();
       void loadingTask?.destroy();
     };
   }, [url]);
 
-  return <div className={styles.pdfPreview} aria-label={`Vista previa de ${name}`}>
+  return <div ref={containerRef} className={styles.pdfPreview} aria-label={`Vista previa de ${name}`}>
     {state === 'loading' && <p className={styles.previewLoading} role="status"><LoaderCircle aria-hidden="true" />Renderizando documento…</p>}
     {state === 'error' && <PreviewFallback onDownload={onDownload} />}
-    <canvas ref={canvasRef} hidden={state !== 'ready'} style={state === 'ready' ? undefined : { display: 'none' }} data-preview-loaded={state === 'ready' ? 'true' : 'false'} aria-label={`Página 1 de ${name}`} />
-    {state === 'ready' && <small>Página 1 de {pages}</small>}
+    {state === 'ready' && <><div className={styles.zoomToolbar} aria-label="Controles de zoom"><button type="button" aria-label="Reducir zoom" onClick={() => setZoom((value) => Math.max(.6, value - .15))}><ZoomOut /></button><span>{Math.round(zoom * 100)}%</span><button type="button" aria-label="Aumentar zoom" onClick={() => setZoom((value) => Math.min(2, value + .15))}><ZoomIn /></button></div><div className={styles.pdfPages}>{pages.map((item) => <PdfCanvas key={item.number} page={item.page} number={item.number} total={pages.length} name={name} zoom={zoom} container={containerRef.current} />)}</div></>}
+  </div>;
+}
+
+function PdfCanvas({ page, number, total, name, zoom, container }: { page: any; number: number; total: number; name: string; zoom: number; container: HTMLDivElement | null }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let active = true; let task: { promise: Promise<void>; cancel(): void } | undefined;
+    const render = async () => {
+      const canvas = ref.current; if (!canvas) return;
+      const base = page.getViewport({ scale: 1 });
+      const available = Math.max(280, (container?.clientWidth || 860) - 64);
+      const viewport = page.getViewport({ scale: Math.min(1.7, available / base.width) * zoom });
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2); const context = canvas.getContext('2d', { alpha: false }); if (!context) return;
+      canvas.width = Math.floor(viewport.width * pixelRatio); canvas.height = Math.floor(viewport.height * pixelRatio); canvas.style.width = `${Math.floor(viewport.width)}px`; canvas.style.height = `${Math.floor(viewport.height)}px`;
+      const renderTask = page.render({ canvas, canvasContext: context, viewport, transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0] });
+      task = renderTask;
+      await renderTask.promise; if (active) setReady(true);
+    };
+    void render(); return () => { active = false; task?.cancel(); };
+  }, [page, zoom, container]);
+  return <figure><canvas ref={ref} data-preview-loaded={ready ? 'true' : 'false'} aria-label={`Página ${number} de ${name}`} /><figcaption>Página {number} de {total}</figcaption></figure>;
+}
+
+const sanitizeDocx = (html: string) => {
+  const document = new DOMParser().parseFromString(html, 'text/html');
+  document.querySelectorAll('script,iframe,object,embed,form').forEach((node) => node.remove());
+  document.querySelectorAll('*').forEach((node) => [...node.attributes].forEach((attribute) => {
+    if (attribute.name.toLowerCase().startsWith('on') || (/^(href|src)$/i.test(attribute.name) && /^javascript:/i.test(attribute.value))) node.removeAttribute(attribute.name);
+  }));
+  return document.body.innerHTML;
+};
+
+function DocxPreview({ url, name, onDownload }: { url: string; name: string; onDownload?: () => void }) {
+  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [html, setHtml] = useState('');
+  const [zoom, setZoom] = useState(1);
+  useEffect(() => { let active = true; const load = async () => { try { const [response, mammoth] = await Promise.all([fetch(url), import('mammoth')]); if (!response.ok) throw new Error('download failed'); const result = await mammoth.convertToHtml({ arrayBuffer: await response.arrayBuffer() }); if (active) { setHtml(sanitizeDocx(result.value)); setState('ready'); } } catch { if (active) setState('error'); } }; void load(); return () => { active = false; }; }, [url]);
+  return <div className={styles.docxPreview} aria-label={`Vista previa de ${name}`}>
+    {state === 'loading' && <p className={styles.previewLoading} role="status"><LoaderCircle aria-hidden="true" />Interpretando documento Word…</p>}
+    {state === 'error' && <PreviewFallback onDownload={onDownload} />}
+    {state === 'ready' && <><div className={styles.zoomToolbar} aria-label="Controles de zoom"><button type="button" aria-label="Reducir zoom" onClick={() => setZoom((value) => Math.max(.7, value - .1))}><ZoomOut /></button><span>{Math.round(zoom * 100)}%</span><button type="button" aria-label="Aumentar zoom" onClick={() => setZoom((value) => Math.min(1.6, value + .1))}><ZoomIn /></button></div><article className={styles.docxPage} style={{ zoom }} data-preview-loaded="true" dangerouslySetInnerHTML={{ __html: html }} /></>}
   </div>;
 }
 
 function ImagePreview({ url, name, onDownload }: { url: string; name: string; onDownload?: () => void }) {
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [zoom, setZoom] = useState(1);
   return <div className={styles.imagePreview}>
     {state === 'loading' && <p className={styles.previewLoading} role="status"><LoaderCircle aria-hidden="true" />Preparando imagen…</p>}
     {state === 'error' && <PreviewFallback onDownload={onDownload} />}
+    {state === 'ready' && <div className={styles.zoomToolbar} aria-label="Controles de zoom"><button type="button" aria-label="Reducir zoom" onClick={() => setZoom((value) => Math.max(.5, value - .15))}><ZoomOut /></button><span>{Math.round(zoom * 100)}%</span><button type="button" aria-label="Aumentar zoom" onClick={() => setZoom((value) => Math.min(2.5, value + .15))}><ZoomIn /></button></div>}
     <img
       src={url}
       alt={`Vista previa de ${name}`}
       data-preview-loaded={state === 'ready' ? 'true' : 'false'}
       hidden={state === 'error'}
+      style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
       onLoad={() => setState('ready')}
       onError={() => setState('error')}
     />
@@ -130,6 +149,7 @@ export function DocumentViewer({ open, name, mimeType, url, loading, error, onCl
         {loading && <p className={styles.previewLoading} role="status"><LoaderCircle aria-hidden="true" />Preparando vista previa…</p>}
         {error && <PreviewFallback onDownload={onDownload} />}
         {!loading && !error && url && kind === 'pdf' && <PdfPreview url={url} name={name} onDownload={onDownload} />}
+        {!loading && !error && url && kind === 'docx' && <DocxPreview url={url} name={name} onDownload={onDownload} />}
         {!loading && !error && url && kind === 'image' && <ImagePreview url={url} name={name} onDownload={onDownload} />}
         {!loading && !error && !url && kind !== 'unsupported' && <PreviewFallback onDownload={onDownload} />}
         {!loading && !error && kind === 'unsupported' && <div className={styles.unsupported}><strong>Vista previa no disponible para este formato</strong><p>Puedes descargar el archivo para abrirlo con una aplicación compatible.</p>{onDownload && <button type="button" onClick={onDownload}><Download />Descargar documento</button>}</div>}

@@ -165,12 +165,12 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
     expect(quote).toMatchObject({ prospecto_id: prospect.id, user_id: primary.id, organization_id: primary.organizationId });
     expect(quote.prospecto).toMatchObject({ telefono: '3111002000', email: 'cliente@example.test', tipo_acto: 'Compraventa', necesidad: 'Operación directa' });
     expect(quote.total_cliente?.toString()).toBe('1160');
-    expect(quote.versiones).toHaveLength(1);
+    expect(quote.versiones).toHaveLength(0);
+    expect(quote.honorarios_pravia).toBeNull();
     expect(quote.conceptos.map((item: any) => [item.concepto, item.categoria, item.importe.toString()])).toEqual([
       ['Honorarios', 'HONORARIOS', '1000'],
       ['Impuestos y derechos', 'IMPUESTOS_DERECHOS', '160'],
     ]);
-    expect(quote.versiones[0].conceptos.map((item: any) => item.categoria)).toEqual(['HONORARIOS', 'IMPUESTOS_DERECHOS']);
     expect(await db.documento.count({ where: { storage_key: document.storage_key } })).toBe(1);
     expect(await db.documento.count({ where: { id: document.id, prospecto_id: prospect.id } })).toBe(1);
     expect((await read(prospect.id)).stage).toBe('CONVERTIDO_EN_COTIZACION');
@@ -204,11 +204,7 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
     await act(prospect.id, 'MARCAR_LISTO_PARA_COTIZAR');
     const prospectConversion = await act(prospect.id, 'CONVERTIR');
     const quoteId = prospectConversion.quoteId!;
-    const approvedVersion = await db.cotizacionVersion.findFirstOrThrow({
-      where: { cotizacion_id: quoteId },
-      include: { conceptos: { orderBy: { orden: 'asc' } } },
-    });
-    await db.cotizacionVersion.update({ where: { id: approvedVersion.id }, data: { aprobada: true } });
+    expect(await db.cotizacionVersion.count({ where: { cotizacion_id: quoteId } })).toBe(0);
 
     expect(await run(primary, () => quoteWorkflow.read(primary, quoteId))).toMatchObject({ stage: 'BORRADOR' });
     const started = await actQuote(quoteId, 'COMENZAR_ELABORACION');
@@ -220,13 +216,13 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
     });
     expect(await run(primary, () => quoteWorkflow.read(primary, quoteId))).toMatchObject({ stage: 'EN_ELABORACION' });
     await actQuote(quoteId, 'ENVIAR_CLIENTE', {
-      channel: 'Correo', recipient: 'cotizacion-002@example.test', evidence: 'Entrega confirmada', versionId: approvedVersion.id,
+      channel: 'Correo', recipient: 'cotizacion-002@example.test', evidence: 'Entrega confirmada',
     });
     await actQuote(quoteId, 'INICIAR_SEGUIMIENTO');
-    await actQuote(quoteId, 'ACEPTAR', { versionId: approvedVersion.id });
+    await actQuote(quoteId, 'ACEPTAR');
     const accepted = await run(primary, () => quoteWorkflow.read(primary, quoteId));
     expect(accepted).toMatchObject({ stage: 'ACEPTADA' });
-    expect(accepted.events.at(-1)).toMatchObject({ action: 'ACEPTAR', quoteVersion: { id: approvedVersion.id } });
+    expect(accepted.events.at(-1)).toMatchObject({ action: 'ACEPTAR', quoteVersion: { id: expect.any(String) } });
 
     const actType = await db.tipoActo.findFirstOrThrow({ where: { codigo_catalogo: 'COMPRAVENTA' } });
     const request = (key: string) => run(primary, () => quoteConversion.convert({
@@ -249,7 +245,7 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
     expect(await db.documento.count({ where: { storage_key: document.storage_key } })).toBe(1);
 
     const operational = await run(primary, () => expedienteBudget.read(primary, first.expediente.id));
-    expect(operational.quote_origin).toMatchObject({ quote_id: quoteId, quote_version_id: approvedVersion.id, immutable: true });
+    expect(operational.quote_origin).toMatchObject({ quote_id: quoteId, quote_version_id: expect.any(String), immutable: true });
     expect(operational.concepts.map((item: any) => [item.concepto, item.categoria, item.importe])).toEqual([
       ['Honorarios', 'HONORARIOS', '1000.00'],
       ['Impuestos y derechos', 'IMPUESTOS_DERECHOS', '160.00'],
@@ -262,7 +258,7 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
       ],
     }));
     const acceptedAfterExpEdit = await db.cotizacionVersion.findUniqueOrThrow({
-      where: { id: approvedVersion.id },
+      where: { id: operational.quote_origin.quote_version_id },
       include: { conceptos: { orderBy: { orden: 'asc' } } },
     });
     expect(acceptedAfterExpEdit.conceptos.map((item: any) => [item.concepto, item.importe.toString()])).toEqual([

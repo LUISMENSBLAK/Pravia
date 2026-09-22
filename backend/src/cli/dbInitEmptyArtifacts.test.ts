@@ -111,6 +111,17 @@ describe('db:init-empty historical artifacts', () => {
       .rejects.toThrow('enforce_same_organization');
   });
 
+  it('restores the latest replacement for a dropped and recreated CHECK constraint', async () => {
+    const allMigrations = (await readdir(migrationsRoot, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+    const plan = await buildHistoricalArtifactPlan(migrationsRoot, allMigrations);
+    const quoteShape = plan.artifacts.filter((artifact) => artifact.kind === 'CHECK' && artifact.sql.includes('cot001_transition_shape'));
+    expect(quoteShape).toHaveLength(1);
+    expect(quoteShape[0].migration).toBe('20260912010000_correction002_cfg001_questionnaires');
+    expect(quoteShape[0].sql).toContain("'COMENZAR_ELABORACION'");
+    expect(quoteShape[0].sql).toContain("'ACEPTAR'");
+  });
+
   it('requires the exact destructive-operation confirmation', () => {
     expect(() => assertEmptyBootstrapConfirmation(undefined)).toThrow('INIT_CONFIRMATION');
     expect(() => assertEmptyBootstrapConfirmation('YES')).toThrow('INIT_CONFIRMATION');

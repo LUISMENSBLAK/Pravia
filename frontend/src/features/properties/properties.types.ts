@@ -1,4 +1,5 @@
 export type PropertyBoundary = { id?: string; referencia?: string | null; medida?: string | number | null; unidad?: string | null; colindante?: string | null; descripcion?: string | null; orden?: number };
+export type PropertyListItem = { id:string; apodo?:string|null; clave_catastral?:string|null; cuenta_predial?:string|null; folio_real?:string|null; ubicacion_texto?:string|null; calle?:string|null; numero_exterior?:string|null; colonia?:string|null; municipio?:string|null; estado?:string|null; updated_at:string };
 export type PropertyDocument = { id: string; documento_id: string; tipo_vinculo: string; estatus: string; vigencia: 'VIGENTE' | 'HISTORICO'; es_antecedente_principal: boolean; origen: string; documento: { id: string; nombre_original: string; mime_type: string; size_bytes: number; fecha_carga: string } };
 export type PropertyImportableDocument = { id: string; origin: string; source_name: string; document: { id: string; nombre_original: string; mime_type: string; size_bytes: number; fecha_carga: string } };
 export type PropertyRecord = {

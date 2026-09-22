@@ -6,6 +6,8 @@ const db = vi.hoisted(() => ({
   catalogoArtefacto: { findMany: vi.fn(), count: vi.fn() },
   catalogoArtefactoVersion: { findFirst: vi.fn() },
   expediente: { findFirst: vi.fn() },
+  expedienteComplianceState: { findFirst: vi.fn() },
+  complianceQuestionnaireAssessment: { findFirst: vi.fn() },
   expedienteCompareciente: { findFirst: vi.fn() },
   expedientePredio: { findFirst: vi.fn() },
   expedienteCuestionarioRespuesta: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
@@ -17,6 +19,7 @@ const db = vi.hoisted(() => ({
 vi.mock('../config/prisma', () => ({ default: db }));
 
 import { QuestionnaireCatalogService } from './questionnaireCatalog.service';
+import { ComplianceH5Service } from './complianceH5.service';
 
 const definition = {
   title: 'Datos del expediente',
@@ -62,69 +65,37 @@ describe('CFG-001 persistencia de cuestionarios', () => {
     }));
   });
 
-  it('materializa una instancia por compareciente y prellena sólo los datos existentes', async () => {
-    db.expediente.findFirst.mockResolvedValue({
-      id: 'exp-1', numero_pravia: 'EXP-0001-2026', cliente_alias: 'Cliente', tipo_acto_id: null, actos: [], predios: [],
-      comparecientes: [
-        { compareciente_id: 'party-1', compareciente: { nombre_busqueda: 'Persona Uno' } },
-        { compareciente_id: 'party-2', compareciente: { nombre_busqueda: '' } },
-      ],
-    });
-    db.catalogoArtefacto.findMany.mockResolvedValue([{
-      id: 'questionnaire-1', nombre: 'Identificación por compareciente', cuestionarioFormatos: [],
-      versiones: [{ id: 'version-2', version: 2, definition_json: {
-        title: 'Identificación por compareciente', scope: 'COMPARECIENTE', sections: [{ id: 'general', title: 'General', order: 0, questions: [
-          { id: 'name', label: 'Nombre', type: 'SHORT_TEXT', order: 0, required: true, mappings: [], prefill: 'COMPARECIENTE_NOMBRE' },
-          { id: 'pending', label: 'Dato pendiente', type: 'SHORT_TEXT', order: 1, required: false, mappings: [] },
-        ] }],
-      } }],
-    }]);
-    db.expedienteCuestionarioRespuesta.findMany.mockResolvedValue([]);
+  it('consume exclusivamente las evaluaciones que Cumplimiento marcó aplicables', async () => {
+    db.expedienteComplianceState.findFirst.mockResolvedValue({ current_review_id: 'review-1' });
+    vi.spyOn(ComplianceH5Service, 'readWorkspace').mockResolvedValue({ questionnaires: [{
+      id: 'assessment-1', scope: 'PERSONAL', identity_key: 'PERSONAL:party-1',
+      definition_version_id: 'version-2', definitionVersion: { id: 'version-2', version: 2, definition_json: definition },
+      targetCompareciente: { nombre_busqueda: 'Persona Uno' }, requirement: { label: 'Cuestionario personal' }, currentRevision: null,
+    }] } as any);
 
     const result = await new QuestionnaireCatalogService().listApplicable(actor, 'exp-1');
 
-    expect(result).toHaveLength(2);
-    expect(result.map((item) => item.subject.key)).toEqual(['party-1', 'party-2']);
-    expect(result[0].prefill).toEqual({ name: 'Persona Uno' });
-    expect(result[1].prefill).toEqual({ name: '' });
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ assessmentId: 'assessment-1', bank: 'PERSONAL', subject: { key: 'PERSONAL:party-1', label: 'Persona Uno' } });
   });
 
-  it('serializa por expediente, versión, alcance y sujeto antes de asignar la revisión', async () => {
-    db.expedienteCuestionarioRespuesta.findFirst
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ revision: 4, answers_json: {} });
-    db.expedienteCuestionarioRespuesta.create.mockResolvedValue({ id: 'response-5', revision: 5 });
+  it('guarda respuestas mediante la revisión inmutable de Cumplimiento', async () => {
+    db.complianceQuestionnaireAssessment.findFirst.mockResolvedValue({ id: 'assessment-1' });
+    const save = vi.spyOn(ComplianceH5Service, 'saveQuestionnaire').mockResolvedValue({ id: 'revision-2' } as any);
 
     await new QuestionnaireCatalogService().saveAnswers(actor, 'exp-1', {
-      versionId: 'version-1',
-      scope: 'EXPEDIENTE',
-      subjectKey: 'exp-1',
-      answers: { dato: 'Valor' },
-      idempotencyKey: 'attempt-0001',
+      assessmentId: 'assessment-1', answers: { dato: 'Valor' }, baseFingerprint: 'base-1', idempotencyKey: 'attempt-0001', finalize: false,
     });
 
-    expect(db.$executeRaw).toHaveBeenCalledTimes(1);
-    expect(db.expedienteCuestionarioRespuesta.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ revision: 5, idempotency_key: 'attempt-0001' }),
-    }));
+    expect(save).toHaveBeenCalledWith(actor, 'assessment-1', {
+      answers: { dato: 'Valor' }, base_fingerprint: 'base-1', idempotency_key: 'attempt-0001',
+    }, false);
   });
 
-  it('rechaza reutilizar una clave idempotente para otro contexto', async () => {
-    db.expedienteCuestionarioRespuesta.findFirst.mockResolvedValueOnce({
-      id: 'response-other',
-      expediente_id: 'exp-other',
-      artefacto_version_id: 'version-1',
-      scope: 'EXPEDIENTE',
-      subject_key: 'exp-other',
-    });
-
+  it('rechaza guardar una evaluación ajena al expediente u organización', async () => {
+    db.complianceQuestionnaireAssessment.findFirst.mockResolvedValue(null);
     await expect(new QuestionnaireCatalogService().saveAnswers(actor, 'exp-1', {
-      versionId: 'version-1',
-      scope: 'EXPEDIENTE',
-      subjectKey: 'exp-1',
-      answers: {},
-      idempotencyKey: 'attempt-0002',
-    })).rejects.toMatchObject({ code: 'QUESTIONNAIRE_KEY_REUSED', status: 409 });
-    expect(db.expedienteCuestionarioRespuesta.create).not.toHaveBeenCalled();
+      assessmentId: 'assessment-foreign', answers: {}, baseFingerprint: 'base-1', idempotencyKey: 'attempt-0002',
+    })).rejects.toMatchObject({ code: 'QUESTIONNAIRE_CONTEXT_NOT_FOUND', status: 404 });
   });
 });

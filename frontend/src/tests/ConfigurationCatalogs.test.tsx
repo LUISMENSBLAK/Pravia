@@ -27,6 +27,7 @@ const api = vi.hoisted(() => ({
   createCatalogInstitution: vi.fn(),
   catalogExplorer: vi.fn(),
   createCatalogFolder: vi.fn(),
+  updateCatalogFolder: vi.fn(),
   createCatalogArtifact: vi.fn(),
   updateCatalogArtifact: vi.fn(),
   addCatalogArtifactVersion: vi.fn(),
@@ -42,6 +43,8 @@ const api = vi.hoisted(() => ({
   bootstrapCatalogLibraryV4: vi.fn(),
   previewCatalogImport: vi.fn(),
   confirmCatalogImport: vi.fn(),
+  functionalDestinations: vi.fn(),
+  assignFunctionalDestinations: vi.fn(),
 }));
 
 vi.mock("../features/settings/settings.service", () => ({
@@ -157,6 +160,15 @@ describe("Catálogos contractuales accesibles", () => {
       notaria: support.notarias[0],
       institutions: support.institutions,
     });
+    api.functionalDestinations.mockResolvedValue([
+      { value: "COTIZACION_SERVICIOS", label: "Cotización de servicios", artifactTypes: ["PLANTILLA", "FORMATO"] },
+      { value: "EXPEDIENTE_PRESUPUESTO", label: "Presupuesto del expediente", artifactTypes: ["PLANTILLA", "FORMATO"] },
+      { value: "PROYECTO_MACHOTE", label: "Machote para proyecto", artifactTypes: ["PLANTILLA"] },
+    ]);
+    api.assignFunctionalDestinations.mockResolvedValue({});
+    api.createCatalogArtifact.mockResolvedValue({ id: "artifact-new" });
+    api.updateCatalogArtifact.mockResolvedValue({});
+    api.updateCatalogFolder.mockResolvedValue({});
     api.previewCatalogImport.mockResolvedValue({
       total_files: 1,
       total_bytes: 10,
@@ -225,6 +237,10 @@ describe("Catálogos contractuales accesibles", () => {
                 created_at: "",
               },
             ],
+        all_folders: [
+          { id: "folder-a", tipo: type, nombre: "A", parent_id: null, created_at: "" },
+          { id: "folder-b", tipo: type, nombre: "B", parent_id: "folder-a", created_at: "" },
+        ],
         artifacts: folderId
           ? []
           : [
@@ -342,6 +358,70 @@ describe("Catálogos contractuales accesibles", () => {
     expect(
       screen.getByLabelText(/^Archivo/, { selector: 'input[type="file"]' }),
     ).toBeInTheDocument();
+  });
+
+  it("permite que un mismo archivo sea predeterminado para varios destinos independientes", async () => {
+    const user = userEvent.setup();
+    render(<TemplatesFormatsCatalog />);
+    await user.click(await screen.findByRole("button", { name: /Notaría 45/ }));
+    await user.click(screen.getByRole("button", { name: /MACHOTE JURÍDICO/ }));
+    await user.click(await screen.findByRole("button", { name: "Conectar a módulos" }));
+    const dialog = screen.getByRole("dialog", { name: "Destinos funcionales · Machote" });
+    await user.click(within(dialog).getByRole("checkbox", { name: "Cotización de servicios" }));
+    await user.click(within(dialog).getByRole("checkbox", { name: "Presupuesto del expediente" }));
+    const defaults = within(dialog).getAllByRole("checkbox", { name: "Predeterminado para este destino" });
+    expect(defaults).toHaveLength(2);
+    expect(defaults[0]).toBeChecked();
+    await user.click(defaults[1]);
+    expect(defaults[0]).toBeChecked();
+    expect(defaults[1]).toBeChecked();
+    await user.click(within(dialog).getByRole("button", { name: "Guardar conexiones" }));
+    await waitFor(() => expect(api.assignFunctionalDestinations).toHaveBeenCalledWith("artifact-a", [
+      expect.objectContaining({ destino: "COTIZACION_SERVICIOS", predeterminado: true }),
+      expect.objectContaining({ destino: "EXPEDIENTE_PRESUPUESTO", predeterminado: true }),
+    ]));
+  });
+
+  it("crea una plantilla contextual en la carpeta actual con destino funcional controlado", async () => {
+    const user = userEvent.setup();
+    render(<TemplatesFormatsCatalog />);
+    await user.click(await screen.findByRole("button", { name: /Notaría 45/ }));
+    await user.click(screen.getByRole("button", { name: /MACHOTE JURÍDICO/ }));
+    await user.click(await screen.findByRole("button", { name: "Nueva plantilla" }));
+    const dialog = screen.getByRole("dialog", { name: "Nueva plantilla" });
+    await user.type(within(dialog).getByLabelText("Nombre"), "Machote contextual");
+    const file = new File(["docx"], "machote-contextual.docx", { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    await user.upload(within(dialog).getByLabelText(/^Archivo/, { selector: 'input[type="file"]' }), file);
+    await user.selectOptions(within(dialog).getByLabelText("Destino funcional"), "PROYECTO_MACHOTE");
+    expect(within(dialog).getByRole("checkbox", { name: "Predeterminado para este destino" })).toBeChecked();
+    const saveButton = within(dialog).getByRole("button", { name: "Guardar" });
+    expect(saveButton).toBeEnabled();
+    fireEvent.submit(saveButton.closest("form")!);
+    await waitFor(() => expect(api.createCatalogArtifact).toHaveBeenCalledWith(expect.objectContaining({
+      tipo: "PLANTILLA", propietario_tipo: "NOTARIA", notaria_id: "notary-a", carpeta_id: null,
+      nombre: "Machote contextual", activo: true, destinos_funcionales: [{ destino: "PROYECTO_MACHOTE", activo: true, predeterminado: true }],
+    }), file));
+  });
+
+  it("mueve, renombra y desactiva un artefacto sin modificar sus destinos funcionales", async () => {
+    const user = userEvent.setup();
+    render(<TemplatesFormatsCatalog />);
+    await user.click(await screen.findByRole("button", { name: /Notaría 45/ }));
+    await user.click(screen.getByRole("button", { name: /MACHOTE JURÍDICO/ }));
+    await user.click(await screen.findByRole("button", { name: "Organizar" }));
+    const dialog = screen.getByRole("dialog", { name: "Organizar · Machote" });
+    await user.clear(within(dialog).getByLabelText("Nombre"));
+    await user.type(within(dialog).getByLabelText("Nombre"), "Machote renombrado");
+    await user.selectOptions(within(dialog).getByLabelText("Carpeta"), "folder-a");
+    fireEvent.submit(within(dialog).getByRole("button", { name: "Guardar organización" }).closest("form")!);
+    await waitFor(() => expect(api.updateCatalogArtifact).toHaveBeenCalledWith("artifact-a", {
+      nombre: "Machote renombrado",
+      carpeta_id: "folder-a",
+    }));
+    expect(api.assignFunctionalDestinations).not.toHaveBeenCalled();
+
+    await user.click(await screen.findByRole("button", { name: "Desactivar" }));
+    await waitFor(() => expect(api.updateCatalogArtifact).toHaveBeenCalledWith("artifact-a", { activo: false }));
   });
 
   it("mantiene la estructura del catálogo con skeleton accesible y sin textos de carga crudos", async () => {

@@ -14,6 +14,7 @@ import {
   quoteKey,
 } from '../domain/cotizacionContract';
 import { recordQuoteTransitionInTransaction } from './cotizacionWorkflow.service';
+import { createQuoteOperationalSnapshotInTransaction } from './quoteBudget.service';
 
 type Actor = NonNullable<Request['user']>;
 
@@ -57,6 +58,7 @@ export class CotizacionConversionService {
         include: {
           prospecto: true,
           expediente: true,
+          conceptos: { orderBy: { orden: 'asc' } },
           versiones: { orderBy: { version: 'desc' }, include: { conceptos: { orderBy: { orden: 'asc' } } } },
           pagos: true,
           transicion_actual: true,
@@ -130,9 +132,15 @@ export class CotizacionConversionService {
         input.tipoActoId,
         cotizacion.prospecto?.tipo_acto,
       );
-      const approvedVersion = cotizacion.versiones.find((version) => version.aprobada)
-        || cotizacion.versiones[0];
-      if (!approvedVersion) throw new CotizacionBusinessError('La cotización no tiene una versión estructurada aprobada.', 'APPROVED_VERSION_REQUIRED');
+      const approvedVersion = canonical
+        ? await createQuoteOperationalSnapshotInTransaction(tx, {
+          organizationId: input.actorOrganizationId,
+          quoteId: cotizacion.id,
+          actorId,
+          reason: 'conversión a expediente',
+        })
+        : cotizacion.versiones.find((version) => version.aprobada) || cotizacion.versiones[0];
+      if (!approvedVersion) throw new CotizacionBusinessError('La cotización histórica no tiene un presupuesto estructurado disponible.', 'APPROVED_VERSION_REQUIRED');
 
       let workflowEffectiveAt: Date | null = null;
       if (canonical) {

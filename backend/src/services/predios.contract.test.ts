@@ -12,6 +12,7 @@ const relations = read('backend/src/services/expedientePredios.service.ts');
 const extraction = read('backend/src/services/openaiDocument.service.ts');
 const routes = read('backend/src/routes/predios.routes.ts');
 const objectAccess = read('backend/src/services/objectAccess.service.ts');
+const controller = read('backend/src/controllers/predios.controller.ts');
 const workspace = read('frontend/src/features/properties/PropertyWorkspace.tsx');
 const propertyTab = read('frontend/src/features/cases/components/tabs/PropertiesTab.tsx');
 
@@ -70,6 +71,7 @@ const cases: Array<[string, () => void]> = [
   ['52 vincular predio no genera ni importa documentos', () => expect(relations).toContain('automatic_document_generation: false')],
   ['53 importación específica concurrente es idempotente', () => { expect(master).toContain('pg_advisory_xact_lock'); expect(master).toContain('blob_copies: 0'); }],
   ['54 no amplía ISR-001', () => { expect(master).not.toContain('deduccion'); expect(relations).not.toContain('calculoISR'); }],
+  ['55 admite el MIME estándar de documentos DOCX', () => expect(controller).toContain('application/vnd.openxmlformats-officedocument.wordprocessingml.document')],
 ];
 
 describe('PRD-001 contrato atómico', () => {

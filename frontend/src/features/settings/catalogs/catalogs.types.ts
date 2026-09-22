@@ -1,6 +1,8 @@
 export type DayType = 'HABILES' | 'NATURALES';
 export type OwnerType = 'NOTARIA' | 'INSTITUCION';
 export type ArtifactType = 'PLANTILLA' | 'FORMATO';
+export type FunctionalDestination = 'COTIZACION_SERVICIOS' | 'EXPEDIENTE_PRESUPUESTO' | 'CALCULO_ISR_MEMORIA' | 'FINANZAS_RECIBO_PAGO' | 'FINANZAS_SOLICITUD_PAGO' | 'PROYECTO_MACHOTE' | 'EXPEDIENTE_DOCUMENTO_GENERICO' | 'CUMPLIMIENTO_PLD_UIF';
+export type ArtifactDestination = { id?: string; destino: FunctionalDestination; activo: boolean; predeterminado: boolean; reglas_json?: unknown; mapeo_datos_json?: unknown };
 
 export type ActDependency = { id: string; depende_actividad_id: string; bloqueante: boolean };
 export type ActException = {
@@ -35,11 +37,14 @@ export type ArtifactRule = {
 };
 export type CatalogArtifact = {
   id: string; tipo: ArtifactType; propietario_tipo: OwnerType; nombre: string; descripcion?: string | null; activo: boolean;
+  carpeta_id?: string | null;
   codigo_biblioteca?: string | null; ruta_biblioteca?: string | null; revision?: number;
   versiones: ArtifactVersion[]; actos: Array<{ tipo_acto_id: string }>; reglas: ArtifactRule[];
+  destinosFuncionales: ArtifactDestination[];
   revisionesNormativas?: Array<{ id: string; revision: number; fundamento_normativo: string; version_normativa: string; vigencia_desde: string | null }>;
 };
-export type ExplorerPayload = { owner_type: OwnerType; owner_id: string; type: ArtifactType; folder?: CatalogFolder | null; breadcrumbs: Array<{ id: string; name: string }>; folders: CatalogFolder[]; artifacts: CatalogArtifact[]; allows_templates: boolean };
+export type FunctionalDestinationOption = { value: FunctionalDestination; label: string; artifactTypes: ArtifactType[] };
+export type ExplorerPayload = { owner_type: OwnerType; owner_id: string; type: ArtifactType; folder?: CatalogFolder | null; breadcrumbs: Array<{ id: string; name: string }>; folders: CatalogFolder[]; all_folders?: CatalogFolder[]; artifacts: CatalogArtifact[]; allows_templates: boolean };
 export type SupportingCatalogs = {
   acts: Array<{ id: string; nombre: string; codigo_catalogo?: string | null }>;
   notaria: { id: string; nombre: string; numero_notaria?: string | null } | null;
@@ -58,20 +63,15 @@ export type CatalogImportPreview = {
   files: Array<{ path: string; name: string; extension: string; mimeType: string; checksum: string; size: number; folders: string[] }>;
 };
 
-export type QuestionnaireType = 'SHORT_TEXT' | 'LONG_TEXT' | 'NUMBER' | 'CURRENCY' | 'PERCENTAGE' | 'DATE' | 'YES_NO' | 'SINGLE_CHOICE' | 'MULTIPLE_CHOICE' | 'CATALOG' | 'PERSON' | 'INSTITUTION' | 'SUPPORT_FILE' | 'REPEATABLE_TABLE';
+export type QuestionnaireType = 'TEXT' | 'NUMBER' | 'BOOLEAN' | 'DATE' | 'CHOICE' | 'MULTI_CHOICE';
 export type QuestionnaireQuestion = {
-  id: string; label: string; type: QuestionnaireType; order: number; required?: boolean; help?: string;
-  options?: string[]; condition?: { questionId: string; operator: 'EQUALS' | 'NOT_EQUALS' | 'INCLUDES' | 'NOT_EMPTY'; value?: unknown };
-  prefill?: 'EXPEDIENTE_FOLIO' | 'EXPEDIENTE_CLIENTE' | 'COMPARECIENTE_NOMBRE' | 'INMUEBLE_CLAVE_CATASTRAL'; mappings?: string[];
+  id: string; label: string; type: QuestionnaireType; order?: number; required?: boolean; active?: boolean;
+  options?: Array<{ code: string; label: string }>;
+  required_when?: { question_id: string; op: 'EQUALS' | 'NOT_EQUALS' | 'IN' | 'EXISTS'; value?: unknown; values?: unknown[] };
 };
 export type QuestionnaireDefinition = {
-  title: string; description?: string; purpose?: string; scope: 'EXPEDIENTE' | 'COMPARECIENTE' | 'INMUEBLE';
-  applicableActIds?: string[]; stageId?: string | null; formatMappings?: Array<{ formatId: string; mappings: Record<string, string[]> }>;
-  sections: Array<{ id: string; title: string; order: number; questions: QuestionnaireQuestion[] }>;
+  schema_version: 1; scope: 'GENERAL' | 'PERSONAL';
+  sections: Array<{ id: string; label: string; questions?: QuestionnaireQuestion[] }>;
 };
-export type QuestionnaireCatalogItem = {
-  id: string; nombre: string; descripcion?: string | null; activo: boolean; revision: number;
-  versiones: Array<{ id: string; version: number; definition_json: QuestionnaireDefinition; definition_checksum?: string | null; created_at: string }>;
-  actos: Array<{ tipo_acto_id: string }>;
-  cuestionarioFormatos: Array<{ formato: { id: string; nombre: string } }>;
-};
+export type QuestionnaireBank = { key: 'PERSONAL' | 'OPERACION'; label: string; version: number; artifact_id: string | null; questions: QuestionnaireQuestion[] };
+export type QuestionnaireBanksPayload = { banks: QuestionnaireBank[]; applicability_authority: 'CUMPLIMIENTO_PLD_UIF'; editable_metadata: ['questions'] };

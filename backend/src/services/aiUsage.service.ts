@@ -70,7 +70,7 @@ export async function recordAIFailure(context: AIUsageContext & { modelo: string
       compareciente_alta_session_id: context.altaSessionId || null,
       assistant_conversation_id: context.assistantConversationId || null,
       duracion_ms: context.durationMs || 0,
-      error_codigo: context.errorCode || 'AI_REQUEST_FAILED',
+      error_codigo: context.errorCode == null ? 'AI_REQUEST_FAILED' : String(context.errorCode),
       metadata: context.metadata as Prisma.InputJsonValue | undefined,
       operation_id: context.operationId || null,
   };

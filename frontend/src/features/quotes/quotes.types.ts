@@ -23,6 +23,11 @@ export type QuoteWorkflow = {
 
 export type QuoteConceptCategory = 'HONORARIOS' | 'IVA_HONORARIOS' | 'IMPUESTOS_DERECHOS' | 'OTROS';
 export type QuoteConcept = { categoria: QuoteConceptCategory; concepto: string; monto: number };
+export type QuoteBudgetConcept = { id?: string; categoria: QuoteConceptCategory; concepto: string; importe: number | string; orden: number; origen?: 'MANUAL' | 'IMPORTADO' };
+export type QuoteBudget = {
+  concepts: QuoteBudgetConcept[];
+  totals: { honorarios: string; iva_honorarios: string; subtotal_honorarios: string; impuestos_derechos: string; total: string };
+};
 
 export type QuoteVersion = {
   id: string;
@@ -59,6 +64,7 @@ export type QuoteDocument = {
   tipo?: string | null;
   fecha_carga?: string | null;
   origen_etiqueta?: string;
+  can_delete?: boolean;
 };
 
 export type ConversionEligibility = {
@@ -108,6 +114,7 @@ export type Quote = {
   transiciones_permitidas?: QuoteState[];
   conversion?: ConversionEligibility;
   workflow?: QuoteWorkflow;
+  presupuesto?: QuoteBudget;
 };
 
 export type QuoteMetrics = { sent: number; accepted: number; totalAmount: number; conversionRate: number | null };

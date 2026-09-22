@@ -70,6 +70,7 @@ model Organization {
   cotizacionVersionConceptos        CotizacionVersionConcepto[]
   catalogoCuestionarioFormatos      CatalogoCuestionarioFormato[]
   expedienteCuestionarios           ExpedienteCuestionarioRespuesta[]
+  catalogoArtefactoDestinos         CatalogoArtefactoDestino[]
 
   @@index([status])
   @@map("organizations")
@@ -188,6 +189,8 @@ model User {
   cotizaciones                           Cotizacion[]
   cuentasFinancierasCreadas              CuentaFinanciera[]                     @relation("CuentaFinancieraCreador")
   documentosSubidos                      Documento[]
+  catalogoDestinosCreados                CatalogoArtefactoDestino[]             @relation("CatalogoDestinoCreator")
+  catalogoDestinosActualizados           CatalogoArtefactoDestino[]             @relation("CatalogoDestinoUpdater")
   outboxEventosDisparados                DomainEventOutbox[]                    @relation("OutboxActor")
   eventosCancelados                      EventoAgenda[]                         @relation("EventoCanceladoPor")
   eventos                                EventoAgenda[]                         @relation("EventoResponsable")
@@ -1226,11 +1229,38 @@ model CatalogoArtefacto {
   pendientesExp006     ExpedienteArtefactoPendiente[] @relation("Exp006PendingArtifact")
   cuestionarioFormatos CatalogoCuestionarioFormato[]  @relation("QuestionnaireDefinition")
   formatoCuestionarios CatalogoCuestionarioFormato[]  @relation("QuestionnaireFormat")
+  destinosFuncionales  CatalogoArtefactoDestino[]
 
   @@unique([organization_id, codigo_biblioteca], map: "uq_catalogo_artefactos_biblioteca")
   @@unique([id, organization_id], map: "uq_catalogo_artefactos_id_org")
   @@index([organization_id, propietario_tipo, notaria_id, institucion_id, carpeta_id], map: "idx_catalogo_artefactos_explorer")
   @@map("catalogo_artefactos")
+}
+
+/// Conexión operativa declarativa entre un artefacto CFG-002 y uno o más
+/// puntos de uso del producto. La carpeta y el nombre físico son únicamente
+/// organizativos; los consumidores resuelven por `destino`.
+model CatalogoArtefactoDestino {
+  id                 String                   @id @default(uuid()) @db.Uuid
+  organization_id    String                   @db.Uuid
+  artefacto_id       String                   @db.Uuid
+  destino            CatalogoDestinoFuncional
+  activo             Boolean                  @default(true)
+  predeterminado     Boolean                  @default(false)
+  reglas_json        Json?
+  mapeo_datos_json   Json?
+  creado_por_id      String                   @db.Uuid
+  actualizado_por_id String                   @db.Uuid
+  created_at         DateTime                 @default(now())
+  updated_at         DateTime                 @default(now()) @updatedAt
+  organization       Organization             @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  artefacto          CatalogoArtefacto        @relation(fields: [artefacto_id, organization_id], references: [id, organization_id], onDelete: Cascade, map: "catalogo_artefacto_destinos_artifact_tenant_fkey")
+  creadoPor          User                     @relation("CatalogoDestinoCreator", fields: [creado_por_id], references: [id], onDelete: Restrict)
+  actualizadoPor     User                     @relation("CatalogoDestinoUpdater", fields: [actualizado_por_id], references: [id], onDelete: Restrict)
+
+  @@unique([organization_id, artefacto_id, destino], map: "uq_catalogo_artefacto_destino")
+  @@index([organization_id, destino, activo, predeterminado], map: "idx_catalogo_destino_resolver")
+  @@map("catalogo_artefacto_destinos")
 }
 
 model CatalogoArtefactoVersion {
@@ -1434,14 +1464,19 @@ model Expediente {
   etapa_actual_nombre        String?                             @default("Apertura de Expediente")
   expediente_etapa_actual_id String?                             @unique @db.Uuid
   fecha_entrega_cliente      DateTime?
+  fecha_escritura            DateTime?
+  fecha_estimada_entrega     DateTime?
   fecha_estimada_firma       DateTime?
   fecha_limite_accion        DateTime?
   fecha_real_firma           DateTime?
+  folio_desde                String?
+  folio_hasta                String?
   flujo_version_id           String?                             @db.Uuid
   formulario_version_id      String?                             @db.Uuid
   gestor_id                  String?                             @db.Uuid
   motivo_archivo             String?
   notaria_id                 String?                             @db.Uuid
+  numero_escritura           String?
   plantilla_doc_version_id   String?                             @db.Uuid
   proxima_accion             String?
   subtipo_acto               String?
@@ -2694,6 +2729,7 @@ model ComparecienteDocumento {
   fecha_validacion  DateTime?                  @db.Timestamptz(6)
   validado_por_id   String?                    @db.Uuid
   estatus           VinculoEstatus?            @default(ACTIVO)
+  vigencia          PredioDocumentoVigencia    @default(VIGENTE)
   observaciones     String?
   creado_por_id     String                     @db.Uuid
   created_at        DateTime?                  @default(now()) @db.Timestamptz(6)
@@ -6517,6 +6553,21 @@ enum CatalogoPropietarioTipo {
 enum CatalogoArtefactoTipo {
   PLANTILLA
   FORMATO
+}
+
+/// Catálogo cerrado de puntos de consumo documentales de CFG-002.
+/// Agregar una función nueva requiere una migración explícita; los usuarios no
+/// pueden inventar destinos que ningún módulo sepa resolver.
+enum CatalogoDestinoFuncional {
+  COTIZACION_SERVICIOS
+  EXPEDIENTE_PRESUPUESTO
+  CALCULO_ISR_MEMORIA
+  FINANZAS_RECIBO_PAGO
+  FINANZAS_SOLICITUD_PAGO
+  PROYECTO_MACHOTE
+  EXPEDIENTE_DOCUMENTO_GENERICO
+  CUMPLIMIENTO_PLD_UIF
+  SIN_ASIGNAR
 }
 
 enum PresupuestoOrigen {

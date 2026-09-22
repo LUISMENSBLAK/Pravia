@@ -27,7 +27,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'ConfiguracionActo', 'ConfiguracionEtapa', 'ConfiguracionActividad', 'ConfiguracionDependencia',
   'ConfiguracionExcepcion', 'ConfiguracionExcepcionDependencia', 'ConfiguracionConceptoActividad',
   'CatalogoInstitucion', 'CatalogoInstitucionTipoRespuesta', 'CatalogoCarpeta',
-  'CatalogoArtefacto', 'CatalogoArtefactoVersion', 'CatalogoArtefactoActo', 'CatalogoArtefactoRegla', 'CatalogoCuestionarioFormato',
+  'CatalogoArtefacto', 'CatalogoArtefactoVersion', 'CatalogoArtefactoActo', 'CatalogoArtefactoDestino', 'CatalogoArtefactoRegla', 'CatalogoCuestionarioFormato',
   'CatalogoNormativaRevision', 'CatalogoBibliotecaImportacion',
   'ExpedienteActo', 'ExpedienteDocumentoSnapshot', 'ExpedienteDocumentoSnapshotItem',
   'ExpedienteSeguimientoActividad', 'ExpedienteSeguimientoDependencia', 'ExpedienteSeguimientoHistorial',

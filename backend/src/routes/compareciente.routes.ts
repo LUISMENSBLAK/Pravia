@@ -30,6 +30,7 @@ router.get('/:id/documentos', requirePermission('documentos.read'), Comparecient
 router.get('/:id/documentos/:documentoId/descargar', requirePermission('documentos.read'), ComparecienteController.descargarDocumentoMaster);
 router.get('/:id/documentos/:documentoId/visualizar', requirePermission('documentos.read'), ComparecienteController.visualizarDocumentoMaster);
 router.post('/:id/documentos', requirePermission('documentos.write'), upload.single('file'), ComparecienteController.subirDocumentoMaster);
+router.patch('/:id/documentos/:documentoId/vigencia', requirePermission('documentos.write'), ComparecienteController.actualizarVigenciaDocumentoMaster);
 router.delete('/:id/documentos/:documentoId', requirePermission('documentos.unlink'), ComparecienteController.eliminarDocumentoMaster);
 router.post('/:id/extraer-ia', requirePermission('documentos.read'), requirePermission('ia.execute'), ComparecienteController.extraerDocumentosConIA);
 

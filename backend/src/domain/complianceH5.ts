@@ -44,6 +44,10 @@ export type QuestionnaireQuestion = {
   id: string;
   label: string;
   type: QuestionType;
+  /** Configuration-only lifecycle. Inactive questions remain in historical snapshots. */
+  active?: boolean;
+  /** Stable visual order inside its bank/section. */
+  order?: number;
   required?: boolean;
   required_when?: QuestionnaireCondition;
   options?: Array<{ code: string; label: string }>;
@@ -187,6 +191,8 @@ export function validateQuestionnaireDefinition(
         "Las preguntas requieren IDs estables únicos y tipos soportados.",
         "QUESTIONNAIRE_QUESTION_INVALID",
       );
+    if (question.order !== undefined && (!Number.isSafeInteger(question.order) || question.order < 0))
+      throw new ComplianceError("El orden de la pregunta no es válido.", "QUESTIONNAIRE_QUESTION_ORDER_INVALID");
     ids.add(question.id);
     if (question.type === "CHOICE" || question.type === "MULTI_CHOICE") {
       if (
@@ -329,6 +335,7 @@ export function questionnaireCompleteness(
     throw new ComplianceError("Hay respuestas ajenas a la definición fijada.", "QUESTIONNAIRE_ANSWER_ID_INVALID");
   for (const section of definition.sections) {
     for (const question of section.questions || []) {
+      if (question.active === false) continue;
       if (
         (question.required || answers[question.id] !== undefined && answers[question.id] !== null && answers[question.id] !== "" ||
           conditionMatches(question.required_when, answers)) &&
@@ -353,6 +360,7 @@ export function questionnaireCompleteness(
           Object.keys(row).some((id) => !group.questions.some((question) => question.id === id)))
           throw new ComplianceError("Una fila contiene respuestas ajenas a su definición.", "QUESTIONNAIRE_ANSWER_ID_INVALID");
         group.questions.forEach((question) => {
+          if (question.active === false) return;
           if (
             (question.required || row[question.id] !== undefined && row[question.id] !== null && row[question.id] !== "" ||
               conditionMatches(question.required_when, { ...answers, ...row })) &&

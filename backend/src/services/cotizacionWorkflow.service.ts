@@ -19,6 +19,7 @@ import {
   quoteStageLabel,
 } from '../domain/cotizacionContract';
 import { cotizacionObjectWhere } from './objectAccess.service';
+import { createQuoteOperationalSnapshotInTransaction } from './quoteBudget.service';
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -210,26 +211,20 @@ export class CotizacionWorkflowService {
       if (action === 'ENVIAR_CLIENTE' || action === 'REENVIAR_CLIENTE') {
         channel = trim(raw.channel, 100); recipient = trim(raw.recipient, 320); const deliveryEvidence = trim(raw.evidence);
         if (!channel || !recipient || !deliveryEvidence) failQuote(400, 'COT001_SEND_EVIDENCE_REQUIRED', 'Indica canal, destinatario y evidencia del envío realizado.');
-        const approved = await tx.cotizacionVersion.findFirst({ where: { cotizacion_id: id, aprobada: true }, orderBy: { version: 'desc' } });
-        if (!approved) return failQuote(409, 'COT001_APPROVED_VERSION_REQUIRED', 'Aprueba la cotización estructurada antes de enviarla al cliente.');
-        if (raw.versionId && String(raw.versionId) !== approved.id) failQuote(409, 'COT001_VERSION_CHANGED', 'La versión vigente cambió. Actualiza la ficha antes de registrar el envío.');
-        quoteVersionId = approved.id;
-        evidence = { deliveryEvidence, deliveryConfirmedByProvider: false, quoteVersion: approved.version, pdfAvailable: Boolean(approved.pdf_url) };
+        const snapshot = await createQuoteOperationalSnapshotInTransaction(tx, {
+          organizationId: actor.organizationId, quoteId: id, actorId: actor.id,
+          reason: action === 'REENVIAR_CLIENTE' ? 'reenvío al cliente' : 'envío al cliente',
+        });
+        quoteVersionId = snapshot.id;
+        evidence = { deliveryEvidence, deliveryConfirmedByProvider: false, immutableOperationalSnapshot: snapshot.id, pdfAvailable: Boolean(snapshot.pdf_url) };
       }
       if (action === 'ACEPTAR') {
-        const approved = await tx.cotizacionVersion.findFirst({
-          where: { cotizacion_id: id, aprobada: true },
-          orderBy: { version: 'desc' },
-          include: { conceptos: { orderBy: { orden: 'asc' } } },
+        const snapshot = await createQuoteOperationalSnapshotInTransaction(tx, {
+          organizationId: actor.organizationId, quoteId: id, actorId: actor.id,
+          reason: 'aceptación del cliente',
         });
-        if (!approved || approved.conceptos.length === 0) {
-          return failQuote(409, 'COT002_STRUCTURED_VERSION_REQUIRED', 'Aprueba primero una versión con presupuesto estructurado.');
-        }
-        if (raw.versionId && String(raw.versionId) !== approved.id) {
-          failQuote(409, 'COT002_VERSION_CHANGED', 'La versión vigente cambió. Actualiza la ficha antes de registrar la aceptación.');
-        }
-        quoteVersionId = approved.id;
-        evidence = { confirmation: 'Aceptación confirmada por el actor', quoteVersion: approved.version, immutableSnapshot: true };
+        quoteVersionId = snapshot.id;
+        evidence = { confirmation: 'Aceptación confirmada por el actor', immutableOperationalSnapshot: snapshot.id };
       }
       const event = await recordQuoteTransitionInTransaction(tx, {
         actor, quote, action, next, changesStage, effectiveAt, recordedAt, key, hash, evidence,

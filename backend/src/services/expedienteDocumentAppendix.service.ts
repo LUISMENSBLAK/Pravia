@@ -59,6 +59,7 @@ const versionOf = (document: CanonicalDocument) => document.checksum_sha256 || d
 ]);
 const sourceKey = (origin: ExpedienteDocumentoOrigen, entityType: string, entityId: string, documentId: string, context: string) =>
   `${origin}:${entityType}:${entityId}:${documentId}:${context}`.slice(0, 320);
+const isUuid = (value: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const notaryQuote = (document: CanonicalDocument, linkType = '') =>
   /PRESUPUESTO[_\s-]*NOTARIA|COTIZACI[ÓO]N[_\s-]*NOTARIA|NOTARIA[_\s-]*QUOTE/i.test(`${document.tipo} ${linkType}`);
 const snapshotFolderId = (folderPath: string) => `snapshot-${digest(folderPath).slice(0, 32)}`;
@@ -373,12 +374,8 @@ export class ExpedienteDocumentAppendixService {
       if (!item) throw new ExpedienteDocumentAppendixError(403, 'EXP004_SNAPSHOT_ITEM_ACCESS_DENIED', 'No tienes acceso a este elemento del snapshot.');
       storageKey = item.storage_key_snapshot || ''; fileName = item.nombre_snapshot; mimeType = item.mime_type_snapshot || 'application/octet-stream';
     } else {
-      const link = await this.prisma.expedienteDocumento.findFirst({
-        where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', OR: [{ id: itemId }, { documento_id: itemId }] },
-        include: { documento: { select: documentSelect } },
-      });
-      if (!link) throw new ExpedienteDocumentAppendixError(403, 'EXP004_DOCUMENT_ACCESS_DENIED', 'No tienes acceso a este documento del expediente.');
-      storageKey = link.documento.storage_key; fileName = link.documento.nombre_original; mimeType = link.documento.mime_type;
+      const item = await this.resolveLiveFile(actor, expedienteId, itemId);
+      storageKey = item.storageKey; fileName = item.fileName; mimeType = item.mimeType;
     }
     if (!storageKey || !(await fileExists(storageKey))) {
       throw new ExpedienteDocumentAppendixError(404, 'EXP004_FILE_UNAVAILABLE', 'El registro existe, pero el archivo no está disponible.');
@@ -391,11 +388,12 @@ export class ExpedienteDocumentAppendixService {
     const snapshot = await this.prisma.expedienteDocumentoSnapshot.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId } });
     const item = snapshot
       ? await this.prisma.expedienteDocumentoSnapshotItem.findFirst({ where: { id: itemId, organization_id: actor.organizationId, snapshot_id: snapshot.id }, select: { storage_key_snapshot: true, nombre_snapshot: true, mime_type_snapshot: true } })
-      : await this.prisma.expedienteDocumento.findFirst({ where: { id: itemId, organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO' }, select: { documento: { select: { storage_key: true, nombre_original: true, mime_type: true } }, nombre_visual: true } });
-    if (!item) throw new ExpedienteDocumentAppendixError(403, 'EXP004_DOCUMENT_ACCESS_DENIED', 'No tienes acceso a este documento del expediente.');
-    const storageKey = 'documento' in item ? item.documento.storage_key : item.storage_key_snapshot;
-    const name = 'documento' in item ? item.nombre_visual || item.documento.nombre_original : item.nombre_snapshot;
-    const mime = 'documento' in item ? item.documento.mime_type : item.mime_type_snapshot || 'application/octet-stream';
+      : null;
+    if (snapshot && !item) throw new ExpedienteDocumentAppendixError(403, 'EXP004_DOCUMENT_ACCESS_DENIED', 'No tienes acceso a este documento del expediente.');
+    const liveItem = snapshot ? null : await this.resolveLiveFile(actor, expedienteId, itemId);
+    const storageKey = liveItem?.storageKey || item?.storage_key_snapshot;
+    const name = liveItem?.fileName || item?.nombre_snapshot || 'documento';
+    const mime = liveItem?.mimeType || item?.mime_type_snapshot || 'application/octet-stream';
     if (!storageKey || !(await fileExists(storageKey))) throw new ExpedienteDocumentAppendixError(404, 'EXP004_FILE_UNAVAILABLE', 'El registro existe, pero el archivo no está disponible.');
     return { buffer: await downloadFile(storageKey), name, mime };
   }
@@ -419,12 +417,19 @@ export class ExpedienteDocumentAppendixService {
       if (requested.size || requestedFolders.size) files = files.filter((item) => requested.has(item.id) || selectedFolderPaths.some((folderPath) => item.folder === folderPath || item.folder?.startsWith(`${folderPath}/`)));
     } else {
       const paths = await this.folderPaths(this.prisma, actor, expedienteId);
-      const links = await this.prisma.expedienteDocumento.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO' }, include: { documento: true } });
+      const candidates = await this.buildCandidates(this.prisma, actor, expedienteId);
       const targetPath = input.folder_id ? paths.get(input.folder_id) : null;
       if (input.folder_id && !targetPath) throw new ExpedienteDocumentAppendixError(404, 'EXP004_FOLDER_NOT_FOUND', 'La carpeta ya no existe.');
       const selectedFolderPaths = [...requestedFolders].map((id) => paths.get(id)).filter((value): value is string => Boolean(value));
       if (selectedFolderPaths.length !== requestedFolders.size) throw new ExpedienteDocumentAppendixError(404, 'EXP004_FOLDER_NOT_FOUND', 'La selección contiene una carpeta que ya no existe.');
-      files = links.filter((link) => !targetPath || (link.carpeta_id && (paths.get(link.carpeta_id) === targetPath || paths.get(link.carpeta_id)?.startsWith(`${targetPath}/`)))).map((link) => ({ id: link.id, name: link.nombre_visual || link.documento.nombre_original, storage: link.documento.storage_key, folder: link.carpeta_id ? paths.get(link.carpeta_id) || null : null }));
+      files = candidates
+        .map((candidate) => ({
+          id: candidate.expedienteDocumentoId || candidate.sourceKey,
+          name: candidate.visualName || candidate.document?.nombre_original || candidate.legacyName || 'Registro documental',
+          storage: candidate.document?.storage_key || candidate.legacyStorageKey || null,
+          folder: candidate.folderId ? paths.get(candidate.folderId) || null : null,
+        }))
+        .filter((item) => !targetPath || (item.folder && (item.folder === targetPath || item.folder.startsWith(`${targetPath}/`))));
       if (requested.size || requestedFolders.size) files = files.filter((item) => requested.has(item.id) || selectedFolderPaths.some((folderPath) => item.folder === folderPath || item.folder?.startsWith(`${folderPath}/`)));
     }
     if (!files.length) throw new ExpedienteDocumentAppendixError(400, 'EXP004_ARCHIVE_EMPTY', 'La selección no contiene archivos descargables.');
@@ -453,7 +458,7 @@ export class ExpedienteDocumentAppendixService {
             select: {
               nombre_busqueda: true,
               documentos: {
-                where: { archived_at: null, estatus: 'ACTIVO', documento: { estatus: { in: ['PENDIENTE', 'VIGENTE', 'POR_VENCER'] } } },
+                where: { archived_at: null, estatus: 'ACTIVO', vigencia: 'VIGENTE', documento: { estatus: { in: ['PENDIENTE', 'VIGENTE', 'POR_VENCER'] } } },
                 select: { id: true, categoria: true, subcategoria: true, documento: { select: documentSelect } },
               },
             },
@@ -641,6 +646,35 @@ export class ExpedienteDocumentAppendixService {
     return [...candidates.values()].sort((a, b) => `${a.origin}:${a.sourceName}:${a.document?.nombre_original || a.legacyName}`.localeCompare(`${b.origin}:${b.sourceName}:${b.document?.nombre_original || b.legacyName}`, 'es'));
   }
 
+  private async resolveLiveFile(actor: Actor, expedienteId: string, itemId: string) {
+    const link = isUuid(itemId) ? await this.prisma.expedienteDocumento.findFirst({
+      where: {
+        organization_id: actor.organizationId,
+        expediente_id: expedienteId,
+        estatus: 'ACTIVO',
+        OR: [{ id: itemId }, { documento_id: itemId }],
+      },
+      include: { documento: { select: documentSelect } },
+    }) : null;
+    if (link) return {
+      storageKey: link.documento.storage_key,
+      fileName: link.nombre_visual || link.documento.nombre_original,
+      mimeType: link.documento.mime_type,
+    };
+
+    const candidate = (await this.buildCandidates(this.prisma, actor, expedienteId)).find((item) =>
+      item.sourceKey === itemId || item.expedienteDocumentoId === itemId || item.document?.id === itemId,
+    );
+    if (!candidate) {
+      throw new ExpedienteDocumentAppendixError(403, 'EXP004_DOCUMENT_ACCESS_DENIED', 'No tienes acceso a este documento del expediente.');
+    }
+    return {
+      storageKey: candidate.document?.storage_key || candidate.legacyStorageKey || '',
+      fileName: candidate.visualName || candidate.document?.nombre_original || candidate.legacyName || 'documento',
+      mimeType: candidate.document?.mime_type || 'application/octet-stream',
+    };
+  }
+
   private revision(candidates: Candidate[]) {
     return digest(candidates.map((item) => [
       item.sourceKey, item.documentVersion, item.document?.estatus || 'MISSING', item.folderId || null, item.visualName || null,
@@ -706,6 +740,15 @@ export class ExpedienteDocumentAppendixService {
       COMPARECIENTE: 'Comparecientes', PREDIO: 'Predios / Inmuebles', CFG002: 'Plantillas / Formatos', ISR: 'Cálculo ISR',
       FINANZAS: 'Finanzas', EXPEDIENTE: 'Carga del expediente',
     };
-    return order.map((origin) => ({ origin, label: labels[origin], items: items.filter((item) => item.origin === origin) })).filter((group) => group.items.length);
+    return order.flatMap<{ origin: ExpedienteDocumentoOrigen; label: string; items: any[] }>((origin) => {
+      const originItems = items.filter((item) => item.origin === origin);
+      if (origin !== 'PREDIO') return originItems.length ? [{ origin, label: labels[origin], items: originItems }] : [];
+      const sources = new Map<string, any[]>();
+      for (const item of originItems) {
+        const name = item.source_name || 'Inmueble sin nombre';
+        sources.set(name, [...(sources.get(name) || []), item]);
+      }
+      return [...sources.entries()].map(([name, sourceItems]) => ({ origin, label: `${labels[origin]} · ${name}`, items: sourceItems }));
+    });
   }
 }

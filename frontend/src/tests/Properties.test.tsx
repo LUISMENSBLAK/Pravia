@@ -3,16 +3,17 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PropertyWorkspace } from '../features/properties/PropertyWorkspace';
+import { PropertiesPage } from '../features/properties/PropertiesPage';
 import { PropertiesTab } from '../features/cases/components/tabs/PropertiesTab';
 
-const mocks = vi.hoisted(() => ({ get: vi.fn(), create: vi.fn(), update: vi.fn(), uploadDocument: vi.fn(), updateDocument: vi.fn(), expedienteDocuments: vi.fn(), importExpedienteDocument: vi.fn(), documentUrl: vi.fn(), propose: vi.fn(), applyProposal: vi.fn() }));
+const mocks = vi.hoisted(() => ({ list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), uploadDocument: vi.fn(), updateDocument: vi.fn(), expedienteDocuments: vi.fn(), importExpedienteDocument: vi.fn(), documentUrl: vi.fn(), propose: vi.fn(), applyProposal: vi.fn() }));
 const expedienteMocks = vi.hoisted(() => ({ listProperties: vi.fn(), propertyCatalogs: vi.fn(), searchProperties: vi.fn(), previewProperty: vi.fn(), applyProperty: vi.fn() }));
 vi.mock('../features/properties/properties.service', () => ({ propertiesService: mocks }));
 vi.mock('../features/cases/expedientes.service', () => ({ expedientesService: expedienteMocks }));
 vi.mock('../features/auth/AuthProvider', () => ({ useAuth: () => ({ user: { permissions: ['expedientes.read', 'expedientes.write', 'documentos.read', 'documentos.write', 'ia.execute'] } }) }));
 
 const record: any = {
-  id: 'property-1', version: 2, apodo: 'Casa Bucerías', clave_catastral: 'CAT-001', cuenta_predial: 'PRED-001', folio_real: 'FR-001', datos_registrales: { libro: '12' },
+  id: 'property-1', version: 2, apodo: 'Casa Bucerías', clave_catastral: 'CAT-001', cuenta_predial: 'PRED-001', folio_real: 'FR-001', updated_at: '2026-09-01T12:00:00.000Z', datos_registrales: { libro: '12' },
   ubicacion_texto: 'Zona centro', calle: 'México', numero_exterior: '10', municipio: 'Bahía de Banderas', estado: 'Nayarit', pais: 'México',
   superficie_terreno_m2: '350.2500', superficie_construccion_m2: '180.0000', superficie_construccion_comercial_m2: null,
   valor_catastral: '1200000.00', valor_avaluo: '1800000.00', valor_operacion: '1900000.00', regimen: 'Propiedad privada', descripcion: 'Casa habitación',
@@ -20,10 +21,11 @@ const record: any = {
   documentos: [{ id: 'link-1', documento_id: 'doc-1', tipo_vinculo: 'TÍTULO', estatus: 'ACTIVO', vigencia: 'VIGENTE', es_antecedente_principal: true, origen: 'CARGA_DIRECTA', documento: { id: 'doc-1', nombre_original: 'titulo.pdf', mime_type: 'application/pdf', size_bytes: 1200, fecha_carga: '2026-08-28T12:00:00Z' } }], expedientes: [],
 };
 
-const renderPath = (path: string) => render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/predios/nuevo" element={<PropertyWorkspace />} /><Route path="/predios/:id" element={<PropertyWorkspace />} /><Route path="/expedientes/:id" element={<div>Regreso seguro al expediente</div>} /></Routes></MemoryRouter>);
+const renderPath = (path: string) => render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/predios" element={<PropertiesPage />} /><Route path="/predios/nuevo" element={<PropertyWorkspace />} /><Route path="/predios/:id" element={<PropertyWorkspace />} /><Route path="/expedientes/:id" element={<div>Regreso seguro al expediente</div>} /></Routes></MemoryRouter>);
 
 describe('PRD-001 ficha maestra inmobiliaria', () => {
-  beforeEach(() => { vi.clearAllMocks(); mocks.get.mockResolvedValue(record); mocks.create.mockResolvedValue({ ...record, id: 'property-new' }); mocks.update.mockResolvedValue(record); mocks.updateDocument.mockResolvedValue(record); mocks.expedienteDocuments.mockResolvedValue([]); mocks.propose.mockResolvedValue({ extraccion_id: 'extract-1', documentos: [{ id: 'doc-1', nombre: 'titulo.pdf' }], propuestas: [{ campo: 'folio_real', valor_actual: 'FR-001', valor_propuesto: 'FR-002', confianza: 'LECTURA_CLARA', fragmento_fuente: 'Folio real FR-002', fuentes: [{ documento_id: 'doc-1', nombre: 'titulo.pdf', valor: 'FR-002' }] }], alertas: [], conflictos: [], persisted_master: false }); mocks.applyProposal.mockResolvedValue({ ...record, version: 3, folio_real: 'FR-002' }); expedienteMocks.listProperties.mockResolvedValue({ data: [] }); expedienteMocks.propertyCatalogs.mockResolvedValue({ acts: [] }); });
+  beforeEach(() => { vi.clearAllMocks(); mocks.list.mockResolvedValue({ data: [record] }); mocks.get.mockResolvedValue(record); mocks.create.mockResolvedValue({ ...record, id: 'property-new' }); mocks.update.mockResolvedValue(record); mocks.updateDocument.mockResolvedValue(record); mocks.expedienteDocuments.mockResolvedValue([]); mocks.propose.mockResolvedValue({ extraccion_id: 'extract-1', documentos: [{ id: 'doc-1', nombre: 'titulo.pdf' }], propuestas: [{ campo: 'folio_real', valor_actual: 'FR-001', valor_propuesto: 'FR-002', confianza: 'LECTURA_CLARA', fragmento_fuente: 'Folio real FR-002', fuentes: [{ documento_id: 'doc-1', nombre: 'titulo.pdf', valor: 'FR-002' }] }], alertas: [], conflictos: [], persisted_master: false }); mocks.applyProposal.mockResolvedValue({ ...record, version: 3, folio_real: 'FR-002' }); expedienteMocks.listProperties.mockResolvedValue({ data: [] }); expedienteMocks.propertyCatalogs.mockResolvedValue({ acts: [] }); });
+  it('expone el catálogo maestro global con búsqueda y alta directa', async () => { renderPath('/predios'); expect(await screen.findByRole('link', { name: /Casa Bucerías/ })).toHaveAttribute('href', '/predios/property-1'); expect(screen.getByRole('heading', { name: 'Predios / Inmuebles' })).toBeInTheDocument(); expect(screen.getByRole('button', { name: 'Nuevo predio' })).toBeInTheDocument(); expect(screen.getByPlaceholderText(/Buscar por apodo/)).toBeInTheDocument(); });
   it('muestra las cinco secciones contractuales en una ficha completa', async () => { renderPath('/predios/property-1'); expect(await screen.findByRole('heading', { name: 'Casa Bucerías' })).toBeInTheDocument(); for (const heading of ['Datos generales', 'Registro y catastro', 'Superficies y valores', 'Medidas y colindancias', 'Documentos y antecedentes']) expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument(); });
   it('separa clave catastral, cuenta predial y folio real', async () => { renderPath('/predios/property-1'); await screen.findByDisplayValue('Casa Bucerías'); expect(screen.getByDisplayValue('CAT-001')).toBeInTheDocument(); expect(screen.getByDisplayValue('PRED-001')).toBeInTheDocument(); expect(screen.getByDisplayValue('FR-001')).toBeInTheDocument(); });
   it('presenta una referencia registral simple como texto humano y preserva JSON estructurado', async () => {
@@ -55,6 +57,16 @@ describe('PRD-001 ficha maestra inmobiliaria', () => {
   });
   it('acepta una propuesta sólo tras decisión humana', async () => { const user = userEvent.setup(); renderPath('/predios/property-1'); await screen.findByText('Extracción asistida'); await user.click(screen.getByLabelText('titulo.pdf')); await user.click(screen.getByRole('button', { name: /Analizar 1 fuente seleccionada/ })); const dialog = await screen.findByRole('dialog'); await user.click(within(dialog).getByLabelText('Aceptar propuesto')); await user.click(within(dialog).getByRole('button', { name: 'Aplicar decisiones' })); await waitFor(() => expect(mocks.applyProposal).toHaveBeenCalledWith('property-1', 'extract-1', 2, { folio_real: 'ACCEPT' })); });
   it('regresa al mismo expediente al crear desde contexto autorizado', async () => { const user = userEvent.setup(); renderPath('/predios/nuevo?fromExpediente=exp-1&fromSection=predios'); await user.type(screen.getByLabelText('Apodo / nombre corto'), 'Casa nueva'); await user.click(screen.getByRole('button', { name: 'Guardar ficha' })); expect(await screen.findByText('Regreso seguro al expediente')).toBeInTheDocument(); expect(mocks.create).toHaveBeenCalled(); });
+  it('completa el auto-vínculo antes de limpiar el estado de retorno', async () => {
+    mocks.get.mockResolvedValueOnce(record);
+    expedienteMocks.propertyCatalogs.mockResolvedValueOnce({ acts: [{ id: 'act-1', tipo_acto: { nombre: 'Compraventa' } }] });
+    expedienteMocks.previewProperty.mockResolvedValueOnce({ classification: 'SAFE', fingerprint: 'preview-1', impact: { added: [], removed_or_no_longer_applicable: [], retained: [], protected_work: { count: 0 } } });
+    expedienteMocks.applyProperty.mockResolvedValueOnce({ data: { id: 'relation-1' } });
+    render(<MemoryRouter initialEntries={[{ pathname: '/expedientes/exp-1', hash: '#predios', state: { prd001NewPredioId: 'property-1' } }]}><PropertiesTab expediente={{ id: 'exp-1', predios: [] } as any} /></MemoryRouter>);
+    expect(await screen.findByRole('status')).toHaveTextContent('Inmueble creado y vinculado automáticamente al expediente.');
+    expect(expedienteMocks.previewProperty).toHaveBeenCalledWith('exp-1', expect.objectContaining({ operation: 'LINK', predio_id: 'property-1', expediente_acto_ids: ['act-1'] }));
+    expect(expedienteMocks.applyProperty).toHaveBeenCalledWith('exp-1', expect.objectContaining({ predio_id: 'property-1', preview_fingerprint: 'preview-1' }));
+  });
   it('no presenta como error una búsqueda anterior cancelada al escribir', async () => {
     expedienteMocks.searchProperties.mockImplementation((_id: string, search: string, signal: AbortSignal) => new Promise((resolve, reject) => {
       const timer = window.setTimeout(() => resolve({ data: search ? [record] : [] }), search ? 10 : 500);

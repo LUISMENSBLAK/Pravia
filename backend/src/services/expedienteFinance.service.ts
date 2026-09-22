@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
-import { hashVerificationToken, moneyDecimal, renderPaymentRequestPdf, renderPraviaReceiptPdf, validateIncomeAllocation } from '../domain/expedienteFinance';
+import { hashVerificationToken, moneyDecimal, validateIncomeAllocation } from '../domain/expedienteFinance';
 import { deleteFile, downloadFile, getSignedUrl, uploadFile } from '../storage/storage.service';
 import { extraerFinanzasDesdeDocumento, getOpenAIModelName } from './openaiDocument.service';
 import { recordAIFailure, recordAIUsage } from './aiUsage.service';
@@ -13,6 +13,7 @@ import {
   openPaymentRequestTiming,
   openReceiptApplicationTiming,
 } from './timingPolicy.service';
+import { FunctionalDocumentRenderError, renderConfiguredFunctionalDocument } from './functionalDocumentRenderer.service';
 
 export type ExpedienteFinanceActor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -81,9 +82,18 @@ export class ExpedienteFinanceService {
     const existing = await this.prisma.expedienteSolicitudPago.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, idempotency_key: key }, include: { documentos: { include: { documento: true } } } });
     if (existing) return { item: existing, idempotent: true };
     const format = await this.resolveFormat(actor.organizationId, 'solicitud');
-    const buffer = renderPaymentRequestPdf({ folio: expediente.numero_pravia, concept, amount: amount.toFixed(2), beneficiary: clean(input.beneficiario, 300) || null, dependency: clean(input.dependencia, 300) || null, reference: clean(input.referencia, 180) || null, createdAt: new Date().toLocaleDateString('es-MX'), formatSource: format.source });
-    const fileName = `Solicitud_pago_${safeName(expediente.numero_pravia)}_${new Date().toISOString().slice(0, 10)}.pdf`;
-    const stored = await this.storeBuffer(actor, expedienteId, buffer, fileName, 'application/pdf', 'solicitudes-pago');
+    const rendered = await this.renderFormat(format, {
+      'expediente.folio': expediente.numero_pravia,
+      'solicitud.concepto': concept,
+      'solicitud.importe': amount.toFixed(2),
+      'solicitud.beneficiario': clean(input.beneficiario, 300) || null,
+      'solicitud.dependencia': clean(input.dependencia, 300) || null,
+      'solicitud.referencia': clean(input.referencia, 180) || null,
+      'solicitud.fecha': new Date().toLocaleDateString('es-MX'),
+      'formato.fuente': format.source,
+    });
+    const fileName = `Solicitud_pago_${safeName(expediente.numero_pravia)}_${new Date().toISOString().slice(0, 10)}.${rendered.extension}`;
+    const stored = await this.storeBuffer(actor, expedienteId, rendered.buffer, fileName, rendered.mimeType, 'solicitudes-pago');
     try {
       const result = await this.prisma.$transaction(async (tx) => {
         await this.lock(tx, `request-create:${actor.organizationId}:${expedienteId}:${key}`);
@@ -92,7 +102,7 @@ export class ExpedienteFinanceService {
         await this.assertExpediente(tx, actor, expedienteId);
         const request = await tx.expedienteSolicitudPago.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, via: 'INTERNA', concepto: concept, importe: amount, dependencia: clean(input.dependencia, 300) || null, beneficiario: clean(input.beneficiario, 300) || null, referencia: clean(input.referencia, 180) || null, fecha_limite: input.fecha_limite ? new Date(input.fecha_limite) : null, notas: clean(input.notas, 2_000) || null, formato_version_id: format.id, formato_fuente: format.source, creado_por_id: actor.id, idempotency_key: key } });
         await openPaymentRequestTiming(tx, actor.organizationId, { sourceId: request.id, openedAt: request.created_at });
-        const document = await this.createDocument(tx, actor, expedienteId, stored, 'EXP008_SOLICITUD_GENERADA', { source: 'EXP-008', role: 'SOLICITUD_GENERADA', format_source: format.source, format_version_id: format.id });
+        const document = await this.createDocument(tx, actor, expedienteId, stored, 'EXP008_SOLICITUD_GENERADA', { source: 'EXP-008', role: 'SOLICITUD_GENERADA', format_source: format.source, format_version_id: format.id, format_checksum: rendered.sourceChecksum });
         await this.linkDocument(tx, actor, expedienteId, document.id, 'SOLICITUD_GENERADA', key, { solicitud_pago_id: request.id });
         await this.record(tx, actor, expedienteId, 'EXP008_CREATE_PAYMENT_REQUEST', request.id, 'Solicitud de pago creada', `Se creó una solicitud por ${amount.toFixed(2)} MXN.`, { via: 'INTERNA', documento_id: document.id, format_source: format.source });
         return { item: await tx.expedienteSolicitudPago.findUniqueOrThrow({ where: { id: request.id }, include: { documentos: { include: { documento: true } } } }), idempotent: false };
@@ -254,8 +264,18 @@ export class ExpedienteFinanceService {
     const token = randomBytes(32).toString('base64url');
     const code = token.slice(0, 12).toUpperCase();
     const verificationUrl = `/api/expedientes/comprobantes-pravia/verificar/${token}`;
-    const buffer = renderPraviaReceiptPdf({ receiptFolio: movement.comprobanteInterno.folio, caseFolio: expediente.numero_pravia, concept: movement.concepto, amount: movement.monto.toFixed(2), date: new Date().toLocaleDateString('es-MX'), code, verificationUrl, formatSource: format.source });
-    const stored = await this.storeBuffer(actor, expedienteId, buffer, `Comprobante_PRAVIA_${safeName(movement.comprobanteInterno.folio)}.pdf`, 'application/pdf', 'comprobantes-pravia');
+    const rendered = await this.renderFormat(format, {
+      'comprobante.folio': movement.comprobanteInterno.folio,
+      'expediente.folio': expediente.numero_pravia,
+      'comprobante.concepto': movement.concepto,
+      'comprobante.importe': movement.monto.toFixed(2),
+      'comprobante.fecha': new Date().toLocaleDateString('es-MX'),
+      'comprobante.codigo_verificacion': code,
+      'comprobante.url_verificacion': verificationUrl,
+      'comprobante.leyenda': 'No es CFDI',
+      'formato.fuente': format.source,
+    });
+    const stored = await this.storeBuffer(actor, expedienteId, rendered.buffer, `Comprobante_PRAVIA_${safeName(movement.comprobanteInterno.folio)}.${rendered.extension}`, rendered.mimeType, 'comprobantes-pravia');
     try {
       const result = await this.prisma.$transaction(async (tx) => {
         await this.lock(tx, `receipt:${actor.organizationId}:${movementId}`);
@@ -264,7 +284,7 @@ export class ExpedienteFinanceService {
         const current = await tx.movimientoFinanciero.findFirst({ where: { id: movementId, organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'APLICADO' }, include: { comprobanteInterno: true } });
         if (!current?.comprobanteInterno) throw new ExpedienteFinanceError(409, 'EXP008_RECEIPT_SOURCE_INVALID', 'El movimiento ya no permite generar comprobante.');
         await tx.comprobanteFinanciero.update({ where: { id: current.comprobanteInterno.id }, data: { verification_token_hash: hashVerificationToken(token), verification_code_hint: code, verification_created_at: new Date() } });
-        const document = await this.createDocument(tx, actor, expedienteId, stored, 'EXP008_COMPROBANTE_PRAVIA', { source: 'EXP-008', role: 'COMPROBANTE_PRAVIA', receipt_id: current.comprobanteInterno.id, verification_code: code, format_source: format.source });
+        const document = await this.createDocument(tx, actor, expedienteId, stored, 'EXP008_COMPROBANTE_PRAVIA', { source: 'EXP-008', role: 'COMPROBANTE_PRAVIA', receipt_id: current.comprobanteInterno.id, verification_code: code, format_source: format.source, format_version_id: format.id, format_checksum: rendered.sourceChecksum });
         const link = await this.linkDocument(tx, actor, expedienteId, document.id, 'COMPROBANTE_PRAVIA', key, { movimiento_id: movementId, comprobante_id: current.comprobanteInterno.id });
         await this.record(tx, actor, expedienteId, 'EXP008_GENERATE_PRAVIA_RECEIPT', current.comprobanteInterno.id, 'Comprobante PRAVIA generado', 'Se generó un comprobante operativo verificable.', { movimiento_id: movementId, documento_id: document.id, verification_code_hint: code, token_persisted: false });
         return { item: { ...link, documento: document }, idempotent: false };
@@ -343,7 +363,27 @@ export class ExpedienteFinanceService {
   private idempotency(value: unknown) { const key = clean(value, 160); if (!key) throw new ExpedienteFinanceError(400, 'EXP008_IDEMPOTENCY_REQUIRED', 'No fue posible identificar de forma segura la operación.'); return key; }
   private async lock(tx: Prisma.TransactionClient, key: string) { await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp008:${key}`}))`); }
   private async assertExpediente(db: Db, actor: ExpedienteFinanceActor, expedienteId: string) { const record = await db.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) }, select: { id: true, numero_pravia: true, cliente_alias: true } }); if (!record) throw new ExpedienteFinanceError(403, 'EXP008_EXPEDIENTE_ACCESS_DENIED', 'No tienes acceso a este expediente.'); return record; }
-  private async resolveFormat(organizationId: string, kind: 'solicitud' | 'comprobante') { const artifact = await this.prisma.catalogoArtefacto.findFirst({ where: { organization_id: organizationId, activo: true, AND: [{ nombre: { contains: kind, mode: 'insensitive' } }, { nombre: { contains: 'pago', mode: 'insensitive' } }] }, include: { versiones: { where: { activa: true }, orderBy: { version: 'desc' }, take: 1 } }, orderBy: { updated_at: 'desc' } }); const version = artifact?.versiones[0]; return version ? { id: version.id, source: `CONFIGURACION:${artifact!.id}:V${version.version}` } : { id: null, source: `SISTEMA_EXP008_${kind.toUpperCase()}_V1` }; }
+  private async resolveFormat(organizationId: string, kind: 'solicitud' | 'comprobante') {
+    const destination = kind === 'solicitud' ? 'FINANZAS_SOLICITUD_PAGO' : 'FINANZAS_RECIBO_PAGO';
+    const links = await this.prisma.catalogoArtefactoDestino.findMany({
+      where: { organization_id: organizationId, destino: destination, activo: true, artefacto: { activo: true, versiones: { some: { activa: true, storage_key: { not: null } } } } },
+      include: { artefacto: { include: { versiones: { where: { activa: true, storage_key: { not: null } }, orderBy: { version: 'desc' }, take: 1 } } } },
+      orderBy: [{ predeterminado: 'desc' }, { created_at: 'asc' }],
+    });
+    const defaults = links.filter((item) => item.predeterminado);
+    if (!links.length) throw new ExpedienteFinanceError(409, 'EXP008_FORMAT_REQUIRED', `Configura y activa el destino funcional de ${kind} de pago en CFG-002.`);
+    if (defaults.length > 1 || (!defaults.length && links.length > 1)) throw new ExpedienteFinanceError(409, 'EXP008_FORMAT_AMBIGUOUS', `Existe más de un formato aplicable para ${kind} de pago y no hay un único predeterminado.`);
+    const selected = defaults[0] || links[0]; const version = selected.artefacto.versiones[0];
+    if (!version) throw new ExpedienteFinanceError(409, 'EXP008_FORMAT_REQUIRED', 'El formato configurado no tiene una versión activa.');
+    return { id: version.id, source: `CFG002:${destination}:${selected.artefacto.id}:V${version.version}`, version, mapping: selected.mapeo_datos_json };
+  }
+  private async renderFormat(format: Awaited<ReturnType<ExpedienteFinanceService['resolveFormat']>>, data: Record<string, unknown>) {
+    try { return await renderConfiguredFunctionalDocument(format.version, data, format.mapping); }
+    catch (error) {
+      if (error instanceof FunctionalDocumentRenderError) throw new ExpedienteFinanceError(422, error.code, error.message);
+      throw error;
+    }
+  }
   private async storeUpload(actor: ExpedienteFinanceActor, expedienteId: string, file: Upload, folder: string) { if (!file?.buffer?.length) throw new ExpedienteFinanceError(400, 'EXP008_FILE_REQUIRED', 'Selecciona un documento.'); if (file.size > 25 * 1024 * 1024) throw new ExpedienteFinanceError(413, 'EXP008_FILE_TOO_LARGE', 'El archivo supera 25 MB.'); return this.storeBuffer(actor, expedienteId, file.buffer, safeName(file.originalname), file.mimetype || 'application/octet-stream', folder); }
   private async storeBuffer(actor: ExpedienteFinanceActor, expedienteId: string, buffer: Buffer, fileName: string, mimeType: string, folder: string) { const storageKey = `organizations/${actor.organizationId}/expedientes/${expedienteId}/finanzas/${folder}/${randomUUID()}_${safeName(fileName)}`; await uploadFile(buffer, storageKey, mimeType); return { storageKey, buffer, fileName, mimeType, checksum: checksum(buffer) }; }
   private async createDocument(tx: Prisma.TransactionClient, actor: ExpedienteFinanceActor, expedienteId: string, stored: { storageKey: string; buffer: Buffer; fileName: string; mimeType: string; checksum: string }, type: string, provenance: Record<string, unknown>) { const document = await tx.documento.create({ data: { organization_id: actor.organizationId, nombre_original: stored.fileName, nombre_interno: `${randomUUID()}-${stored.fileName}`, tipo: type, categoria: 'OTROS', storage_key: stored.storageKey, mime_type: stored.mimeType, size_bytes: stored.buffer.length, checksum_sha256: stored.checksum, estatus: 'VIGENTE', subido_por_id: actor.id, expediente_id: expedienteId, datos_extraidos: json(provenance) } }); await tx.expedienteDocumento.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, documento_id: document.id, tipo_vinculo: type, creado_por_id: actor.id, origen: 'FINANZAS', source_entity_type: 'ExpedienteFinanzaDocumento', source_entity_id: document.id, source_context: type, source_key: `FINANZAS:Documento:${document.id}:${type}`, document_version: stored.checksum, provenance: json(provenance) } }); return document; }
