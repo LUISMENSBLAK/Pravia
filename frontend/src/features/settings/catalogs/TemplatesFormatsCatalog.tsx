@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { Skeleton } from "../../../components/ui/Skeleton";
+import { DocumentViewer } from "../../../components/documents/DocumentViewer";
+import { downloadPrivateUrl } from "../../../components/documents/documentDownload";
 import { useAuth } from "../../auth/AuthProvider";
 import { settingsService } from "../settings.service";
 import type {
@@ -31,6 +33,7 @@ import type {
   FunctionalDestinationOption,
   FunctionalDestination,
   ArtifactDestination,
+  ArtifactVersion,
 } from "./catalogs.types";
 import { CatalogModal } from "./CatalogModal";
 import styles from "./Catalogs.module.css";
@@ -118,6 +121,7 @@ export function TemplatesFormatsCatalog() {
   const [destinationDraft, setDestinationDraft] = useState<ArtifactDestination[]>([]);
   const [importFiles, setImportFiles] = useState<File[]>([]);
   const [preview, setPreview] = useState<CatalogImportPreview | null>(null);
+  const [viewer, setViewer] = useState<{ version: ArtifactVersion; url?: string; loading?: boolean; error?: string } | null>(null);
   const [overrides, setOverrides] = useState<Record<string, FileOverride>>({});
   const [bulk, setBulk] = useState({
     act_ids: [] as string[],
@@ -377,13 +381,20 @@ export function TemplatesFormatsCatalog() {
     if (!modal || typeof modal === "string" || !("destinations" in modal)) return;
     void run(() => settingsService.assignFunctionalDestinations(modal.destinations.id, destinationDraft), "Conexiones funcionales actualizadas.");
   };
-  const openVersion = async (id: string) => {
+  const openVersion = async (version: ArtifactVersion) => {
+    setViewer({ version, loading: true });
     try {
-      const { url } = await settingsService.catalogArtifactVersionUrl(id);
-      window.open(url, "_blank", "noopener,noreferrer");
+      const { url } = await settingsService.catalogArtifactVersionUrl(version.id);
+      setViewer({ version, url });
     } catch {
-      setError("No pudimos abrir el archivo privado.");
+      setViewer({ version, error: "No pudimos preparar la vista previa protegida." });
     }
+  };
+  const downloadVersion = async (version: ArtifactVersion) => {
+    try {
+      const { url } = await settingsService.catalogArtifactVersionUrl(version.id);
+      await downloadPrivateUrl(url, version.nombre_original);
+    } catch { setError("No pudimos descargar el archivo privado."); }
   };
   const toggleAct = (id: string) =>
     setBulk((current) => ({
@@ -407,7 +418,7 @@ export function TemplatesFormatsCatalog() {
   };
   const selectedActs = useMemo(() => new Set(bulk.act_ids), [bulk.act_ids]);
 
-  return renderCurrent();
+  return <>{renderCurrent()}{viewer && <DocumentViewer open name={viewer.version.nombre_original} mimeType={viewer.version.mime_type} url={viewer.url} loading={viewer.loading} error={viewer.error} onClose={() => setViewer(null)} onDownload={() => void downloadVersion(viewer.version)} />}</>;
 
   function renderCurrent() {
     if (!selection) return renderRoot();
@@ -859,8 +870,8 @@ export function TemplatesFormatsCatalog() {
               </span>
               <button
                 type="button"
-                aria-label={`Descargar ${version.nombre_original}`}
-                onClick={() => void openVersion(version.id)}
+                aria-label={`Visualizar ${version.nombre_original}`}
+                onClick={() => void openVersion(version)}
               >
                 <Download />
               </button>

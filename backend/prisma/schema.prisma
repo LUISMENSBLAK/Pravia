@@ -2243,6 +2243,7 @@ model ExpedienteDocumento {
   nombre_visual       String?                           @db.VarChar(500)
   moved_at            DateTime?
   moved_by_id         String?                           @db.Uuid
+  idempotency_key     String?                           @db.VarChar(160)
   creado_por          User                              @relation("ExpedienteDocCreador", fields: [creado_por_id], references: [id])
   documento           Documento                         @relation(fields: [documento_id], references: [id])
   expediente          Expediente                        @relation(fields: [expediente_id], references: [id])
@@ -2253,6 +2254,7 @@ model ExpedienteDocumento {
 
   @@unique([expediente_id, documento_id, tipo_vinculo])
   @@unique([organization_id, expediente_id, source_key], map: "uq_exp_documentos_source_key")
+  @@unique([organization_id, expediente_id, idempotency_key], map: "uq_exp_documentos_idempotency")
   @@index([organization_id, expediente_id, origen, estatus], map: "idx_exp_documentos_source_status")
   @@index([creado_por_id], map: "idx_exp_documentos_creador_fk")
   @@index([documento_id], map: "idx_exp_documentos_documento_fk")

@@ -15,7 +15,7 @@ export function getSupabaseClient(): SupabaseClient {
 }
 
 const safeMime = (mimeType: string) => [
-  'application/pdf', 'image/jpeg', 'image/png', 'image/jpg', 'application/msword',
+  'application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/jpg', 'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ].includes(mimeType) ? mimeType : 'application/octet-stream';
 

@@ -9,6 +9,11 @@ export type AssistantContext = {
   entityType?: 'expediente' | 'compareciente' | 'notaria' | 'prospecto' | 'cotizacion' | 'evento' | 'isrCalculation' | 'complianceReview';
   entityId?: string;
   subview?: string;
+  projectDraft?: {
+    instructions?: string;
+    templateVersionId?: string;
+    sourceDocumentIds?: string[];
+  };
 };
 
 export type AssistantSource = {

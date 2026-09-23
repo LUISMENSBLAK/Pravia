@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, CalendarDays, Download, FileCheck2, FileText, LoaderCircle, MessageSquarePlus, Unlink, UserRound, UsersRound } from 'lucide-react';
+import { ArrowLeft, CalendarDays, Download, Eye, FileCheck2, FileText, LoaderCircle, MessageSquarePlus, Unlink, UserRound, UsersRound } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
+import { DocumentViewer } from '../../components/documents/DocumentViewer';
+import { downloadPrivateUrl } from '../../components/documents/documentDownload';
 import { useAuth } from '../auth/AuthProvider';
 import { FollowUpForm } from './components/FollowUpForm';
 import { ProspectActivity } from './components/ProspectActivity';
@@ -33,6 +35,7 @@ export function ProspectDetailPage() {
   const [toast, setToast] = useState('');
   const [unlinkTarget, setUnlinkTarget] = useState<ProspectDocument | null>(null);
   const [unlinking, setUnlinking] = useState(false);
+  const [viewer, setViewer] = useState<{ document: ProspectDocument; url?: string; loading?: boolean; error?: string } | null>(null);
   const canWrite = user?.permissions?.includes('prospectos.write') ?? false;
   const canUpload = user?.permissions?.includes('documentos.write') ?? false;
   const canReadDocuments = user?.permissions?.includes('documentos.read') ?? false;
@@ -89,8 +92,13 @@ export function ProspectDetailPage() {
     notify(failed ? `${failed} documento${failed === 1 ? '' : 's'} no pudo guardarse.` : 'Documentación vinculada al prospecto.');
   };
   const openDocument = async (document: ProspectDocument) => {
-    try { window.open(await prospectsService.getDocumentUrl(document.id), '_blank', 'noopener,noreferrer'); }
-    catch { notify('No pudimos abrir el documento.'); }
+    setViewer({ document, loading: true });
+    try { setViewer({ document, url: await prospectsService.getDocumentUrl(document.id) }); }
+    catch { setViewer({ document, error: 'No pudimos preparar la vista previa protegida.' }); }
+  };
+  const downloadDocument = async (document: ProspectDocument) => {
+    try { await downloadPrivateUrl(await prospectsService.getDocumentUrl(document.id), document.nombre_original); }
+    catch { notify('No pudimos descargar el documento.'); }
   };
   const unlink = async () => {
     if (!unlinkTarget || unlinking) return;
@@ -123,7 +131,7 @@ export function ProspectDetailPage() {
       <aside className={styles.detailSidebar}>
         <section className={styles.detailSection}><header><div><h2>Documentación inicial ({visibleDocuments.length})</h2><p>Archivos persistentes de la operación.</p></div></header>
           {documentError && <p className={styles.sectionEmpty} role="alert">{documentError} <button type="button" onClick={() => void loadDocuments()}>Reintentar</button></p>}
-          {visibleDocuments.length ? <ul className={styles.documentList}>{visibleDocuments.map((document) => <li key={document.id}><FileText size={16} /><span><strong>{document.nombre_original}</strong><small>{document.tipo || 'Documento inicial'} · {formatDate(document.fecha_carga)}</small></span>{canReadDocuments && <button type="button" className={styles.documentOpen} aria-label={`Ver o descargar ${document.nombre_original}`} onClick={() => void openDocument(document)}><Download size={16} /></button>}{canUnlink && <button type="button" className={styles.documentOpen} aria-label={`Eliminar vínculo de ${document.nombre_original}`} onClick={() => setUnlinkTarget(document)}><Unlink size={16} /></button>}</li>)}</ul> : <p className={styles.sectionEmpty}>Sin documentos vinculados.</p>}
+          {visibleDocuments.length ? <ul className={styles.documentList}>{visibleDocuments.map((document) => <li key={document.id}><FileText size={16} /><span><strong>{document.nombre_original}</strong><small>{document.tipo || 'Documento inicial'} · {formatDate(document.fecha_carga)}</small></span>{canReadDocuments && <button type="button" className={styles.documentOpen} aria-label={`Visualizar ${document.nombre_original}`} onClick={() => void openDocument(document)}><Eye size={16} /></button>}{canReadDocuments && <button type="button" className={styles.documentOpen} aria-label={`Descargar ${document.nombre_original}`} onClick={() => void downloadDocument(document)}><Download size={16} /></button>}{canUnlink && <button type="button" className={styles.documentOpen} aria-label={`Eliminar vínculo de ${document.nombre_original}`} onClick={() => setUnlinkTarget(document)}><Unlink size={16} /></button>}</li>)}</ul> : <p className={styles.sectionEmpty}>Sin documentos vinculados.</p>}
           {unlinkTarget && <div className={styles.unlinkConfirmation} role="group" aria-label="Confirmar desvinculación"><p>¿Desvincular {unlinkTarget.nombre_original}? No se eliminará el blob ni otras relaciones.</p><button type="button" disabled={unlinking} onClick={() => void unlink()}>Confirmar</button><button type="button" disabled={unlinking} onClick={() => setUnlinkTarget(null)}>Cancelar</button></div>}
           {canUpload && <div className={styles.detailUploader}><ProspectDocumentPicker id="initial-document" label="Agregar documentos" files={files} disabled={uploading} onChange={setFiles} /><button type="button" className={styles.secondaryButton} disabled={uploading || !files.length} onClick={() => void upload()}>{uploading ? <LoaderCircle className={styles.spin} size={16} /> : <FileCheck2 size={16} />}Subir seleccionados</button></div>}
         </section>
@@ -131,5 +139,6 @@ export function ProspectDetailPage() {
       </aside>
     </div>
     <div className={`${styles.toast} ${toast ? styles.toastVisible : ''}`} role="status" aria-live="polite">{toast}</div>
+    {viewer && <DocumentViewer open name={viewer.document.nombre_original} mimeType={viewer.document.mime_type} url={viewer.url} loading={viewer.loading} error={viewer.error} onClose={() => setViewer(null)} onDownload={() => void downloadDocument(viewer.document)} />}
   </div>;
 }

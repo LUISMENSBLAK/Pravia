@@ -41,7 +41,6 @@ import {
   downloadIAReport,
   downloadCarpetaZip,
   getDatosDetectadosMatrix,
-  generarProyectoConIA,
   saveProyectoAsNotaryTemplate,
   getProyectoWorkspace,
   generarProyectoContractual,
@@ -210,7 +209,6 @@ router.get('/:id/documentos/:documentoId/descargar', requirePermission('document
 router.get('/:id/proyecto', requirePermission('expedientes.project.read'), getProyectoEscritura);
 router.get('/:id/proyecto/workspace', requirePermission('expedientes.project.read'), getProyectoWorkspace);
 router.get('/:id/proyecto/matriz-datos', requirePermission('expedientes.project.read'), getDatosDetectadosMatrix);
-router.post('/:id/proyecto/generar-ia', requirePermission('expedientes.write'), requirePermission('documentos.write'), requirePermission('ia.execute'), generarProyectoConIA);
 router.post('/:id/proyecto/generar', requirePermission('expedientes.write'), requirePermission('documentos.write'), requirePermission('ia.execute'), generarProyectoContractual);
 router.post('/:id/proyecto/generar-desde-machote', requirePermission('expedientes.write'), requirePermission('documentos.write'), requirePermission('ia.execute'), uploadProyectoMulter.single('file'), generarProyectoDesdeMachoteExcepcional);
 router.post('/:id/proyecto/upload', requirePermission('expedientes.write'), requirePermission('documentos.write'), uploadProyectoMulter.single('file'), uploadProyectoVersion);

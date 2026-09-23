@@ -17,6 +17,14 @@ export interface ProjectVersionRecord {
   pending_count: number;
   generation_observations: unknown[];
   docx_structural_fidelity?: Record<string, unknown>;
+  template_artifact_id?: string | null;
+  template_version_id?: string | null;
+  template_version?: number | null;
+  template_name?: string | null;
+  generation_mode?: string;
+  generation_origin?: string;
+  instructions?: string | null;
+  instructions_consumed?: boolean;
 }
 
 export interface ProjectReportRecord {
@@ -55,6 +63,14 @@ export function mapProjectVersion(document: any): ProjectVersionRecord {
     pending_count: Number(meta.pending_count || 0),
     generation_observations: Array.isArray(meta.generation_observations) ? meta.generation_observations : [],
     docx_structural_fidelity: metadataObject(meta.docx_structural_fidelity),
+    template_artifact_id: typeof meta.template_artifact_id === 'string' ? meta.template_artifact_id : null,
+    template_version_id: typeof meta.template_version_id === 'string' ? meta.template_version_id : null,
+    template_version: Number.isFinite(Number(meta.template_version)) ? Number(meta.template_version) : null,
+    template_name: typeof meta.template_name === 'string' ? meta.template_name : null,
+    generation_mode: typeof meta.generation_mode === 'string' ? meta.generation_mode : undefined,
+    generation_origin: typeof meta.generation_origin === 'string' ? meta.generation_origin : undefined,
+    instructions: typeof meta.instructions === 'string' ? meta.instructions : null,
+    instructions_consumed: Boolean(meta.instructions_consumed),
   };
 }
 

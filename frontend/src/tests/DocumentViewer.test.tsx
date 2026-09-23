@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DocumentViewer } from '../components/documents/DocumentViewer';
 
@@ -14,10 +14,11 @@ vi.mock('mammoth', () => ({ convertToHtml: vi.fn().mockResolvedValue({ value: '<
 const successfulPdf = () => ({
   promise: Promise.resolve({
     numPages: 2,
-    getPage: vi.fn().mockResolvedValue({
+    getPage: vi.fn().mockImplementation(async (number: number) => ({
       getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: 792 * scale }),
       render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
-    }),
+      getTextContent: vi.fn().mockResolvedValue({ items: [{ str: number === 2 ? 'Folio EXP-0002-2026' : 'Primera página' }] }),
+    })),
   }),
   destroy: vi.fn().mockResolvedValue(undefined),
 });
@@ -26,6 +27,7 @@ describe('Shared DocumentViewer', () => {
   beforeEach(() => {
     getDocument.mockReset().mockImplementation(successfulPdf);
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as CanvasRenderingContext2D);
+    Element.prototype.scrollIntoView = vi.fn();
   });
 
   it('renderiza una página PDF real en canvas y confirma contenido cargado', async () => {
@@ -37,6 +39,24 @@ describe('Shared DocumentViewer', () => {
     expect(getDocument).toHaveBeenCalledWith({ url: 'blob:pdf-real' });
   });
 
+  it('muestra las primeras páginas sin esperar a que termine un PDF grande', async () => {
+    let releaseSecond!: (page: unknown) => void;
+    const secondPage = new Promise((resolve) => { releaseSecond = resolve; });
+    const page = (number: number) => ({
+      getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: 792 * scale }),
+      render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+      getTextContent: vi.fn().mockResolvedValue({ items: [{ str: `Página ${number}` }] }),
+    });
+    getDocument.mockReturnValueOnce({ promise: Promise.resolve({ numPages: 2, getPage: vi.fn((number: number) => number === 1 ? Promise.resolve(page(1)) : secondPage) }), destroy: vi.fn().mockResolvedValue(undefined) });
+    render(<DocumentViewer open name="expediente-extenso.pdf" mimeType="application/pdf" url="blob:large" onClose={vi.fn()} />);
+    expect(await screen.findByLabelText('Página 1 de expediente-extenso.pdf')).toBeInTheDocument();
+    expect(screen.getByText('Cargando páginas 1 de 2…')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Página 2 de expediente-extenso.pdf')).not.toBeInTheDocument();
+    await act(async () => releaseSecond(page(2)));
+    expect(await screen.findByLabelText('Página 2 de expediente-extenso.pdf')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Cargando páginas 1 de 2…')).not.toBeInTheDocument());
+  });
+
   it('confirma que una imagen cargó y conserva su blob autenticado', async () => {
     render(<DocumentViewer open name="identificacion.png" mimeType="image/png" url="blob:image-real" onClose={vi.fn()} onDownload={vi.fn()} />);
     const image = screen.getByAltText('Vista previa de identificacion.png');
@@ -46,6 +66,14 @@ describe('Shared DocumentViewer', () => {
     expect(screen.queryByText('Preparando imagen…')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Aumentar zoom' }));
     expect(screen.getByText('115%')).toBeInTheDocument();
+    expect(image.style.transform).toBe('');
+  });
+
+  it('monta el diálogo en document.body para que ningún panel padre lo recorte', async () => {
+    render(<form data-testid="parent-form"><DocumentViewer open name="identificacion.png" mimeType="image/png" url="blob:image" onClose={vi.fn()} /></form>);
+    const dialog = screen.getByRole('dialog', { name: 'identificacion.png' });
+    expect(dialog.closest('form')).toBeNull();
+    expect(dialog.parentElement?.parentElement).toBe(document.body);
   });
 
   it('muestra un fallback humano cuando el render falla y mantiene descarga', async () => {
@@ -64,5 +92,31 @@ describe('Shared DocumentViewer', () => {
     expect(screen.getByText('Contenido Word visible.')).toBeInTheDocument();
     expect(screen.getByText('100%')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /Descargar/ }).length).toBeGreaterThan(0);
+  });
+
+  it('navega páginas y busca texto extraído sin salir del visor', async () => {
+    render(<DocumentViewer open name="expediente.pdf" mimeType="application/pdf" url="blob:pdf-search" onClose={vi.fn()} />);
+    await screen.findByLabelText('Página 1 de expediente.pdf');
+    expect(screen.getByText('1 / 2')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Página siguiente' }));
+    expect(screen.getByText('2 / 2')).toBeInTheDocument();
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('Buscar en documento'), { target: { value: 'EXP-0002-2026' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Buscar en PDF' }));
+    expect(await screen.findByText('Coincidencia en la página 2.')).toBeInTheDocument();
+  });
+
+  it('cierra con Escape y devuelve el foco al control de origen', async () => {
+    const onClose = vi.fn();
+    const { rerender } = render(<><button type="button">Abrir visor</button><DocumentViewer open={false} name="archivo.png" onClose={onClose} /></>);
+    const trigger = screen.getByRole('button', { name: 'Abrir visor' });
+    trigger.focus();
+    rerender(<><button type="button">Abrir visor</button><DocumentViewer open name="archivo.png" url="blob:image" onClose={onClose} /></>);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cerrar vista previa' })).toHaveFocus());
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    rerender(<><button type="button">Abrir visor</button><DocumentViewer open={false} name="archivo.png" onClose={onClose} /></>);
+    expect(screen.getByRole('button', { name: 'Abrir visor' })).toHaveFocus();
   });
 });

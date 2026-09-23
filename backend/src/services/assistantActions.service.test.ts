@@ -5,6 +5,7 @@ import { assistantConversationService } from './assistantConversation.service';
 import { ProspectWorkflowService } from './prospectWorkflow.service';
 import { CotizacionWorkflowService } from './cotizacionWorkflow.service';
 import { ExpedienteActivityService } from './expedienteActivity.service';
+import { ProjectGenerationService } from './projectGeneration.service';
 import {
   AssistantActionError,
   assistantActionCatalog,
@@ -17,7 +18,7 @@ const actor = {
   id: '11111111-1111-4111-8111-111111111111', organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   email: 'ana@example.test', nombre: 'Ana', apellido: 'Prueba', rol: 'ABOGADO', sessionId: 'session-1', membershipId: 'membership-1',
   scope: 'GLOBAL', requiresPasswordChange: false,
-  permissions: ['ai.use', 'ai.actions.prepare', 'agenda.write', 'prospectos.write', 'cotizaciones.write', 'expedientes.write', 'documentos.write', 'comparecientes.read'],
+  permissions: ['ai.use', 'ai.actions.prepare', 'agenda.write', 'prospectos.write', 'cotizaciones.write', 'expedientes.write', 'expedientes.project.read', 'documentos.write', 'comparecientes.read', 'ia.execute'],
 } as any;
 
 const base = { actor, conversationId: 'conversation-1', messageId: 'message-1', correlationId: 'correlation-1' };
@@ -109,6 +110,44 @@ describe('PRAVIA IA action layer', () => {
     expect(result.confirmation).toMatchObject({ title: expect.stringContaining('transición') });
     expect(act).not.toHaveBeenCalled();
     expect(save).toHaveBeenCalledWith(actor, 'conversation-1', expect.objectContaining({ status: 'AWAITING_CONFIRMATION', confirmationId: expect.any(String) }));
+  });
+
+  it('prepara EXP-010 desde el expediente usando el machote, fuentes e indicaciones visibles', async () => {
+    vi.spyOn(assistantConversationService, 'actionState').mockResolvedValue(undefined);
+    vi.spyOn((prisma as any).catalogoArtefactoVersion, 'findFirst').mockResolvedValue({ version: 3, artefacto: { nombre: 'Machote proyecto notarial QA' } });
+    const save = vi.spyOn(assistantConversationService, 'setActionState').mockResolvedValue(undefined as any);
+    const generate = vi.spyOn(ProjectGenerationService.prototype, 'generate');
+    const result = await prepareOrExecuteAssistantAction({
+      ...base,
+      actionKey: 'project.generate',
+      args: {},
+      context: {
+        entityType: 'expediente', entityId: 'case-1',
+        projectDraft: { instructions: 'Conservar la cláusula tercera.', templateVersionId: 'template-1', sourceDocumentIds: ['document-1'] },
+      },
+    });
+    expect(result.confirmation).toMatchObject({ confirmLabel: 'Generar proyecto', details: expect.arrayContaining([{ label: 'machote', value: 'Machote proyecto notarial QA · v3' }]) });
+    expect(generate).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledWith(actor, 'conversation-1', expect.objectContaining({
+      status: 'AWAITING_CONFIRMATION', actionKey: 'project.generate',
+      args: expect.objectContaining({ expediente_id: 'case-1', instructions: 'Conservar la cláusula tercera.', template_version_id: 'template-1', machote: 'Machote proyecto notarial QA · v3', source_document_ids: ['document-1'] }),
+    }));
+  });
+
+  it('combina de forma determinista las indicaciones visibles con la solicitud de proyección', async () => {
+    vi.spyOn(assistantConversationService, 'actionState').mockResolvedValue(undefined);
+    const save = vi.spyOn(assistantConversationService, 'setActionState').mockResolvedValue(undefined as any);
+    await prepareOrExecuteAssistantAction({
+      ...base,
+      actionKey: 'project.generate', args: {},
+      context: {
+        entityType: 'expediente', entityId: 'case-1', requestMessage: 'Proyéctalo y revisa especialmente el antecedente.',
+        projectDraft: { instructions: 'Conservar literalmente la cláusula tercera.' },
+      },
+    });
+    expect(save).toHaveBeenCalledWith(actor, 'conversation-1', expect.objectContaining({
+      args: expect.objectContaining({ instructions: 'Indicaciones existentes:\nConservar literalmente la cláusula tercera.\n\nIndicaciones de esta solicitud:\nRevisa especialmente el antecedente.' }),
+    }));
   });
 
   it('ejecuta la autoridad canónica únicamente al confirmar y conserva al actor humano', async () => {

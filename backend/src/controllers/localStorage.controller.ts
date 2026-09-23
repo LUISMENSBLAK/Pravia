@@ -5,7 +5,7 @@ import { downloadFile } from '../storage/storage.service';
 import { verifyLocalStorageSignature } from '../storage/localStorage.provider';
 
 const mimeByExtension: Record<string, string> = {
-  '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.pdf': 'application/pdf', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
   '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 };
 

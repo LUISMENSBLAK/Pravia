@@ -204,7 +204,7 @@ export type ProjectGenerationObservation = {
   location?: string;
   detail?: string;
 };
-export type ProjectVersion = { id: string; version_numero: number; nombre_original?: string; nota_version?: string; es_vigente: boolean; es_version_final?: boolean; subido_por_nombre?: string; created_at: string; pending_count?: number; generation_observations?: ProjectGenerationObservation[]; docx_structural_fidelity?: { status?: string; sections?: number; tables?: number; immutable_parts?: number } };
+export type ProjectVersion = { id: string; version_numero: number; nombre_original?: string; nota_version?: string; es_vigente: boolean; es_version_final?: boolean; subido_por_nombre?: string; cargado_por_nombre?: string; created_at: string; pending_count?: number; generation_observations?: ProjectGenerationObservation[]; docx_structural_fidelity?: { status?: string; sections?: number; tables?: number; immutable_parts?: number }; template_artifact_id?: string | null; template_version_id?: string | null; template_version?: number | null; template_name?: string | null; generation_mode?: string; generation_origin?: 'UI' | 'PRAVIA_IA' | string; instructions?: string | null; instructions_consumed?: boolean };
 export type ProjectObservation = {
   id: string;
   titulo: string;
@@ -231,6 +231,24 @@ export type ProjectReport = {
 export type ProjectState = { vigente: ProjectVersion | null; historial: ProjectVersion[]; ultimoReporte?: ProjectReport | null };
 export type ProjectWorkspace = {
   modes: Array<'GENERAR_PROYECTO' | 'REVISAR_PROYECTO'>;
+  expediente: { id: string; folio: string; acts: Array<{ id: string; name: string }> };
   templates: Array<{ id: string; name: string; default: boolean; applicable_act_ids: string[]; versions: Array<{ id: string; version: number; name?: string; checksum?: string | null }> }>;
+  suggested_template: { artifact_id: string; name: string; version_id: string; version: number } | null;
+  pending_detectable_count: number;
   sources: { structured: string[]; documents: Array<{ id: string; tipo_vinculo: string; source_context?: string | null; selected_by_default: boolean; documento: { id: string; nombre_original: string; mime_type: string; checksum_sha256?: string | null; tipo?: string | null; categoria?: string | null } }> };
+};
+export type ProjectGenerationResult = {
+  version: ProjectVersion;
+  pending_count: number;
+  contradiction_count: number;
+  generation_observation_count: number;
+  residual_observation_count: number;
+  critical_count: number;
+  instructions_consumed: boolean;
+  instruction_focus: string[];
+  generation_origin: 'UI' | 'PRAVIA_IA';
+  docx_structural_fidelity: 'PASS';
+  template: { artifact_id: string | null; version_id: string | null; version: number | null; name?: string | null; exclusive: boolean };
+  review_required: boolean;
+  idempotent: boolean;
 };

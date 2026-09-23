@@ -37,6 +37,46 @@ type ProjectObservation = {
   detail?: string;
 };
 
+export type ProjectInstructionPolicy = {
+  text: string | null;
+  consumed: boolean;
+  focus: string[];
+};
+
+const instructionFocus = [
+  ['REPRESENTACION', /representaci[oó]n|representante|sociedad/i],
+  ['PODER', /\bpoder\b|apoderad/i],
+  ['ANTECEDENTE', /antecedente/i],
+  ['SUBDIVISION', /subdivisi[oó]n/i],
+  ['CLAUSULA', /cl[aá]usula/i],
+  ['TRANSCRIPCION_LITERAL', /literal|transcripci[oó]n/i],
+] as const;
+
+/**
+ * Instructions are an auditable review focus; they never replace master facts.
+ * Explicit attempts to bypass the factual hierarchy are rejected before any
+ * document or storage write occurs.
+ */
+export function resolveProjectInstructions(value: unknown): ProjectInstructionPolicy {
+  const normalized = text(value);
+  if (!normalized) return { text: null, consumed: false, focus: [] };
+  if (normalized.length > 4_000) throw new ProjectGenerationError(400, 'PROJECT_INSTRUCTIONS_TOO_LONG', 'Las indicaciones no pueden exceder 4,000 caracteres.');
+  const conflicts = [
+    /\b(?:inventa|inventar|fabri(?:ca|car))\b/i,
+    /\b(?:ignora|ignorar|omite|omitir)\b.{0,80}\b(?:comparecientes?|predios?|fuentes?|documentos?|expediente)\b/i,
+    /\baunque\s+no\s+(?:est[eé]|aparezca|conste)(?:\s|[.,;:]|$)/i,
+    /\b(?:cambia|cambiar|sustituye|sustituir|reemplaza|reemplazar)\b.{0,80}\b(?:dato\s+maestro|hecho|compareciente|predio)\b/i,
+  ];
+  if (conflicts.some((pattern) => pattern.test(normalized))) {
+    throw new ProjectGenerationError(409, 'PROJECT_INSTRUCTIONS_CONFLICT', 'La indicación contradice la jerarquía factual de EXP-010. Corrígela sin inventar ni sustituir datos maestros.');
+  }
+  return {
+    text: normalized,
+    consumed: true,
+    focus: instructionFocus.filter(([, pattern]) => pattern.test(normalized)).map(([label]) => label),
+  };
+}
+
 const XML_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
 const xmlText = (xml: string) => xml
   .replace(/<w:tab\/?\s*>/g, '\t')
@@ -517,7 +557,7 @@ export class ProjectGenerationService {
   }
 
   async workspace(actor: Actor, expedienteId: string) {
-    const expediente = await prisma.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId }, select: { id: true, actos: { where: { estatus: 'ACTIVO', removed_at: null }, select: { tipo_acto_id: true, tipo_acto: { select: { nombre: true } } } } } });
+    const expediente = await prisma.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null }, select: { id: true, numero_pravia: true, cliente_alias: true, descripcion: true, notaria_id: true, actos: { where: { estatus: 'ACTIVO', removed_at: null }, select: { tipo_acto_id: true, tipo_acto: { select: { nombre: true } } } }, comparecientes: { where: { estatus: 'ACTIVO' }, select: { id: true } }, predios: { where: { estatus: 'ACTIVO' }, select: { id: true } } } });
     if (!expediente) throw new ProjectGenerationError(404, 'PROJECT_CASE_NOT_FOUND', 'No se encontró el expediente.');
     const actIds = expediente.actos.map((item) => item.tipo_acto_id);
     const templates = await prisma.catalogoArtefactoDestino.findMany({
@@ -526,9 +566,16 @@ export class ProjectGenerationService {
       orderBy: [{ predeterminado: 'desc' }, { created_at: 'asc' }],
     });
     const documents = await prisma.expedienteDocumento.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO' }, select: { id: true, tipo_vinculo: true, source_context: true, documento: { select: { id: true, nombre_original: true, mime_type: true, checksum_sha256: true, tipo: true, categoria: true } } }, orderBy: { fecha_vinculo: 'asc' } });
+    const mappedTemplates = templates.map((link) => ({ id: link.artefacto.id, name: link.artefacto.nombre, default: link.predeterminado, applicable_act_ids: link.artefacto.actos.map((act) => act.tipo_acto_id), versions: link.artefacto.versiones.map((version) => ({ id: version.id, version: version.version, name: version.nombre_original, checksum: version.checksum_sha256 })) }));
+    const suggestedArtifact = mappedTemplates.find((item) => item.default) || mappedTemplates[0];
+    const suggestedVersion = suggestedArtifact?.versions[0];
+    const pendingDetectable = [!expediente.cliente_alias, !expediente.descripcion, !expediente.notaria_id, expediente.comparecientes.length === 0, expediente.predios.length === 0].filter(Boolean).length;
     return {
       modes: ['GENERAR_PROYECTO', 'REVISAR_PROYECTO'],
-      templates: templates.map((link) => ({ id: link.artefacto.id, name: link.artefacto.nombre, default: link.predeterminado, applicable_act_ids: link.artefacto.actos.map((act) => act.tipo_acto_id), versions: link.artefacto.versiones.map((version) => ({ id: version.id, version: version.version, name: version.nombre_original, checksum: version.checksum_sha256 })) })),
+      expediente: { id: expediente.id, folio: expediente.numero_pravia, acts: expediente.actos.map((item) => ({ id: item.tipo_acto_id, name: item.tipo_acto.nombre })) },
+      templates: mappedTemplates,
+      suggested_template: suggestedArtifact && suggestedVersion ? { artifact_id: suggestedArtifact.id, name: suggestedArtifact.name, version_id: suggestedVersion.id, version: suggestedVersion.version } : null,
+      pending_detectable_count: pendingDetectable,
       sources: { structured: ['comparecientes', 'predios', 'expediente', 'actos'], documents: documents.map((link) => ({ ...link, selected_by_default: isDefaultProjectSource(link) })) },
     };
   }
@@ -545,8 +592,24 @@ export class ProjectGenerationService {
       },
     });
     if (!expediente) throw new ProjectGenerationError(404, 'PROJECT_CASE_NOT_FOUND', 'No se encontró el expediente.');
-    const instructions = text(input?.instructions);
-    if (instructions && instructions.length > 4_000) throw new ProjectGenerationError(400, 'PROJECT_INSTRUCTIONS_TOO_LONG', 'Las instrucciones no pueden exceder 4,000 caracteres.');
+    const idempotencyKey = text(input?.idempotency_key);
+    if (idempotencyKey && idempotencyKey.length > 160) throw new ProjectGenerationError(400, 'PROJECT_IDEMPOTENCY_INVALID', 'La clave de idempotencia no es válida.');
+    if (idempotencyKey) {
+      const existing = await prisma.expedienteDocumento.findFirst({
+        where: { organization_id: actor.organizationId, expediente_id: expedienteId, idempotency_key: idempotencyKey },
+        include: { documento: true },
+      });
+      if (existing) {
+        const persisted = await projectRepository.getVersion(expedienteId, existing.documento_id);
+        const metadata = record(existing.documento.datos_extraidos);
+        const project = record(metadata.proyecto);
+        return { version: persisted?.record, pending_count: Number(project.pending_count || 0), contradiction_count: Array.isArray(project.contradiction_observations) ? project.contradiction_observations.length : 0, generation_observation_count: Array.isArray(project.generation_observations) ? project.generation_observations.length : 0, residual_observation_count: Array.isArray(project.residual_observations) ? project.residual_observations.length : 0, critical_count: 0, instructions_consumed: Boolean(project.instructions_consumed), instruction_focus: Array.isArray(project.instruction_focus) ? project.instruction_focus : [], generation_origin: project.generation_origin || 'UI', docx_structural_fidelity: 'PASS', template: { artifact_id: project.template_artifact_id || null, version_id: project.template_version_id || null, version: project.template_version || null, name: project.template_name || null, exclusive: project.generation_mode === 'MACHOTE_EXCEPCIONAL' }, review_required: true, idempotent: true };
+      }
+    }
+    const instructionPolicy = resolveProjectInstructions(input?.instructions);
+    const instructions = instructionPolicy.text;
+    const origin = input?.origin == null ? 'UI' : String(input.origin);
+    if (!['UI', 'PRAVIA_IA'].includes(origin)) throw new ProjectGenerationError(400, 'PROJECT_ORIGIN_INVALID', 'El origen de la proyección no es válido.');
     const requestedSourceIds = input?.source_document_ids;
     if (requestedSourceIds !== undefined && (!Array.isArray(requestedSourceIds) || requestedSourceIds.some((id: unknown) => typeof id !== 'string'))) {
       throw new ProjectGenerationError(400, 'PROJECT_SOURCES_INVALID', 'La selección de fuentes documentales no es válida.');
@@ -562,6 +625,7 @@ export class ProjectGenerationService {
     const manualTemplate = input?.__manual_template as { buffer: Buffer; name: string } | undefined;
     const requestedVersionId = manualTemplate ? null : text(input?.template_version_id);
     const actId = expediente.actos[0]?.tipo_acto_id || expediente.tipo_acto_id;
+    if (!actId) throw new ProjectGenerationError(409, 'PROJECT_ACT_REQUIRED', 'El expediente necesita al menos un acto activo antes de proyectar la escritura.');
     const resolved = requestedVersionId
       ? await prisma.catalogoArtefactoVersion.findFirst({ where: { id: requestedVersionId, organization_id: actor.organizationId, activa: true, artefacto: { activo: true, destinosFuncionales: { some: { destino: 'PROYECTO_MACHOTE', activo: true } }, OR: [{ actos: { none: {} } }, ...(actId ? [{ actos: { some: { tipo_acto_id: actId } } }] : [])] } }, include: { artefacto: true } })
       : null;
@@ -597,8 +661,15 @@ export class ProjectGenerationService {
     if (manualStorageKey) await uploadFile(source, manualStorageKey, DOCX);
     await uploadFile(rendered.buffer, storageKey, DOCX);
     try {
-      const document = await prisma.$transaction(async (tx) => {
+      const result = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:proyecto-version:${expedienteId}`}))`);
+        if (idempotencyKey) {
+          const concurrent = await tx.expedienteDocumento.findFirst({
+            where: { organization_id: actor.organizationId, expediente_id: expedienteId, idempotency_key: idempotencyKey },
+            include: { documento: true },
+          });
+          if (concurrent) return { document: concurrent.documento, idempotent: true };
+        }
         const concurrent = await tx.documento.count({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, tipo: 'PROYECTO_ESCRITURA' } });
         const assignedVersion = resolveAssignedProjectVersion(versionNumber, concurrent);
         const assignedFileName = `Proyecto_${safe(expediente.numero_pravia)}_V${assignedVersion}.docx`;
@@ -620,14 +691,19 @@ export class ProjectGenerationService {
           organization_id: actor.organizationId, expediente_id: expedienteId, nombre_original: assignedFileName, nombre_interno: storageKey, storage_key: storageKey,
           tipo: 'PROYECTO_ESCRITURA', categoria: 'PROYECTO', mime_type: DOCX, size_bytes: rendered.buffer.length, checksum_sha256: checksum(rendered.buffer),
           subido_por_id: actor.id, estatus: 'VIGENTE', observaciones: `V${assignedVersion} · borrador para revisión notarial`,
-          datos_extraidos: json({ proyecto: { version_numero: assignedVersion, es_version_final: false, nota_version: `V${assignedVersion} · borrador para revisión notarial`, template_artifact_id: artifact.id, template_version_id: sourceEntityId, template_version: version.version, template_checksum: version.checksum_sha256, source_document_ids: selectedSources.map((link) => link.documento_id), source_selection_explicit: requestedSourceIds !== undefined, instructions, pending_count: rendered.pendingCount, contradiction_observations: documentContext.observations.filter((item) => item.kind === 'CONTRADICTION'), generation_observations: generationObservations, residual_observations: residueObservations, docx_structural_fidelity: { status: 'PASS', ...rendered.fidelity }, generation_mode: manualSource ? 'MACHOTE_EXCEPCIONAL' : 'MACHOTE_CFG002' } }),
+          datos_extraidos: json({ proyecto: { version_numero: assignedVersion, es_version_final: false, nota_version: `V${assignedVersion} · borrador para revisión notarial`, template_artifact_id: artifact.id, template_version_id: sourceEntityId, template_version: version.version, template_name: artifact.nombre, template_checksum: version.checksum_sha256, source_document_ids: selectedSources.map((link) => link.documento_id), source_selection_explicit: requestedSourceIds !== undefined, instructions, instructions_consumed: instructionPolicy.consumed, instruction_focus: instructionPolicy.focus, generation_origin: origin, pending_count: rendered.pendingCount, contradiction_observations: documentContext.observations.filter((item) => item.kind === 'CONTRADICTION'), generation_observations: generationObservations, residual_observations: residueObservations, docx_structural_fidelity: { status: 'PASS', ...rendered.fidelity }, generation_mode: manualSource ? 'MACHOTE_EXCEPCIONAL' : 'MACHOTE_CFG002' } }),
         } });
-        await tx.expedienteDocumento.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, documento_id: created.id, tipo_vinculo: 'PROYECTO_ESCRITURA', creado_por_id: actor.id, estatus: 'ACTIVO', origen: 'EXPEDIENTE', source_entity_type: manualSource ? 'Documento' : 'CatalogoArtefactoVersion', source_entity_id: sourceEntityId, source_context: 'PROYECTO_ESCRITURA', source_key: `EXPEDIENTE:${manualSource ? 'Documento' : 'CatalogoArtefactoVersion'}:${sourceEntityId}:${created.id}:PROYECTO_ESCRITURA`, document_version: checksum(rendered.buffer), provenance: json({ template_artifact_id: artifact.id, template_version_id: sourceEntityId, template_checksum: version.checksum_sha256, exclusive_template: Boolean(manualSource), source_selection_explicit: requestedSourceIds !== undefined, source_documents: selectedSources.map((link) => ({ id: link.documento_id, checksum: link.documento.checksum_sha256 })) }), document_role: 'PROJECT_DRAFT' } });
-        await tx.expedienteActividad.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, tipo: 'AUDITORIA', titulo: `Proyecto generado (V${assignedVersion})`, descripcion: `Machote ${manualSource ? 'exclusivo' : 'CFG-002'} ${artifact.nombre}, versión ${version.version}; ${selectedSources.length} fuente(s) documental(es); ${rendered.pendingCount} pendiente(s) y ${generationObservations.length} observación(es) para revisión.`, usuario_id: actor.id } });
-        return created;
+        await tx.expedienteDocumento.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, documento_id: created.id, tipo_vinculo: 'PROYECTO_ESCRITURA', creado_por_id: actor.id, estatus: 'ACTIVO', origen: 'EXPEDIENTE', source_entity_type: manualSource ? 'Documento' : 'CatalogoArtefactoVersion', source_entity_id: sourceEntityId, source_context: 'PROYECTO_ESCRITURA', source_key: `EXPEDIENTE:${manualSource ? 'Documento' : 'CatalogoArtefactoVersion'}:${sourceEntityId}:${created.id}:PROYECTO_ESCRITURA`, document_version: checksum(rendered.buffer), provenance: json({ template_artifact_id: artifact.id, template_version_id: sourceEntityId, template_checksum: version.checksum_sha256, exclusive_template: Boolean(manualSource), source_selection_explicit: requestedSourceIds !== undefined, source_documents: selectedSources.map((link) => ({ id: link.documento_id, checksum: link.documento.checksum_sha256 })) }), document_role: 'PROJECT_DRAFT', idempotency_key: idempotencyKey || null } });
+        await tx.expedienteActividad.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, tipo: 'AUDITORIA', titulo: `Proyecto generado (V${assignedVersion})`, descripcion: `Origen ${origin}; machote ${manualSource ? 'exclusivo' : 'CFG-002'} ${artifact.nombre}, versión ${version.version}; ${selectedSources.length} fuente(s) documental(es); indicaciones ${instructionPolicy.consumed ? 'consumidas como foco de revisión' : 'no proporcionadas'}; ${rendered.pendingCount} pendiente(s) y ${generationObservations.length} observación(es) para revisión.`, usuario_id: actor.id } });
+        return { document: created, idempotent: false };
       }, { timeout: 20_000 });
-      const persisted = await projectRepository.getVersion(expedienteId, document.id);
-      return { version: persisted?.record, pending_count: rendered.pendingCount, contradiction_count: documentContext.observations.filter((item) => item.kind === 'CONTRADICTION').length, generation_observation_count: generationObservations.length, residual_observation_count: residueObservations.length, docx_structural_fidelity: 'PASS', template: { artifact_id: artifact.id, version_id: version.id, version: version.version, exclusive: Boolean(manualTemplate) }, review_required: true };
+      if (result.idempotent) await Promise.all([deleteFile(storageKey).catch(() => undefined), manualStorageKey ? deleteFile(manualStorageKey).catch(() => undefined) : Promise.resolve()]);
+      const persisted = await projectRepository.getVersion(expedienteId, result.document.id);
+      if (result.idempotent) {
+        const metadata = record(result.document.datos_extraidos); const project = record(metadata.proyecto);
+        return { version: persisted?.record, pending_count: Number(project.pending_count || 0), contradiction_count: Array.isArray(project.contradiction_observations) ? project.contradiction_observations.length : 0, generation_observation_count: Array.isArray(project.generation_observations) ? project.generation_observations.length : 0, residual_observation_count: Array.isArray(project.residual_observations) ? project.residual_observations.length : 0, critical_count: 0, instructions_consumed: Boolean(project.instructions_consumed), instruction_focus: Array.isArray(project.instruction_focus) ? project.instruction_focus : [], generation_origin: project.generation_origin || origin, docx_structural_fidelity: 'PASS', template: { artifact_id: project.template_artifact_id || null, version_id: project.template_version_id || null, version: project.template_version || null, name: project.template_name || null, exclusive: project.generation_mode === 'MACHOTE_EXCEPCIONAL' }, review_required: true, idempotent: true };
+      }
+      return { version: persisted?.record, pending_count: rendered.pendingCount, contradiction_count: documentContext.observations.filter((item) => item.kind === 'CONTRADICTION').length, generation_observation_count: generationObservations.length, residual_observation_count: residueObservations.length, critical_count: 0, instructions_consumed: instructionPolicy.consumed, instruction_focus: instructionPolicy.focus, generation_origin: origin, docx_structural_fidelity: 'PASS', template: { artifact_id: artifact.id, version_id: version.id, version: version.version, name: artifact.nombre, exclusive: Boolean(manualTemplate) }, review_required: true, idempotent: false };
     } catch (error) { await Promise.all([deleteFile(storageKey).catch(() => undefined), manualStorageKey ? deleteFile(manualStorageKey).catch(() => undefined) : Promise.resolve()]); throw error; }
   }
 }

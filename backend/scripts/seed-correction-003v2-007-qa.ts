@@ -20,6 +20,8 @@ const ids = {
   membership: '30000000-0000-4000-8000-000000000003',
   alternateUser: '30000000-0000-4000-8000-000000000004',
   alternateMembership: '30000000-0000-4000-8000-000000000005',
+  readOnlyUser: '30000000-0000-4000-8000-000000000006',
+  readOnlyMembership: '30000000-0000-4000-8000-000000000007',
   detail: '770a40da-3ba5-4d24-a293-75fa8d064c05',
   selector: '30000000-0000-4000-8000-000000000102',
   dynamic: '30000000-0000-4000-8000-000000000103',
@@ -128,6 +130,26 @@ async function setupIdentity() {
       where: { organization_id_user_id: { organization_id: ids.organization, user_id: ids.alternateUser } },
       update: { rol: 'ABOGADO', status: 'ACTIVE' },
       create: { id: ids.alternateMembership, organization_id: ids.organization, user_id: ids.alternateUser, rol: 'ABOGADO', status: 'ACTIVE' },
+    });
+    await raw.user.upsert({
+      where: { email: 'consulta.proyecto.qa@pravia.test' },
+      update: {
+        password_hash: await bcrypt.hash('Synthetic-ReadOnly-2026!', 12),
+        nombre: 'Consulta', apellido: 'Proyecto QA', rol: 'CONSULTA', activo: true,
+        requires_password_change: false, password_changed_at: new Date(), failed_login_attempts: 0, locked_until: null,
+      },
+      create: {
+        id: ids.readOnlyUser,
+        email: 'consulta.proyecto.qa@pravia.test',
+        password_hash: await bcrypt.hash('Synthetic-ReadOnly-2026!', 12),
+        nombre: 'Consulta', apellido: 'Proyecto QA', rol: 'CONSULTA', activo: true,
+        requires_password_change: false, password_changed_at: new Date(),
+      },
+    });
+    await raw.organizationMembership.upsert({
+      where: { organization_id_user_id: { organization_id: ids.organization, user_id: ids.readOnlyUser } },
+      update: { rol: 'CONSULTA', status: 'ACTIVE' },
+      create: { id: ids.readOnlyMembership, organization_id: ids.organization, user_id: ids.readOnlyUser, rol: 'CONSULTA', status: 'ACTIVE' },
     });
   });
 }

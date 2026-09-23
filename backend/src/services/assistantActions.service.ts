@@ -17,6 +17,7 @@ import { ExpedienteBudgetService } from './expedienteBudget.service';
 import { ExpedienteFinanceService } from './expedienteFinance.service';
 import { ExpedienteArtifactsService } from './expedienteArtifacts.service';
 import { complianceH9Service } from './complianceH9.service';
+import { ProjectGenerationService } from './projectGeneration.service';
 
 type Actor = NonNullable<Request['user']>;
 export type AssistantActionRisk = 'READ' | 'SAFE_WRITE' | 'SENSITIVE_WRITE' | 'DESTRUCTIVE';
@@ -25,6 +26,8 @@ export type AssistantActionContext = {
   entityId?: string;
   module?: string;
   route?: string;
+  projectDraft?: { instructions?: string; templateVersionId?: string; sourceDocumentIds?: string[] };
+  requestMessage?: string;
 };
 
 type FieldType = 'string' | 'number' | 'boolean' | 'string[]' | 'object';
@@ -38,6 +41,7 @@ type Definition = {
   permissions: string[];
   risk: AssistantActionRisk;
   confirmation: 'NONE' | 'REQUIRED';
+  confirmLabel?: string;
   fields: Record<string, Field>;
   contextField?: string;
   contextTypes?: string[];
@@ -277,6 +281,23 @@ const definitions: Definition[] = [
     },
   },
   {
+    key: 'project.generate', domain: 'Proyecto', description: 'Generar un proyecto con EXP-010 y el machote CFG-002 aplicable.',
+    permissions: ['expedientes.write', 'expedientes.project.read', 'documentos.write', 'ia.execute'], risk: 'SENSITIVE_WRITE', confirmation: 'REQUIRED',
+    confirmLabel: 'Generar proyecto',
+    fields: { expediente_id: { type: 'string', required: true, max: 80 }, expediente_query: { type: 'string', max: 120 }, template_version_id: { type: 'string', max: 80 }, machote: { type: 'string', max: 300 }, source_document_ids: { type: 'string[]' }, instructions: { type: 'string', max: 4_000 } },
+    contextField: 'expediente_id', contextTypes: ['expediente', 'proyecto'],
+    async execute(input) {
+      const result = await new ProjectGenerationService().generate(input.actor, input.args.expediente_id, {
+        template_version_id: input.args.template_version_id,
+        source_document_ids: input.args.source_document_ids,
+        instructions: input.args.instructions,
+        origin: 'PRAVIA_IA',
+        idempotency_key: input.invocationId,
+      });
+      return { entityType: 'Documento', entityId: result.version?.id, message: 'El proyecto quedó generado y persistido para revisión humana.', refresh: 'proyecto', details: [{ label: 'Versión', value: String(result.version?.version_numero || '') }] };
+    },
+  },
+  {
     key: 'compliance.review.run', domain: 'Cumplimiento', description: 'Ejecutar la revisión asistida CUM-AUD sin resolver decisiones legales.',
     permissions: ['compliance.review', 'ia.execute'], risk: 'SENSITIVE_WRITE', confirmation: 'REQUIRED',
     fields: { expediente_id: { type: 'string', required: true, max: 80 }, expediente_query: { type: 'string', max: 120 } },
@@ -339,9 +360,41 @@ async function resolveQuery(actor: Actor, args: Record<string, any>) {
   return args;
 }
 
+function projectInstructionsFromMessage(message?: string) {
+  const raw = safeText(message, 4_000);
+  if (!raw) return '';
+  const instruction = raw
+    .replace(/^\s*(?:por\s+favor[,\s]*)?(?:proy[eé]ctalo|proyecta(?:r)?(?:\s+la\s+escritura)?|genera(?:r)?(?:\s+el)?\s+proyecto)(?:\s+y\s+|\s*[:;,.-]\s*)?/i, '')
+    .trim();
+  if (!instruction || instruction === raw.trim()) return '';
+  return instruction.charAt(0).toUpperCase() + instruction.slice(1);
+}
+
 function applyContext(definition: Definition, args: Record<string, any>, context?: AssistantActionContext) {
   if (definition.contextField && !args[definition.contextField] && context?.entityId && definition.contextTypes?.includes(String(context.entityType))) {
     args[definition.contextField] = context.entityId;
+  }
+  if (definition.key === 'project.generate' && context?.projectDraft) {
+    const fieldInstructions = safeText(context.projectDraft.instructions, 4_000);
+    const plannedInstructions = safeText(args.instructions, 4_000);
+    const derivedInstructions = projectInstructionsFromMessage(context.requestMessage);
+    const requestInstructions = derivedInstructions || plannedInstructions;
+    args.instructions = fieldInstructions && requestInstructions && fieldInstructions !== requestInstructions
+      ? `Indicaciones existentes:\n${fieldInstructions}\n\nIndicaciones de esta solicitud:\n${requestInstructions}`.slice(0, 4_000)
+      : requestInstructions || fieldInstructions || undefined;
+    if (!args.template_version_id && context.projectDraft.templateVersionId) args.template_version_id = safeText(context.projectDraft.templateVersionId, 80);
+    if (!args.source_document_ids && context.projectDraft.sourceDocumentIds) args.source_document_ids = context.projectDraft.sourceDocumentIds.slice(0, 50);
+  }
+  return args;
+}
+
+async function enrichPresentationArgs(definition: Definition, actor: Actor, args: Record<string, any>) {
+  if (definition.key === 'project.generate' && args.template_version_id && !args.machote) {
+    const version = await prisma.catalogoArtefactoVersion.findFirst({
+      where: { id: args.template_version_id, organization_id: actor.organizationId, activa: true },
+      select: { version: true, artefacto: { select: { nombre: true } } },
+    });
+    if (version) args.machote = `${version.artefacto.nombre} · v${version.version}`;
   }
   return args;
 }
@@ -400,6 +453,7 @@ export async function prepareOrExecuteAssistantAction(input: { actor: Actor; con
     : supplied;
   args = applyContext(definition, args, input.context);
   args = await resolveQuery(input.actor, args);
+  args = await enrichPresentationArgs(definition, input.actor, args);
   const missing = missingFields(definition, args);
   const invocationId = previous?.status === 'COLLECTING' && previous.actionKey === definition.key
     ? previous.invocationId
@@ -417,7 +471,7 @@ export async function prepareOrExecuteAssistantAction(input: { actor: Actor; con
     }
     const confirmationId = randomUUID();
     const details = Object.entries(args).filter(([key]) => !key.endsWith('_id') && !key.endsWith('_query')).slice(0, 4).map(([key, value]) => ({ label: key.replace(/_/g, ' '), value: displayValue(value) }));
-    const confirmation = { id: confirmationId, title: definition.description, details, confirmLabel: 'Confirmar' };
+    const confirmation = { id: confirmationId, title: definition.description, details, confirmLabel: definition.confirmLabel || 'Confirmar' };
     const state: AssistantActionState = { status: 'AWAITING_CONFIRMATION', actionKey: definition.key, args, invocationId, confirmationId, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(), confirmation };
     await assistantConversationService.setActionState(input.actor, input.conversationId, state);
     return { status: 'success', message: `Voy a ${definition.description.charAt(0).toLowerCase()}${definition.description.slice(1)} ¿Confirmas?`, confirmation };

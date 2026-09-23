@@ -1,5 +1,5 @@
 import { apiBlobRequest, apiRequest } from '../../services/api/client';
-import type { NotaryOption, ProspectCandidate, Quote, QuoteBudget, QuoteBudgetConcept, QuoteBudgetExtraction, QuoteContractAction, QuoteDocument, QuoteFollowUp, QuoteListFilters, QuoteListResult, QuoteState } from './quotes.types';
+import type { NotaryOption, ProspectCandidate, Quote, QuoteActTypeOption, QuoteBudget, QuoteBudgetConcept, QuoteBudgetExtraction, QuoteContractAction, QuoteDocument, QuoteFollowUp, QuoteListFilters, QuoteListResult, QuoteState } from './quotes.types';
 
 const asObject = (value: unknown): Record<string, unknown> | null => value && typeof value === 'object' ? value as Record<string, unknown> : null;
 const queryString = (filters: QuoteListFilters) => {
@@ -50,6 +50,10 @@ export const quotesService = {
     const payload = await apiRequest<unknown>(`/notarias?${params.toString()}`, { signal });
     return Array.isArray(payload) ? payload as NotaryOption[] : [];
   },
+  async actTypes(signal?: AbortSignal): Promise<QuoteActTypeOption[]> {
+    const payload = await apiRequest<unknown>('/expedientes/tipos-acto', { signal });
+    return Array.isArray(payload) ? payload as QuoteActTypeOption[] : [];
+  },
   async create(prospectId: string, notaryId?: string): Promise<Quote> {
     return apiRequest<Quote>('/cotizaciones', { method: 'POST', body: JSON.stringify({ prospecto_id: prospectId, ...(notaryId ? { notaria_id: notaryId } : {}) }) });
   },
@@ -72,8 +76,9 @@ export const quotesService = {
   async contractAction(id: string, input: { action: Exclude<QuoteContractAction, 'CONVERTIR'>; expectedVersion: number; idempotencyKey: string; confirm: true; effectiveAt: string; channel?: string; recipient?: string; evidence?: string; reason?: string }) {
     return apiRequest<{ idempotent: boolean; eventId: string }>(`/cotizaciones/${encodeURIComponent(id)}/acciones`, { method: 'POST', body: JSON.stringify(input) });
   },
-  async convert(id: string, input?: { expectedVersion: number; idempotencyKey: string; confirm: true; effectiveAt: string }): Promise<{ id: string; numero_pravia?: string; idempotent?: boolean }> {
-    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/convertir`, { method: 'POST', body: JSON.stringify(input ?? {}) });
+  async convert(id: string, input?: { expectedVersion?: number; idempotencyKey?: string; confirm?: true; effectiveAt?: string; tipoActoId?: string }): Promise<{ id: string; numero_pravia?: string; idempotent?: boolean }> {
+    const { tipoActoId, ...contract } = input ?? {};
+    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/convertir`, { method: 'POST', body: JSON.stringify({ ...contract, ...(tipoActoId ? { tipo_acto_id: tipoActoId } : {}) }) });
   },
   async documentUrl(documentId: string): Promise<string> {
     const payload = await apiRequest<{ url: string }>(`/documentos/${encodeURIComponent(documentId)}/url`);

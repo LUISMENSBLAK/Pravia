@@ -134,6 +134,7 @@ export type QuoteListFilters = { search?: string; state?: QuoteState | ''; act?:
 
 export type ProspectCandidate = { id: string; nombre: string; tipo_acto?: string | null; email?: string | null; telefono?: string | null; cotizacion?: { id: string } | null };
 export type NotaryOption = { id: string; nombre: string; numero_notaria?: string | null; entidad_federativa?: string | null; municipio?: string | null; correo_general?: string | null; correo_proyectos?: string | null; activa: boolean };
+export type QuoteActTypeOption = { id: string; nombre: string; codigo?: string | null };
 
 export type CreateQuoteVersionInput = {
   desglose_notaria: { rubros: QuoteConcept[] };

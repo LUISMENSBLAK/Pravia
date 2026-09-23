@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, Check, Download, Eye, FilePlus2, FileText, LoaderCircle, Send, Trash2, X } from 'lucide-react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { DocumentViewer } from '../../components/documents/DocumentViewer';
+import { downloadPrivateUrl } from '../../components/documents/documentDownload';
 import { useAuth } from '../auth/AuthProvider';
 import { ConvertQuoteDialog } from './components/ConvertQuoteDialog';
 import { QuoteActivity } from './components/QuoteActivity';
@@ -29,7 +30,7 @@ export function QuoteDetailPage() {
   const [delivery, setDelivery] = useState<'NOTARIA' | 'CLIENTE' | null>(null);
   const [contractAction, setContractAction] = useState<ContractDialogAction | null>(null);
   const [convert, setConvert] = useState(false);
-  const [viewer, setViewer] = useState<{ document: QuoteDocument; url?: string; loading?: boolean; error?: string } | null>(null);
+  const [viewer, setViewer] = useState<{ document: QuoteDocument; url?: string; loading?: boolean; error?: string; source?: boolean } | null>(null);
   const canWrite = user?.permissions?.includes('cotizaciones.write') ?? false;
   const canConvert = user?.permissions?.includes('expedientes.write') ?? false;
   const canReadDocuments = user?.permissions?.includes('documentos.read') ?? false;
@@ -64,6 +65,17 @@ export function QuoteDetailPage() {
     try { setViewer({ document, url: await quotesService.quoteDocumentPreviewUrl(quote.id, document.id) }); }
     catch { setViewer({ document, error: 'No fue posible preparar la vista previa del documento.' }); }
     finally { setBusy(''); }
+  };
+  const viewSource = async () => {
+    const document = quote?.fuente_notarial?.documento;
+    if (!document) return;
+    setViewer({ document, loading: true, source: true });
+    try { setViewer({ document, url: await quotesService.documentUrl(document.id), source: true }); }
+    catch { setViewer({ document, error: 'No fue posible preparar la vista previa de la fuente.', source: true }); }
+  };
+  const downloadSource = async (document: QuoteDocument) => {
+    try { await downloadPrivateUrl(await quotesService.documentUrl(document.id), document.nombre_original); notify('Descarga iniciada.'); }
+    catch { notify('No fue posible descargar la fuente notarial.'); }
   };
   const closeViewer = () => {
     if (viewer?.url) URL.revokeObjectURL(viewer.url);
@@ -117,7 +129,7 @@ export function QuoteDetailPage() {
 
     <div className={styles.detailGrid}>
       <main>
-        {quote.fuente_notarial && <section className={styles.detailSection}><h2>Cotización de Notaría · Fuente de origen</h2><p>Primera recepción: {shortDate(quote.fuente_notarial.received_at)} · Versión {quote.fuente_notarial.version}</p><button type="button" className={styles.secondaryButton} onClick={async () => { try { const url = await quotesService.documentUrl(quote.fuente_notarial!.documento.id); window.open(url, '_blank', 'noopener,noreferrer'); } catch { notify('No pudimos abrir la fuente notarial.'); } }}>Abrir {quote.fuente_notarial.documento.nombre_original}</button></section>}
+        {quote.fuente_notarial && <section className={styles.detailSection}><h2>Cotización de Notaría · Fuente de origen</h2><p>Primera recepción: {shortDate(quote.fuente_notarial.received_at)} · Versión {quote.fuente_notarial.version}</p><button type="button" className={styles.secondaryButton} onClick={() => void viewSource()}>Visualizar {quote.fuente_notarial.documento.nombre_original}</button></section>}
         <QuoteConcepts quote={quote} canWrite={canWrite} onSaved={() => load()} notify={notify} />
         <QuoteActivity quote={quote} />
       </main>
@@ -144,7 +156,7 @@ export function QuoteDetailPage() {
     {delivery && <RegisterDeliveryDialog quote={quote} target={delivery} onClose={() => setDelivery(null)} onDone={() => { setDelivery(null); void load(); notify(canonical && quote.workflow?.stage === 'ENVIADA_CLIENTE' ? 'Reenvío registrado sin cambiar el primer envío.' : 'Envío registrado con evidencia.'); }} />}
     {contractAction && <QuoteContractActionDialog quote={quote} action={contractAction} onClose={() => setContractAction(null)} onDone={() => { const completed = contractAction; setContractAction(null); void load(); notify(completed === 'ACEPTAR' ? 'Aceptación registrada.' : completed === 'SUSPENDER' ? 'Cotización suspendida.' : 'Acción registrada.'); }} />}
     {convert && <ConvertQuoteDialog quote={quote} onClose={() => setConvert(false)} onDone={(result) => { setConvert(false); notify(result.idempotent ? 'La cotización ya tenía expediente.' : 'Expediente creado correctamente.'); navigate(`/expedientes/${result.id}`); }} />}
-    {viewer && <DocumentViewer open name={viewer.document.nombre_original} mimeType={viewer.document.mime_type} url={viewer.url} loading={viewer.loading} error={viewer.error} onClose={closeViewer} onDownload={() => void download(viewer.document)} />}
+    {viewer && <DocumentViewer open name={viewer.document.nombre_original} mimeType={viewer.document.mime_type} url={viewer.url} loading={viewer.loading} error={viewer.error} onClose={closeViewer} onDownload={() => void (viewer.source ? downloadSource(viewer.document) : download(viewer.document))} />}
     <div className={`${styles.toast} ${toast ? styles.toastVisible : ''}`} role="status" aria-live="polite">{toast}</div>
   </div>;
 }

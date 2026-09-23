@@ -20,6 +20,7 @@ import { BudgetValidationError, budgetTotals, normalizeBudgetConcepts } from '..
 import { QuoteDocumentError, quoteDocumentService } from '../services/quoteDocument.service';
 import { QuoteBudgetError, QuoteBudgetService } from '../services/quoteBudget.service';
 import { downloadFile } from '../services/supabase.service';
+import { ExpedienteOpeningError } from '../services/expedienteOpening.service';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
 const cotizacionWorkflowService = new CotizacionWorkflowService(prisma);
@@ -64,6 +65,8 @@ const quoteBudgetResponse = (rows: any[]) => {
 const quoteWorkflowError = (res: Response, error: unknown) => {
   if (error instanceof QuoteContractError) return res.status(error.status).json({ error: error.message, code: error.code });
   if (error instanceof CotizacionBusinessError) return res.status(error.status).json({ error: error.message, code: error.code });
+  if (error instanceof ExpedienteOpeningError) return res.status(error.status).json({ error: error.message, code: error.code });
+  console.error('[QUOTE_WORKFLOW_ERROR]', error);
   return res.status(500).json({ error: 'No fue posible completar la operación.', code: 'COT001_OPERATION_FAILED' });
 };
 

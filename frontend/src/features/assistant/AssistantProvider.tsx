@@ -32,7 +32,7 @@ type AssistantContextValue = {
   setRecording(value: boolean): void; reportError(message: string): void;
 };
 
-type Submission = { prompt: string; conversationId: string; clientMessageId: string; attachmentIds: string[]; history: Array<{ role: 'user' | 'assistant'; content: string }> };
+type Submission = { prompt: string; conversationId: string; clientMessageId: string; attachmentIds: string[]; history: Array<{ role: 'user' | 'assistant'; content: string }>; context: AssistantContext };
 const AssistantContextStore = createContext<AssistantContextValue | null>(null);
 
 function mapConversationMessages(detail: AssistantConversationDetail): AssistantMessage[] {
@@ -60,9 +60,21 @@ export function AssistantProvider({ children, service = assistantService }: Prop
   const [historyLoading, setHistoryLoading] = useState(false);
   const [recording, setRecording] = useState(false);
   const lastSubmission = useRef<Submission>();
+  const projectDraft = useRef<AssistantContext['projectDraft']>();
   const lastActivator = useRef<HTMLElement | null>(null);
   const activeRequest = useRef<AbortController | null>(null);
   const successTimer = useRef<number>();
+
+  useEffect(() => { projectDraft.current = undefined; }, [location.pathname, location.hash]);
+
+  useEffect(() => {
+    const update = (event: Event) => {
+      const detail = (event as CustomEvent<AssistantContext['projectDraft']>).detail;
+      projectDraft.current = detail && typeof detail === 'object' ? detail : undefined;
+    };
+    window.addEventListener('pravia:assistant-project-draft', update);
+    return () => window.removeEventListener('pravia:assistant-project-draft', update);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -127,20 +139,21 @@ export function AssistantProvider({ children, service = assistantService }: Prop
     setErrorMessage(undefined); setConfirmation(null);
     if (appendUser) setMessages((current) => [...current, { id: submission.clientMessageId, role: 'user', content: submission.prompt, timestamp: now(), attachments: pendingAttachments }]);
     setStatus('thinking'); const controller = new AbortController(); activeRequest.current?.abort(); activeRequest.current = controller;
-    try { const reply = await service.sendMessage({ message: submission.prompt, context, suggestionId: selectedSuggestion?.id, conversationId: submission.conversationId,
+    try { const reply = await service.sendMessage({ message: submission.prompt, context: submission.context, suggestionId: selectedSuggestion?.id, conversationId: submission.conversationId,
         clientMessageId: submission.clientMessageId, attachmentIds: submission.attachmentIds, history: submission.history }, controller.signal);
       setPendingAttachments([]); applyReply(reply); void loadConversations('ACTIVE'); }
     catch (error) { if (error instanceof DOMException && error.name === 'AbortError') return; setStatus('error'); setErrorMessage('No pude completar esa consulta.'); }
     finally { if (activeRequest.current === controller) activeRequest.current = null; }
-  }, [applyReply, context, loadConversations, pendingAttachments, selectedSuggestion?.id, service]);
+  }, [applyReply, loadConversations, pendingAttachments, selectedSuggestion?.id, service]);
 
   const sendMessage = useCallback(async (value?: string) => {
     const prompt = (value ?? draft).trim(); if (!prompt || status === 'thinking' || status === 'processing') return; setDraft('');
     try { const conversationId = await ensureConversation(); const submission: Submission = { prompt, conversationId, clientMessageId: messageId(),
-        attachmentIds: pendingAttachments.map((item) => item.id), history: messages.slice(-8).map(({ role, content }) => ({ role, content })) };
+        attachmentIds: pendingAttachments.map((item) => item.id), history: messages.slice(-8).map(({ role, content }) => ({ role, content })),
+        context: { ...context, ...(projectDraft.current ? { projectDraft: projectDraft.current } : {}) } };
       lastSubmission.current = submission; await performSubmission(submission, true); }
     catch { setStatus('error'); setErrorMessage('No pude preparar la conversación.'); }
-  }, [draft, ensureConversation, messages, pendingAttachments, performSubmission, status]);
+  }, [context, draft, ensureConversation, messages, pendingAttachments, performSubmission, status]);
 
   const retry = useCallback(async () => { if (lastSubmission.current) await performSubmission(lastSubmission.current, false); }, [performSubmission]);
   const newConversation = useCallback(() => {

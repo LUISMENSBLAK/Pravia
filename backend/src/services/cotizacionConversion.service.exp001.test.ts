@@ -22,12 +22,12 @@ vi.mock('./expedienteBudget.service', () => ({
 
 import { CotizacionConversionService } from './cotizacionConversion.service';
 
-function database(options: { failAudit?: boolean } = {}) {
+function database(options: { failAudit?: boolean; prospectAct?: string | null } = {}) {
   const state = { linked: null as any, quoteState: 'ACEPTADA' };
   let transactionTail = Promise.resolve();
   const candidate = () => ({
     id: 'quote-1', estado: state.quoteState, user_id: 'user-1', notaria_id: 'notary-1', prospecto_id: 'prospect-1',
-    prospecto: { id: 'prospect-1', nombre: 'Cliente heredado', tipo_acto: 'Compraventa' }, expediente: state.linked,
+    prospecto: { id: 'prospect-1', nombre: 'Cliente heredado', tipo_acto: options.prospectAct === undefined ? 'Compraventa' : options.prospectAct }, expediente: state.linked,
     versiones: [{ id: 'version-1', version: 1, aprobada: true, desglose_notaria: { rubros: [{ concepto: 'Honorarios' }] }, total_notaria: 100_000, honorarios_pravia: 25_000, total_cliente: 125_000 }],
     pagos: [{ id: 'payment-1', categoria_ingreso: 'ANTICIPO_NOTARIA', estatus: 'VALIDADO', monto: 30_000 }],
   });
@@ -107,6 +107,21 @@ describe('EXP-001 conversión canónica y atómica', () => {
     expect(dependencies.open).toHaveBeenCalledTimes(1);
     expect(first.expediente.id).toBe(second.expediente.id);
     expect([first.alreadyConverted, second.alreadyConverted].sort()).toEqual([false, true]);
+  });
+
+  it('acepta una selección canónica explícita cuando el prospecto no especificó el acto', async () => {
+    const { prisma, tx } = database({ prospectAct: null });
+    const result = await new CotizacionConversionService(prisma).convert({
+      cotizacionId: 'quote-1',
+      actorUserId: 'user-1',
+      actorOrganizationId: 'org-1',
+      tipoActoId: 'act-selected',
+    });
+    expect(result.expediente.numero_pravia).toBe('EXP-0001-2026');
+    expect(tx.tipoActo.findFirst).toHaveBeenCalledWith({
+      where: { id: 'act-selected', activo: true, archived_at: null, OR: [{ organization_id: null }, { organization_id: 'org-1' }] },
+    });
+    expect(dependencies.open).toHaveBeenCalledWith(tx, expect.objectContaining({ tipoActoId: 'act-1' }));
   });
 
   it('revierte toda la conversión si falla una escritura posterior', async () => {
