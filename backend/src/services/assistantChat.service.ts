@@ -387,6 +387,7 @@ function synthesisInstructions(user: AuthUser, input: AssistantMessageInput, pla
     'No fuerces secciones irrelevantes. Si una categoría solicitada está vacía, di “No hay pendientes de este tipo registrados.”',
     'Separa recomendaciones de hechos y susténtalas en señales reales.',
     'Puedes usar Markdown seguro, incluidas tablas cuando aporten claridad. No incluyas HTML.',
+    'Presenta siempre los estados con sus etiquetas humanas en español (por ejemplo, “En proceso” o “Pendiente de revisión”); nunca muestres enums técnicos con guiones bajos.',
     'Las fuentes se adjuntan por separado; menciona folios o etiquetas útiles, nunca IDs internos.',
   ].join('\n');
 }
