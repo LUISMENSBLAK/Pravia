@@ -36,11 +36,12 @@ export async function seedProspectCatalogs(prisma: ProspectCatalogClient) {
     for (const service of PROSPECT_SERVICES) {
       const tipoActo = await tx.tipoActo.upsert({
         where: { codigo_catalogo: service.code },
-        update: { activo: service.active },
+        update: { activo: false, archived_at: new Date(0) },
         create: {
           codigo_catalogo: service.code,
           nombre: service.label,
-          activo: service.active,
+          activo: false,
+          archived_at: new Date(0),
         },
         select: { id: true },
       });

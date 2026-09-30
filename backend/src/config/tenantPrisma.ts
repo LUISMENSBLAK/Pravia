@@ -4,8 +4,8 @@ import { currentActorContext, TenantContextError } from '../auth/actorContext';
 // Modelos que poseen organization_id explícito. Los hijos derivados también lo
 // conservan para defensa en profundidad, consultas directas e índices eficientes.
 export const TENANT_SCOPED_MODELS = new Set([
-  'UserInvitation', 'Notification', 'Prospecto', 'ProspectoSeguimiento', 'ProspectoTransicion', 'ProspectoFuenteNotarial', 'Notaria', 'NotariaContacto',
-  'Cotizacion', 'CotizacionVersion', 'CotizacionConcepto', 'CotizacionVersionConcepto', 'CotizacionSeguimiento', 'CotizacionTransicion', 'Expediente', 'ExpedienteEstatus_Log',
+  'UserInvitation', 'Notification', 'NotificationReminder', 'Prospecto', 'ProspectoActo', 'ProspectoSeguimiento', 'ProspectoTransicion', 'ProspectoFuenteNotarial', 'Notaria', 'NotariaContacto',
+  'Cotizacion', 'CotizacionActo', 'CotizacionVersion', 'CotizacionConcepto', 'CotizacionVersionConcepto', 'CotizacionSeguimiento', 'CotizacionTransicion', 'Expediente', 'ExpedienteEstatus_Log',
   'ExpedienteEtapa', 'Documento', 'ExpedienteDocumento', 'ExpedienteDocumentoCarpeta', 'CotizacionDocumento', 'ProspectoDocumento',
   'RequisitoDocumentoVinculo', 'MovimientoDocumento', 'ComunicacionDocumento', 'Compareciente',
   'PersonaFisica', 'RelacionConyugal', 'PersonaMoral', 'PersonaMoralInstrumento', 'ComparecienteDomicilio',
@@ -30,7 +30,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'CatalogoArtefacto', 'CatalogoArtefactoVersion', 'CatalogoArtefactoActo', 'CatalogoArtefactoDestino', 'CatalogoArtefactoRegla', 'CatalogoCuestionarioFormato',
   'CatalogoNormativaRevision', 'CatalogoBibliotecaImportacion',
   'ExpedienteActo', 'ExpedienteDocumentoSnapshot', 'ExpedienteDocumentoSnapshotItem',
-  'ExpedienteSeguimientoActividad', 'ExpedienteSeguimientoDependencia', 'ExpedienteSeguimientoHistorial',
+  'ExpedienteSeguimientoActividad', 'ExpedienteSeguimientoOrigen', 'ExpedienteSeguimientoDependencia', 'ExpedienteSeguimientoHistorial',
   'Predio', 'PredioColindancia', 'ExpedientePredio', 'ExpedienteActoPredio', 'PredioDocumento', 'PredioDatoFuente',
   'ExpedienteArtefactoPendiente', 'ExpedienteArtefactoDocumento', 'ExpedienteCuestionarioRespuesta',
   'ExpedientePresupuesto', 'ExpedientePresupuestoConcepto', 'ExpedientePresupuestoDistribucion',
@@ -50,6 +50,10 @@ export const TENANT_SCOPED_MODELS = new Set([
   'ComplianceNoticeFicheRevision', 'ComplianceOfficialProduct', 'ComplianceNoticePresentation',
   'ComplianceNoticeAcknowledgement', 'ComplianceAssistedReview',
   'TimingPolicyRevision', 'TimingInterval',
+  'KnowledgeSource', 'KnowledgeSourceVersion', 'KnowledgeArticle', 'KnowledgeCriterion', 'KnowledgeRadarRun', 'KnowledgeImpact',
+  'AssistantAlert', 'GastoRecurrenteFinanciero', 'ConsultaFinancieraGuardada',
+  'CotizacionIAProposal', 'ProjectFactSnapshot', 'ProjectInstructionApplication', 'ProjectTemplateAssignment',
+  'FiscalReferenceRevision', 'FiscalExportProfile',
 ]);
 
 const READ_OR_WRITE_WITH_WHERE = new Set([
@@ -58,7 +62,7 @@ const READ_OR_WRITE_WITH_WHERE = new Set([
 ]);
 
 const WRITES_WITH_DATA = new Set(['update', 'updateMany']);
-export const SHARED_OR_TENANT_MODELS = new Set(['TipoActo']);
+export const SHARED_OR_TENANT_MODELS = new Set(['TipoActo', 'CaracterCompareciente']);
 
 function tenantWhere(args: any, organizationId: string) {
   args.where = { ...(args.where || {}), organization_id: organizationId };

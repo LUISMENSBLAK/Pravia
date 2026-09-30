@@ -9,7 +9,7 @@
 .headerActions { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; }
 .headerActions button { width: 38px; height: 38px; display: grid; place-items: center; border: 0; border-radius: var(--radius-md); color: var(--color-text-secondary); background: var(--color-surface-subtle); cursor: pointer; }
 .headerActions button:hover { color: var(--color-navy-950); }
-.headerActions button:focus-visible, .quickActions button:focus-visible, .composer button:focus-visible, .confirmation button:focus-visible, .error button:focus-visible, .sources summary:focus-visible, .historyPanel button:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
+.headerActions button:focus-visible, .quickActions button:focus-visible, .composer button:focus-visible, .confirmation button:focus-visible, .dynamicForm button:focus-visible, .dynamicForm input:focus-visible, .dynamicForm select:focus-visible, .dynamicForm textarea:focus-visible, .error button:focus-visible, .sources summary:focus-visible, .historyPanel button:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
 .body { min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; padding: var(--space-5); background: linear-gradient(180deg, #fbfcfe, var(--color-surface) 180px); }
 .hero { display: flex; align-items: center; gap: var(--space-4); border-bottom: 1px solid var(--color-border); padding: 0 var(--space-2) var(--space-4); }
 .hero > div { min-width: 0; }
@@ -82,11 +82,12 @@
 .sources summary::-webkit-details-marker { display: none; }
 .sources[open] summary svg { rotate: 180deg; }
 .sources ul { display: grid; gap: var(--space-2); margin: var(--space-2) 0 0; padding: 0; list-style: none; }
-.sources li { display: flex; gap: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-2); background: var(--color-surface-subtle); }
+.sources li { display: flex; align-items: flex-start; gap: var(--space-2); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-2); background: var(--color-surface-subtle); }
 .sources li svg { flex: 0 0 auto; color: var(--color-navy-700); }
 .sources li div { min-width: 0; display: grid; gap: 2px; }
 .sources li strong, .sources li span { font-size: 12px; line-height: 1.45; }
 .sources li span { color: var(--color-text-secondary); }
+.sources .sourceOpen { margin-left: auto; min-height: 36px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-navy-700); font-size: 12px; font-weight: 700; padding: 6px 9px; }
 .confirmation { border: 1px solid var(--color-gold-300); border-radius: var(--radius-lg); padding: var(--space-4); background: linear-gradient(180deg, var(--color-gold-100), white); }
 .confirmationTitle { display: flex; align-items: flex-start; gap: var(--space-3); }
 .confirmationTitle > svg { color: var(--color-gold-700); }
@@ -104,6 +105,25 @@
 .confirmationActions button { min-height: 36px; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0 var(--space-3); color: var(--color-text-primary); background: white; font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
 .confirmationActions .confirmButton { display: inline-flex; align-items: center; gap: 6px; border-color: var(--color-gold-500); background: var(--color-gold-400); }
 .confirmationActions button:disabled { opacity: .55; cursor: wait; }
+.dynamicForm { display: grid; gap: var(--space-3); border: 1px solid var(--color-gold-300); border-radius: var(--radius-lg); padding: var(--space-4); background: linear-gradient(180deg, var(--color-gold-100), white 72%); box-shadow: var(--shadow-sm); }
+.dynamicForm > header { display: flex; align-items: flex-start; gap: var(--space-3); }
+.dynamicForm > header > span { width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center; border-radius: var(--radius-md); color: var(--color-gold-700); background: white; box-shadow: var(--shadow-xs); }
+.dynamicForm > header > div { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.dynamicForm > header small { color: var(--color-gold-700); font-size: 9px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+.dynamicForm > header strong { font-size: 13px; line-height: 1.4; }
+.dynamicForm > header button { width: 34px; height: 34px; flex: 0 0 34px; display: grid; place-items: center; border: 0; border-radius: var(--radius-md); color: var(--color-text-secondary); background: transparent; cursor: pointer; }
+.dynamicForm > header button:hover { color: var(--color-navy-900); background: white; }
+.dynamicForm > p { margin: 0; color: var(--color-text-secondary); font-size: 11px; line-height: 1.5; }
+.dynamicFields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+.dynamicFields label { min-width: 0; display: grid; align-content: start; gap: 6px; color: var(--color-text-secondary); font-size: 10px; font-weight: 700; }
+.dynamicFields input:not([type="checkbox"]), .dynamicFields select, .dynamicFields textarea { width: 100%; min-height: 40px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); padding: 0 var(--space-3); color: var(--color-text-primary); background: white; font: inherit; font-size: 12px; }
+.dynamicFields textarea { min-height: 76px; padding-block: var(--space-2); resize: vertical; }
+.dynamicFields select { cursor: pointer; }
+.dynamicFields input[type="checkbox"] { width: 20px; height: 20px; margin: 4px 0; accent-color: var(--color-navy-800); }
+.dynamicForm > footer { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.dynamicForm > footer button { min-height: 38px; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0 var(--space-4); color: var(--color-text-primary); background: white; font: inherit; font-size: 11px; font-weight: 750; cursor: pointer; }
+.dynamicForm > footer button:last-child { border-color: var(--color-gold-500); color: var(--color-navy-950); background: var(--color-gold-400); }
+.dynamicForm > footer button:disabled { opacity: .55; cursor: wait; }
 .composer { flex: 0 0 auto; border-top: 1px solid var(--color-border); padding: var(--space-3) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom)); background: white; }
 .composer > label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 .composer > div { display: flex; align-items: flex-end; gap: var(--space-2); border: 1px solid var(--color-border-strong); border-radius: 13px; padding: 7px; background: var(--color-surface-subtle); }
@@ -139,6 +159,11 @@
   .composer textarea { font-size: 16px; }
   .composer button { width: 44px; height: 44px; flex-basis: 44px; }
   .confirmationActions button { min-height: 44px; }
+  .dynamicFields { grid-template-columns: minmax(0, 1fr); }
+  .dynamicFields input:not([type="checkbox"]), .dynamicFields select, .dynamicFields textarea, .dynamicForm > footer button { min-height: 44px; }
+  .dynamicForm > footer { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .composer small { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { .drawer, .spinner, .historyLoading svg, .recordingButton { animation: none; } .sources summary svg { transition: none; } }
+.actionCenter{margin:10px 0 14px;border:1px solid var(--color-border);border-radius:12px;background:#fff;overflow:hidden}.actionCenter>header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:#f8fafc}.actionCenter>header>div{display:flex;align-items:center;gap:8px;color:#8b651d}.actionCenter>header span{display:flex;flex-direction:column}.actionCenter>header strong{font-size:.72rem;color:var(--color-text-primary)}.actionCenter>header small{font-size:.59rem;color:var(--color-text-muted)}.actionCenter article{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;border-top:1px solid #edf0f4;border-left:3px solid #8190a4}.actionCenter article[data-severity=IMPORTANT]{border-left-color:#d09d32}.actionCenter article[data-severity=URGENT]{border-left-color:#b8484d}.actionCenter article>span{display:flex;flex-direction:column;min-width:0}.actionCenter article strong{font-size:.66rem}.actionCenter article small{margin-top:3px;color:var(--color-text-muted);font-size:.58rem;line-height:1.4}.actionCenter article>div{display:flex;align-items:center;gap:5px;flex:none}.actionCenter article a,.actionCenter article button{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:0 8px;border:1px solid var(--color-border);border-radius:7px;background:#fff;color:#345b84;text-decoration:none;font:inherit;font-size:.57rem;font-weight:720}.actionCenter article button:last-child{width:32px;padding:0}
+@media(max-width:520px){.actionCenter article{align-items:flex-start;flex-direction:column}.actionCenter article>div{width:100%;flex-wrap:wrap}.actionCenter article a,.actionCenter article button:not(:last-child){flex:1}}

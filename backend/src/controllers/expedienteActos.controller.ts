@@ -26,3 +26,10 @@ export async function applyExpedienteActoChange(req: Request, res: Response) {
     return res.status(result.idempotent ? 200 : 201).json(result);
   } catch (error) { return handle(error, res); }
 }
+
+export async function updateExpedienteActoObjectPercentage(req: Request, res: Response) {
+  try {
+    const result = await service.setObjectPercentage(actor(req), req.params.id, req.params.actId, req.body);
+    return res.status(result.idempotent ? 200 : 201).json(result);
+  } catch (error) { return handle(error, res); }
+}

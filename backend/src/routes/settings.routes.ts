@@ -16,6 +16,8 @@ router.get('/audit', requirePermission('configuracion.manage'), SettingsControll
 router.get('/notifications', SettingsController.notifications);
 router.post('/notifications/read-all', SettingsController.readAllNotifications);
 router.post('/notifications/:id/read', SettingsController.readNotification);
+router.post('/notifications/:id/dismiss', SettingsController.dismissNotification);
+router.post('/notifications/:id/not-applicable', SettingsController.markNotificationNotApplicable);
 router.get('/search', requirePermission('ai.search'), SettingsController.search);
 
 export default router;

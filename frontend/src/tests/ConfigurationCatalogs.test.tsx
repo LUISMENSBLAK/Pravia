@@ -6,6 +6,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
@@ -45,6 +46,8 @@ const api = vi.hoisted(() => ({
   confirmCatalogImport: vi.fn(),
   functionalDestinations: vi.fn(),
   assignFunctionalDestinations: vi.fn(),
+  projectTemplateAssignments: vi.fn(),
+  removeProjectTemplateAssignment: vi.fn(),
 }));
 
 vi.mock("../features/settings/settings.service", () => ({
@@ -166,6 +169,8 @@ describe("Catálogos contractuales accesibles", () => {
       { value: "PROYECTO_MACHOTE", label: "Machote para proyecto", artifactTypes: ["PLANTILLA"] },
     ]);
     api.assignFunctionalDestinations.mockResolvedValue({});
+    api.projectTemplateAssignments.mockResolvedValue([]);
+    api.removeProjectTemplateAssignment.mockResolvedValue({});
     api.createCatalogArtifact.mockResolvedValue({ id: "artifact-new" });
     api.updateCatalogArtifact.mockResolvedValue({});
     api.updateCatalogFolder.mockResolvedValue({});
@@ -273,7 +278,7 @@ describe("Catálogos contractuales accesibles", () => {
 
   it("permite por teclado abrir acto, editar actividad y guardar dependencias con diálogo etiquetado", async () => {
     const user = userEvent.setup();
-    render(<ActsTimesCatalog />);
+    render(<MemoryRouter><ActsTimesCatalog /></MemoryRouter>);
     await user.click(
       await screen.findByRole("button", { name: /Compraventa/ }),
     );
@@ -387,20 +392,49 @@ describe("Catálogos contractuales accesibles", () => {
     render(<TemplatesFormatsCatalog />);
     await user.click(await screen.findByRole("button", { name: /Notaría 45/ }));
     await user.click(screen.getByRole("button", { name: /MACHOTE JURÍDICO/ }));
-    await user.click(await screen.findByRole("button", { name: "Nueva plantilla" }));
-    const dialog = screen.getByRole("dialog", { name: "Nueva plantilla" });
+    await user.click(await screen.findByRole("button", { name: "Agregar machote" }));
+    const dialog = screen.getByRole("dialog", { name: "Agregar machote" });
     await user.type(within(dialog).getByLabelText("Nombre"), "Machote contextual");
     const file = new File(["docx"], "machote-contextual.docx", { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
     await user.upload(within(dialog).getByLabelText(/^Archivo/, { selector: 'input[type="file"]' }), file);
     await user.selectOptions(within(dialog).getByLabelText("Destino funcional"), "PROYECTO_MACHOTE");
-    expect(within(dialog).getByRole("checkbox", { name: "Predeterminado para este destino" })).toBeChecked();
+    await user.selectOptions(within(dialog).getByLabelText("Acto para el machote"), "act-a");
+    expect(within(dialog).queryByRole("checkbox", { name: "Predeterminado para este destino" })).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/identidad exacta de esta Notaría y este Acto/)).toBeInTheDocument();
     const saveButton = within(dialog).getByRole("button", { name: "Guardar" });
     expect(saveButton).toBeEnabled();
     fireEvent.submit(saveButton.closest("form")!);
     await waitFor(() => expect(api.createCatalogArtifact).toHaveBeenCalledWith(expect.objectContaining({
       tipo: "PLANTILLA", propietario_tipo: "NOTARIA", notaria_id: "notary-a", carpeta_id: null,
-      nombre: "Machote contextual", activo: true, destinos_funcionales: [{ destino: "PROYECTO_MACHOTE", activo: true, predeterminado: true }],
+      nombre: "Machote contextual", activo: true, act_ids: ["act-a"], replace_project_template: false,
+      destinos_funcionales: [{ destino: "PROYECTO_MACHOTE", activo: true, predeterminado: false }],
     }), file));
+  });
+
+  it("muestra y retira la asignación estructural de un machote sin eliminar su historial", async () => {
+    api.projectTemplateAssignments.mockResolvedValue([
+      {
+        id: "assignment-a",
+        organization_id: "org-a",
+        tipo_acto_id: "act-a",
+        artefacto_id: "artifact-a",
+        version_id: "v1",
+        active: true,
+        tipoActo: { id: "act-a", nombre: "Compraventa" },
+        artefacto: { id: "artifact-a", nombre: "Machote" },
+        version: { id: "v1", version: 1, nombre_original: "machote.docx" },
+      },
+    ]);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const user = userEvent.setup();
+    render(<TemplatesFormatsCatalog />);
+    await user.click(await screen.findByRole("button", { name: /Notaría 45/ }));
+    await user.click(screen.getByRole("button", { name: /MACHOTE JURÍDICO/ }));
+    expect(await screen.findByText("Machote de Compraventa · v1")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retirar asignación" }));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("Compraventa"));
+    await waitFor(() => expect(api.removeProjectTemplateAssignment).toHaveBeenCalledWith("act-a"));
+    confirm.mockRestore();
   });
 
   it("mueve, renombra y desactiva un artefacto sin modificar sus destinos funcionales", async () => {
@@ -426,7 +460,7 @@ describe("Catálogos contractuales accesibles", () => {
 
   it("mantiene la estructura del catálogo con skeleton accesible y sin textos de carga crudos", async () => {
     api.catalogActs.mockReturnValue(new Promise(() => undefined));
-    render(<ActsTimesCatalog />);
+    render(<MemoryRouter><ActsTimesCatalog /></MemoryRouter>);
     expect(
       screen.getByRole("status", { name: "Cargando catálogo de actos" }),
     ).toBeInTheDocument();
@@ -467,9 +501,9 @@ describe("Catálogos contractuales accesibles", () => {
         },
       ],
     });
-    render(<ActsTimesCatalog />);
+    render(<MemoryRouter><ActsTimesCatalog /></MemoryRouter>);
     expect(await screen.findByText("1 activo")).toBeInTheDocument();
-    expect(screen.getByText("1 día hábil · revisión 1")).toBeInTheDocument();
+    expect(screen.getByText(/Actividad · 1 día hábil · revisión 1/)).toBeInTheDocument();
     expect(
       screen.getByText("BANCO · 1 tiempo configurado"),
     ).toBeInTheDocument();
@@ -505,7 +539,7 @@ describe("Catálogos contractuales accesibles", () => {
         },
       ],
     });
-    render(<ActsTimesCatalog />);
+    render(<MemoryRouter><ActsTimesCatalog /></MemoryRouter>);
     await user.click(
       await screen.findByRole("button", { name: "Configurar tiempo" }),
     );

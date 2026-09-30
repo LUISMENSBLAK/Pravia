@@ -5,6 +5,7 @@ import { expedienteAccessWhere } from '../middleware/auth.middleware';
 type AuthUser = NonNullable<Request['user']>;
 
 const hasGlobalRead = (user: AuthUser) => ['DIRECCION', 'ADMINISTRACION', 'CONSULTA'].includes(user.rol);
+const hasGlobalFinanceRead = (user: AuthUser) => hasGlobalRead(user) || user.rol === 'FINANCIERO';
 const canOperateCommercialCatalog = (user: AuthUser) => user.rol === 'RECEPCION';
 
 export const prospectoObjectWhere = (user: AuthUser) =>
@@ -52,10 +53,9 @@ export async function canAccessCotizacion(user: AuthUser, id: string) {
 }
 
 export async function canAccessCompareciente(user: AuthUser, id: string) {
-  if (hasGlobalRead(user)) return true;
   return Boolean(await prisma.compareciente.findFirst({
     where: {
-      id,
+      id, organization_id: user.organizationId,
       archived_at: null,
       ...comparecienteObjectWhere(user),
     },
@@ -115,7 +115,7 @@ export async function canAccessDocumento(user: AuthUser, id: string) {
     const accessible = await prisma.movimientoFinanciero.findFirst({
       where: {
         id: { in: movementIds },
-        ...(hasGlobalRead(user) ? {} : {
+        ...(hasGlobalFinanceRead(user) ? {} : {
           OR: [
             { expediente_id: null },
             { expediente: expedienteAccessWhere(user) },
@@ -152,7 +152,7 @@ export async function canAttachDocumento(user: AuthUser, targets: {
     const record = await prisma.movimientoFinanciero.findFirst({
       where: {
         id: targets.movimiento_id,
-        ...(hasGlobalRead(user) ? {} : {
+        ...(hasGlobalFinanceRead(user) ? {} : {
           OR: [
             { expediente_id: null },
             { expediente: expedienteAccessWhere(user) },

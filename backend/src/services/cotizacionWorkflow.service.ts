@@ -23,7 +23,7 @@ import { createQuoteOperationalSnapshotInTransaction } from './quoteBudget.servi
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
-const actionFields = ['action', 'expectedVersion', 'idempotencyKey', 'confirm', 'effectiveAt', 'channel', 'recipient', 'evidence', 'versionId', 'reason'] as const;
+const actionFields = ['action', 'expectedVersion', 'idempotencyKey', 'confirm', 'effectiveAt', 'channel', 'recipient', 'cc', 'subject', 'messageBody', 'deliveryMode', 'evidence', 'versionId', 'reason', 'confirmedActIds', 'formalApplicantId'] as const;
 const trim = (value: unknown, max = 4000) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 
 const permission = (actor: Actor, name: Actor['permissions'][number]) => {
@@ -114,6 +114,8 @@ const readInclude = {
   prospecto: { select: { id: true, nombre: true } },
   expediente: { select: { id: true, numero_pravia: true } },
   creada_por: { select: { id: true, nombre: true, apellido: true } },
+  actos: { include: { tipo_acto: { select: { id: true, nombre: true, codigo_catalogo: true } } }, orderBy: { orden: 'asc' as const } },
+  solicitante_formal: { select: { id: true, nombre_busqueda: true, tipo_persona: true } },
 } as const;
 
 export class CotizacionWorkflowService {
@@ -155,6 +157,9 @@ export class CotizacionWorkflowService {
       actions: actions.map((code) => ({ code, label: QUOTE_CONTRACT_ACTIONS[code] })),
       firstSentAt: firstSend?.effective_at ?? null,
       lastSentAt: lastSend?.effective_at ?? null,
+      daysWithoutResponse: firstSend && !accepted
+        ? Math.max(0, Math.floor((Date.now() - firstSend.effective_at.getTime()) / 86_400_000))
+        : null,
       acceptedAdvanceAt: accepted?.effective_at ?? null,
       suspendedAt: suspended?.effective_at ?? null,
       cancelledAt: cancelled?.effective_at ?? null,
@@ -162,6 +167,8 @@ export class CotizacionWorkflowService {
       originProspect: quote.prospecto,
       linkedCase: quote.expediente,
       responsible: quote.creada_por,
+      acts: quote.actos,
+      formalApplicant: quote.solicitante_formal,
       provenance: quote.transicion_actual?.procedencia ?? null,
       events: events.map((event) => ({
         id: event.id,
@@ -211,20 +218,45 @@ export class CotizacionWorkflowService {
       if (action === 'ENVIAR_CLIENTE' || action === 'REENVIAR_CLIENTE') {
         channel = trim(raw.channel, 100); recipient = trim(raw.recipient, 320); const deliveryEvidence = trim(raw.evidence);
         if (!channel || !recipient || !deliveryEvidence) failQuote(400, 'COT001_SEND_EVIDENCE_REQUIRED', 'Indica canal, destinatario y evidencia del envío realizado.');
+        const cc = trim(raw.cc, 1000);
+        const subject = trim(raw.subject, 500);
+        const messageBody = trim(raw.messageBody, 12000);
+        if (channel === 'correo' && (!subject || !messageBody)) failQuote(400, 'COT001_EMAIL_DRAFT_REQUIRED', 'Completa asunto y mensaje antes de confirmar el envío manual.');
+        if (raw.deliveryMode !== 'MANUAL_CONFIRMED') failQuote(400, 'COT001_DELIVERY_MODE_REQUIRED', 'Confirma expresamente que el envío se realizó fuera de PRAVIA.');
         const snapshot = await createQuoteOperationalSnapshotInTransaction(tx, {
           organizationId: actor.organizationId, quoteId: id, actorId: actor.id,
           reason: action === 'REENVIAR_CLIENTE' ? 'reenvío al cliente' : 'envío al cliente',
         });
         quoteVersionId = snapshot.id;
-        evidence = { deliveryEvidence, deliveryConfirmedByProvider: false, immutableOperationalSnapshot: snapshot.id, pdfAvailable: Boolean(snapshot.pdf_url) };
+        await tx.cotizacion.update({ where: { id, organization_id: actor.organizationId }, data: {
+          correo_cc: cc || null,
+          correo_asunto: subject || null,
+          cuerpo_correo_cliente: messageBody || null,
+        } });
+        evidence = { deliveryEvidence, deliveryMode: 'MANUAL_CONFIRMED', deliveryConfirmedByProvider: false,
+          cc: cc || null, subject: subject || null, messageBody, immutableOperationalSnapshot: snapshot.id,
+          pdfAvailable: Boolean(snapshot.pdf_url) };
       }
       if (action === 'ACEPTAR') {
+        if (!Array.isArray(raw.confirmedActIds)) failQuote(400, 'COT001_ACT_CONFIRMATION_REQUIRED', 'Confirma los actos de la cotización antes de registrar la aceptación.');
+        const confirmedActIds = Array.from(new Set((raw.confirmedActIds as unknown[]).map((value) => String(value ?? '').trim()).filter(Boolean)));
+        const existingActIds = quote.actos.map((item) => item.id);
+        if (!existingActIds.length || confirmedActIds.length !== existingActIds.length || confirmedActIds.some((id) => !existingActIds.includes(id))) {
+          failQuote(400, 'COT001_ACT_CONFIRMATION_MISMATCH', 'Confirma exactamente los actos vigentes de esta cotización.');
+        }
+        const formalApplicantId = trim(raw.formalApplicantId, 64);
+        if (!formalApplicantId) failQuote(400, 'COT001_FORMAL_APPLICANT_REQUIRED', 'Selecciona un compareciente existente como solicitante formal.');
+        const applicant = await tx.compareciente.findFirst({ where: { id: formalApplicantId, organization_id: actor.organizationId, archived_at: null, estatus: 'ACTIVO' }, select: { id: true, nombre_busqueda: true } });
+        if (!applicant) failQuote(400, 'COT001_FORMAL_APPLICANT_INVALID', 'El solicitante formal no existe o no pertenece a tu organización.');
         const snapshot = await createQuoteOperationalSnapshotInTransaction(tx, {
           organizationId: actor.organizationId, quoteId: id, actorId: actor.id,
           reason: 'aceptación del cliente',
         });
         quoteVersionId = snapshot.id;
-        evidence = { confirmation: 'Aceptación confirmada por el actor', immutableOperationalSnapshot: snapshot.id };
+        await tx.cotizacionActo.updateMany({ where: { organization_id: actor.organizationId, cotizacion_id: id, id: { in: confirmedActIds } }, data: { confirmed_at: effectiveAt, confirmed_by_id: actor.id } });
+        await tx.cotizacion.update({ where: { id, organization_id: actor.organizationId }, data: { solicitante_formal_id: applicant!.id } });
+        evidence = { confirmation: 'Aceptación confirmada por el actor', immutableOperationalSnapshot: snapshot.id,
+          confirmedActIds, formalApplicantId: applicant!.id, formalApplicantName: applicant!.nombre_busqueda };
       }
       const event = await recordQuoteTransitionInTransaction(tx, {
         actor, quote, action, next, changesStage, effectiveAt, recordedAt, key, hash, evidence,

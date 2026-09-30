@@ -11,7 +11,7 @@ function database(input: { acts?: any[]; count?: Record<string, number>; status?
     $executeRaw: vi.fn().mockResolvedValue(1),
     expediente: { findFirst: vi.fn().mockResolvedValueOnce(expediente ? { id: 'exp-1' } : null).mockResolvedValue(expediente), update: vi.fn().mockResolvedValue({ version: 4 }) },
     expedienteActo: {
-      findFirst: vi.fn().mockResolvedValueOnce(input.prior || null).mockImplementation(async ({ where }: any) => acts.find((act) => act.id === where.id) || null),
+      findFirst: vi.fn().mockImplementation(async ({ where }: any) => where.OR ? input.prior || null : acts.find((act) => act.id === where.id) || null),
       findMany: vi.fn().mockResolvedValue(acts),
       create: vi.fn().mockImplementation(async ({ data }: any) => ({ id: 'link-new', estatus: 'ACTIVO', created_at: now, tipo_acto: { id: data.tipo_acto_id, nombre: 'Compraventa' }, ...data })),
       update: vi.fn().mockImplementation(async ({ data }: any) => ({ ...acts[0], ...data })),
@@ -22,6 +22,7 @@ function database(input: { acts?: any[]; count?: Record<string, number>; status?
     expedienteCompareciente: { count: vi.fn().mockResolvedValue(input.partyRelations || 0) },
     expedienteActoPredio: { count: vi.fn().mockResolvedValue(input.propertyRelations || 0) },
     expedienteSeguimientoActividad: { findMany: vi.fn().mockResolvedValue([]), update: vi.fn(), upsert: vi.fn() },
+    expedienteSeguimientoOrigen: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null), updateMany: vi.fn(), upsert: vi.fn() },
     expedienteSeguimientoDependencia: { findMany: vi.fn().mockResolvedValue([]), upsert: vi.fn() },
     expedienteSeguimientoHistorial: { count: vi.fn().mockResolvedValue(0), create: vi.fn() },
     expedienteComplianceState: { findFirst: vi.fn().mockResolvedValue(null) },
@@ -93,6 +94,22 @@ describe('EXP-002 actos canónicos del expediente', () => {
     const preview = await new ExpedienteActosService(prisma).preview(actor, 'exp-1', { operation: 'REMOVE', expediente_acto_id: 'link-1', reason: 'Acto cancelado' });
     expect(preview.classification).toBe('BLOCKED');
     expect(preview.impact.protected_work).toMatchObject({ count: 2, requires_human_confirmation: false });
+  });
+
+  it('guarda el porcentaje objeto con control de concurrencia y auditoría, sin inventar participaciones', async () => {
+    const act = { id: 'link-1', organization_id: 'org-1', expediente_id: 'exp-1', tipo_acto_id: 'type-1', porcentaje_objeto: 100, estatus: 'ACTIVO', removed_at: null, updated_at: now, tipo_acto: { id: 'type-1', nombre: 'Compraventa' } };
+    const { prisma, tx } = database({ acts: [act] });
+    const result = await new ExpedienteActosService(prisma).setObjectPercentage(actor, 'exp-1', act.id, { porcentaje_objeto: 50, expected_updated_at: now.toISOString() });
+    expect(result).toMatchObject({ idempotent: false });
+    expect(tx.expedienteActo.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: act.id }, data: { porcentaje_objeto: 50 } }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ accion: 'UPDATE_EXPEDIENTE_ACT_OBJECT_PERCENTAGE' }) }));
+  });
+
+  it('rechaza porcentaje objeto inválido o revisión obsoleta', async () => {
+    const act = { id: 'link-1', organization_id: 'org-1', expediente_id: 'exp-1', tipo_acto_id: 'type-1', porcentaje_objeto: 100, estatus: 'ACTIVO', removed_at: null, updated_at: now };
+    const db = database({ acts: [act] });
+    await expect(new ExpedienteActosService(db.prisma).setObjectPercentage(actor, 'exp-1', act.id, { porcentaje_objeto: 0, expected_updated_at: now.toISOString() })).rejects.toMatchObject({ code: 'EXPEDIENTE_ACT_OBJECT_PERCENTAGE_INVALID' });
+    await expect(new ExpedienteActosService(db.prisma).setObjectPercentage(actor, 'exp-1', act.id, { porcentaje_objeto: 50, expected_updated_at: new Date(now.getTime() - 1).toISOString() })).rejects.toMatchObject({ code: 'EXPEDIENTE_ACT_STALE' });
   });
 
   it('expone errores de dominio estables', () => {

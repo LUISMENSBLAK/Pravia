@@ -2,6 +2,8 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
 import { budgetTotals, normalizeBudgetConcepts } from '../domain/expedienteBudget';
 import { cotizacionObjectWhere } from './objectAccess.service';
+import { normalizeOperationalText } from '../utils/operationalText';
+import { getQuotationTemplate } from './quotationTemplate.service';
 
 type Actor = NonNullable<Request['user']>;
 
@@ -12,6 +14,28 @@ export class QuoteBudgetError extends Error {
 }
 
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+
+export function quoteBudgetDraft(input: {
+  folio: string;
+  client: string;
+  act: string;
+  description: string;
+  responsible: string;
+  date: Date;
+  totals: { subtotal_honorarios: string; subtotal_impuestos_derechos: string; total: string };
+}) {
+  return getQuotationTemplate({
+    folio: input.folio,
+    cliente: input.client,
+    acto: input.act,
+    descripcion: input.description,
+    responsable: input.responsible,
+    fecha: input.date,
+    honorarios: input.totals.subtotal_honorarios,
+    impuestos_derechos: input.totals.subtotal_impuestos_derechos,
+    total: input.totals.total,
+  });
+}
 
 export const quoteBudgetPayload = (rows: Array<{ id?: string; concepto: string; categoria: any; importe: unknown; orden: number; origen?: string }>) => {
   const concepts = rows.map((row, orden) => ({
@@ -89,7 +113,7 @@ export class QuoteBudgetService {
 
   async save(actor: Actor, quoteId: string, raw: Record<string, unknown>) {
     if (!actor.permissions.includes('cotizaciones.write')) throw new QuoteBudgetError(403, 'QUOTE_BUDGET_WRITE_DENIED', 'No tienes permiso para modificar la cotización.');
-    const allowed = new Set(['concepts', 'origin', 'expectedUpdatedAt']);
+    const allowed = new Set(['concepts', 'origin', 'operationContext', 'expectedUpdatedAt']);
     const unexpected = Object.keys(raw).filter((key) => !allowed.has(key));
     if (unexpected.length) throw new QuoteBudgetError(400, 'QUOTE_BUDGET_FIELDS_DENIED', 'La solicitud contiene campos no permitidos.');
     const concepts = normalizeBudgetConcepts(raw.concepts);
@@ -97,12 +121,18 @@ export class QuoteBudgetService {
     const expected = typeof raw.expectedUpdatedAt === 'string' ? new Date(raw.expectedUpdatedAt) : null;
     if (!expected || Number.isNaN(expected.getTime())) throw new QuoteBudgetError(400, 'QUOTE_BUDGET_REVISION_REQUIRED', 'Actualiza la ficha antes de guardar el presupuesto.');
     const origin = raw.origin === 'IMPORTADO' ? 'IMPORTADO' : 'MANUAL';
+    const operationContext = typeof raw.operationContext === 'string' ? normalizeOperationalText(raw.operationContext, 4_000) : '';
 
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:quote-budget:${actor.organizationId}:${quoteId}`}))`);
       const quote = await tx.cotizacion.findFirst({
         where: { id: quoteId, ...cotizacionObjectWhere(actor) },
-        include: { conceptos: { orderBy: { orden: 'asc' } } },
+        include: {
+          conceptos: { orderBy: { orden: 'asc' } },
+          prospecto: true,
+          creada_por: { select: { nombre: true, apellido: true } },
+          actos: { include: { tipo_acto: { select: { nombre: true } } }, orderBy: { orden: 'asc' } },
+        },
       });
       if (!quote) throw new QuoteBudgetError(404, 'QUOTE_NOT_FOUND', 'No se encontró la cotización o no tienes acceso.');
       if (!quote.organization_id) throw new QuoteBudgetError(409, 'QUOTE_TENANT_REQUIRED', 'La cotización histórica requiere revisión antes de editarse.');
@@ -118,10 +148,22 @@ export class QuoteBudgetService {
         orden: row.orden,
         origen: origin,
       })) });
+      const draft = quoteBudgetDraft({
+        folio: quote.numero_cotizacion || quote.numero_solicitud || quote.id,
+        client: quote.prospecto?.nombre || 'Cliente pendiente',
+        act: quote.actos?.map((item) => item.tipo_acto.nombre).join(', ') || quote.prospecto?.tipo_acto || 'Acto pendiente',
+        description: operationContext || quote.contexto_operacion || quote.prospecto?.necesidad || 'Sin descripción adicional',
+        responsible: [quote.creada_por?.nombre, quote.creada_por?.apellido].filter(Boolean).join(' ') || 'Responsable pendiente',
+        date: quote.created_at || new Date(),
+        totals,
+      });
+      const refreshUnsentDraft = !quote.fecha_enviada_cliente;
       const updated = await tx.cotizacion.update({ where: { id: quote.id }, data: {
         total_notaria: totals.total,
         total_cliente: totals.total,
         honorarios_pravia: null,
+        contexto_operacion: operationContext || null,
+        ...(refreshUnsentDraft ? { correo_asunto: draft.subject, cuerpo_correo_cliente: draft.body } : {}),
       }, include: { conceptos: { orderBy: { orden: 'asc' } } } });
       const after = quoteBudgetPayload(updated.conceptos);
       await tx.auditLog.create({ data: {
@@ -131,8 +173,8 @@ export class QuoteBudgetService {
         entidad: 'Cotizacion',
         entidad_id: quote.id,
         session_id: actor.sessionId,
-        valores_anteriores: json({ stage: quote.etapa_contractual, budget: before }),
-        valores_nuevos: json({ stage: updated.etapa_contractual, budget: after }),
+        valores_anteriores: json({ stage: quote.etapa_contractual, budget: before, operationContext: quote.contexto_operacion }),
+        valores_nuevos: json({ stage: updated.etapa_contractual, budget: after, operationContext: updated.contexto_operacion }),
         detalles: { source: 'CORRECCION_002_V2', stage_changed: false, editable_version_created: false },
       } });
       return { presupuesto: after, updated_at: updated.updated_at, stage: updated.etapa_contractual };

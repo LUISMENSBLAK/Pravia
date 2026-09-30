@@ -102,6 +102,26 @@ export class ExpedienteDocumentAppendixService {
     return this.liveResponse(candidates, actor, expedienteId);
   }
 
+  async importPreview(actor: Actor, expedienteId: string, origin: 'COMPARECIENTE' | 'PREDIO') {
+    const expediente = await this.assertExpediente(this.prisma, actor, expedienteId);
+    if (frozenStatuses.has(expediente.estatus)) throw new ExpedienteDocumentAppendixError(409, 'EXP004_APPENDIX_FROZEN', 'El apéndice quedó congelado al firmar y ya no admite importaciones.');
+    const sources = (await this.discoverCurrentSources(this.prisma, actor, expedienteId, origin)).filter((source) => source.document);
+    const keys = sources.map((source) => source.sourceKey);
+    const existing = keys.length ? await this.prisma.expedienteDocumento.findMany({
+      where: { organization_id: actor.organizationId, expediente_id: expedienteId, source_key: { in: keys } },
+      select: { source_key: true, documento_id: true, document_version: true, estatus: true },
+    }) : [];
+    const byKey = new Map(existing.map((item) => [item.source_key, item]));
+    let created = 0; let updated = 0; let unchanged = 0;
+    for (const source of sources) {
+      const current = byKey.get(source.sourceKey);
+      if (!current) created += 1;
+      else if (current.documento_id !== source.document!.id || current.document_version !== source.documentVersion || current.estatus !== 'ACTIVO') updated += 1;
+      else unchanged += 1;
+    }
+    return { origin, sources: sources.length, new: created, updated, unchanged, duplicates_created: 0, blob_copies: 0 };
+  }
+
   async importCurrent(actor: Actor, expedienteId: string, origin: 'COMPARECIENTE' | 'PREDIO') {
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp004-import:${expedienteId}:${origin}`}))`);

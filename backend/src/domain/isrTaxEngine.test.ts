@@ -95,8 +95,8 @@ describe('motor determinista de ISR', () => {
     expect(item.confirmedAt).toBeTruthy();
   });
 
-  it.each(['PRAVIA_CALCULATION', 'NORMATIVE_OPTION_TABLE'] as const)('rechaza el origen %s mientras no exista implementación normativa', (updateOrigin) => {
-    expect(() => calculateISR(base({ deductions: [deduction({ updateOrigin })] }), ISR2026_RULESET)).toThrowError(/aún no está implementada/);
+  it.each(['PRAVIA_CALCULATION', 'NORMATIVE_OPTION_TABLE'] as const)('rechaza el origen %s cuando no incluye versión y fuente', (updateOrigin) => {
+    expect(() => calculateISR(base({ deductions: [deduction({ updateOrigin })] }), ISR2026_RULESET)).toThrowError(/versión y fuente/);
   });
 
   it('conserva tratamientos diferenciados de artículos 121 y 124', () => {
@@ -137,7 +137,7 @@ describe('motor determinista de ISR', () => {
   it('bloquea ganancia cero para revisión específica', () => expect(() => calculateISR(base({ deductions: [deduction({ updatedAmount: '2000000.00' })] }), ISR2026_RULESET)).toThrowError(/ganancia nula/));
   it('bloquea pérdidas para revisión específica', () => expect(() => calculateISR(base({ deductions: [deduction({ updatedAmount: '2100000.00' })] }), ISR2026_RULESET)).toThrowError(/pérdida/));
   it('bloquea exenciones no implementadas', () => expect(() => calculateISR(base({ exemptionTreatment: 'SOLICITADA' }), ISR2026_RULESET)).toThrowError(/exención/));
-  it('bloquea copropiedad y otros supuestos especiales', () => expect(() => calculateISR(base({ specialCases: ['COPROPIEDAD'] }), ISR2026_RULESET)).toThrowError(/supuesto especial/));
+  it('bloquea copropiedad sin todas las partes', () => expect(() => calculateISR(base({ specialCases: ['COPROPIEDAD'] }), ISR2026_RULESET)).toThrowError(/todos los enajenantes/));
   it('bloquea personas morales', () => expect(() => calculateISR(base({ taxpayer: { ...base().taxpayer, personType: 'MORAL' } }), ISR2026_RULESET)).toThrowError(/supuesto de contribuyente/));
   it('expone códigos humanos estables sin stack técnico', () => {
     try { calculateISR(base({ operationType: 'ADQUISICION_INMUEBLE' }), ISR2026_RULESET); throw new Error('debió fallar'); }

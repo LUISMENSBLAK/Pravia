@@ -22,7 +22,7 @@ import {
 } from "./components/ComparecienteDocuments";
 import { ComparecienteForm } from "./components/ComparecienteForm";
 import { ScreeningPanel } from "./components/ScreeningPanel";
-import { OwnershipStructureEditor } from "./components/OwnershipStructureEditor";
+import { OwnershipStructureEditor, type MoralStructureSuggestion } from "./components/OwnershipStructureEditor";
 import styles from "./Comparecientes.module.css";
 import {
   resolveExpedienteCreationContext,
@@ -148,16 +148,18 @@ const updatePayload = (draft: NewComparecienteDraft) => ({
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean),
-  domicilio_particular: addressPayload(draft, "dom_particular"),
+  ...(draft.tipo_persona === "FISICA"
+    ? { domicilio_particular: addressPayload(draft, "dom_particular") }
+    : {}),
   domicilio_fiscal: addressPayload(draft, "dom_fiscal"),
-  identificacion: {
+  ...(draft.tipo_persona === "FISICA" ? { identificacion: {
     tipo_identificacion: draft.tipo_identificacion,
     numero: draft.folio_identificacion,
     autoridad_emisora: draft.autoridad_emisora,
     pais_emisor: draft.pais_emisor,
     fecha_expedicion: draft.fecha_expedicion_identificacion,
     fecha_vencimiento: draft.fecha_vencimiento_identificacion,
-  },
+  } } : {}),
 });
 const safeContextId = /^[A-Za-z0-9_-]{1,128}$/;
 const ownershipReturnContext = (search: string) => {
@@ -218,6 +220,16 @@ export function ComparecienteWorkspace() {
   }>({});
   const [dirty, setDirty] = useState(false);
   const [extractionState, setExtractionState] = useState("");
+  const [extractionReview, setExtractionReview] = useState<{
+    filled: string[];
+    missing: string[];
+    errors: string[];
+    alerts: string[];
+    structure?: Record<string, any> | null;
+  } | null>(null);
+  const [extractionConflicts, setExtractionConflicts] = useState<
+    Array<{ field: string; current: string; proposed: string }>
+  >([]);
   const canWrite = createMode
     ? Boolean(user?.permissions?.includes("comparecientes.write"))
     : Boolean(item?.capabilities.canEdit);
@@ -457,14 +469,48 @@ export function ComparecienteWorkspace() {
           !proposal[key]?.estado?.includes("CONFLICTO"),
       ),
     );
+    const conflicts: Array<{ field: string; current: string; proposed: string }> = [];
+    const valuesToApply: Record<string, string> = {};
+    for (const [key, rawValue] of Object.entries(safeValues)) {
+      const proposed = String(rawValue || "");
+      const current = String(draft[key] || "");
+      if (!createMode && current.trim() && current.trim().toLocaleUpperCase("es-MX") !== proposed.trim().toLocaleUpperCase("es-MX")) {
+        conflicts.push({ field: key, current, proposed });
+        mappedSources[key] = { ...(mappedSources[key] || {}), valor: proposed, estado: "EN_CONFLICTO" };
+      } else valuesToApply[key] = proposed;
+    }
     setIneIdentifiers(response.identificadores_ine || {});
     setDraft((current) => ({
       ...current,
-      ...safeValues,
+      ...valuesToApply,
       tipo_persona: current.tipo_persona,
     }));
     setSources(mappedSources);
+    setExtractionConflicts(conflicts);
+    const nested = response.borrador_actualizado || {};
+    const missing = response.faltantes || nested._ia_faltantes || response.resultado?.faltantes || [];
+    const errors = [
+      ...(response.documentos_omitidos || []),
+      ...((response.errores || []).map((entry: any) => entry?.nombre || entry?.error).filter(Boolean)),
+    ];
+    setExtractionReview({
+      filled: Object.keys(valuesToApply),
+      missing,
+      errors,
+      alerts: response.alertas || nested._ia_alertas || response.resultado?.alertas || [],
+      structure: response.estructura_persona_moral || nested._ia_estructura_persona_moral || response.resultado?.estructura_persona_moral || null,
+    });
     setDirty(true);
+  };
+  const decideExtractionConflict = (field: string, decision: "UPDATE" | "KEEP") => {
+    const conflict = extractionConflicts.find((entry) => entry.field === field);
+    if (!conflict) return;
+    if (decision === "UPDATE") change(field, conflict.proposed);
+    setSources((current) => ({
+      ...current,
+      [field]: { ...(current[field] || {}), estado: decision === "UPDATE" ? "PENDIENTE_CONFIRMACION" : "CONSERVAR_ACTUAL" },
+    }));
+    setExtractionConflicts((current) => current.filter((entry) => entry.field !== field));
   };
   const extract = async () => {
     setBusy(true);
@@ -677,6 +723,19 @@ export function ComparecienteWorkspace() {
             {message}
           </div>
         )}
+        {extractionReview && (
+          <section className={styles.extractionReview} aria-label="Resultado de extracción documental">
+            <header>
+              <div><strong>{extractionReview.missing.length ? "Extracción completada con faltantes" : "Extracción completada"}</strong><span>{extractionReview.filled.length} campo{extractionReview.filled.length === 1 ? "" : "s"} propuesto{extractionReview.filled.length === 1 ? "" : "s"} para revisión humana.</span></div>
+              <button type="button" onClick={() => setExtractionReview(null)}>Cerrar</button>
+            </header>
+            {extractionReview.missing.length > 0 && <div><b>Datos no encontrados</b><ul>{extractionReview.missing.map((field) => <li key={field}>{field.replaceAll("_", " ")}: DATO NO ENCONTRADO</li>)}</ul></div>}
+            {extractionReview.errors.length > 0 && <div><b>Errores de lectura</b><ul>{extractionReview.errors.map((entry) => <li key={entry}>{entry}</li>)}</ul></div>}
+            {extractionReview.alerts.length > 0 && <div><b>Observaciones</b><ul>{extractionReview.alerts.map((entry) => <li key={entry}>{entry}</li>)}</ul></div>}
+            {draft.tipo_persona === "MORAL" && extractionReview.structure && <div><b>Estructura societaria propuesta</b><p>{extractionReview.structure.accionistas?.length || 0} accionista(s) · {extractionReview.structure.administracion?.length || 0} integrante(s) de administración · {extractionReview.structure.beneficiarios_controladores?.length || 0} beneficiario(s) propuesto(s){extractionReview.structure.cadena_incompleta ? " · cadena incompleta" : ""}. Revisa y confirma en los bloques societarios de esta ficha.</p></div>}
+            {extractionConflicts.length > 0 && <div><b>Diferencias con datos guardados</b>{extractionConflicts.map((conflict) => <article key={conflict.field}><span><strong>{conflict.field.replaceAll("_", " ")}</strong><small>Actual: {conflict.current}</small><small>Documento: {conflict.proposed}</small></span><button type="button" onClick={() => decideExtractionConflict(conflict.field, "KEEP")}>Conservar actual</button><button type="button" onClick={() => decideExtractionConflict(conflict.field, "UPDATE")}>Actualizar</button></article>)}</div>}
+          </section>
+        )}
         <div className={styles.unifiedColumns}>
           <main className={styles.unifiedInformation}>
             <header>
@@ -740,6 +799,7 @@ export function ComparecienteWorkspace() {
                   { replace: true, state: null },
                 )
               }
+              extractedSuggestion={(extractionReview?.structure as MoralStructureSuggestion | null | undefined) || null}
             />
           )}
         {!createMode && item && canReadScreening && (

@@ -31,7 +31,7 @@ export function useProspects(
   const [laneLoading, setLaneLoading] = useState<ProspectPipelineStage | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [meta, setMeta] = useState<ProspectListMeta | null>(null);
-  const [catalogs, setCatalogs] = useState<ProspectCatalogs>({ stages: [], services: [] });
+  const [catalogs, setCatalogs] = useState<ProspectCatalogs>({ stages: [], services: [], actTypes: [] });
   const [reloadVersion, setReloadVersion] = useState(0);
 
   const baseFilters = useMemo(() => ({

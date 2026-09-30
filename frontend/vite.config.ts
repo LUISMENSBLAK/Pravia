@@ -42,9 +42,11 @@ export default defineConfig(({ mode }) => {
       exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
       css: true,
       // Los archivos ejercitan la aplicación completa. Un solo worker evita
-      // transformar en paralelo los mismos route chunks y mantiene cada prueba
-      // bajo el timeout local sin ampliar ese límite.
+      // transformar en paralelo los mismos route chunks. El margen explícito
+      // evita falsos negativos cuando jsdom carga rutas completas bajo la
+      // regresión global, sin alterar aserciones ni cobertura funcional.
       maxWorkers: 1,
+      testTimeout: 15_000,
     },
   };
 });

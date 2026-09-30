@@ -107,14 +107,25 @@
 .auditIcon, .notificationIcon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--color-blue-700); background: var(--color-blue-100); }
 .auditList span { display: flex; flex-direction: column; gap: 4px; }
 .auditList small, .auditList time { color: var(--color-text-muted); font-size: 11px; }
-.notificationList button { display: grid; grid-template-columns: 38px 1fr 8px; align-items: center; gap: 12px; min-height: 78px; padding: 12px 20px; border: 0; border-top: 1px solid var(--color-border); color: inherit; text-align: left; background: #fff; cursor: pointer; }
-.notificationList button:first-child { border-top: 0; }
-.notificationList button:hover { background: var(--color-surface-subtle); }
-.notificationList button.unread { background: #fffcf5; }
-.notificationList button > span:nth-child(2) { display: flex; flex-direction: column; gap: 4px; }
+.notificationList article { border-top: 1px solid var(--color-border); background: #fff; }
+.notificationList article:first-child { border-top: 0; }
+.notificationList article.unread { background: #fffcf5; }
+.notificationMain { width: 100%; display: grid; grid-template-columns: 38px minmax(0, 1fr) 8px; align-items: center; gap: 12px; min-height: 78px; padding: 12px 20px; border: 0; color: inherit; text-align: left; background: transparent; cursor: pointer; }
+.notificationMain:hover { background: var(--color-surface-subtle); }
+.notificationCopy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .notificationList small { color: var(--color-text-secondary); }
 .notificationList time { color: var(--color-text-muted); font-size: 10px; }
-.notificationList i { width: 7px; height: 7px; border-radius: 50%; background: var(--color-gold-500); }
+.notificationMain > i { width: 7px; height: 7px; border-radius: 50%; background: var(--color-gold-500); }
+.notificationMeta { display: flex; flex-wrap: wrap; gap: 5px; }
+.notificationMeta em { padding: 2px 6px; border-radius: 99px; color: var(--color-text-secondary); background: var(--color-surface-subtle); font-size: 9px; font-style: normal; font-weight: 750; text-transform: capitalize; }
+.notificationMeta em[data-priority="URGENT"] { color: var(--color-danger-700); background: var(--color-danger-100); }
+.notificationMeta em[data-priority="IMPORTANT"] { color: var(--color-warning-700); background: var(--color-warning-100); }
+.notificationMeta em[data-status="RESOLVED"], .notificationMeta em[data-status="DISMISSED"], .notificationMeta em[data-status="NOT_APPLICABLE"] { color: var(--color-text-muted); }
+.notificationActions { display: flex; justify-content: flex-end; gap: 6px; padding: 0 20px 12px 70px; }
+.notificationActions button { min-height: 36px; padding: 0 10px; border: 1px solid var(--color-border); border-radius: 7px; color: var(--color-text-secondary); background: #fff; cursor: pointer; font: inherit; font-size: 11px; font-weight: 650; }
+.notificationActions button:hover { color: var(--color-text-primary); border-color: var(--color-gold-300); }
+.notificationHeaderActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.notificationFallback { margin: 0; padding: 10px 20px; color: var(--color-text-secondary); background: var(--color-surface-subtle); font-size: 12px; }
 .invitationList { display: flex; flex-direction: column; }
 .invitationList article { min-height: 72px; display: grid; grid-template-columns: 38px minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--color-border); }
 .invitationList article:first-child { border-top: 0; }
@@ -168,6 +179,7 @@
   .auditList time { grid-column: 2; }
   .invitationList article { grid-template-columns: 38px minmax(0, 1fr) auto; padding: 13px 16px; }
   .invitationList article > button { grid-column: 2 / -1; justify-self: start; }
+  .notificationHeaderActions > button { flex: 1 1 190px; }
 }
 @media (max-width: 420px) {
   .welcome, .formCard { padding: 18px; }
@@ -177,4 +189,8 @@
   .actionCard { grid-template-columns: 38px 1fr 16px; padding: 14px; }
   .formGrid { gap: 14px; }
   .modal { padding: 18px; }
+  .notificationMain { grid-template-columns: 36px minmax(0, 1fr) 7px; gap: 10px; padding: 12px 14px; }
+  .notificationActions { flex-wrap: wrap; padding: 0 14px 12px; }
+  .notificationActions button { flex: 1 1 125px; }
+  .notificationFallback { padding-inline: 14px; }
 }

@@ -21,6 +21,8 @@ import { QuoteDocumentError, quoteDocumentService } from '../services/quoteDocum
 import { QuoteBudgetError, QuoteBudgetService } from '../services/quoteBudget.service';
 import { downloadFile } from '../services/supabase.service';
 import { ExpedienteOpeningError } from '../services/expedienteOpening.service';
+import { quoteAIProposalService, QuoteAIError } from '../services/quoteAIProposal.service';
+import { quoteEmailAIService, QuoteEmailAIError } from '../services/quoteEmailAI.service';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
 const cotizacionWorkflowService = new CotizacionWorkflowService(prisma);
@@ -63,11 +65,30 @@ const quoteBudgetResponse = (rows: any[]) => {
 };
 
 const quoteWorkflowError = (res: Response, error: unknown) => {
+  if (error instanceof QuoteEmailAIError) return res.status(error.status).json({ error: error.message, code: error.code });
+  if (error instanceof QuoteAIError) return res.status(error.status).json({ error: error.message, code: error.code });
   if (error instanceof QuoteContractError) return res.status(error.status).json({ error: error.message, code: error.code });
   if (error instanceof CotizacionBusinessError) return res.status(error.status).json({ error: error.message, code: error.code });
   if (error instanceof ExpedienteOpeningError) return res.status(error.status).json({ error: error.message, code: error.code });
   console.error('[QUOTE_WORKFLOW_ERROR]', error);
   return res.status(500).json({ error: 'No fue posible completar la operación.', code: 'COT001_OPERATION_FAILED' });
+};
+
+export const draftCotizacionEmailWithAI = async (req: Request, res: Response) => {
+  try { return res.json(await quoteEmailAIService.draft(req.user!, req.params.id)); }
+  catch (error) { return quoteWorkflowError(res, error); }
+};
+
+export const generateCotizacionAIProposal = async (req: Request, res: Response) => {
+  try {
+    const result = await quoteAIProposalService.generate(req.user!, req.params.id, { ...(req.body || {}), idempotency_key: req.get('Idempotency-Key') || req.body?.idempotency_key });
+    return res.status(result.idempotent ? 200 : 201).json(result);
+  } catch (error) { return quoteWorkflowError(res, error); }
+};
+
+export const decideCotizacionAIProposal = async (req: Request, res: Response) => {
+  try { return res.json(await quoteAIProposalService.decide(req.user!, req.params.id, req.params.proposalId, req.body || {})); }
+  catch (error) { return quoteWorkflowError(res, error); }
 };
 
 const quoteWorkflowSummary = (quote: any, req: Request) => ({
@@ -179,6 +200,9 @@ export const getCotizacionById = async (req: Request, res: Response) => {
         fuente_notarial: { include: { documento: { select: { id: true, nombre_original: true, mime_type: true } } } },
         versiones: { orderBy: { version: 'desc' }, include: { conceptos: { orderBy: { orden: 'asc' } } } },
         conceptos: { orderBy: { orden: 'asc' } },
+        actos: { include: { tipo_acto: { select: { id: true, nombre: true, codigo_catalogo: true } } }, orderBy: { orden: 'asc' } },
+        solicitante_formal: { select: { id: true, nombre_busqueda: true, tipo_persona: true } },
+        propuestasIA: { where: { status: 'PENDIENTE' }, orderBy: { created_at: 'desc' }, take: 1 },
         documentos: true,
         pagos: true,
         expediente: true,
@@ -203,6 +227,54 @@ export const getCotizacionById = async (req: Request, res: Response) => {
   } catch (error: any) {
     return quoteWorkflowError(res, error);
   }
+};
+
+/**
+ * Vincula un acto del catálogo canónico mientras la cotización todavía se está
+ * preparando. La restricción única de CotizacionActo convierte reintentos y
+ * doble clic en una sola relación persistida.
+ */
+export const attachCotizacionAct = async (req: Request, res: Response) => {
+  const actor = req.user!;
+  const quoteId = req.params.id;
+  const actId = String(req.body?.tipo_acto_id || '');
+  if (!actId) return res.status(400).json({ error: 'Selecciona un acto del catálogo.', code: 'COT_ACT_REQUIRED' });
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const quote = await tx.cotizacion.findFirst({
+        where: { id: quoteId, ...cotizacionObjectWhere(actor) },
+        select: { id: true, organization_id: true, etapa_contractual: true },
+      });
+      if (!quote) throw new QuoteContractError(404, 'COT001_NOT_FOUND', 'No se encontró la cotización o no tienes acceso.');
+      const editableStages = new Set<CotizacionEtapaContractual>([CotizacionEtapaContractual.BORRADOR, CotizacionEtapaContractual.EN_ELABORACION]);
+      if (!quote.etapa_contractual || !editableStages.has(quote.etapa_contractual)) {
+        throw new QuoteContractError(409, 'COT_ACTS_FROZEN', 'Los actos sólo pueden ajustarse durante la preparación de la cotización.');
+      }
+      const act = await tx.tipoActo.findFirst({
+        where: { id: actId, activo: true, archived_at: null, OR: [{ organization_id: actor.organizationId }, { organization_id: null }] },
+        select: { id: true, nombre: true },
+      });
+      if (!act) throw new QuoteContractError(404, 'COT_ACT_NOT_FOUND', 'El acto no existe en el catálogo disponible para esta Notaría.');
+      const existing = await tx.cotizacionActo.findFirst({ where: { organization_id: actor.organizationId, cotizacion_id: quoteId, tipo_acto_id: actId }, include: { tipo_acto: { select: { id: true, nombre: true, codigo_catalogo: true } } } });
+      if (existing) return { relation: existing, idempotent: true };
+      const aggregate = await tx.cotizacionActo.aggregate({ where: { organization_id: actor.organizationId, cotizacion_id: quoteId }, _max: { orden: true } });
+      const relation = await tx.cotizacionActo.create({
+        data: { organization_id: actor.organizationId, cotizacion_id: quoteId, tipo_acto_id: act.id, orden: (aggregate._max.orden ?? -1) + 1 },
+        include: { tipo_acto: { select: { id: true, nombre: true, codigo_catalogo: true } } },
+      });
+      await tx.auditLog.create({ data: {
+        organization_id: actor.organizationId,
+        user_id: actor.id,
+        accion: 'COTIZACION_ACTO_VINCULADO',
+        entidad: 'CotizacionActo',
+        entidad_id: relation.id,
+        valores_nuevos: { cotizacion_id: quoteId, tipo_acto_id: act.id, acto: act.nombre },
+        session_id: actor.sessionId,
+      } });
+      return { relation, idempotent: false };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    return res.status(result.idempotent ? 200 : 201).json(result);
+  } catch (error) { return quoteWorkflowError(res, error); }
 };
 
 /** Compatibility route: the same PRO-001 conversion authority, never a second creation path. */

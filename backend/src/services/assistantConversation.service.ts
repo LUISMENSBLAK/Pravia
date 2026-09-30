@@ -3,8 +3,9 @@ import path from 'path';
 import type { Request } from 'express';
 import { Prisma } from '@prisma/client';
 import prisma from '../config/prisma';
-import { canAccessDocumento } from './objectAccess.service';
+import { canAccessDocumento, canAttachDocumento } from './objectAccess.service';
 import { deleteFile, downloadFile, getSignedUrl, uploadFile } from './supabase.service';
+import { canonicalUploadedDocumentMime } from './documentUploadValidation';
 
 type AuthUser = NonNullable<Request['user']>;
 
@@ -15,18 +16,56 @@ export type AssistantConversationContext = {
   entityType?: string;
   entityId?: string;
   subview?: string;
+  expedienteId?: string;
+  expedienteActoId?: string;
+  procesoId?: string;
+  actividadId?: string;
+  comparecienteId?: string;
+  predioId?: string;
+  documentoId?: string;
+  cotizacionId?: string;
+  presupuestoId?: string;
+  isrCalculationId?: string;
+  complianceReviewId?: string;
+  selectedDate?: string;
+  selectedFrom?: string;
+  selectedTo?: string;
+  activeDocumentId?: string;
 };
 
 export type AssistantActionState = {
-  status: 'COLLECTING' | 'AWAITING_CONFIRMATION' | 'COMPLETED';
+  status: 'COLLECTING' | 'AWAITING_CONFIRMATION' | 'EXECUTING' | 'COMPLETED';
   actionKey: string;
   args: Record<string, unknown>;
   invocationId: string;
   missing?: string[];
+  collection?: AssistantCollection;
   confirmationId?: string;
   expiresAt?: string;
-  confirmation?: { id: string; title: string; details: Array<{ label: string; value: string }>; confirmLabel?: string };
+  executingAt?: string;
+  confirmation?: { id: string; title: string; summary?: string; level?: 'STANDARD' | 'REINFORCED'; details: Array<{ label: string; value: string }>; confirmLabel?: string };
+  preview?: {
+    object?: { type: string; id?: string; label?: string };
+    before?: unknown;
+    after?: unknown;
+    impact?: string;
+    guard?: { kind: string; id: string; version: string | number };
+  };
   result?: { status: 'success'; message: string; refresh?: string };
+};
+
+export type AssistantCollection = {
+  actionKey: string;
+  title: string;
+  description: string;
+  fields: Array<{
+    name: string;
+    label: string;
+    type: 'text' | 'number' | 'checkbox' | 'select' | 'multiline';
+    required: boolean;
+    value?: string | number | boolean;
+    options?: Array<{ value: string; label: string }>;
+  }>;
 };
 
 export class AssistantConversationError extends Error {
@@ -74,6 +113,8 @@ function json(value: unknown): Prisma.InputJsonValue | undefined {
 
 function sanitizeContext(input: AssistantConversationContext | undefined) {
   if (!input) return undefined;
+  const id = (value: unknown) => String(value || '').slice(0, 80) || undefined;
+  const date = (value: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? String(value) : undefined;
   return {
     route: String(input.route || '').slice(0, 180) || undefined,
     module: String(input.module || '').slice(0, 60) || undefined,
@@ -81,6 +122,21 @@ function sanitizeContext(input: AssistantConversationContext | undefined) {
     entityType: String(input.entityType || '').slice(0, 60) || undefined,
     entityId: String(input.entityId || '').slice(0, 80) || undefined,
     subview: String(input.subview || '').slice(0, 80) || undefined,
+    expedienteId: id(input.expedienteId),
+    expedienteActoId: id(input.expedienteActoId),
+    procesoId: id(input.procesoId),
+    actividadId: id(input.actividadId),
+    comparecienteId: id(input.comparecienteId),
+    predioId: id(input.predioId),
+    documentoId: id(input.documentoId),
+    cotizacionId: id(input.cotizacionId),
+    presupuestoId: id(input.presupuestoId),
+    isrCalculationId: id(input.isrCalculationId),
+    complianceReviewId: id(input.complianceReviewId),
+    selectedDate: date(input.selectedDate),
+    selectedFrom: date(input.selectedFrom),
+    selectedTo: date(input.selectedTo),
+    activeDocumentId: id(input.activeDocumentId),
   };
 }
 
@@ -96,7 +152,8 @@ function publicConversation<T extends { context?: unknown }>(record: T) {
     && state.expiresAt && new Date(state.expiresAt) > new Date()
     ? state.confirmation
     : undefined;
-  return { ...record, context, pending_confirmation };
+  const pending_collection = state?.status === 'COLLECTING' ? state.collection : undefined;
+  return { ...record, context, pending_confirmation, pending_collection };
 }
 
 function titleFromMessage(message: string) {
@@ -125,16 +182,18 @@ function extensionFor(name: string, mimeType: string) {
   const ext = path.extname(name).toLowerCase().replace(/[^.a-z0-9]/g, '');
   if (ext && ext.length <= 8) return ext;
   const fallback: Record<string, string> = {
-    'application/pdf': '.pdf', 'image/jpeg': '.jpg', 'image/png': '.png',
+    'application/pdf': '.pdf', 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp',
     'application/msword': '.doc', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+    'application/xml': '.xml', 'text/xml': '.xml', 'application/zip': '.zip', 'application/x-zip-compressed': '.zip',
     'audio/webm': '.webm', 'audio/mpeg': '.mp3', 'audio/mp4': '.m4a', 'audio/wav': '.wav', 'audio/x-wav': '.wav', 'audio/ogg': '.ogg',
   };
   return fallback[mimeType] || '.bin';
 }
 
 const ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
-  'application/pdf', 'image/jpeg', 'image/png', 'application/msword',
+  'application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/xml', 'text/xml', 'application/zip', 'application/x-zip-compressed',
   'audio/webm', 'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/x-wav', 'audio/ogg',
 ]);
 
@@ -312,6 +371,41 @@ export const assistantConversationService = {
     });
   },
 
+  async claimActionState(user: AuthUser, conversationId: string, confirmationId: string) {
+    return prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT id
+        FROM assistant_conversations
+        WHERE id = ${conversationId}::uuid
+          AND organization_id = ${user.organizationId}::uuid
+          AND owner_user_id = ${user.id}::uuid
+        FOR UPDATE
+      `);
+      if (!locked.length) throw new AssistantConversationError('La conversación no existe o no está disponible.', 'ASSISTANT_CONVERSATION_NOT_FOUND', 404);
+      const conversation = await tx.assistantConversation.findFirstOrThrow({
+        where: { id: conversationId, organization_id: user.organizationId, owner_user_id: user.id },
+        select: { status: true, context: true },
+      });
+      if (conversation.status !== 'ACTIVE') throw new AssistantConversationError('Restaura la conversación antes de continuar escribiendo.', 'ASSISTANT_CONVERSATION_NOT_ACTIVE', 409);
+      const context = conversation.context && typeof conversation.context === 'object' && !Array.isArray(conversation.context)
+        ? conversation.context as Record<string, unknown>
+        : {};
+      const state = context.actionState && typeof context.actionState === 'object' && !Array.isArray(context.actionState)
+        ? context.actionState as AssistantActionState
+        : undefined;
+      if (state?.confirmationId !== confirmationId) return { status: 'NOT_FOUND' as const, state };
+      if (state.status === 'COMPLETED') return { status: 'COMPLETED' as const, state };
+      if (state.status === 'EXECUTING') return { status: 'IN_PROGRESS' as const, state };
+      if (state.status !== 'AWAITING_CONFIRMATION') return { status: 'NOT_FOUND' as const, state };
+      const claimed: AssistantActionState = { ...state, status: 'EXECUTING', executingAt: new Date().toISOString() };
+      await tx.assistantConversation.update({
+        where: { id: conversationId },
+        data: { context: json({ ...context, actionState: claimed }) },
+      });
+      return { status: 'CLAIMED' as const, state: claimed };
+    });
+  },
+
   async refreshExtractiveSummary(user: AuthUser, conversationId: string) {
     await ownedConversation(user, conversationId);
     const total = await prisma.assistantMessage.count({ where: { conversation_id: conversationId, status: 'COMPLETE' } });
@@ -329,8 +423,15 @@ export const assistantConversationService = {
 
   async uploadAttachment(user: AuthUser, conversationId: string, file: Express.Multer.File) {
     await writableConversation(user, conversationId);
+    if (!file.mimetype.startsWith('audio/')) {
+      try {
+        file.mimetype = canonicalUploadedDocumentMime(file);
+      } catch (error: any) {
+        throw new AssistantConversationError(error?.message || 'El archivo no es válido.', 'ASSISTANT_ATTACHMENT_CONTENT_INVALID', 415);
+      }
+    }
     if (!ALLOWED_ATTACHMENT_MIME_TYPES.has(file.mimetype)) {
-      throw new AssistantConversationError('Tipo de archivo no permitido. Usa PDF, imagen, DOC/DOCX o audio compatible.', 'ASSISTANT_ATTACHMENT_TYPE_UNSUPPORTED', 415);
+      throw new AssistantConversationError('Tipo de archivo no permitido. Usa PDF, imagen, DOC/DOCX, XML, ZIP o audio compatible.', 'ASSISTANT_ATTACHMENT_TYPE_UNSUPPORTED', 415);
     }
     const sha256 = createHash('sha256').update(file.buffer).digest('hex');
     const duplicate = await prisma.assistantAttachment.findFirst({
@@ -410,6 +511,108 @@ export const assistantConversationService = {
     const key = attachment.source === 'OFFICIAL_DOCUMENT' ? attachment.documento?.storage_key : attachment.storage_key;
     if (!key) throw new AssistantConversationError('El archivo no está disponible.', 'ASSISTANT_ATTACHMENT_FILE_UNAVAILABLE', 410);
     return { attachment, buffer: await downloadFile(key) };
+  },
+
+  async promoteAttachment(user: AuthUser, conversationId: string, attachmentId: string, input: {
+    targetType: 'EXPEDIENTE' | 'COTIZACION' | 'PROSPECTO' | 'COMPARECIENTE' | 'PREDIO';
+    targetId: string;
+    documentType: string;
+  }, transaction?: Prisma.TransactionClient) {
+    if (!user.permissions.includes('documentos.write')) {
+      throw new AssistantConversationError('No tienes permiso para incorporar documentos.', 'ASSISTANT_DOCUMENT_WRITE_DENIED', 403);
+    }
+    const attachment = await this.attachmentForOwner(user, conversationId, attachmentId);
+    const targets = {
+      expediente_id: input.targetType === 'EXPEDIENTE' ? input.targetId : null,
+      cotizacion_id: input.targetType === 'COTIZACION' ? input.targetId : null,
+      prospecto_id: input.targetType === 'PROSPECTO' ? input.targetId : null,
+      compareciente_id: input.targetType === 'COMPARECIENTE' ? input.targetId : null,
+      predio_id: input.targetType === 'PREDIO' ? input.targetId : null,
+    };
+    if (!(await canAttachDocumento(user, targets))) {
+      throw new AssistantConversationError('No tienes acceso al registro de destino.', 'ASSISTANT_DOCUMENT_TARGET_DENIED', 403);
+    }
+    if (attachment.documento_id) {
+      throw new AssistantConversationError(
+        'Este adjunto ya fue incorporado como documento oficial. Usa ese documento existente o vuelve a adjuntar el archivo para otro registro.',
+        'ASSISTANT_ATTACHMENT_ALREADY_PROMOTED',
+        409,
+      );
+    }
+    if (!attachment.storage_key) {
+      throw new AssistantConversationError('El archivo temporal ya no está disponible.', 'ASSISTANT_ATTACHMENT_FILE_UNAVAILABLE', 410);
+    }
+    const documentType = String(input.documentType || 'OTROS').trim().slice(0, 120) || 'OTROS';
+    const partyCategories = new Set(['IDENTIFICACION','CURP','RFC','COMPROBANTE_DOMICILIO','ACTA_NACIMIENTO','ACTA_MATRIMONIO','REGIMEN_MATRIMONIAL','DOCUMENTO_MIGRATORIO','ACTA_CONSTITUTIVA','REFORMAS','PODERES','INSCRIPCION_MERCANTIL','CONSTANCIA_FISCAL','ORGANIGRAMA','ASAMBLEAS','OTROS']);
+    if (input.targetType === 'COMPARECIENTE' && !partyCategories.has(documentType)) {
+      throw new AssistantConversationError('La categoría documental del compareciente no es válida.', 'ASSISTANT_DOCUMENT_CATEGORY_INVALID', 400);
+    }
+    const promote = async (tx: Prisma.TransactionClient) => {
+      const locked = await tx.assistantAttachment.findFirst({
+        where: { id: attachment.id, conversation_id: conversationId, organization_id: user.organizationId, documento_id: null },
+      });
+      if (!locked) {
+        const current = await tx.assistantAttachment.findFirst({ where: { id: attachment.id, conversation_id: conversationId, organization_id: user.organizationId } });
+        if (current?.documento_id) {
+          throw new AssistantConversationError(
+            'Este adjunto ya fue incorporado como documento oficial.',
+            'ASSISTANT_ATTACHMENT_ALREADY_PROMOTED',
+            409,
+          );
+        }
+        throw new AssistantConversationError('El adjunto ya no está disponible.', 'ASSISTANT_ATTACHMENT_NOT_FOUND', 404);
+      }
+      const document = await tx.documento.create({ data: {
+        organization_id: user.organizationId,
+        nombre_original: locked.original_name,
+        nombre_interno: locked.storage_key!,
+        tipo: documentType,
+        categoria: 'OTROS',
+        storage_key: locked.storage_key!,
+        mime_type: locked.mime_type,
+        size_bytes: locked.size_bytes,
+        checksum_sha256: locked.sha256,
+        estatus: 'PENDIENTE',
+        subido_por_id: user.id,
+        expediente_id: targets.expediente_id,
+        cotizacion_id: targets.cotizacion_id,
+        prospecto_id: targets.prospecto_id,
+        compareciente_id: targets.compareciente_id,
+        datos_extraidos: json({ source: 'PRAVIA_IA', conversation_id: conversationId, attachment_id: locked.id, promoted_at: new Date().toISOString(), requested_by: user.id }),
+      } });
+      if (input.targetType === 'EXPEDIENTE') await tx.expedienteDocumento.create({ data: {
+        organization_id: user.organizationId, expediente_id: input.targetId, documento_id: document.id, tipo_vinculo: documentType,
+        creado_por_id: user.id, origen: 'EXPEDIENTE', source_entity_type: 'AssistantAttachment', source_entity_id: locked.id,
+        source_context: 'PRAVIA_IA', source_key: `PRAVIA_IA:AssistantAttachment:${locked.id}`, document_version: locked.sha256,
+        provenance: json({ source: 'PRAVIA_IA', conversation_id: conversationId, attachment_id: locked.id }),
+      } });
+      if (input.targetType === 'COTIZACION') await tx.cotizacionDocumento.create({ data: {
+        organization_id: user.organizationId, cotizacion_id: input.targetId, documento_id: document.id, tipo_vinculo: documentType,
+        creado_por_id: user.id, idempotency_key: `assistant:${locked.id}`,
+      } });
+      if (input.targetType === 'PROSPECTO') await tx.prospectoDocumento.create({ data: {
+        organization_id: user.organizationId, prospecto_id: input.targetId, documento_id: document.id, tipo_vinculo: documentType, creado_por_id: user.id,
+      } });
+      if (input.targetType === 'COMPARECIENTE') await tx.comparecienteDocumento.create({ data: {
+        organization_id: user.organizationId, compareciente_id: input.targetId, documento_id: document.id,
+        categoria: documentType as any, creado_por_id: user.id, vigencia: 'VIGENTE',
+      } });
+      if (input.targetType === 'PREDIO') await tx.predioDocumento.create({ data: {
+        organization_id: user.organizationId, predio_id: input.targetId, documento_id: document.id, tipo_vinculo: documentType,
+        creado_por_id: user.id, vigencia: 'VIGENTE', origen: 'PRAVIA_IA',
+      } });
+      await tx.assistantAttachment.update({ where: { id: locked.id }, data: {
+        source: 'OFFICIAL_DOCUMENT', documento_id: document.id, storage_key: null,
+        promoted_at: new Date(), expires_at: null, status: 'LINKED',
+      } });
+      await tx.auditLog.create({ data: {
+        organization_id: user.organizationId, user_id: user.id, accion: 'AI_ATTACHMENT_PROMOTED', entidad: 'Documento', entidad_id: document.id,
+        correlation_id: randomUUID(), session_id: user.sessionId,
+        valores_nuevos: json({ origin: 'PRAVIA_IA', conversation_id: conversationId, attachment_id: locked.id, target_type: input.targetType, target_id: input.targetId, document_type: documentType }),
+      } });
+      return { documentId: document.id, attachmentId: locked.id, duplicate: false };
+    };
+    return transaction ? promote(transaction) : prisma.$transaction(promote);
   },
 
   async linkAttachmentsToMessage(user: AuthUser, conversationId: string, messageId: string, rawIds: unknown) {

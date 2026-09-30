@@ -1,6 +1,6 @@
 import { apiRequest } from '../../services/api/client';
-import type { ManagedUser, NotificationItem, SearchResult, Session, UserPreferences } from './settings.types';
-import type { ActActivity, ActListPayload, ActivityConcept, CatalogAct, CatalogArtifact, CatalogFolder, CatalogOwner, ExplorerPayload, SupportingCatalogs, CatalogImportPreview, QuestionnaireBanksPayload, QuestionnaireQuestion, FunctionalDestinationOption, ArtifactDestination } from './catalogs/catalogs.types';
+import type { ManagedUser, NotificationFeed, SearchResult, Session, UserPreferences } from './settings.types';
+import type { ActActivity, ActListPayload, ActivityConcept, CatalogAct, CatalogArtifact, CatalogFolder, CatalogOwner, ExplorerPayload, SupportingCatalogs, CatalogImportPreview, QuestionnaireBanksPayload, QuestionnaireQuestion, FunctionalDestinationOption, ArtifactDestination, ProjectTemplateAssignment } from './catalogs/catalogs.types';
 import type { PublishTimingPolicyInput, TimingPolicyDefinition, TimingPolicyRevision } from './timing/timing.types';
 
 const qs = (params: Record<string, string | number | undefined>) => {
@@ -38,9 +38,11 @@ export const settingsService = {
   roles: () => apiRequest<any>('/settings/roles'),
   audit: (params: Record<string, string | number | undefined>) => apiRequest<any>(`/settings/audit?${qs(params)}`),
   aiDashboard: () => apiRequest<any>('/ia/dashboard?periodo=30_DIAS'),
-  notifications: () => apiRequest<{ notifications: NotificationItem[]; unread: number }>('/settings/notifications'),
+  notifications: (history = false) => apiRequest<NotificationFeed>(`/settings/notifications${history ? '?history=1' : ''}`),
   readNotification: (id: string) => apiRequest(`/settings/notifications/${id}/read`, { method: 'POST' }),
   readAllNotifications: () => apiRequest('/settings/notifications/read-all', { method: 'POST' }),
+  dismissNotification: (id: string) => apiRequest(`/settings/notifications/${id}/dismiss`, { method: 'POST' }),
+  markNotificationNotApplicable: (id: string) => apiRequest(`/settings/notifications/${id}/not-applicable`, { method: 'POST' }),
   search: (query: string) => apiRequest<{ data: SearchResult[] }>(`/settings/search?q=${encodeURIComponent(query)}`),
   timingPolicies: () => timingVisualFixture ? Promise.resolve(timingVisualPolicies) : apiRequest<{ success: true; data: TimingPolicyDefinition[] }>('/settings/timing-policies').then((payload) => payload.data),
   publishTimingPolicy: (data: PublishTimingPolicyInput) => {
@@ -77,6 +79,8 @@ export const settingsService = {
   createActsCatalogInstitution: (data: Record<string, unknown>) => apiRequest('/settings/catalogs/v2/institutions', { method: 'POST', body: JSON.stringify(data) }),
   catalogArtifactRoot: () => apiRequest<{ data: { notaria: CatalogOwner | null; institutions: CatalogOwner[]; legacy_notaries_hidden?: number } }>('/settings/catalogs/artifacts/root').then((payload) => payload.data),
   functionalDestinations: () => apiRequest<{ data: FunctionalDestinationOption[] }>('/settings/catalogs/artifacts/functional-destinations').then((payload) => payload.data),
+  projectTemplateAssignments: () => apiRequest<{ data: ProjectTemplateAssignment[] }>('/settings/catalogs/artifacts/project-template-assignments').then((payload) => payload.data),
+  removeProjectTemplateAssignment: (actId: string) => apiRequest(`/settings/catalogs/artifacts/project-template-assignments/${encodeURIComponent(actId)}`, { method: 'DELETE' }),
   assignFunctionalDestinations: (id: string, destinos: ArtifactDestination[]) => apiRequest(`/settings/catalogs/artifacts/${id}/functional-destinations`, { method: 'PUT', body: JSON.stringify({ destinos }) }),
   catalogSupporting: () => apiRequest<{ data: SupportingCatalogs }>('/settings/catalogs/supporting').then((payload) => payload.data),
   createCatalogInstitution: (data: Record<string, unknown>) => apiRequest<{ data: CatalogOwner }>('/settings/catalogs/institutions', { method: 'POST', body: JSON.stringify(data) }).then((payload) => payload.data),
@@ -95,4 +99,7 @@ export const settingsService = {
   updateQuestionnaireBankQuestion: (bank: string, id: string, input: Partial<QuestionnaireQuestion>) => apiRequest(`/settings/catalogs/questionnaire-banks/${encodeURIComponent(bank)}/questions/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   removeQuestionnaireBankQuestion: (bank: string, id: string) => apiRequest(`/settings/catalogs/questionnaire-banks/${encodeURIComponent(bank)}/questions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   reorderQuestionnaireBank: (bank: string, questionIds: string[]) => apiRequest(`/settings/catalogs/questionnaire-banks/${encodeURIComponent(bank)}/order`, { method: 'PUT', body: JSON.stringify({ question_ids: questionIds }) }),
+  knowledgeSources: (params: { search?: string; jurisdiction?: string; category?: string; page?: number; page_size?: number }) => apiRequest<any>(`/settings/knowledge/sources?${qs(params)}`),
+  knowledgeCriteria: () => apiRequest<any>('/settings/knowledge/criteria'),
+  retrieveKnowledge: (input: { query: string; jurisdiction?: string; category?: string; legal_date?: string }) => apiRequest<any>('/settings/knowledge/retrieve', { method: 'POST', body: JSON.stringify(input) }),
 };

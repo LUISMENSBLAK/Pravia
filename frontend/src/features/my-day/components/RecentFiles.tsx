@@ -1,7 +1,7 @@
 import { FolderClosed } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { RecentFile } from '../myDay.types';
-import { formatRelativeDate } from '../formatters';
+import { formatOperationalStatus, formatRelativeDate } from '../formatters';
 import { WidgetCard, WidgetEmpty, WidgetError, WidgetLoading } from './WidgetCard';
 import styles from './MyDayWidgets.module.css';
 
@@ -19,7 +19,7 @@ export function RecentFiles({ items, loading, error, onRetry, className }: { ite
                 <strong>{item.fileNumber}</strong>
                 {(item.act || item.summary) && <p>{[item.act, item.summary].filter(Boolean).join(' · ')}</p>}
               </Link>
-              <div className={styles.itemMeta}>{item.status && <span>{item.status}</span>}{item.updatedAt && <time>{formatRelativeDate(item.updatedAt)}</time>}</div>
+              <div className={styles.itemMeta}>{item.status && <span>{formatOperationalStatus(item.status)}</span>}{item.updatedAt && <time>{formatRelativeDate(item.updatedAt)}</time>}</div>
             </li>
           ))}
         </ul>

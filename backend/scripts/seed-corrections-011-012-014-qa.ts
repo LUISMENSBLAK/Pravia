@@ -9,10 +9,10 @@ import { ComplianceH5Service } from '../src/services/complianceH5.service';
 import { questionnaireBanksService } from '../src/services/questionnaireBanks.service';
 import { deleteFile, uploadFile } from '../src/storage/storage.service';
 
-const expectedDatabase = 'pravia_corr011_012_014_qa';
-const expectedHost = '127.0.0.1';
-const expectedPort = '55433';
-const expectedStorage = '/private/tmp/pravia-corr011-012-014-storage-qa';
+const expectedDatabase = process.env.QA_EXPECTED_DATABASE || 'pravia_corr011_012_014_qa';
+const expectedHost = process.env.QA_EXPECTED_HOST || '127.0.0.1';
+const expectedPort = process.env.QA_EXPECTED_PORT || '55433';
+const expectedStorage = process.env.QA_EXPECTED_STORAGE || '/private/tmp/pravia-corr011-012-014-storage-qa';
 const databaseUrl = new URL(process.env.DATABASE_URL || '');
 if (databaseUrl.hostname !== expectedHost || databaseUrl.port !== expectedPort || databaseUrl.pathname.slice(1) !== expectedDatabase) {
   throw new Error('QA_SEED_DATABASE_SAFETY_GATE_FAILED');

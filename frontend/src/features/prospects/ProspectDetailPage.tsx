@@ -26,7 +26,7 @@ export function ProspectDetailPage() {
   const [prospect, setProspect] = useState<Prospect | null>(null);
   const [workflow, setWorkflow] = useState<ProspectWorkflow | null>(null);
   const [documents, setDocuments] = useState<ProspectDocument[]>([]);
-  const [catalogs, setCatalogs] = useState<ProspectCatalogs>({ stages: [], services: [] });
+  const [catalogs, setCatalogs] = useState<ProspectCatalogs>({ stages: [], services: [], actTypes: [] });
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [showFollowUp, setShowFollowUp] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
@@ -115,7 +115,7 @@ export function ProspectDetailPage() {
 
   return <div className={styles.detailPage} data-ai-trigger={!latest?.proxima_accion ? 'SIN_SIGUIENTE_ACCION' : undefined}>
     <Link className={styles.backLink} to="/prospectos"><ArrowLeft size={17} />Prospectos</Link>
-    <header className={styles.detailHeader}><div><div className={styles.detailEyebrow}><span className={styles.stateBadge}>{workflow.stageLabel}</span>{workflow.knowledge === 'UNKNOWN_LEGACY' && <span>Histórico · {SUBSTATUS_LABELS[prospect.estado]}</span>}</div><h1>{displayProspectName(prospect.nombre)}</h1><p>{workflow.folio || 'Folio histórico no asignado'} · {prospect.servicio_catalogo?.label || prospect.tipo_acto || 'Acto por definir'}</p></div>{canWrite && <button className={styles.secondaryButton} type="button" onClick={() => setShowFollowUp(true)}><MessageSquarePlus size={18} />Registrar seguimiento</button>}</header>
+    <header className={styles.detailHeader}><div><div className={styles.detailEyebrow}><span className={styles.stateBadge}>{workflow.stageLabel}</span>{workflow.knowledge === 'UNKNOWN_LEGACY' && <span>Histórico · {SUBSTATUS_LABELS[prospect.estado]}</span>}</div><h1>{displayProspectName(prospect.nombre)}</h1><p>{workflow.folio || 'Folio histórico no asignado'} · {prospect.actos?.map((item) => item.tipo_acto.nombre).join(', ') || prospect.servicio_catalogo?.label || prospect.tipo_acto || 'Acto por definir'}</p></div>{canWrite && <button className={styles.secondaryButton} type="button" onClick={() => setShowFollowUp(true)}><MessageSquarePlus size={18} />Registrar seguimiento</button>}</header>
     <section className={styles.detailOverview} aria-label="Resumen del prospecto">
       <article><span><FileText size={18} /></span><div><small>Folio</small><strong>{workflow.folio || 'Sin folio canónico'}</strong></div></article>
       <article><span><UserRound size={18} /></span><div><small>Responsable</small><strong>{prospect.atendido_por?.nombre || 'Sin responsable visible'}</strong></div></article>

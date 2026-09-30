@@ -1,10 +1,10 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Check, LoaderCircle, Pencil, X } from 'lucide-react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ApiError } from '../../../services/api/client';
 import { prospectsService } from '../prospects.service';
 import type { Prospect, ProspectCatalogs, ProspectWorkflow } from '../prospects.types';
 import { displayProspectName, uppercaseProspectNameInput } from '../prospects.types';
-import { CatalogCombobox } from './CatalogCombobox';
 import styles from '../ProspectsPage.module.css';
 
 type Block = 'matter' | 'client' | 'economic';
@@ -18,22 +18,37 @@ export function ProspectInlineEditor({ prospect, workflow, catalogs, canWrite, o
   onChanged: () => Promise<void>;
   notify: (message: string) => void;
 }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const processedReturnedAct = useRef('');
   const [editing, setEditing] = useState<Block | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState({
     nombre: displayProspectName(prospect.nombre), telefono: prospect.telefono ?? '', email: prospect.email ?? '',
-    servicio: prospect.servicio_catalogo_codigo ?? '', descripcion: prospect.necesidad ?? '', responsable: prospect.user_id ?? '',
+    actIds: prospect.actos?.map((item) => item.tipo_acto_id) ?? [], descripcion: prospect.necesidad ?? '', contexto: prospect.contexto_operacion ?? '', responsable: prospect.user_id ?? '',
     honorarios: amount(prospect.honorarios_estimados), impuestos: amount(prospect.impuestos_derechos_estimados), total: amount(prospect.total_estimado),
   });
   useEffect(() => {
     if (editing) return;
     setForm({
       nombre: displayProspectName(prospect.nombre), telefono: prospect.telefono ?? '', email: prospect.email ?? '',
-      servicio: prospect.servicio_catalogo_codigo ?? '', descripcion: prospect.necesidad ?? '', responsable: prospect.user_id ?? '',
+      actIds: prospect.actos?.map((item) => item.tipo_acto_id) ?? [], descripcion: prospect.necesidad ?? '', contexto: prospect.contexto_operacion ?? '', responsable: prospect.user_id ?? '',
       honorarios: amount(prospect.honorarios_estimados), impuestos: amount(prospect.impuestos_derechos_estimados), total: amount(prospect.total_estimado),
     });
   }, [editing, prospect]);
+  useEffect(() => {
+    const returned = location.state as { cfg001CreatedActId?: string; cfg001CreatedActName?: string } | null;
+    const actId = returned?.cfg001CreatedActId;
+    if (!actId || processedReturnedAct.current === actId || busy) return;
+    processedReturnedAct.current = actId;
+    const actIds = Array.from(new Set([...(prospect.actos?.map((item) => item.tipo_acto_id) ?? []), actId]));
+    setBusy(true); setError('');
+    void prospectsService.update(prospect.id, { expectedVersion: workflow.version, tipo_acto_ids: actIds })
+      .then(async () => { await onChanged(); notify(`${returned?.cfg001CreatedActName || 'Acto'} quedó seleccionado en el prospecto.`); })
+      .catch(() => notify('El acto se creó, pero no pudo vincularse al prospecto.'))
+      .finally(() => { setBusy(false); navigate(`/prospectos/${prospect.id}`, { replace: true, state: null }); });
+  }, [busy, location.state, navigate, notify, onChanged, prospect.actos, prospect.id, workflow.version]);
   const set = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }));
   const open = (block: Block) => { setEditing(block); setError(''); };
   const cancel = () => { setEditing(null); setError(''); };
@@ -48,7 +63,8 @@ export function ProspectInlineEditor({ prospect, workflow, catalogs, canWrite, o
     }
     if (editing === 'matter') Object.assign(payload, {
       necesidad: form.descripcion,
-      ...(form.servicio ? { servicio_catalogo_codigo: form.servicio } : {}),
+      contexto_operacion: form.contexto,
+      tipo_acto_ids: form.actIds,
       ...(form.responsable && form.responsable !== prospect.user_id ? { responsable_id: form.responsable } : {}),
     });
     if (editing === 'economic') {
@@ -81,11 +97,12 @@ export function ProspectInlineEditor({ prospect, workflow, catalogs, canWrite, o
   return <div className={styles.workBlocks}>
     <section className={styles.detailSection}><header><div><h2>Datos del asunto</h2><p>Acto, descripción y responsable de la oportunidad.</p></div>{editing !== 'matter' && actions('matter')}</header>
       {editing === 'matter' ? <form className={styles.inlineForm} onSubmit={save}>
-        <CatalogCombobox label="Acto" value={form.servicio} options={catalogs.services} placeholder="Selecciona un acto" legacyValue={!prospect.servicio_catalogo_codigo ? prospect.tipo_acto : null} onChange={(value) => set('servicio', value)} />
+        <fieldset className={styles.actSelector}><legend>Actos preliminares</legend>{catalogs.actTypes.length ? catalogs.actTypes.map((act) => <label key={act.id}><input type="checkbox" checked={form.actIds.includes(act.id)} onChange={(event) => setForm((current) => ({ ...current, actIds: event.target.checked ? [...current.actIds, act.id] : current.actIds.filter((id) => id !== act.id) }))} /><span>{act.nombre}</span></label>) : <p>No hay actos configurados para esta Notaría.</p>}<Link to={`/configuracion/actos-tiempos?returnTo=${encodeURIComponent(`/prospectos/${prospect.id}`)}`}>+ Crear nuevo acto en Actos y tiempos</Link></fieldset>
         <label><span>Descripción breve</span><textarea rows={4} value={form.descripcion} onChange={(event) => set('descripcion', event.target.value)} /></label>
+        <label><span>Contexto de la operación</span><textarea rows={4} value={form.contexto} onChange={(event) => set('contexto', event.target.value)} placeholder="Hechos mínimos relevantes para preparar la cotización" /></label>
         {workflow.responsibles.length > 0 && <label><span>Responsable</span><select value={form.responsable} onChange={(event) => set('responsable', event.target.value)}>{workflow.responsibles.map((responsible) => <option key={responsible.id} value={responsible.id}>{[responsible.nombre, responsible.apellido].filter(Boolean).join(' ')}</option>)}</select></label>}
         {error && <p className={styles.formError} role="alert">{error}</p>}{footer}
-      </form> : <dl><div><dt>Acto</dt><dd>{prospect.servicio_catalogo?.label || prospect.tipo_acto || 'Por definir'}</dd></div><div><dt>Descripción breve</dt><dd>{prospect.necesidad || 'Sin descripción'}</dd></div><div><dt>Responsable</dt><dd>{prospect.atendido_por?.nombre || 'Sin responsable visible'}</dd></div></dl>}
+      </form> : <dl><div><dt>Acto(s)</dt><dd>{prospect.actos?.map((item) => item.tipo_acto.nombre).join(', ') || prospect.servicio_catalogo?.label || prospect.tipo_acto || 'Por definir'}</dd></div><div><dt>Descripción breve</dt><dd>{prospect.necesidad || 'Sin descripción'}</dd></div><div><dt>Contexto de la operación</dt><dd>{prospect.contexto_operacion || 'Sin contexto adicional'}</dd></div><div><dt>Responsable</dt><dd>{prospect.atendido_por?.nombre || 'Sin responsable visible'}</dd></div></dl>}
     </section>
 
     <section className={styles.detailSection}><header><div><h2>Cliente / solicitante</h2><p>Datos de identificación y contacto.</p></div>{editing !== 'client' && actions('client')}</header>

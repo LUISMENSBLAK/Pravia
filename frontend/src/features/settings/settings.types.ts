@@ -30,8 +30,17 @@ export type Session = {
 };
 
 export type NotificationItem = {
-  id: string; type: string; title: string; body: string; href?: string | null;
-  read_at?: string | null; created_at: string;
+  id: string; type: string; subtype?: string | null; priority: 'LOW' | 'NORMAL' | 'IMPORTANT' | 'URGENT';
+  title: string; body: string; source_module?: string | null; entity_type?: string | null; entity_id?: string | null;
+  href?: string | null; status: 'ACTIVE' | 'RESOLVED' | 'DISMISSED' | 'NOT_APPLICABLE';
+  read_at?: string | null; last_reminder_at?: string | null; snoozed_until?: string | null;
+  resolved_at?: string | null; dismissed_at?: string | null; not_applicable_at?: string | null;
+  metadata?: Record<string, unknown>; created_at: string; updated_at?: string;
+  reminders?: Array<{ id: string; reminder_key: string; channel: string; created_at: string }>;
+};
+
+export type NotificationFeed = {
+  notifications: NotificationItem[]; unread: number; generated_at?: string; refresh_seconds?: number;
 };
 
 export type SearchResult = { type: string; id: string; title: string; subtitle?: string | null; href: string };

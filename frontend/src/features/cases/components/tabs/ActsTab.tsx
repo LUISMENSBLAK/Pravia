@@ -1,5 +1,6 @@
 import { AlertTriangle, ChevronDown, FileText, LoaderCircle, Pencil, Plus, Search, ShieldAlert, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ApiError } from '../../../../services/api/client';
 import { expedientesService } from '../../expedientes.service';
 import type { ActTypeOption, ExpedienteAct, ExpedienteActOperation, ExpedienteActPreview, ExpedienteDetail } from '../../expedientes.types';
@@ -10,6 +11,8 @@ const originLabel: Record<ExpedienteAct['origen'], string> = { COTIZACION: 'Orig
 const impactTitle = (source: 'CFG-001' | 'CFG-002') => source === 'CFG-001' ? 'Flujo operativo' : 'Documentos y artefactos';
 
 export function ActsTab({ expediente, onChanged }: { expediente: ExpedienteDetail; onChanged: () => void }) {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [acts, setActs] = useState<ExpedienteAct[]>(expediente.actos || []);
   const [types, setTypes] = useState<ActTypeOption[]>([]);
   const [status, setStatus] = useState<'loading' | 'ready' | 'denied' | 'error'>('loading');
@@ -22,6 +25,8 @@ export function ActsTab({ expediente, onChanged }: { expediente: ExpedienteDetai
   const [message, setMessage] = useState('');
   const [idempotencyKey, setIdempotencyKey] = useState('');
   const [search, setSearch] = useState('');
+  const [objectPercentages, setObjectPercentages] = useState<Record<string, string>>({});
+  const [savingObjectId, setSavingObjectId] = useState<string | null>(null);
   const active = useMemo(() => acts.filter((act) => act.estatus === 'ACTIVO' && !act.removed_at), [acts]);
   const groupedTypes = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase('es-MX');
@@ -45,12 +50,20 @@ export function ActsTab({ expediente, onChanged }: { expediente: ExpedienteDetai
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
       const [actResult, catalog] = await Promise.all([expedientesService.listActs(expediente.id, signal), expedientesService.actTypes(signal)]);
-      setActs(actResult.data); setTypes(catalog); setStatus('ready');
+      setActs(actResult.data); setObjectPercentages(Object.fromEntries(actResult.data.map((act) => [act.id, String(Number(act.porcentaje_objeto ?? 100))]))); setTypes(catalog); setStatus('ready');
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) setStatus(error instanceof ApiError && error.status === 403 ? 'denied' : 'error');
     }
   }, [expediente.id]);
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
+  useEffect(() => {
+    const returned = location.state as { cfg001CreatedActId?: string; cfg001CreatedActName?: string } | null;
+    if (!returned?.cfg001CreatedActId || status !== 'ready') return;
+    setDialog({ operation: 'ADD' }); setTypeId(returned.cfg001CreatedActId); setReason(''); setPreview(null); setConfirmed(false);
+    setMessage(`${returned.cfg001CreatedActName || 'El acto nuevo'} está seleccionado. Revisa el impacto para vincularlo.`);
+    setSearch(''); setIdempotencyKey(crypto.randomUUID());
+    navigate(`/expedientes/${expediente.id}`, { replace: true, state: null });
+  }, [expediente.id, location.state, navigate, status]);
 
   const open = (operation: ExpedienteActOperation, current?: ExpedienteAct) => {
     setDialog({ operation, current }); setTypeId(operation === 'CHANGE' ? current?.tipo_acto_id || '' : ''); setReason(''); setPreview(null); setConfirmed(false); setMessage(''); setSearch(''); setIdempotencyKey(crypto.randomUUID());
@@ -86,6 +99,18 @@ export function ActsTab({ expediente, onChanged }: { expediente: ExpedienteDetai
   };
   const formReady = dialog?.operation === 'REMOVE' ? reason.trim().length > 0 : Boolean(typeId) && (dialog?.operation === 'ADD' || reason.trim().length > 0);
   const canApply = preview && preview.classification !== 'BLOCKED' && (preview.classification !== 'REVIEW_REQUIRED' || confirmed);
+  const saveObjectPercentage = async (act: ExpedienteAct) => {
+    const value = Number(objectPercentages[act.id]);
+    if (!Number.isFinite(value) || value <= 0 || value > 100) { setMessage('El porcentaje objeto debe ser mayor que 0 y no superar 100%.'); return; }
+    setSavingObjectId(act.id); setMessage('');
+    try {
+      const result = await expedientesService.setActObjectPercentage(expediente.id, act.id, value, act.updated_at);
+      setActs((current) => current.map((item) => item.id === act.id ? result.acto : item));
+      setObjectPercentages((current) => ({ ...current, [act.id]: String(Number(result.acto.porcentaje_objeto)) }));
+      onChanged();
+    } catch (error) { setMessage(error instanceof ApiError ? error.message : 'No pudimos guardar el porcentaje objeto.'); }
+    finally { setSavingObjectId(null); }
+  };
 
   return <section className={styles.sectionCard}>
     <header className={styles.actHeader}><div><h2>Actos del expediente</h2><p>Relaciones jurídicas canónicas. Un expediente puede contener varios actos, incluso del mismo tipo.</p></div>{expediente.capabilities.canWrite && <button type="button" className={styles.primaryButton} onClick={() => open('ADD')}><Plus size={16} />Agregar acto</button>}</header>
@@ -94,14 +119,15 @@ export function ActsTab({ expediente, onChanged }: { expediente: ExpedienteDetai
     {status === 'error' && <div className={styles.inlineState}><AlertTriangle />No pudimos cargar los actos.<button type="button" className={styles.secondaryButton} onClick={() => void load()}>Reintentar</button></div>}
     {status === 'ready' && !active.length && <p className={styles.sectionEmpty}>Este expediente no tiene actos activos.</p>}
     {status === 'ready' && active.length > 0 && <div className={styles.actList}>{active.map((act, index) => <article key={act.id}>
-      <span><FileText size={19} /></span><div><strong>{act.tipo_acto.nombre}</strong><small>{originLabel[act.origen]} · Instancia {index + 1}</small>{act.tipo_acto.descripcion && <p>{act.tipo_acto.descripcion}</p>}</div>
+      <span><FileText size={19} /></span><div><strong>{act.tipo_acto.nombre}</strong><small>{originLabel[act.origen]} · Instancia {index + 1}</small>{act.tipo_acto.descripcion && <p>{act.tipo_acto.descripcion}</p>}{expediente.capabilities.canWrite && <div className={styles.actObjectPercentage}><label htmlFor={`object-percentage-${act.id}`}>Porcentaje objeto</label><input id={`object-percentage-${act.id}`} type="number" min="0.000001" max="100" step="0.000001" value={objectPercentages[act.id] ?? '100'} onChange={(event) => setObjectPercentages((current) => ({ ...current, [act.id]: event.target.value }))} /><span>%</span><button type="button" disabled={savingObjectId === act.id || Number(objectPercentages[act.id]) === Number(act.porcentaje_objeto)} onClick={() => void saveObjectPercentage(act)}>{savingObjectId === act.id ? 'Guardando…' : 'Guardar'}</button></div>}</div>
       {expediente.capabilities.canWrite && <div className={styles.actActions}><button type="button" aria-label={`Cambiar ${act.tipo_acto.nombre}`} onClick={() => open('CHANGE', act)}><Pencil size={16} /></button><button type="button" aria-label={`Desvincular ${act.tipo_acto.nombre}`} onClick={() => open('REMOVE', act)}><Trash2 size={16} /></button></div>}
     </article>)}</div>}
+    {message && !dialog && <p className={styles.formError} role="alert">{message}</p>}
 
     {dialog && <div className={styles.dialogBackdrop} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close(); }}><section className={`${styles.dialog} ${styles.actDialog}`} role="dialog" aria-modal="true" aria-labelledby="act-dialog-title">
       <header><div><h2 id="act-dialog-title">{dialog.operation === 'ADD' ? 'Agregar acto' : dialog.operation === 'CHANGE' ? 'Cambiar acto' : 'Desvincular acto'}</h2><p>La operación se aplicará sólo después de revisar su impacto configurado.</p></div><button type="button" className={styles.iconButton} aria-label="Cerrar" onClick={close}><X size={18} /></button></header>
       <div className={styles.dialogBody}>
-        {dialog.operation !== 'REMOVE' && <section className={styles.actCatalog} aria-label="Selector CFG-001 de actos"><label className={styles.actCatalogSearch}><Search /><span className={styles.srOnly}>Buscar acto</span><input aria-label="Buscar acto" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nombre, familia o descripción" /></label><div className={styles.actCatalogTree}>{[...groupedTypes.entries()].map(([classification, families]) => <section key={classification}><h3>{classification}</h3>{[...families.entries()].map(([family, familyTypes]) => <details key={family} open><summary><ChevronDown />{family}<span>{familyTypes.length}</span></summary><div>{familyTypes.map((type) => { const config = type.configuracionesOperativas?.[0]; const selected = typeId === type.id; return <button key={type.id} type="button" aria-pressed={selected} className={selected ? styles.actCatalogSelected : ''} onClick={() => { setTypeId(type.id); setPreview(null); }}><strong>{config?.nombre_personalizado || type.nombre}</strong><small>{config?.descripcion_personalizada || type.descripcion || 'Acto configurado en CFG-001.'}</small><em>CFG-001 · revisión {config?.revision || 1}</em></button>; })}</div></details>)}</section>)}</div>{!groupedTypes.size && <p className={styles.sectionEmpty}>No hay actos activos que coincidan con la búsqueda.</p>}</section>}
+        {dialog.operation !== 'REMOVE' && <section className={styles.actCatalog} aria-label="Selector CFG-001 de actos"><label className={styles.actCatalogSearch}><Search /><span className={styles.srOnly}>Buscar acto</span><input aria-label="Buscar acto" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nombre, familia o descripción" /></label><Link className={styles.secondaryButton} to={`/configuracion/actos-tiempos?returnTo=${encodeURIComponent(`/expedientes/${expediente.id}`)}`}>+ Crear nuevo acto en Actos y tiempos</Link><div className={styles.actCatalogTree}>{[...groupedTypes.entries()].map(([classification, families]) => <section key={classification}><h3>{classification}</h3>{[...families.entries()].map(([family, familyTypes]) => <details key={family} open><summary><ChevronDown />{family}<span>{familyTypes.length}</span></summary><div>{familyTypes.map((type) => { const config = type.configuracionesOperativas?.[0]; const selected = typeId === type.id; return <button key={type.id} type="button" aria-pressed={selected} className={selected ? styles.actCatalogSelected : ''} onClick={() => { setTypeId(type.id); setPreview(null); }}><strong>{config?.nombre_personalizado || type.nombre}</strong><small>{config?.descripcion_personalizada || type.descripcion || 'Acto configurado en CFG-001.'}</small><em>CFG-001 · revisión {config?.revision || 1}</em></button>; })}</div></details>)}</section>)}</div>{!groupedTypes.size && <p className={styles.sectionEmpty}>No hay actos activos que coincidan con la búsqueda.</p>}</section>}
         {dialog.operation !== 'ADD' && <label>Motivo<textarea rows={3} value={reason} onChange={(event) => { setReason(event.target.value); setPreview(null); }} placeholder="Explica por qué se realiza este cambio" /></label>}
         {message && <p className={styles.formError} role="alert">{message}</p>}
         {preview && <div className={styles.impactPreview} data-classification={preview.classification}>

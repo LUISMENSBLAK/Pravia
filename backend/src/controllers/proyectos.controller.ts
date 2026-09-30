@@ -17,7 +17,9 @@ import prisma from '../config/prisma';
 import { projectRepository } from '../services/projectRepository.service';
 import { ComplianceH6Service } from '../services/complianceH6.service';
 import { configurationCatalogV4Service } from '../services/configurationCatalogV4.service';
-import { isDefaultProjectSource, ProjectGenerationError, projectGenerationService, reviewProjectAgainstTemplate } from '../services/projectGeneration.service';
+import { isDefaultProjectSource, ProjectGenerationError, projectGenerationService, reviewProjectAgainstTemplate, verifyLiteralProjectTemplateIntegrity } from '../services/projectGeneration.service';
+import { projectInstructionService } from '../services/projectInstruction.service';
+import { INSUFFICIENT_LEGAL_FOUNDATION, knowledgeService } from '../services/knowledge.service';
 
 function assertPersistentProjectStorage() {
   if (!['cloud', 'local'].includes(getStorageInfo().primary)) {
@@ -65,6 +67,16 @@ export const generarProyectoDesdeMachoteExcepcional = async (req: Request, res: 
   }
 };
 
+export const aplicarIndicacionesProyecto = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Usuario autenticado requerido.', code: 'AUTH_REQUIRED' });
+    const result = await projectInstructionService.apply(req.user, req.params.id, { ...(req.body || {}), idempotency_key: req.get('Idempotency-Key') || req.body?.idempotency_key });
+    return res.status(result.idempotent ? 200 : 201).json(result);
+  } catch (error: any) {
+    return res.status(error instanceof ProjectGenerationError ? error.status : Number(error?.status || 500)).json({ error: error?.message || 'No fue posible aplicar las indicaciones.', code: error?.code || 'PROJECT_INSTRUCTIONS_FAILED' });
+  }
+};
+
 const PROYECTOS_DIR = path.join(__dirname, '../../uploads/proyectos');
 const REPORTES_DIR = path.join(__dirname, '../../uploads/reportes_ia');
 const DOCS_DIR = path.join(__dirname, '../../uploads/documentos');
@@ -104,6 +116,13 @@ interface ProyectoVersionRecord {
   generation_origin?: string;
   instructions?: string | null;
   instructions_consumed?: boolean;
+  validation_cycle?: number;
+  validated_by_id?: string | null;
+  validated_at?: string | null;
+  reopened_from_document_id?: string | null;
+  reopened_by_id?: string | null;
+  reopened_at?: string | null;
+  fact_snapshot?: { facts: unknown[]; conflicts: unknown[]; created_at: string } | null;
 }
 
 interface IAReportRecord {
@@ -174,7 +193,7 @@ async function loadProjectTemplateBaseline(organizationId: string, expedienteId:
   const templateVersionId = typeof metadata.template_version_id === 'string' ? metadata.template_version_id : null;
   if (!templateVersionId) return null;
   let baseline: { storage_key: string; nombre_original: string | null; checksum_sha256: string | null } | null = null;
-  if (metadata.generation_mode === 'MACHOTE_EXCEPCIONAL') {
+  if (String(metadata.generation_mode || '').includes('EXCEPCIONAL')) {
     baseline = await prisma.documento.findFirst({
       where: { id: templateVersionId, organization_id: organizationId },
       select: { storage_key: true, nombre_original: true, checksum_sha256: true },
@@ -191,7 +210,13 @@ async function loadProjectTemplateBaseline(organizationId: string, expedienteId:
   if (expectedChecksum && createHash('sha256').update(buffer).digest('hex') !== expectedChecksum) {
     throw new ProjectGenerationError(409, 'PROJECT_TEMPLATE_BASELINE_CHECKSUM_MISMATCH', 'El machote de origen no coincide con la procedencia registrada del proyecto.');
   }
-  return { buffer, name: baseline.nombre_original || 'Machote CFG-002' };
+  const literalProjection = metadata.literal_projection && typeof metadata.literal_projection === 'object' && !Array.isArray(metadata.literal_projection)
+    ? metadata.literal_projection as Record<string, unknown>
+    : {};
+  const authorizedTemplateTargets = Array.isArray(literalProjection.authorized_template_targets)
+    ? literalProjection.authorized_template_targets.map(String)
+    : [];
+  return { buffer, name: baseline.nombre_original || 'Machote CFG-002', authorizedTemplateTargets };
 }
 
 const mapDocumentProjectVersion = (document: any): ProyectoVersionRecord => {
@@ -222,6 +247,17 @@ const mapDocumentProjectVersion = (document: any): ProyectoVersionRecord => {
     generation_origin: typeof meta.generation_origin === 'string' ? meta.generation_origin : undefined,
     instructions: typeof meta.instructions === 'string' ? meta.instructions : null,
     instructions_consumed: Boolean(meta.instructions_consumed),
+    validation_cycle: Number(meta.validation_cycle || 1),
+    validated_by_id: typeof meta.validated_by_id === 'string' ? meta.validated_by_id : null,
+    validated_at: typeof meta.validated_at === 'string' ? meta.validated_at : null,
+    reopened_from_document_id: typeof meta.reopened_from_document_id === 'string' ? meta.reopened_from_document_id : null,
+    reopened_by_id: typeof meta.reopened_by_id === 'string' ? meta.reopened_by_id : null,
+    reopened_at: typeof meta.reopened_at === 'string' ? meta.reopened_at : null,
+    fact_snapshot: document.fact_snapshot ? {
+      facts: Array.isArray(document.fact_snapshot.facts) ? document.fact_snapshot.facts : [],
+      conflicts: Array.isArray(document.fact_snapshot.conflicts) ? document.fact_snapshot.conflicts : [],
+      created_at: new Date(document.fact_snapshot.created_at).toISOString(),
+    } : null,
   };
 };
 
@@ -237,6 +273,11 @@ async function loadDatabaseProjectVersions(expedienteId: string) {
     },
     orderBy: { fecha_carga: 'desc' },
   });
+  const snapshots = documents.length ? await prisma.projectFactSnapshot.findMany({
+    where: { expediente_id: expedienteId, project_document_id: { in: documents.map((document) => document.id) } },
+  }) : [];
+  const byDocument = new Map(snapshots.map((snapshot) => [snapshot.project_document_id, snapshot]));
+  documents.forEach((document: any) => { document.fact_snapshot = byDocument.get(document.id) || null; });
   return documents.map(mapDocumentProjectVersion).sort((a, b) => b.version_numero - a.version_numero);
 }
 
@@ -281,7 +322,14 @@ export const getProyectoEscritura = async (req: Request, res: Response) => {
 export const saveProyectoAsNotaryTemplate = async (req: Request, res: Response) => {
   try {
     if (!req.user) return res.status(401).json({ error: 'Usuario autenticado requerido.' });
-    const result = await configurationCatalogV4Service.saveProjectAsNotaryTemplate(req.user, req.params.id, req.params.versionId, req.body?.nombre);
+    const result = await configurationCatalogV4Service.saveProjectAsNotaryTemplate(
+      req.user,
+      req.params.id,
+      req.params.versionId,
+      req.body?.nombre,
+      req.body?.act_id,
+      req.body?.replace === true,
+    );
     return res.status(result.idempotent ? 200 : 201).json(result);
   } catch (error: any) {
     return res.status(Number(error?.status || 500)).json({ error: error?.message || 'No fue posible guardar el proyecto como plantilla.', code: error?.code || 'CFG002_PROJECT_TEMPLATE_FAILED' });
@@ -328,6 +376,9 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
         include: { documento: { select: { id: true, datos_extraidos: true } } },
         orderBy: { fecha_vinculo: 'desc' },
       });
+      if (previousActive?.document_role === 'DEFINITIVE_DEED' || projectMeta(previousActive?.documento).es_version_final === true) {
+        throw Object.assign(new Error('El proyecto está validado. Reábrelo explícitamente antes de cargar otra versión.'), { code: 'PROJECT_VALIDATED_REOPEN_REQUIRED', status: 409 });
+      }
       const inheritedLineage = projectTemplateLineage(projectMeta(previousActive?.documento));
       const existing = await tx.documento.findMany({
         where: { expediente_id: id, tipo: 'PROYECTO_ESCRITURA' },
@@ -437,6 +488,57 @@ export const updateProyectoVersion = async (req: Request, res: Response) => {
       if (!actor) return res.status(403).json({ error: 'Usuario activo requerido para actualizar el proyecto.' });
       const currentMeta = projectMeta(databaseDocument);
 
+      if (accion === 'REABRIR') {
+        const activeLink = databaseDocument.expedienteVinculos.find((link) => link.estatus === 'ACTIVO');
+        if (!activeLink || !currentMeta.es_version_final) return res.status(409).json({ error: 'Sólo el proyecto vigente y validado puede reabrirse.', code: 'PROJECT_VALIDATED_VERSION_REQUIRED' });
+        const source = await downloadFile(databaseDocument.storage_key);
+        const storageKey = `organizations/${req.user!.organizationId}/documentos/expedientes/${id}/proyectos/${crypto.randomUUID()}_reapertura_${path.basename(databaseDocument.nombre_original)}`;
+        await uploadFile(source, storageKey, databaseDocument.mime_type);
+        try {
+          const reopened = await prisma.$transaction(async (tx) => {
+            await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:proyecto-version:${id}`}))`);
+            const locked = await tx.expedienteDocumento.findFirst({ where: { organization_id: req.user!.organizationId, expediente_id: id, documento_id: versionId, tipo_vinculo: 'PROYECTO_ESCRITURA', estatus: 'ACTIVO', document_role: 'DEFINITIVE_DEED' } });
+            if (!locked) throw Object.assign(new Error('La versión vigente cambió; recarga antes de reabrir.'), { code: 'PROJECT_CURRENT_VERSION_CHANGED' });
+            const count = await tx.documento.count({ where: { organization_id: req.user!.organizationId, expediente_id: id, tipo: 'PROYECTO_ESCRITURA' } });
+            const versionNumber = Math.max(Number(currentMeta.version_numero || 1) + 1, count + 1);
+            await tx.expedienteDocumento.update({ where: { id: locked.id }, data: { estatus: 'SUSTITUIDO', inactivado_at: new Date(), inactivado_por_id: actor.id, motivo_inactivacion: `Reabierto en ciclo V${versionNumber}`, document_role: 'DEFINITIVE_DEED' } });
+            const metadata = {
+              ...currentMeta,
+              version_numero: versionNumber,
+              es_version_final: false,
+              validation_cycle: Number(currentMeta.validation_cycle || 1) + 1,
+              reopened_from_document_id: versionId,
+              reopened_by_id: actor.id,
+              reopened_at: new Date().toISOString(),
+              validated_by_id: null,
+              validated_at: null,
+              nota_version: `V${versionNumber} · ciclo reabierto explícitamente`,
+            };
+            const document = await tx.documento.create({ data: {
+              organization_id: req.user!.organizationId, expediente_id: id,
+              nombre_original: `V${versionNumber} — ${databaseDocument.nombre_original.replace(/^V\d+\s+—\s+/, '')}`,
+              nombre_interno: storageKey, storage_key: storageKey, tipo: 'PROYECTO_ESCRITURA', categoria: 'PROYECTO',
+              mime_type: databaseDocument.mime_type, size_bytes: source.length, checksum_sha256: createHash('sha256').update(source).digest('hex'),
+              subido_por_id: actor.id, estatus: 'VIGENTE', observaciones: metadata.nota_version, datos_extraidos: { proyecto: metadata },
+            } });
+            await tx.expedienteDocumento.create({ data: {
+              organization_id: req.user!.organizationId, expediente_id: id, documento_id: document.id, tipo_vinculo: 'PROYECTO_ESCRITURA', creado_por_id: actor.id,
+              estatus: 'ACTIVO', origen: 'EXPEDIENTE', source_entity_type: 'Documento', source_entity_id: versionId,
+              source_context: 'PROYECTO_REAPERTURA', source_key: `EXPEDIENTE:Documento:${versionId}:${document.id}:PROYECTO_REAPERTURA`,
+              document_version: document.checksum_sha256, provenance: { reopened_from_document_id: versionId, explicit: true }, document_role: 'PROJECT_DRAFT',
+            } });
+            await tx.expedienteActividad.create({ data: { organization_id: req.user!.organizationId, expediente_id: id, usuario_id: actor.id, tipo: 'AUDITORIA', titulo: `Proyecto reabierto en V${versionNumber}`, descripcion: 'Se inició un nuevo ciclo editable; la versión validada permanece histórica e inmutable.', seccion_relacionada: 'proyecto', entidad_relacionada: 'Documento', entidad_relacionada_id: document.id } });
+            await tx.auditLog.create({ data: { organization_id: req.user!.organizationId, user_id: actor.id, accion: 'PROJECT_REOPENED', entidad: 'Documento', entidad_id: document.id, valores_anteriores: { document_id: versionId, validated_at: currentMeta.validated_at || null }, valores_nuevos: { version: versionNumber, validation_cycle: metadata.validation_cycle }, session_id: req.user!.sessionId } });
+            return document;
+          });
+          const [mapped] = (await loadDatabaseProjectVersions(id)).filter((version) => version.id === reopened.id);
+          return res.status(201).json(mapped);
+        } catch (error) {
+          await deleteFile(storageKey).catch(() => undefined);
+          throw error;
+        }
+      }
+
       await prisma.$transaction(async (tx) => {
         await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:proyecto-version:${id}`}))`);
         if (accion === 'RESTAURAR_VIGENTE') {
@@ -465,6 +567,9 @@ export const updateProyectoVersion = async (req: Request, res: Response) => {
         const nextMeta = {
           ...currentMeta,
           es_version_final: accion === 'MARCAR_FINAL' ? true : Boolean(currentMeta.es_version_final),
+          validation_cycle: accion === 'MARCAR_FINAL' ? Number(currentMeta.validation_cycle || 1) : currentMeta.validation_cycle,
+          validated_by_id: accion === 'MARCAR_FINAL' ? actor.id : currentMeta.validated_by_id,
+          validated_at: accion === 'MARCAR_FINAL' ? new Date().toISOString() : currentMeta.validated_at,
           nota_version: nota_version?.trim() || currentMeta.nota_version,
         };
         await tx.documento.update({
@@ -481,7 +586,7 @@ export const updateProyectoVersion = async (req: Request, res: Response) => {
             expediente_id: id,
             usuario_id: actor.id,
             tipo: 'DOCUMENTO',
-            titulo: accion === 'RESTAURAR_VIGENTE' ? `Proyecto V${currentMeta.version_numero || ''} restaurado` : 'Metadatos del proyecto actualizados',
+            titulo: accion === 'RESTAURAR_VIGENTE' ? `Proyecto V${currentMeta.version_numero || ''} restaurado` : accion === 'MARCAR_FINAL' ? `Proyecto V${currentMeta.version_numero || ''} validado` : 'Metadatos del proyecto actualizados',
             descripcion: nota_version?.trim() || accion,
           }
         });
@@ -687,6 +792,11 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
       });
     }
 
+    const knowledgeQuery = [exp.actos.map((acto) => acto.tipo_acto.nombre).join(' '), exp.descripcion || '', 'proyecto escritura notarial'].filter(Boolean).join(' ');
+    const legalEvidence = await knowledgeService.retrieve(
+      { id: userId, organizationId: req.user!.organizationId },
+      { query: knowledgeQuery, legal_date: new Date().toISOString().slice(0, 10), limit: 8 },
+    ).catch(() => ({ status: 'INSUFFICIENT_FOUNDATION', message: INSUFFICIENT_LEGAL_FOUNDATION, evidence: [], internal_reasoning: null }));
     aiRequestStarted = true;
     const resultadoIA = await analizarProyectoNotarialConOpenAI(
       {
@@ -719,9 +829,17 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
           superficie_construccion_m2: link.predio.superficie_construccion_m2?.toString() || null,
           colindancias: link.predio.colindancias,
         })),
+        biblioteca_juridica: legalEvidence,
       },
+      templateBaseline ? {
+        buffer: templateBaseline.buffer,
+        mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        tipoDocumento: 'MACHOTE_ORIGEN',
+        documentoId: vigente.template_version_id || 'MACHOTE_ORIGEN',
+        nombreOriginal: templateBaseline.name,
+      } : undefined,
     );
-    await recordAIUsages(resultadoIA.uso ? [resultadoIA.uso] : [], {
+    await recordAIUsages(resultadoIA.usos || (resultadoIA.uso ? [resultadoIA.uso] : []), {
       operacion: 'REVISION_PROYECTO_ESCRITURA',
       usuarioId: userId,
       expedienteId: id,
@@ -731,8 +849,23 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
     aiRequestStarted = false;
 
     const deterministicObservations = templateBaseline
-      ? await reviewProjectAgainstTemplate(projectBuffer, templateBaseline.buffer, exp.valor_operacion?.toString(), templateBaseline.name)
+      ? await reviewProjectAgainstTemplate(projectBuffer, templateBaseline.buffer, exp.valor_operacion?.toString(), templateBaseline.name, templateBaseline.authorizedTemplateTargets)
       : [];
+    const deterministicTemplateIntegrity = templateBaseline && templateBaseline.authorizedTemplateTargets.length
+      ? await verifyLiteralProjectTemplateIntegrity(projectBuffer, templateBaseline.buffer, templateBaseline.authorizedTemplateTargets)
+      : null;
+    if (deterministicTemplateIntegrity?.status === 'PASS') {
+      resultadoIA.areas_revision = resultadoIA.areas_revision.map((area) => (
+        (area.area === 'CLAUSULAS_ELIMINADAS' || area.area === 'TEXTO_FIJO') && area.estado === 'NO_VERIFICABLE'
+          ? {
+              ...area,
+              estado: 'REVISADO_SIN_HALLAZGOS',
+              resumen: `Comprobación determinista aprobada: ${deterministicTemplateIntegrity.checkedParagraphs} párrafos fijos conservaron posición, texto y estilo; ${deterministicTemplateIntegrity.authorizedParagraphs} párrafos sólo contienen sustituciones autorizadas.`,
+              hallazgos: 0,
+            }
+          : area
+      ));
+    }
     const deterministicCategories = new Set(deterministicObservations.map((observation) => observation.tipo_discrepancia));
     const mergedObservations = [
       ...deterministicObservations,
@@ -814,6 +947,25 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
               }),
             ]
           }),
+          new Paragraph({
+            children: [
+              new TextRun({ text: '• Fundamento jurídico activo: ', bold: true }),
+              new TextRun({ text: legalEvidence.evidence.length
+                ? legalEvidence.evidence.map((item: any) => `${item.inventory_code} · ${item.title} · ${item.label}`).join('; ')
+                : INSUFFICIENT_LEGAL_FOUNDATION }),
+            ],
+          }),
+          new Paragraph({ text: " " }),
+          new Paragraph({
+            text: "COBERTURA DE LAS 17 ÁREAS DE REVISIÓN:",
+            heading: HeadingLevel.HEADING_2,
+          }),
+          ...resultadoIA.areas_revision.map((area, index) => new Paragraph({
+            children: [
+              new TextRun({ text: `${index + 1}. ${area.etiqueta}: `, bold: true }),
+              new TextRun({ text: `${area.estado.replace(/_/g, ' ')}${area.hallazgos ? ` · ${area.hallazgos} hallazgo(s)` : ''}. ${area.resumen}` }),
+            ],
+          })),
           new Paragraph({ text: " " }),
           new Paragraph({
             text: "DETALLE DE OBSERVACIONES Y DISCREPANCIAS:",
@@ -899,6 +1051,9 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
           documentos_analizados_count: documentosParaIA.length,
           documentos_totales_count: docsActivos.length,
           documentos_no_leidos: documentosNoLeidos,
+          areas_revision: JSON.parse(JSON.stringify(resultadoIA.areas_revision)) as Prisma.InputJsonValue,
+          template_integrity: deterministicTemplateIntegrity ? JSON.parse(JSON.stringify(deterministicTemplateIntegrity)) as Prisma.InputJsonValue : null,
+          legal_evidence: JSON.parse(JSON.stringify(legalEvidence)) as Prisma.InputJsonValue,
           observaciones,
           solicitado_por: userName,
         } },

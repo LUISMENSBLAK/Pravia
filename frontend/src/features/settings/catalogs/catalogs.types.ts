@@ -3,6 +3,12 @@ export type OwnerType = 'NOTARIA' | 'INSTITUCION';
 export type ArtifactType = 'PLANTILLA' | 'FORMATO';
 export type FunctionalDestination = 'COTIZACION_SERVICIOS' | 'EXPEDIENTE_PRESUPUESTO' | 'CALCULO_ISR_MEMORIA' | 'FINANZAS_RECIBO_PAGO' | 'FINANZAS_SOLICITUD_PAGO' | 'PROYECTO_MACHOTE' | 'EXPEDIENTE_DOCUMENTO_GENERICO' | 'CUMPLIMIENTO_PLD_UIF';
 export type ArtifactDestination = { id?: string; destino: FunctionalDestination; activo: boolean; predeterminado: boolean; reglas_json?: unknown; mapeo_datos_json?: unknown };
+export type ProjectTemplateAssignment = {
+  id: string; organization_id: string; tipo_acto_id: string; artefacto_id: string; version_id: string; active: boolean;
+  tipoActo: { id: string; nombre: string };
+  artefacto: { id: string; nombre: string; descripcion?: string | null };
+  version: { id: string; version: number; nombre_original?: string | null; checksum_sha256?: string | null; mime_type?: string | null };
+};
 
 export type ActDependency = { id: string; depende_actividad_id: string; bloqueante: boolean };
 export type ActException = {
@@ -25,7 +31,7 @@ export type ActConfiguration = { id: string; activa: boolean; requiere_revision:
 export type CatalogAct = { id: string; organization_id?: string | null; codigo_catalogo?: string | null; nombre: string; descripcion?: string | null; activo: boolean; complete: boolean; edited?: boolean; configuration?: ActConfiguration | null; effective_activities?: ActActivity[]; effective_stages?: ActStage[]; inheritance_chain?: string[] };
 export type ActListPayload = { data: CatalogAct[]; metrics: { total: number; complete: number; edited: number; pending: number } };
 
-export type ActivityConcept = { id: string; codigo: string; nombre: string; descripcion?: string | null; naturaleza: ActActivity['naturaleza']; duracion_estimada: number; unidad_tiempo: 'DIAS' | 'HORAS'; tipo_dias: DayType; margen_seguridad: number; fuente_tiempo: ActActivity['fuente_tiempo']; aplica_por_defecto: boolean; activa: boolean; revision: number; requiere_revision: boolean };
+export type ActivityConcept = { id: string; codigo: string; nombre: string; descripcion?: string | null; naturaleza: ActActivity['naturaleza']; tipo_proceso: 'HITO' | 'ACTIVIDAD' | 'SOLICITUD_ESPERA'; proceso_complementario_id?: string | null; proceso_complementario?: { id: string; codigo: string; nombre: string; tipo_proceso: 'HITO' | 'ACTIVIDAD' | 'SOLICITUD_ESPERA' } | null; es_base_pravia: boolean; duracion_estimada: number; unidad_tiempo: 'DIAS' | 'HORAS'; tipo_dias: DayType; margen_seguridad: number; fuente_tiempo: ActActivity['fuente_tiempo']; aplica_por_defecto: boolean; activa: boolean; revision: number; requiere_revision: boolean };
 
 export type CatalogOwner = { id: string; nombre: string; numero_notaria?: string | null; tipo?: 'BANCO' | 'FIDUCIARIA' | 'OTRA'; activa: boolean };
 export type CatalogFolder = { id: string; tipo: ArtifactType; nombre: string; parent_id?: string | null; created_at: string };

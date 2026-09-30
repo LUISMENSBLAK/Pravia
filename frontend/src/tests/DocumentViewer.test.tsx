@@ -94,6 +94,17 @@ describe('Shared DocumentViewer', () => {
     expect(screen.getAllByRole('button', { name: /Descargar/ }).length).toBeGreaterThan(0);
   });
 
+  it('detecta .DOC antiguo sin intentar una conversión silenciosa', () => {
+    const download = vi.fn();
+    render(<DocumentViewer open name="aviso-preventivo.doc" mimeType="application/msword" url="blob:legacy-doc" onClose={vi.fn()} onDownload={download} />);
+    expect(screen.getByText('El archivo usa el formato antiguo .DOC')).toBeInTheDocument();
+    expect(screen.getByText(/no puede extraerlo ni mostrarlo de forma fiable/i)).toBeInTheDocument();
+    expect(screen.getByText(/revisión manual/i)).toBeInTheDocument();
+    expect(screen.queryByText('Interpretando documento Word…')).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: /Descargar/ }).at(-1)!);
+    expect(download).toHaveBeenCalledTimes(1);
+  });
+
   it('navega páginas y busca texto extraído sin salir del visor', async () => {
     render(<DocumentViewer open name="expediente.pdf" mimeType="application/pdf" url="blob:pdf-search" onClose={vi.fn()} />);
     await screen.findByLabelText('Página 1 de expediente.pdf');

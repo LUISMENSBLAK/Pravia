@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { FinancialBarChart } from '../../components/analytics/FinancialBarChart';
 import { settingsService } from '../settings/settings.service';
 import styles from './Reports.module.css';
 import type {
@@ -65,24 +66,11 @@ export function Empty({ title = 'Sin datos para este periodo', detail = 'Ajusta 
 }
 
 function TrendChart({ data = [] }: { data?: Array<{ periodo: string; generados: number; cobrados: number }> }) {
-  if (!data.length) return <Empty />;
-  const max = Math.max(1, ...data.flatMap((item) => [item.generados, item.cobrados]));
-  const points = (key: 'generados' | 'cobrados') => data.map((item, index) => `${22 + index * (420 / Math.max(1, data.length - 1))},${142 - (item[key] / max) * 112}`).join(' ');
-  return <div className={styles.chart}>
-    <svg viewBox="0 0 470 175" preserveAspectRatio="none" role="img" aria-label="Tendencia mensual de honorarios generados y cobrados">
-      <title>Tendencia de honorarios generados y cobrados</title>
-      {[30, 67, 104, 142].map((y) => <line key={y} x1="20" y1={y} x2="450" y2={y} className={styles.gridLine} />)}
-      <polyline points={points('generados')} className={styles.generatedLine} />
-      <polyline points={points('cobrados')} className={styles.collectedLine} />
-      {data.map((item, index) => <g key={item.periodo}>
-        <circle cx={22 + index * (420 / Math.max(1, data.length - 1))} cy={142 - (item.generados / max) * 112} r="4" className={styles.generatedPoint}><title>{`${item.periodo}: ${money.format(item.generados)} generados`}</title></circle>
-        <circle cx={22 + index * (420 / Math.max(1, data.length - 1))} cy={142 - (item.cobrados / max) * 112} r="4" className={styles.collectedPoint}><title>{`${item.periodo}: ${money.format(item.cobrados)} cobrados`}</title></circle>
-        <text x={22 + index * (420 / Math.max(1, data.length - 1))} y="166" textAnchor="middle">{item.periodo.slice(5)}</text>
-      </g>)}
-    </svg>
-    <div className={styles.legend}><span><i data-series="generated" />Generados</span><span><i data-series="collected" />Cobrados</span></div>
-    <table className={styles.srOnly}><caption>Datos de tendencia financiera</caption><thead><tr><th>Periodo</th><th>Generados</th><th>Cobrados</th></tr></thead><tbody>{data.map((item) => <tr key={item.periodo}><td>{item.periodo}</td><td>{money.format(item.generados)}</td><td>{money.format(item.cobrados)}</td></tr>)}</tbody></table>
-  </div>;
+  return <FinancialBarChart
+    data={data.map((item) => ({ period: item.periodo, generated: item.generados, collected: item.cobrados }))}
+    ariaLabel="Tendencia mensual de honorarios generados y cobrados"
+    emptyMessage="NO HAY MOVIMIENTOS PARA ESTE PERIODO"
+  />;
 }
 
 function ComparisonChart({ rows = [], title, limit = 5 }: { rows?: ComparisonRow[]; title: string; limit?: number }) {

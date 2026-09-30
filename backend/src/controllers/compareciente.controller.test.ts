@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const service = vi.hoisted(() => ({ buscarDuplicados: vi.fn(), listarMaster: vi.fn(), obtenerPorId: vi.fn(), eliminarDocumentoMaster: vi.fn(), extraerDocumentosExistentesConIA: vi.fn() }));
+const access = vi.hoisted(() => ({ canAccessCompareciente: vi.fn() }));
 vi.mock('../services/compareciente.service', () => ({ ComparecienteService: class { buscarDuplicados = service.buscarDuplicados; listarMaster = service.listarMaster; obtenerPorId = service.obtenerPorId; eliminarDocumentoMaster = service.eliminarDocumentoMaster; extraerDocumentosExistentesConIA = service.extraerDocumentosExistentesConIA; } }));
 vi.mock('../config/prisma', () => ({ default: {}, prisma: {} }));
-vi.mock('../services/objectAccess.service', () => ({ comparecienteObjectWhere: vi.fn(() => ({ creado_por_id: 'user-1' })) }));
+vi.mock('../services/objectAccess.service', () => ({ comparecienteObjectWhere: vi.fn(() => ({ creado_por_id: 'user-1' })), canAccessCompareciente: access.canAccessCompareciente }));
 import { ComparecienteController } from './compareciente.controller';
 
 const response = () => { const res: any = {}; res.status = vi.fn(() => res); res.json = vi.fn(() => res); return res; };
-const user = { id: 'user-1', rol: 'ABOGADO', permissions: ['comparecientes.read'] };
+const user = { id: 'user-1', organizationId: 'org-1', rol: 'ABOGADO', permissions: ['comparecientes.read'] };
 
 describe('ComparecienteController endpoints', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -16,5 +17,7 @@ describe('ComparecienteController endpoints', () => {
   it('oculta snapshots de cumplimiento cuando falta permiso específico', async () => { service.obtenerPorId.mockResolvedValue({ cumplimiento:'COMPLETO', health:[{key:'CUMPLIMIENTO',state:'COMPLETO'}], complianceSnapshots:[{id:'review-1'}], expedientes:[{expediente:{complianceReviews:[{id:'review-1'}]}}] }); const req:any={params:{id:'party-1'},user}; const res=response(); await ComparecienteController.obtenerPorId(req,res); const payload=res.json.mock.calls[0][0]; expect(payload.data).toMatchObject({ cumplimiento:'NO_CONFIGURADO', complianceSnapshots:[], health:[{key:'CUMPLIMIENTO',state:'NO_CONFIGURADO'}] }); expect(payload.data.expedientes[0].expediente.complianceReviews).toEqual([]); });
   it('expone capacidades documentales solo con permisos explícitos', async () => { service.obtenerPorId.mockResolvedValue({ health:[], complianceSnapshots:[], expedientes:[], documentos:[{id:'doc'}], datosFuente:[{id:'source'}], capabilities:{} }); const req:any={params:{id:'party-1'},user:{...user,permissions:['comparecientes.read','comparecientes.write','documentos.read','documentos.write','documentos.unlink','ia.execute']}};const res=response();await ComparecienteController.obtenerPorId(req,res);expect(res.json.mock.calls[0][0].data.capabilities).toMatchObject({canEdit:true,canUploadDocuments:true,canReadDocuments:true,canDeleteDocuments:true,canExtractWithAI:true}); });
   it('retira un documento lógicamente con el actor autenticado', async()=>{service.eliminarDocumentoMaster.mockResolvedValue({estatus:'INACTIVO'});const req:any={params:{id:'party-1',documentoId:'doc-1'},user};const res=response();await ComparecienteController.eliminarDocumentoMaster(req,res);expect(service.eliminarDocumentoMaster).toHaveBeenCalledWith('party-1','doc-1','user-1');expect(res.status).toHaveBeenCalledWith(200)});
-  it('devuelve propuestas IA sin persistencia maestra', async()=>{service.extraerDocumentosExistentesConIA.mockResolvedValue({values:{rfc:'ABC'},proposals:{rfc:{estado:'PENDIENTE_CONFIRMACION'}}});const req:any={params:{id:'party-1'},user};const res=response();await ComparecienteController.extraerDocumentosConIA(req,res);expect(service.extraerDocumentosExistentesConIA).toHaveBeenCalledWith('party-1','user-1');expect(res.json.mock.calls[0][0].data.values).toEqual({rfc:'ABC'})});
+  it('devuelve propuestas IA sin persistencia maestra', async()=>{access.canAccessCompareciente.mockResolvedValue(true);service.extraerDocumentosExistentesConIA.mockResolvedValue({values:{rfc:'ABC'},proposals:{rfc:{estado:'PENDIENTE_CONFIRMACION'}}});const req:any={params:{id:'party-1'},user};const res=response();await ComparecienteController.extraerDocumentosConIA(req,res);expect(service.extraerDocumentosExistentesConIA).toHaveBeenCalledWith('party-1','user-1',user.organizationId);expect(res.json.mock.calls[0][0].data.values).toEqual({rfc:'ABC'})});
+
+  it('deniega extracción IA fuera del alcance del actor', async()=>{access.canAccessCompareciente.mockResolvedValue(false);const req:any={params:{id:'party-2'},user};const res=response();await ComparecienteController.extraerDocumentosConIA(req,res);expect(res.status).toHaveBeenCalledWith(404);expect(service.extraerDocumentosExistentesConIA).not.toHaveBeenCalled()});
 });

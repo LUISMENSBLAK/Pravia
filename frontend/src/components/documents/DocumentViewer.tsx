@@ -17,8 +17,10 @@ type Props = {
 
 const previewKind = (mime = '', name = '') => {
   const value = `${mime} ${name}`.toLowerCase();
+  const normalizedName = name.toLowerCase();
   if (value.includes('pdf') || value.endsWith('.pdf')) return 'pdf';
-  if (value.includes('wordprocessingml') || value.includes('msword') || value.endsWith('.docx')) return 'docx';
+  if (normalizedName.endsWith('.doc') || (value.includes('msword') && !normalizedName.endsWith('.docx'))) return 'legacy-doc';
+  if (value.includes('wordprocessingml') || normalizedName.endsWith('.docx')) return 'docx';
   if (value.includes('image/') || /\.(png|jpe?g|webp|bmp)$/.test(value)) return 'image';
   return 'unsupported';
 };
@@ -229,7 +231,8 @@ export function DocumentViewer({ open, name, mimeType, url, loading, error, onCl
         {!loading && !error && url && kind === 'pdf' && <PdfPreview url={url} name={name} onDownload={onDownload} />}
         {!loading && !error && url && kind === 'docx' && <DocxPreview url={url} name={name} onDownload={onDownload} />}
         {!loading && !error && url && kind === 'image' && <ImagePreview url={url} name={name} onDownload={onDownload} />}
-        {!loading && !error && !url && kind !== 'unsupported' && <PreviewFallback onDownload={onDownload} />}
+        {!loading && !error && kind === 'legacy-doc' && <div className={styles.unsupported} role="alert"><strong>El archivo usa el formato antiguo .DOC</strong><p>PRAVIA conserva el original y su trazabilidad, pero no puede extraerlo ni mostrarlo de forma fiable. Descárgalo para revisión manual o guarda una copia como .DOCX o PDF.</p>{onDownload && <button type="button" onClick={onDownload}><Download />Descargar documento</button>}</div>}
+        {!loading && !error && !url && kind !== 'unsupported' && kind !== 'legacy-doc' && <PreviewFallback onDownload={onDownload} />}
         {!loading && !error && kind === 'unsupported' && <div className={styles.unsupported}><strong>Vista previa no disponible para este formato</strong><p>Puedes descargar el archivo para abrirlo con una aplicación compatible.</p>{onDownload && <button type="button" onClick={onDownload}><Download />Descargar documento</button>}</div>}
       </div>
     </section>

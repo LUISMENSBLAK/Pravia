@@ -61,7 +61,10 @@ const ids = {
 };
 
 const email = 'qa.correcciones@pravia.test';
-const password = 'Pravia!QA-Release-2026';
+const password = String(process.env.PRAVIA_E2E_PASSWORD || '');
+if (!password) {
+  throw new Error('PRAVIA_E2E_PASSWORD es obligatoria para el provisioning QA local.');
+}
 const raw = new PrismaClient();
 const permissions = permissionsForRole('DIRECCION');
 const context = {

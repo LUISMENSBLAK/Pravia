@@ -5,6 +5,7 @@ import { CatalogoArtefactoTipo, CatalogoDestinoFuncional, CatalogoPropietarioTip
 import prisma from '../config/prisma';
 import { deleteFile, downloadFile, uploadFile } from './supabase.service';
 import { CatalogConfigurationError } from './configurationCatalogError';
+import { projectTemplateAssignmentService } from './projectTemplateAssignment.service';
 import {
   analyzeCatalogUpload,
   artifactCodeFromPath,
@@ -30,13 +31,13 @@ const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.Inp
 const sha = (value: Buffer) => createHash('sha256').update(value).digest('hex');
 const safeSegment = (value: string) => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 150);
 const displayName = (fileName: string) => fileName.replace(/\.[^.]+$/, '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
-const normalized = (value: string) => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, ' ').trim().toUpperCase();
 const uniqueStrings = (value: unknown) => [...new Set(Array.isArray(value) ? value.map(String).filter(Boolean) : [])];
 const standardDestinations = (code: string, type: CatalogoArtefactoTipo): CatalogoDestinoFuncional[] => {
   if (code === 'ADM-001') return [CatalogoDestinoFuncional.COTIZACION_SERVICIOS, CatalogoDestinoFuncional.EXPEDIENTE_PRESUPUESTO];
   if (code === 'ADM-002') return [CatalogoDestinoFuncional.FINANZAS_RECIBO_PAGO];
   if (code === 'ADM-003') return [CatalogoDestinoFuncional.EXPEDIENTE_DOCUMENTO_GENERICO];
-  if (code.startsWith('PRY-') && type === 'PLANTILLA') return [CatalogoDestinoFuncional.PROYECTO_MACHOTE];
+  // PRY files may remain available as historical/library material, but the
+  // active Project inventory starts empty and assignments are explicit by ID.
   if (code.startsWith('PLD-')) return [CatalogoDestinoFuncional.CUMPLIMIENTO_PLD_UIF];
   return [];
 };
@@ -230,10 +231,24 @@ async function persistFiles(input: {
 export const configurationCatalogV4Service = {
   canonicalNotary,
 
-  async saveProjectAsNotaryTemplate(actor: Actor, expedienteId: string, projectVersionId: string, requestedName?: string) {
+  async saveProjectAsNotaryTemplate(actor: Actor, expedienteId: string, projectVersionId: string, requestedName?: string, requestedActId?: string, replace = false) {
     const stableCode = `EXP010:${projectVersionId}`;
+    const expediente = await prisma.expediente.findFirst({
+      where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null },
+      select: {
+        tipo_acto_id: true,
+        actos: { where: { estatus: 'ACTIVO', removed_at: null }, select: { tipo_acto_id: true }, orderBy: { created_at: 'asc' } },
+      },
+    });
+    if (!expediente) throw new CatalogConfigurationError(404, 'CFG002_PROJECT_CASE_NOT_FOUND', 'El expediente no existe o no pertenece a esta organización.');
+    const caseActIds = [...new Set([...(expediente.actos.map((item) => item.tipo_acto_id)), expediente.tipo_acto_id].filter(Boolean) as string[])];
+    const actId = requestedActId || (caseActIds.length === 1 ? caseActIds[0] : '');
+    if (!actId || !caseActIds.includes(actId)) throw new CatalogConfigurationError(409, 'CFG002_PROJECT_ACT_REQUIRED', 'Selecciona explícitamente uno de los Actos reales del expediente para registrar el machote.');
     const existing = await prisma.catalogoArtefacto.findFirst({ where: { organization_id: actor.organizationId, codigo_biblioteca: stableCode }, include: { versiones: true } });
-    if (existing) return { artifact_id: existing.id, version_id: existing.versiones[0]?.id, idempotent: true };
+    if (existing?.versiones[0]) {
+      const assigned = await projectTemplateAssignmentService.assign(actor, { actId, artifactId: existing.id, versionId: existing.versiones[0].id, replace });
+      return { artifact_id: existing.id, version_id: existing.versiones[0].id, assignment_id: assigned.assignment.id, idempotent: assigned.idempotent };
+    }
     const project = await prisma.documento.findFirst({ where: { id: projectVersionId, organization_id: actor.organizationId, expediente_id: expedienteId, tipo: 'PROYECTO_ESCRITURA', estatus: { not: 'RECHAZADO' } } });
     if (!project) throw new CatalogConfigurationError(403, 'CFG002_PROJECT_ACCESS_DENIED', 'El proyecto no pertenece a este expediente u organización.');
     const { notary } = await canonicalNotary(actor, false);
@@ -263,7 +278,8 @@ export const configurationCatalogV4Service = {
         return { artifact_id: artifact.id, version_id: version.id, idempotent: false };
       });
       if (result.idempotent) await deleteFile(storageKey).catch(() => undefined);
-      return result;
+      const assigned = await projectTemplateAssignmentService.assign(actor, { actId, artifactId: result.artifact_id, versionId: result.version_id!, replace });
+      return { ...result, assignment_id: assigned.assignment.id, assignment_replaced: assigned.replaced };
     } catch (error) {
       await deleteFile(storageKey).catch(() => undefined);
       throw error;
@@ -282,19 +298,11 @@ export const configurationCatalogV4Service = {
       .filter((file) => file.path.startsWith(`${packageRoot}NOTARIA/`))
       .map((file) => ({ ...file, path: file.path.slice(packageRoot.length) }));
     if (files.length !== 40) throw new CatalogConfigurationError(500, 'CFG002_LIBRARY_CONTENT_MISMATCH', `La biblioteca aprobada debe contener 40 archivos operativos; se encontraron ${files.length}.`);
-    const acts = await prisma.tipoActo.findMany({ where: { activo: true, archived_at: null, OR: [{ organization_id: actor.organizationId }, { organization_id: null }] }, select: { id: true, nombre: true, codigo_catalogo: true } });
+    const acts = await prisma.tipoActo.findMany({ where: { activo: true, archived_at: null, OR: [{ organization_id: actor.organizationId }, { organization_id: null }] }, select: { id: true } });
     const allActIds = acts.map((act) => act.id);
     const overrides = Object.fromEntries(files.map((file) => {
       const code = artifactCodeFromPath(file.path);
-      if (code.startsWith('PRY-')) {
-        const title = normalized(displayName(file.name).replace(/^PRY \d{3}\s+/, ''));
-        const matched = acts.filter((act) => {
-          const actName = normalized(act.nombre); const catalogCode = normalized(act.codigo_catalogo || '');
-          const keywords = title.split(' ').filter((word) => word.length > 4);
-          return Boolean(catalogCode && title.includes(catalogCode)) || keywords.some((word) => actName.includes(word));
-        }).map((act) => act.id);
-        return [file.path, { act_ids: matched, rules: matched.length ? [{ obligatoria: false, multiplicidad: 'EXPEDIENTE', condiciones: { fuente: 'BIBLIOTECA_ESTANDAR', aplicabilidad: 'ACTO_CONFIGURADO' } }] : [] }];
-      }
+      if (code.startsWith('PRY-')) return [file.path, { act_ids: [], rules: [], destinos_funcionales: [] }];
       if (code.startsWith('PLD-')) {
         const legal = standardLegalMetadata(code);
         const multiplicidad = ['FISICA', 'MORAL'].includes(String(legal.tipo_cliente)) || ['PLD-A3', 'PLD-A4', 'PLD-A5', 'PLD-A6'].includes(code) ? 'COMPARECIENTE' : 'EXPEDIENTE';

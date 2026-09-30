@@ -1,20 +1,23 @@
-import type { ISRInput, ISRListResponse, ISRRecord } from './isr.types';
+import type { ISRInput, ISRListResponse, ISRRecord, ISRV3Input, ISRV3Result } from './isr.types';
 
 export const emptyISRInput = (taxYear = 2026): ISRInput => ({
   operationType: 'ENAJENACION_INMUEBLE', taxYear,
   taxpayer: { fullName: '', rfc: '', curp: '', personType: 'FISICA', fiscalResidence: 'NO_CONFIRMADA', confirmed: false },
-  property: { description: '', landAndConstructionSameAcquisitionDate: true }, sourceContext: { capturedAt: new Date().toISOString(), acts: [], properties: [], parties: [] }, iva: { applies: false, suggestedFromProperty: false, reviewNote: '' }, acquisitionDate: '', saleDate: '', yearsElapsed: 1, salePrice: '', deductions: [],
+  property: { description: '', landAndConstructionSameAcquisitionDate: true }, operation: { operationDate: '', operationTypeCode: '', instrumentTypeCode: '', deedNumber: '', notary: { number: '', name: '', state: '' }, propertyTypeCode: '', transmissionTypeCode: '', reportingMetadata: {}, source: 'MANUAL_CONFIRMED', confirmed: false }, sourceContext: { capturedAt: new Date().toISOString(), acts: [], properties: [], parties: [] }, iva: { applies: false, suggestedFromProperty: false, reviewNote: '' }, acquisitionDate: '', saleDate: '', yearsElapsed: 1, salePrice: '', deductions: [],
   exemptionTreatment: 'PENDIENTE_REVISION', ordinaryCaseConfirmed: false, specialCases: [],
+  components: [], parties: [], payments: [],
+  criteria: { adjustmentMethod: 'AUTO', resolvedAdjustmentMethod: 'MANUAL_CONFIRMED', tariffSelection: 'AUTO', landLossOffsetsConstructionGain: false, version: 'PENDIENTE', effectiveFrom: '', source: '', referenceCode: '' },
 });
 
 const readyInput: ISRInput = {
   operationType: 'ENAJENACION_INMUEBLE', taxYear: 2026,
   taxpayer: { fullName: 'María Fernanda López Ramírez', rfc: 'LORM8504127G2', curp: 'LORM850412MNTPMR08', personType: 'FISICA', fiscalResidence: 'MEXICO', confirmed: true },
-  property: { sourcePredioId: 'predio-1', description: 'Casa habitación · Paseo de los Cocoteros 125, Bahía de Banderas, Nayarit', landAndConstructionSameAcquisitionDate: true, landSurfaceM2: '420.00', constructionSurfaceM2: '238.00', commercialConstructionSurfaceM2: '0.00', cadastralValue: '1450000.00', appraisalValue: '2100000.00', operationValue: '2000000.00' },
+  property: { sourcePredioId: 'predio-1', description: 'Casa habitación · Paseo de los Cocoteros 125, Bahía de Banderas, Nayarit', addressText: 'Paseo de los Cocoteros 125, Nuevo Vallarta, Bahía de Banderas, Nayarit, 63735', cadastralKey: 'QA-CAT-001', propertyTaxAccount: 'QA-PRED-001', realEstateFolio: 'FR-QA-00418', registryData: { partida: '418', libro: 'QA' }, countryCode: 'MEX', boundaries: [{ order: 1, reference: 'Norte', measurement: '20.00', unit: 'm', neighbor: 'Área común' }], landAndConstructionSameAcquisitionDate: true, landSurfaceM2: '420.00', constructionSurfaceM2: '238.00', commercialConstructionSurfaceM2: '0.00', cadastralValue: '1450000.00', appraisalValue: '2100000.00', operationValue: '2000000.00' },
+  operation: { operationDate: '2026-08-17', operationTypeCode: 'COMPRAVENTA', instrumentTypeCode: 'ESCRITURA_PUBLICA', deedNumber: '418', notary: { id: 'notary-1', number: '12', name: 'Notaría 12', state: 'Nayarit' }, propertyTypeCode: 'HOUSE', transmissionTypeCode: 'ONEROSA', reportingMetadata: { operationReference: 'QA-OP-418', noticeReference: 'QA-AV-418' }, source: 'EXPEDIENTE_SNAPSHOT', confirmed: true },
   sourceContext: {
     capturedAt: '2026-08-17T15:00:00.000Z', expediente: { id: 'exp-1', number: 'EXP-0001-2026', version: 7 },
     acts: [{ id: 'act-1', typeId: 'type-1', name: 'Compraventa de inmueble' }],
-    properties: [{ relationId: 'ep-1', predioId: 'predio-1', actIds: ['act-1'], version: 3, label: 'Casa Nuevo Vallarta', description: 'Casa habitación · Paseo de los Cocoteros 125, Bahía de Banderas, Nayarit', landSurfaceM2: '420.00', constructionSurfaceM2: '238.00', commercialConstructionSurfaceM2: '0.00', cadastralValue: '1450000.00', appraisalValue: '2100000.00', operationValue: '2000000.00', ivaSuggested: false }],
+    properties: [{ relationId: 'ep-1', predioId: 'predio-1', actIds: ['act-1'], version: 3, label: 'Casa Nuevo Vallarta', description: 'Casa habitación · Paseo de los Cocoteros 125, Bahía de Banderas, Nayarit', addressText: 'Paseo de los Cocoteros 125, Nuevo Vallarta, Bahía de Banderas, Nayarit, 63735', cadastralKey: 'QA-CAT-001', propertyTaxAccount: 'QA-PRED-001', realEstateFolio: 'FR-QA-00418', registryData: { partida: '418', libro: 'QA' }, countryCode: 'MEX', boundaries: [{ order: 1, reference: 'Norte', measurement: '20.00', unit: 'm', neighbor: 'Área común' }], landSurfaceM2: '420.00', constructionSurfaceM2: '238.00', commercialConstructionSurfaceM2: '0.00', cadastralValue: '1450000.00', appraisalValue: '2100000.00', operationValue: '2000000.00', ivaSuggested: false }],
     parties: [{ relationId: 'ec-1', comparecienteId: 'party-1', actId: 'act-1', role: 'Enajenante', name: 'María Fernanda López Ramírez', personType: 'FISICA', rfc: 'LORM8504127G2', curp: 'LORM850412MNTPMR08', nationality: 'Mexicana', fiscalResidence: 'NO_CONFIRMADA', participationPercentage: '100.00', validated: true }],
   },
   iva: { applies: false, suggestedFromProperty: false, reviewNote: 'Sin superficie comercial informada en el predio.' },
@@ -48,6 +51,61 @@ const result = {
   ],
 };
 
+export const readyV3Input: ISRV3Input = {
+  schemaVersion: 3,
+  taxYear: 2026,
+  operationDate: '2026-08-17',
+  act: { id: 'type-1', name: 'Compraventa de inmueble', fiscalClassification: 'COMPRAVENTA' },
+  property: { type: 'TERRENO_CONSTRUCCION', sameAcquisitionDate: true },
+  values: {
+    operation: '2000000.00', appraisal: '2100000.00', cadastral: '1450000.00',
+    landSale: '1200000.00', constructionSale: '800000.00',
+  },
+  calculateIVA: true,
+  parties: [
+    {
+      id: 'party-seller', role: 'ENAJENANTE', name: 'María Fernanda López Ramírez', subjectType: 'PF',
+      nationalityCode: 'MX', immigrationStatus: 'Mexicana por nacimiento', fiscalResidence: 'MEXICO', percentage: '100',
+      acquisitionLayers: [{
+        id: 'layer-1', percentage: '100', acquisitionAct: 'ONEROSA', legalDate: '2016-03-01', fiscalDate: '2016-03-01',
+        adjustedLandCost: '650000.00', adjustedConstructionCost: '450000.00', source: 'Escritura_adquisicion.pdf · cláusula quinta', verified: true,
+      }],
+    },
+    {
+      id: 'party-buyer', role: 'ADQUIRENTE', name: 'Roberto Salinas Vélez', subjectType: 'PF',
+      nationalityCode: 'MX', immigrationStatus: 'Mexicano por nacimiento', fiscalResidence: 'MEXICO', percentage: '100',
+    },
+  ],
+  deductions: [{ id: 'd-v3', concept: 'Gastos notariales', amount: '100000.00', paidByPartyId: 'party-seller', component: 'AMBOS', verified: true, supportDocumentId: 'doc-1' }],
+};
+
+export const resultV3: ISRV3Result = {
+  schemaVersion: 3,
+  engineVersion: 'ISR-V3.0',
+  ruleVersion: '2026.1-DOF-2025-12-28',
+  currency: 'MXN',
+  saleISR: [{
+    partyId: 'party-seller', partyName: 'María Fernanda López Ramírez', status: 'GRAVADO', amount: '46659.42',
+    taxableBase: '800000.00', exemptAmount: '0.00', route: 'PF_MEXICO', reason: 'Tarifa de enajenación vigente aplicada a la ganancia individual.', missing: [],
+    traces: [{ ruleId: 'ISR_ENAJENACION_INMUEBLE_PAGO_PROVISIONAL_MX_FED', legalReference: 'LISR artículos 119, 120, 121 y 126', ruleVersion: '2026.1-DOF-2025-12-28', inputsUsed: { ganancia: '800000.00', anos: '10' }, calculation: 'tarifa(ganancia / años) × años', result: '46659.42', explanation: 'Cálculo determinístico individual por enajenante y sus capas de adquisición.' }],
+  }],
+  acquisitionISR: [{
+    partyId: 'party-buyer', partyName: 'Roberto Salinas Vélez', status: 'NO_GENERADO', amount: '0.00',
+    taxableBase: '0.00', exemptAmount: '0.00', route: 'ISR_ADQUISICION', reason: 'El avalúo no excede la contraprestación en más del umbral legal verificado.', missing: [],
+    traces: [{ ruleId: 'RLISR217_THRESHOLD_PERCENT', legalReference: 'RLISR artículo 217', ruleVersion: '1', inputsUsed: { contraprestacion: '2000000.00', avaluo: '2100000.00', umbral: '10' }, calculation: 'avalúo ≤ contraprestación × (1 + umbral)', result: '0.00', explanation: 'No se actualiza el supuesto que genera ISR por adquisición.' }],
+  }],
+  iva: {
+    status: 'GRAVADO', taxableBase: '800000.00', rate: '16', amount: '128000.00', reason: 'Sólo el componente de construcción legalmente gravado integra la base; el suelo nunca se incluyó.', missing: [],
+    traces: [{ ruleId: 'LIVA_GENERAL_RATE', legalReference: 'LIVA artículo 1', ruleVersion: '1', inputsUsed: { construccionGravada: '800000.00', tasa: '16' }, calculation: 'construccionGravada × tasa / 100', result: '128000.00', explanation: 'Determinación de IVA sobre el componente gravado.' }],
+  },
+  missing: [],
+  breakdown: [
+    { key: 'sale:party-seller', label: 'ISR enajenación · María Fernanda López Ramírez', operation: 'PF_MEXICO', amount: '46659.42', source: 'LISR artículos 119, 120, 121 y 126' },
+    { key: 'acquisition:party-buyer', label: 'ISR adquisición · Roberto Salinas Vélez', operation: 'ISR_ADQUISICION', amount: '0.00', source: 'RLISR artículo 217' },
+    { key: 'iva', label: 'IVA', operation: 'GRAVADO', amount: '128000.00', source: 'LIVA artículo 1' },
+  ],
+};
+
 const documents = [
   { id: 'link-1', documento_id: 'doc-1', documento: { id: 'doc-1', nombre_original: 'Escritura_adquisicion.pdf', mime_type: 'application/pdf', size_bytes: 2480000, fecha_carga: '2026-08-17T15:20:00Z' } },
   { id: 'link-2', documento_id: 'doc-2', documento: { id: 'doc-2', nombre_original: 'Avaluo_2026.pdf', mime_type: 'application/pdf', size_bytes: 1860000, fecha_carga: '2026-08-17T15:24:00Z' } },
@@ -64,18 +122,18 @@ export const fixtureRecord = (mode = 'ready'): ISRRecord => {
   return {
     id: 'fixture-isr-2026', folio: 'ISR-2026-00418', tipo_operacion: 'ENAJENACION_INMUEBLE', estado: calculated ? 'CALCULADO' : mode === 'ready' ? 'LISTO_PARA_CALCULAR' : 'BORRADOR', ejercicio: 2026,
     expediente_id: mode === 'link' ? undefined : 'exp-1', contribuyente_nombre: readyInput.taxpayer.fullName, contribuyente_rfc: readyInput.taxpayer.rfc, inmueble_descripcion: readyInput.property.description,
-    input_data: mode === 'new' ? emptyISRInput() : readyInput, ultima_version: calculated ? (mode === 'history' ? 2 : 1) : 0, datos_modificados: mode === 'existing', created_at: '2026-08-17T15:00:00Z', updated_at: '2026-08-17T16:10:00Z',
+    input_data: mode === 'new' ? emptyISRInput() : readyV3Input, ultima_version: calculated ? (mode === 'history' ? 2 : 1) : 0, datos_modificados: mode === 'existing', created_at: '2026-08-17T15:00:00Z', updated_at: '2026-08-17T16:10:00Z',
     expediente: mode === 'link' ? undefined : { id: 'exp-1', numero_pravia: 'EXP-2026-00318', cliente_alias: readyInput.taxpayer.fullName },
     documentos: ['documents', 'extraction-before', 'extraction-after', 'provenance', 'conflict', 'ready', 'result', 'breakdown', 'existing', 'history', 'link', 'federal-result', 'deduction-origin', 'print-summary'].includes(mode) ? documents : [],
     propuestas: ['extraction-after', 'provenance', 'conflict', 'ready', 'result', 'breakdown', 'existing', 'history', 'federal-result', 'deduction-origin', 'print-summary'].includes(mode) ? proposals : [],
-    versiones: calculated ? [{ id: 'v1', version: 1, result, breakdown: result.breakdown, calculated_at: '2026-08-17T15:45:00Z', ruleset_snapshot: { version: result.ruleSet.version }, input_snapshot: readyInput }, ...(mode === 'history' ? [{ id: 'v2', version: 2, result: { ...result, provisionalFederalISR: '48120.20', calculationPrecision: { ...result.calculationPrecision, provisionalFederalISRRaw: '48120.20000' } }, breakdown: result.breakdown, calculated_at: '2026-08-17T16:10:00Z', ruleset_snapshot: { version: result.ruleSet.version }, input_snapshot: readyInput }] : [])] : [],
+    versiones: calculated ? [{ id: 'v1', version: 1, result: resultV3, breakdown: resultV3.breakdown, calculated_at: '2026-08-17T15:45:00Z', ruleset_snapshot: { version: resultV3.ruleVersion }, input_snapshot: readyV3Input }, ...(mode === 'history' ? [{ id: 'v2', version: 2, result: resultV3, breakdown: resultV3.breakdown, calculated_at: '2026-08-17T16:10:00Z', ruleset_snapshot: { version: resultV3.ruleVersion }, input_snapshot: readyV3Input }] : [])] : [],
   };
 };
 
 export const fixtureDirectory: ISRListResponse = {
   kpis: { total: 18, calculated: 11, pending: 5 }, meta: { page: 1, pageSize: 20, total: 18 },
   data: [
-    { ...fixtureRecord('result'), id: 'f1', folio: 'ISR-2026-00418', versiones: [{ result }] },
+    { ...fixtureRecord('result'), id: 'f1', folio: 'ISR-2026-00418', versiones: [{ result: resultV3 }] },
     { ...fixtureRecord('ready'), id: 'f2', folio: 'ISR-2026-00417', contribuyente_nombre: 'Roberto Salinas Vélez', contribuyente_rfc: 'SAVR740922QK4', estado: 'LISTO_PARA_CALCULAR', expediente: { id: 'e2', numero_pravia: 'EXP-2026-00314' }, versiones: [] },
     { ...fixtureRecord('new'), id: 'f3', folio: 'ISR-2026-00416', contribuyente_nombre: 'Inmobiliaria del Pacífico, S.A. de C.V.', contribuyente_rfc: 'IPA190308GK2', tipo_operacion: 'ADQUISICION_INMUEBLE', estado: 'REQUIERE_REVISION', expediente: undefined, versiones: [] },
     { ...fixtureRecord('ready'), id: 'f4', folio: 'ISR-2026-00415', contribuyente_nombre: 'Ana Paula Medina', contribuyente_rfc: 'MERA900115LU8', estado: 'BORRADOR', inmueble_descripcion: 'Terreno · Bucerías, Nayarit', versiones: [] },

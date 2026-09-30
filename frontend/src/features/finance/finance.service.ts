@@ -1,5 +1,5 @@
 import { apiRequest } from '../../services/api/client';
-import type { FinanceAccount, FinanceCatalogs, FinanceMovement, FinanceSummary, MovementDraft, Paginated, Receipt, Receivable, ReconciliationData } from './finance.types';
+import type { ExpedienteInvoice, FinanceAccount, FinanceCatalogs, FinanceMovement, FinanceSummary, MovementDraft, Paginated, Receipt, Receivable, ReconciliationData, RecurringExpense } from './finance.types';
 
 const data = <T>(value: { success:boolean;data:T }|T):T => value && typeof value === 'object' && 'data' in value ? (value as {data:T}).data : value as T;
 const params = (input:Record<string,string|number|undefined>) => { const result=new URLSearchParams(); Object.entries(input).forEach(([key,value])=>{if(value!==undefined&&value!=='')result.set(key,String(value));}); return result.toString(); };
@@ -10,6 +10,7 @@ export const financeService = {
   async movements(filters:Record<string,string|number|undefined>,signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:Paginated<FinanceMovement>}>(`/finanzas/movimientos?${params(filters)}`,{signal}));},
   async receipts(filters:Record<string,string|number|undefined>,signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:Paginated<Receipt>}>(`/finanzas/comprobantes?${params(filters)}`,{signal}));},
   async accounts(signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:FinanceAccount[]}>('/finanzas/cuentas',{signal}));},
+  async expedienteInvoices(estado='',signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:{items:ExpedienteInvoice[];source:string;count:number}}>(`/finanzas/facturacion/expedientes?${params({estado})}`,{signal}));},
   async receivables(filters:Record<string,string|number|undefined>,signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:Paginated<Receivable>}>(`/finanzas/cartera?${params(filters)}`,{signal}));},
   async reconciliation(filters:Record<string,string|undefined>,signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:ReconciliationData}>(`/finanzas/conciliacion?${params(filters)}`,{signal}));},
   async createMovement(draft:MovementDraft){return data(await apiRequest('/finanzas/movimientos',{method:'POST',body:JSON.stringify(draft)}));},
@@ -20,5 +21,9 @@ export const financeService = {
   async downloadReceipt(documentId:string,name:string){const {url}=await this.receiptUrl(documentId);const response=await fetch(url);if(!response.ok)throw new Error('El comprobante no está disponible.');const objectUrl=URL.createObjectURL(await response.blob());const link=document.createElement('a');link.href=objectUrl;link.download=name;link.click();window.setTimeout(()=>URL.revokeObjectURL(objectUrl),1000);},
   async retireReceipt(movementId:string,documentId:string,motivo:string){return data(await apiRequest(`/finanzas/movimientos/${encodeURIComponent(movementId)}/comprobantes/${encodeURIComponent(documentId)}`,{method:'DELETE',body:JSON.stringify({motivo})}));},
   async createAccount(input:Record<string,unknown>){return data(await apiRequest('/finanzas/cuentas',{method:'POST',body:JSON.stringify(input)}));},
+  async recurringExpenses(signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:RecurringExpense[]}>('/finanzas/gastos-recurrentes',{signal}));},
+  async createRecurringExpense(input:Record<string,unknown>){return data(await apiRequest('/finanzas/gastos-recurrentes',{method:'POST',body:JSON.stringify(input)}));},
+  async updateRecurringExpense(id:string,input:Record<string,unknown>){return data(await apiRequest(`/finanzas/gastos-recurrentes/${encodeURIComponent(id)}`,{method:'PATCH',body:JSON.stringify(input)}));},
+  async analyze(query:string,save=false){return data(await apiRequest<{success:boolean;data:{id:string;plan:{metric:string;groupBy:string;period:'7_DIAS'|'30_DIAS'|'3_MESES'|'6_MESES'|'1_ANO';chart:string};read_only:boolean;sql_freeform:boolean}}>('/finanzas/analisis',{method:'POST',body:JSON.stringify({query,save})}));},
   async reconcile(movimiento_id:string,transaccion_bancaria_id:string,metodo='MANUAL'){return data(await apiRequest('/finanzas/conciliacion',{method:'POST',body:JSON.stringify({movimiento_id,transaccion_bancaria_id,metodo})}));},
 };

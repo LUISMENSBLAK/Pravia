@@ -15,8 +15,9 @@ export function getSupabaseClient(): SupabaseClient {
 }
 
 const safeMime = (mimeType: string) => [
-  'application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/jpg', 'application/msword',
+  'application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/bmp', 'image/jpg', 'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/xml', 'text/xml', 'application/zip',
 ].includes(mimeType) ? mimeType : 'application/octet-stream';
 
 export class CloudStorageProvider implements StorageProvider {

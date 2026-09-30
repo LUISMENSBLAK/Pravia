@@ -55,6 +55,8 @@ router.patch('/questionnaires/:questionnaireId/status', manageArtifacts, endpoin
 
 router.get('/artifacts/root', read, endpoint(configurationCatalogController.artifactsRoot));
 router.get('/artifacts/functional-destinations', read, endpoint(configurationCatalogController.functionalDestinations));
+router.get('/artifacts/project-template-assignments', read, endpoint(configurationCatalogController.listProjectTemplateAssignments));
+router.delete('/artifacts/project-template-assignments/:actId', manageArtifacts, endpoint(configurationCatalogController.removeProjectTemplateAssignment));
 router.get('/artifacts/resolve/:destination', read, endpoint(configurationCatalogController.resolveFunctionalDestination));
 router.post('/artifacts/library/bootstrap', manageArtifacts, endpoint(configurationCatalogController.bootstrapLibraryV4, 201));
 router.post('/artifacts/import/preview', manageArtifacts, importUpload.array('files', 100), endpoint(configurationCatalogController.previewArtifactImport));

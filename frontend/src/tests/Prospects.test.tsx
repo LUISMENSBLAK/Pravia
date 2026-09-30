@@ -10,6 +10,7 @@ import type { Prospect, ProspectCatalogs } from '../features/prospects/prospects
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const session = (permissions = ['prospectos.read', 'prospectos.write', 'documentos.read', 'documentos.write']) => ({ user: { id: 'user-1', name: 'Andrea Ruiz', role: 'ADMINISTRACION', permissions } });
 const catalogs: ProspectCatalogs = {
+  actTypes: [{ id: 'act-compraventa', nombre: 'Compraventa', codigo_catalogo: 'COMPRAVENTA' }],
   stages: [
     { code: 'PROSPECTO_RECIBIDO', label: 'Prospecto recibido', order: 1, active: true },
     { code: 'ANTECEDENTES_SOLICITADOS', label: 'Antecedentes solicitados', order: 2, active: true },

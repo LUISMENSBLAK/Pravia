@@ -7,6 +7,7 @@ import { questionnaireCatalogService } from '../services/questionnaireCatalog.se
 import { QuestionnaireError } from '../domain/questionnaire';
 import { functionalDestinationService } from '../services/functionalDestination.service';
 import { questionnaireBanksService } from '../services/questionnaireBanks.service';
+import { projectTemplateAssignmentService } from '../services/projectTemplateAssignment.service';
 
 const actor = (req: Request) => {
   if (!req.user) throw new CatalogConfigurationError(401, 'AUTH_REQUIRED', 'Inicia sesión para continuar.');
@@ -71,6 +72,8 @@ export const configurationCatalogController = {
   functionalDestinations: (_req: Request) => Promise.resolve(functionalDestinationService.catalog()),
   assignFunctionalDestinations: (req: Request) => functionalDestinationService.assign(actor(req), req.params.artifactId, req.body),
   resolveFunctionalDestination: (req: Request) => functionalDestinationService.resolve(actor(req), req.params.destination, { tipoActoId: typeof req.query.tipo_acto_id === 'string' ? req.query.tipo_acto_id : null }),
+  listProjectTemplateAssignments: (req: Request) => projectTemplateAssignmentService.list(actor(req)),
+  removeProjectTemplateAssignment: (req: Request) => projectTemplateAssignmentService.remove(actor(req), req.params.actId),
   bootstrapLibraryV4: (req: Request) => configurationCatalogV4Service.bootstrap(actor(req), String(req.get('Idempotency-Key') || '').trim() || undefined),
   previewArtifactImport: (req: Request) => configurationCatalogV4Service.preview(actor(req), req.files as Express.Multer.File[] || []),
   confirmArtifactImport: (req: Request) => configurationCatalogV4Service.confirm(actor(req), multipartBody(req), req.files as Express.Multer.File[] || [], String(req.get('Idempotency-Key') || '').trim()),

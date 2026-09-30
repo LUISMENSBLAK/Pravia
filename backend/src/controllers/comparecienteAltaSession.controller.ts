@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { ComparecienteAltaSessionService } from '../services/comparecienteAltaSession.service';
+import { canonicalUploadedDocumentMime } from '../services/documentUploadValidation';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -123,13 +124,14 @@ export class ComparecienteAltaSessionController {
           error: 'No se recibió ningún archivo en el campo "archivo"'
         });
       }
+      const canonicalMime = canonicalUploadedDocumentMime(archivo);
 
       const carga = await ComparecienteAltaSessionService.subirDocumentoTemporal({
         sessionId,
         usuarioId,
         buffer: archivo.buffer,
         nombreOriginal: archivo.originalname,
-        mimeType: archivo.mimetype,
+        mimeType: canonicalMime,
         tipoDocumento
       });
 

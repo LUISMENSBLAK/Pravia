@@ -6,7 +6,7 @@ const expedienteId = '770a40da-3ba5-4d24-a293-75fa8d064c05';
 const exclusiveTemplate = '/private/tmp/pravia-corr011-012-014-storage-qa/organizations/30000000-0000-4000-8000-000000000001/qa/correction-011/Machote_Proyecto_QA.docx';
 const evidenceDir = resolve(process.cwd(), 'artifacts/qa-exp010-project-ux');
 
-async function login(page: Page, email = 'qa.correcciones@pravia.test', password = 'Pravia!QA-Release-2026') {
+async function login(page: Page, email = 'qa.correcciones@pravia.test', password = (process.env.PRAVIA_E2E_PASSWORD ?? '')) {
   await page.goto('/login', { waitUntil: 'domcontentloaded' });
   await page.getByRole('textbox', { name: 'Correo electrónico' }).fill(email);
   await page.getByRole('textbox', { name: 'Contraseña', exact: true }).fill(password);

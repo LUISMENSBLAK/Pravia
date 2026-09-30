@@ -18,6 +18,7 @@ import prisma from '../config/prisma';
 import { deleteFile, getSignedUrl, uploadFile } from './supabase.service';
 import { inheritableActivityAttributes, resolveInheritedActivity, validateDeclarativeCondition } from './configurationCatalogV2.domain';
 import { CatalogConfigurationError } from './configurationCatalogError';
+import { normalizeOperationalText, optionalOperationalText as normalizeOptionalOperationalText } from '../utils/operationalText';
 
 export { CatalogConfigurationError } from './configurationCatalogError';
 
@@ -32,6 +33,11 @@ const requiredText = (value: unknown, label: string, max = 180) => {
 const optionalText = (value: unknown, max = 500) => {
   const clean = String(value || '').trim().slice(0, max);
   return clean || null;
+};
+const requiredOperationalText = (value: unknown, label: string, max = 180) => {
+  const clean = normalizeOperationalText(value, max);
+  if (!clean) throw new CatalogConfigurationError(400, 'CATALOG_FIELD_REQUIRED', `${label} es obligatorio.`);
+  return clean;
 };
 const nonNegative = (value: unknown, label: string) => {
   const parsed = Number(value);
@@ -308,17 +314,41 @@ export const actsAndTimesService = {
   },
 
   async create(actor: Actor, input: any) {
-    const nombre = requiredText(input.nombre, 'Nombre del acto');
-    const descripcion = optionalText(input.descripcion);
-    const clasificacion = requiredText(input.clasificacion, 'Clasificación');
-    if (!['TRASLATIVOS', 'NO TRASLATIVOS'].includes(clasificacion)) throw new CatalogConfigurationError(400, 'ACT_CLASSIFICATION_INVALID', 'Selecciona Traslativos o No traslativos.');
-    const familia = requiredText(input.familia, 'Familia');
+    const nombre = requiredOperationalText(input.nombre, 'Nombre del acto');
+    const descripcion = normalizeOptionalOperationalText(input.descripcion);
+    const definitionType = input.tipo_definicion === 'VARIANTE' ? 'VARIANTE' : 'ACTO_BASE';
+    const baseActId = definitionType === 'VARIANTE' ? requiredText(input.acto_base_id, 'Acto base') : null;
+    const requestedClassification = definitionType === 'ACTO_BASE' ? requiredText(input.clasificacion, 'Clasificación') : optionalText(input.clasificacion, 80);
+    if (requestedClassification && !['TRASLATIVOS', 'NO TRASLATIVOS'].includes(requestedClassification)) throw new CatalogConfigurationError(400, 'ACT_CLASSIFICATION_INVALID', 'Selecciona Traslativos o No traslativos.');
+    const requestedFamily = definitionType === 'ACTO_BASE' ? requiredOperationalText(input.familia, 'Familia') : normalizeOptionalOperationalText(input.familia, 180);
     return prisma.$transaction(async (tx) => {
       const duplicate = await tx.tipoActo.findFirst({ where: { nombre: { equals: nombre, mode: 'insensitive' }, archived_at: null, OR: [{ organization_id: actor.organizationId }, { organization_id: null }] }, select: { id: true } });
       if (duplicate) throw new CatalogConfigurationError(409, 'ACT_ALREADY_EXISTS', 'Ya existe un acto con ese nombre.');
+      const baseConfiguration = baseActId ? await tx.configuracionActo.findFirst({
+        where: {
+          organization_id: actor.organizationId,
+          tipo_acto_id: baseActId,
+          tipo_acto: { archived_at: null, OR: [{ organization_id: actor.organizationId }, { organization_id: null }] },
+        },
+        select: { id: true, familia: true, clasificacion: true },
+      }) : null;
+      if (baseActId && !baseConfiguration) throw new CatalogConfigurationError(400, 'ACT_BASE_CONFIGURATION_REQUIRED', 'Configura el acto base antes de crear una variante.');
+      const clasificacion = baseConfiguration?.clasificacion || requestedClassification;
+      const familia = baseConfiguration?.familia || requestedFamily;
+      if (!clasificacion || !familia) throw new CatalogConfigurationError(400, 'ACT_BASE_CONFIGURATION_INCOMPLETE', 'El acto base debe tener clasificación y familia antes de crear una variante.');
       const act = await tx.tipoActo.create({ data: { organization_id: actor.organizationId, codigo_catalogo: await uniqueActCode(tx, nombre), nombre, descripcion, activo: true } });
-      const configuration = await tx.configuracionActo.create({ data: { organization_id: actor.organizationId, tipo_acto_id: act.id, creado_por_id: actor.id, actualizado_por_id: actor.id, activa: booleanValue(input.activo, true), clasificacion, familia, etapas: { create: ['Prefirma', 'Firma', 'Postfirma', 'Registro', 'Cierre'].map((stage, index) => ({ organization_id: actor.organizationId, nombre: stage, orden: index + 1 })) } }, include: actInclude });
-      await audit(tx, actor, 'CFG_ACT_CREATED', 'TipoActo', act.id, undefined, { nombre, descripcion, clasificacion, familia, configuracion_id: configuration.id });
+      const configuration = await tx.configuracionActo.create({ data: {
+        organization_id: actor.organizationId,
+        tipo_acto_id: act.id,
+        creado_por_id: actor.id,
+        actualizado_por_id: actor.id,
+        activa: booleanValue(input.activo, true),
+        clasificacion: baseConfiguration?.clasificacion || clasificacion,
+        familia: baseConfiguration?.familia || familia,
+        hereda_configuracion_id: baseConfiguration?.id || null,
+        ...(baseConfiguration ? {} : { etapas: { create: ['Prefirma', 'Firma', 'Postfirma', 'Registro', 'Cierre'].map((stage, index) => ({ organization_id: actor.organizationId, nombre: stage, orden: index + 1 })) } }),
+      }, include: actInclude });
+      await audit(tx, actor, 'CFG_ACT_CREATED', 'TipoActo', act.id, undefined, { nombre, descripcion, clasificacion: configuration.clasificacion, familia: configuration.familia, tipo_definicion: definitionType, acto_base_id: baseActId, configuracion_id: configuration.id });
       return { ...act, configuration, complete: false };
     });
   },
@@ -341,16 +371,16 @@ export const actsAndTimesService = {
     await prisma.$transaction(async (tx) => {
       const identity: Prisma.TipoActoUpdateInput = {};
       const isTenantOwned = before.organization_id === actor.organizationId;
-      if (isTenantOwned && input.nombre !== undefined) identity.nombre = requiredText(input.nombre, 'Nombre del acto');
-      if (isTenantOwned && input.descripcion !== undefined) identity.descripcion = optionalText(input.descripcion);
+      if (isTenantOwned && input.nombre !== undefined) identity.nombre = requiredOperationalText(input.nombre, 'Nombre del acto');
+      if (isTenantOwned && input.descripcion !== undefined) identity.descripcion = normalizeOptionalOperationalText(input.descripcion);
       if (Object.keys(identity).length) await tx.tipoActo.updateMany({ where: { id: actId }, data: identity });
       const requestedClassification = input.clasificacion === undefined ? undefined : requiredText(input.clasificacion, 'Clasificación');
       if (requestedClassification !== undefined && !['TRASLATIVOS', 'NO TRASLATIVOS'].includes(requestedClassification)) throw new CatalogConfigurationError(400, 'ACT_CLASSIFICATION_INVALID', 'Selecciona Traslativos o No traslativos.');
-      const requestedFamily = input.familia === undefined ? undefined : requiredText(input.familia, 'Familia');
+      const requestedFamily = input.familia === undefined ? undefined : requiredOperationalText(input.familia, 'Familia');
       const functionalChange = ['nombre', 'descripcion', 'activo', 'config_activa', 'requiere_revision', 'clasificacion', 'familia'].some((key) => input[key] !== undefined);
       const configuration = await tx.configuracionActo.update({ where: { id: config.id }, data: {
-        ...(!isTenantOwned && input.nombre !== undefined ? { nombre_personalizado: requiredText(input.nombre, 'Nombre del acto') } : {}),
-        ...(!isTenantOwned && input.descripcion !== undefined ? { descripcion_personalizada: optionalText(input.descripcion) } : {}),
+        ...(!isTenantOwned && input.nombre !== undefined ? { nombre_personalizado: requiredOperationalText(input.nombre, 'Nombre del acto') } : {}),
+        ...(!isTenantOwned && input.descripcion !== undefined ? { descripcion_personalizada: normalizeOptionalOperationalText(input.descripcion) } : {}),
         ...(input.activo !== undefined ? { activa: Boolean(input.activo) } : input.config_activa !== undefined ? { activa: Boolean(input.config_activa) } : {}),
         ...(input.requiere_revision !== undefined ? { requiere_revision: Boolean(input.requiere_revision) } : {}),
         ...(requestedClassification !== undefined ? { clasificacion: requestedClassification } : {}),
@@ -365,7 +395,7 @@ export const actsAndTimesService = {
 
   async createStage(actor: Actor, actId: string, input: any) {
     const configuration = await this.ensureConfiguration(actor, actId);
-    const name = requiredText(input.nombre, 'Nombre de la etapa');
+    const name = requiredOperationalText(input.nombre, 'Nombre de la etapa');
     const max = await prisma.configuracionEtapa.aggregate({ where: { configuracion_id: configuration.id }, _max: { orden: true } });
     return prisma.$transaction(async (tx) => {
       const stage = await tx.configuracionEtapa.create({ data: { organization_id: actor.organizationId, configuracion_id: configuration.id, nombre: name, orden: input.orden === undefined ? (max._max.orden || 0) + 1 : positive(input.orden, 'Orden'), activa: booleanValue(input.activa, true) } });
@@ -378,7 +408,7 @@ export const actsAndTimesService = {
   async updateStage(actor: Actor, stageId: string, input: any) {
     const before = await prisma.configuracionEtapa.findFirst({ where: { id: stageId, organization_id: actor.organizationId }, select: { id: true, configuracion_id: true, nombre: true, orden: true, activa: true } });
     if (!before) throw new CatalogConfigurationError(404, 'STAGE_NOT_FOUND', 'Etapa no encontrada.');
-    const data = { ...(input.nombre !== undefined ? { nombre: requiredText(input.nombre, 'Nombre de la etapa') } : {}), ...(input.orden !== undefined ? { orden: positive(input.orden, 'Orden') } : {}), ...(input.activa !== undefined ? { activa: Boolean(input.activa) } : {}) };
+    const data = { ...(input.nombre !== undefined ? { nombre: requiredOperationalText(input.nombre, 'Nombre de la etapa') } : {}), ...(input.orden !== undefined ? { orden: positive(input.orden, 'Orden') } : {}), ...(input.activa !== undefined ? { activa: Boolean(input.activa) } : {}) };
     return prisma.$transaction(async (tx) => {
       if (data.orden && data.orden !== before.orden) {
         const occupied = await tx.configuracionEtapa.findFirst({ where: { configuracion_id: before.configuracion_id, orden: data.orden, id: { not: stageId } }, select: { id: true } });
@@ -406,12 +436,12 @@ export const actsAndTimesService = {
     const role = input.responsable_rol ? enumValue(Role, input.responsable_rol, 'Rol responsable') : null;
     if (role && userId) throw new CatalogConfigurationError(400, 'DEFAULT_RESPONSIBLE_AMBIGUOUS', 'Selecciona un rol o un usuario, no ambos.');
     return prisma.$transaction(async (tx) => {
-      const activityName = requiredText(input.nombre, 'Nombre de la actividad');
+      const activityName = requiredOperationalText(input.nombre, 'Nombre de la actividad');
       const concept = await tx.configuracionConceptoActividad.create({ data: {
         organization_id: actor.organizationId,
         codigo: `CUSTOM_${randomUUID().replace(/-/g, '').toUpperCase()}`,
         nombre: activityName,
-        descripcion: optionalText(input.descripcion),
+        descripcion: normalizeOptionalOperationalText(input.descripcion),
         duracion_estimada: nonNegative(input.duracion_estimada, 'Duración estimada'),
         tipo_dias: enumValue(ConfiguracionTipoDias, input.tipo_dias, 'Tipo de días'),
         margen_seguridad: nonNegative(input.margen_seguridad ?? 0, 'Margen de seguridad'),
@@ -424,7 +454,7 @@ export const actsAndTimesService = {
         condicion_json: validateDeclarativeCondition(input.condicion_json),
       } });
       const activity = await tx.configuracionActividad.create({ data: {
-        organization_id: actor.organizationId, etapa_id: stageId, concepto_maestro_id: concept.id, nombre: activityName, descripcion: optionalText(input.descripcion),
+        organization_id: actor.organizationId, etapa_id: stageId, concepto_maestro_id: concept.id, nombre: activityName, descripcion: normalizeOptionalOperationalText(input.descripcion),
         duracion_estimada: nonNegative(input.duracion_estimada, 'Duración estimada'), tipo_dias: enumValue(ConfiguracionTipoDias, input.tipo_dias, 'Tipo de días'),
         margen_seguridad: nonNegative(input.margen_seguridad ?? 0, 'Margen de seguridad'), responsable_rol: role, responsable_usuario_id: userId,
         aplica_por_defecto: booleanValue(input.aplica_por_defecto, true), activa: booleanValue(input.activa, true), atributos_heredados: [],
@@ -452,8 +482,8 @@ export const actsAndTimesService = {
     const inherited = new Set(Array.isArray(before.atributos_heredados) ? before.atributos_heredados as string[] : []);
     inheritableActivityAttributes.forEach((key) => { if (input[key] !== undefined) inherited.delete(key); });
     const data: Prisma.ConfiguracionActividadUpdateInput = {
-      ...(input.nombre !== undefined ? { nombre: requiredText(input.nombre, 'Nombre de la actividad') } : {}),
-      ...(input.descripcion !== undefined ? { descripcion: optionalText(input.descripcion) } : {}),
+      ...(input.nombre !== undefined ? { nombre: requiredOperationalText(input.nombre, 'Nombre de la actividad') } : {}),
+      ...(input.descripcion !== undefined ? { descripcion: normalizeOptionalOperationalText(input.descripcion) } : {}),
       ...(input.duracion_estimada !== undefined ? { duracion_estimada: nonNegative(input.duracion_estimada, 'Duración estimada') } : {}),
       ...(input.tipo_dias !== undefined ? { tipo_dias: enumValue(ConfiguracionTipoDias, input.tipo_dias, 'Tipo de días') } : {}),
       ...(input.margen_seguridad !== undefined ? { margen_seguridad: nonNegative(input.margen_seguridad, 'Margen de seguridad') } : {}),
@@ -509,7 +539,7 @@ export const actsAndTimesService = {
     const selector = enumValue(ConfiguracionSelectorExcepcion, input.selector_tipo, 'Tipo de excepción');
     const institutionId = selector === 'INSTITUCION' ? requiredText(input.institucion_id, 'Institución', 64) : null;
     const notariaId = selector === 'NOTARIA' ? requiredText(input.notaria_id, 'Notaría', 64) : null;
-    const jurisdiction = selector === 'JURISDICCION' ? requiredText(input.jurisdiccion, 'Estado o jurisdicción', 120) : null;
+    const jurisdiction = selector === 'JURISDICCION' ? requiredOperationalText(input.jurisdiccion, 'Estado o jurisdicción', 120) : null;
     if (institutionId) await assertOwner(actor, 'INSTITUCION', institutionId);
     if (notariaId) await assertOwner(actor, 'NOTARIA', notariaId);
     const dependencyIds = idList(input.dependency_ids);
@@ -592,7 +622,15 @@ async function validateFolder(actor: Actor, folderId: string | null, ownerType: 
 
 async function validateRulesAndActs(actor: Actor, actIds: string[], rules: any[]) {
   if (!actIds.length && rules.length) throw new CatalogConfigurationError(400, 'ARTIFACT_ACT_REQUIRED', 'Las reglas por acto requieren al menos un acto aplicable.');
-  const acts = await prisma.tipoActo.findMany({ where: { id: { in: actIds }, activo: true, archived_at: null }, select: { id: true } });
+  const acts = await prisma.tipoActo.findMany({
+    where: {
+      id: { in: actIds },
+      activo: true,
+      archived_at: null,
+      OR: [{ organization_id: actor.organizationId }, { organization_id: null }],
+    },
+    select: { id: true },
+  });
   if (acts.length !== actIds.length) throw new CatalogConfigurationError(400, 'ARTIFACT_ACT_INVALID', 'Uno o más actos no son válidos.');
   const stageIds = Array.from(new Set(rules.flatMap((rule) => [rule.etapa_requerida_id, rule.momento_limite_etapa_id]).filter(Boolean).map(String)));
   if (stageIds.length) {
@@ -660,7 +698,7 @@ export const templatesAndFormatsService = {
   },
 
   async createInstitution(actor: Actor, input: any) {
-    const data = { organization_id: actor.organizationId, nombre: requiredText(input.nombre, 'Nombre de la institución'), tipo: enumValue(CatalogoInstitucionTipo, input.tipo, 'Tipo de institución'), activa: booleanValue(input.activa, true) };
+    const data = { organization_id: actor.organizationId, nombre: requiredOperationalText(input.nombre, 'Nombre de la institución'), tipo: enumValue(CatalogoInstitucionTipo, input.tipo, 'Tipo de institución'), activa: booleanValue(input.activa, true) };
     return prisma.$transaction(async (tx) => { const item = await tx.catalogoInstitucion.create({ data }); await audit(tx, actor, 'CFG_INSTITUTION_CREATED', 'CatalogoInstitucion', item.id, undefined, item); return item; });
   },
 
@@ -701,7 +739,7 @@ export const templatesAndFormatsService = {
     await assertOwner(actor, ownerType, ownerId);
     const parentId = optionalText(input.parent_id, 64);
     await validateFolder(actor, parentId, ownerType, ownerId, type);
-    const data = { organization_id: actor.organizationId, propietario_tipo: ownerType, tipo: type, notaria_id: ownerType === 'NOTARIA' ? ownerId : null, institucion_id: ownerType === 'INSTITUCION' ? ownerId : null, parent_id: parentId, nombre: requiredText(input.nombre, 'Nombre de la carpeta'), activa: true };
+    const data = { organization_id: actor.organizationId, propietario_tipo: ownerType, tipo: type, notaria_id: ownerType === 'NOTARIA' ? ownerId : null, institucion_id: ownerType === 'INSTITUCION' ? ownerId : null, parent_id: parentId, nombre: requiredOperationalText(input.nombre, 'Nombre de la carpeta'), activa: true };
     return prisma.$transaction(async (tx) => { const folder = await tx.catalogoCarpeta.create({ data }); await audit(tx, actor, 'CFG_FOLDER_CREATED', 'CatalogoCarpeta', folder.id, undefined, folder); return folder; });
   },
 
@@ -725,7 +763,7 @@ export const templatesAndFormatsService = {
       }
     }
     const data = {
-      ...(input.nombre !== undefined ? { nombre: requiredText(input.nombre, 'Nombre de la carpeta') } : {}),
+      ...(input.nombre !== undefined ? { nombre: requiredOperationalText(input.nombre, 'Nombre de la carpeta') } : {}),
       ...(input.parent_id !== undefined ? { parent_id: parentId } : {}),
     };
     return prisma.$transaction(async (tx) => {
@@ -744,7 +782,16 @@ export const templatesAndFormatsService = {
     const folderId = optionalText(input.carpeta_id, 64);
     await validateFolder(actor, folderId, ownerType, ownerId, type);
     const actIds = idList(input.act_ids); const rules = Array.isArray(input.rules) ? input.rules : [];
-    const destinations = destinationList(actor, input.destinos_funcionales) || [];
+    const destinations = (destinationList(actor, input.destinos_funcionales) || []).map((destination) =>
+      destination.destino === 'PROYECTO_MACHOTE' ? { ...destination, predeterminado: false } : destination,
+    );
+    const projectDestination = destinations.find((destination) => destination.destino === 'PROYECTO_MACHOTE' && destination.activo);
+    if (projectDestination && (type !== 'PLANTILLA' || ownerType !== 'NOTARIA')) {
+      throw new CatalogConfigurationError(400, 'PROJECT_TEMPLATE_TYPE_INVALID', 'Un machote de Proyecto debe ser una Plantilla propia de la Notaría.');
+    }
+    if (projectDestination && actIds.length !== 1) {
+      throw new CatalogConfigurationError(400, 'PROJECT_TEMPLATE_ACT_REQUIRED', 'Selecciona exactamente un Acto para el machote de Proyecto.');
+    }
     await validateRulesAndActs(actor, actIds, rules);
     const version = positive(input.version || 1, 'Versión');
     const checksum = createHash('sha256').update(file.buffer).digest('hex');
@@ -753,14 +800,76 @@ export const templatesAndFormatsService = {
     await uploadFile(file.buffer, storageKey, file.mimetype);
     try {
       return await prisma.$transaction(async (tx) => {
-        const artifact = await tx.catalogoArtefacto.create({ data: {
+        let currentProjectAssignment: any = null;
+        if (projectDestination) {
+          const actId = actIds[0];
+          await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`project-template:${actor.organizationId}:${actId}`}))`);
+          currentProjectAssignment = await tx.projectTemplateAssignment.findUnique({
+            where: { organization_id_tipo_acto_id: { organization_id: actor.organizationId, tipo_acto_id: actId } },
+          });
+          if (currentProjectAssignment?.active && input.replace_project_template !== true) {
+            throw new CatalogConfigurationError(409, 'PROJECT_TEMPLATE_CONFLICT', 'El Acto ya tiene un machote maestro. Elige Cancelar o confirma expresamente Reemplazar.');
+          }
+        }
+        const artifactRecord = await tx.catalogoArtefacto.create({ data: {
           organization_id: actor.organizationId, tipo: type, propietario_tipo: ownerType, notaria_id: ownerType === 'NOTARIA' ? ownerId : null, institucion_id: ownerType === 'INSTITUCION' ? ownerId : null,
-          carpeta_id: folderId, nombre: requiredText(input.nombre, 'Nombre'), descripcion: optionalText(input.descripcion), activo: booleanValue(input.activo, true), creado_por_id: actor.id, actualizado_por_id: actor.id,
-          versiones: { create: { organization_id: actor.organizationId, version, nombre_original: file.originalname, storage_key: storageKey, mime_type: file.mimetype || 'application/octet-stream', size_bytes: file.size, checksum_sha256: checksum, origen: 'CARGA_USUARIO', creado_por_id: actor.id } },
-          actos: { create: actIds.map((tipoActoId) => ({ organization_id: actor.organizationId, tipo_acto_id: tipoActoId })) },
-          reglas: rules.length ? { create: rules.map((rule: any) => ruleData(actor, rule)) } : undefined,
-          destinosFuncionales: destinations.length ? { create: destinations } : undefined,
-        }, include: artifactInclude });
+          carpeta_id: folderId, nombre: requiredOperationalText(input.nombre, 'Nombre'), descripcion: normalizeOptionalOperationalText(input.descripcion), activo: booleanValue(input.activo, true), creado_por_id: actor.id, actualizado_por_id: actor.id,
+        } });
+        // Los destinos tienen relaciones tenant-aware propias. Crearlos como hijos
+        // anidados fuerza el input relacional de Prisma y excluye organization_id.
+        // Conservamos una sola transacción, pero persistimos cada tabla con sus FKs
+        // explícitas para que el aislamiento por organización sea verificable.
+        const artifactVersion = await tx.catalogoArtefactoVersion.create({ data: {
+          organization_id: actor.organizationId,
+          artefacto_id: artifactRecord.id,
+          version,
+          nombre_original: file.originalname,
+          storage_key: storageKey,
+          mime_type: file.mimetype || 'application/octet-stream',
+          size_bytes: file.size,
+          checksum_sha256: checksum,
+          origen: 'CARGA_USUARIO',
+          creado_por_id: actor.id,
+        } });
+        if (actIds.length) await tx.catalogoArtefactoActo.createMany({ data: actIds.map((tipoActoId) => ({
+          organization_id: actor.organizationId,
+          artefacto_id: artifactRecord.id,
+          tipo_acto_id: tipoActoId,
+        })) });
+        if (rules.length) await tx.catalogoArtefactoRegla.createMany({ data: rules.map((rule: any) => ({
+          artefacto_id: artifactRecord.id,
+          ...ruleData(actor, rule),
+        })) });
+        if (destinations.length) await tx.catalogoArtefactoDestino.createMany({ data: destinations.map((destination) => ({
+          ...destination,
+          artefacto_id: artifactRecord.id,
+        })) });
+        const artifact = await tx.catalogoArtefacto.findUniqueOrThrow({ where: { id: artifactRecord.id }, include: artifactInclude });
+        if (projectDestination) {
+          const actId = actIds[0];
+          const versionId = artifactVersion.id;
+          const assignment = await tx.projectTemplateAssignment.upsert({
+            where: { organization_id_tipo_acto_id: { organization_id: actor.organizationId, tipo_acto_id: actId } },
+            update: { artefacto_id: artifact.id, version_id: versionId, active: true, updated_by_id: actor.id },
+            create: {
+              organization_id: actor.organizationId,
+              tipo_acto_id: actId,
+              artefacto_id: artifact.id,
+              version_id: versionId,
+              created_by_id: actor.id,
+              updated_by_id: actor.id,
+            },
+          });
+          await audit(
+            tx,
+            actor,
+            currentProjectAssignment ? 'PROJECT_TEMPLATE_ASSIGNMENT_REPLACED' : 'PROJECT_TEMPLATE_ASSIGNMENT_CREATED',
+            'ProjectTemplateAssignment',
+            assignment.id,
+            currentProjectAssignment || undefined,
+            { act_id: actId, artifact_id: artifact.id, version_id: versionId, source: 'CFG-002' },
+          );
+        }
         await audit(tx, actor, 'CFG_ARTIFACT_CREATED', 'CatalogoArtefacto', artifact.id, undefined, redactPrivateArtifactData(artifact));
         return artifact;
       });
@@ -800,7 +909,7 @@ export const templatesAndFormatsService = {
       await validateFolder(actor, folderId, before.propietario_tipo, ownerId, before.tipo);
     }
     return prisma.$transaction(async (tx) => {
-      await tx.catalogoArtefacto.update({ where: { id: artifactId }, data: { ...(input.nombre !== undefined ? { nombre: requiredText(input.nombre, 'Nombre') } : {}), ...(input.descripcion !== undefined ? { descripcion: optionalText(input.descripcion) } : {}), ...(input.activo !== undefined ? { activo: Boolean(input.activo) } : {}), ...(input.carpeta_id !== undefined ? { carpeta_id: folderId } : {}), actualizado_por_id: actor.id } });
+      await tx.catalogoArtefacto.update({ where: { id: artifactId }, data: { ...(input.nombre !== undefined ? { nombre: requiredOperationalText(input.nombre, 'Nombre') } : {}), ...(input.descripcion !== undefined ? { descripcion: normalizeOptionalOperationalText(input.descripcion) } : {}), ...(input.activo !== undefined ? { activo: Boolean(input.activo) } : {}), ...(input.carpeta_id !== undefined ? { carpeta_id: folderId } : {}), actualizado_por_id: actor.id } });
       if (input.act_ids !== undefined) { await tx.catalogoArtefactoActo.deleteMany({ where: { artefacto_id: artifactId } }); await tx.catalogoArtefactoActo.createMany({ data: actIds.map((id) => ({ organization_id: actor.organizationId, artefacto_id: artifactId, tipo_acto_id: id })) }); }
       if (rules !== null) { await tx.catalogoArtefactoRegla.deleteMany({ where: { artefacto_id: artifactId } }); if (rules.length) await tx.catalogoArtefactoRegla.createMany({ data: rules.map((rule: any) => ({ artefacto_id: artifactId, ...ruleData(actor, rule) })) }); }
       if (destinations !== undefined) {

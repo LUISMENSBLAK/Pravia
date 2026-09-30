@@ -1,5 +1,5 @@
 import { apiBlobRequest, apiRequest } from '../../services/api/client';
-import type { NotaryOption, ProspectCandidate, Quote, QuoteActTypeOption, QuoteBudget, QuoteBudgetConcept, QuoteBudgetExtraction, QuoteContractAction, QuoteDocument, QuoteFollowUp, QuoteListFilters, QuoteListResult, QuoteState } from './quotes.types';
+import type { NotaryOption, ProspectCandidate, Quote, QuoteAIProposal, QuoteActTypeOption, QuoteBudget, QuoteBudgetConcept, QuoteBudgetExtraction, QuoteContractAction, QuoteDocument, QuoteFollowUp, QuoteListFilters, QuoteListResult, QuoteState } from './quotes.types';
 
 const asObject = (value: unknown): Record<string, unknown> | null => value && typeof value === 'object' ? value as Record<string, unknown> : null;
 const queryString = (filters: QuoteListFilters) => {
@@ -64,8 +64,18 @@ export const quotesService = {
   async generateDocument(id: string): Promise<QuoteDocument> {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/generar-documento`, { method: 'POST' });
   },
-  async updateBudget(id: string, input: { concepts: Array<Pick<QuoteBudgetConcept, 'categoria' | 'concepto' | 'importe'>>; origin: 'MANUAL' | 'IMPORTADO'; expectedUpdatedAt: string }): Promise<{ presupuesto: QuoteBudget; updated_at: string; stage: string | null }> {
+  async updateBudget(id: string, input: { concepts: Array<Pick<QuoteBudgetConcept, 'categoria' | 'concepto' | 'importe'>>; origin: 'MANUAL' | 'IMPORTADO'; operationContext: string; expectedUpdatedAt: string }): Promise<{ presupuesto: QuoteBudget; updated_at: string; stage: string | null }> {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/presupuesto`, { method: 'PUT', body: JSON.stringify(input) });
+  },
+  async generateAIProposal(id: string): Promise<{ data: QuoteAIProposal; idempotent: boolean }> {
+    const key = crypto.randomUUID();
+    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/propuestas-ia`, { method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify({ idempotency_key: key }) });
+  },
+  async draftEmailWithAI(id: string): Promise<{ recipient: string; cc: string; subject: string; messageBody: string; provider: 'OPENAI'; model: string; promptVersion: string }> {
+    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/correo-ia`, { method: 'POST' });
+  },
+  async decideAIProposal(id: string, proposalId: string, action: 'APLICAR' | 'DESCARTAR'): Promise<{ data: QuoteAIProposal; applied: boolean }> {
+    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/propuestas-ia/${encodeURIComponent(proposalId)}`, { method: 'PATCH', body: JSON.stringify({ action }) });
   },
   async updateState(id: string, state: QuoteState): Promise<Quote> {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/estado`, { method: 'PUT', body: JSON.stringify({ estado: state }) });
@@ -73,8 +83,11 @@ export const quotesService = {
   async registerDelivery(id: string, input: { destino: 'NOTARIA' | 'CLIENTE'; canal: string; destinatario: string; resumen: string }) {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/registrar-envio`, { method: 'POST', body: JSON.stringify(input) });
   },
-  async contractAction(id: string, input: { action: Exclude<QuoteContractAction, 'CONVERTIR'>; expectedVersion: number; idempotencyKey: string; confirm: true; effectiveAt: string; channel?: string; recipient?: string; evidence?: string; reason?: string }) {
+  async contractAction(id: string, input: { action: Exclude<QuoteContractAction, 'CONVERTIR'>; expectedVersion: number; idempotencyKey: string; confirm: true; effectiveAt: string; channel?: string; recipient?: string; cc?: string; subject?: string; messageBody?: string; deliveryMode?: 'MANUAL_CONFIRMED'; evidence?: string; reason?: string; confirmedActIds?: string[]; formalApplicantId?: string }) {
     return apiRequest<{ idempotent: boolean; eventId: string }>(`/cotizaciones/${encodeURIComponent(id)}/acciones`, { method: 'POST', body: JSON.stringify(input) });
+  },
+  async attachAct(id: string, actId: string) {
+    return apiRequest<{ relation: NonNullable<Quote['actos']>[number]; idempotent: boolean }>(`/cotizaciones/${encodeURIComponent(id)}/actos`, { method: 'POST', body: JSON.stringify({ tipo_acto_id: actId }) });
   },
   async convert(id: string, input?: { expectedVersion?: number; idempotencyKey?: string; confirm?: true; effectiveAt?: string; tipoActoId?: string }): Promise<{ id: string; numero_pravia?: string; idempotent?: boolean }> {
     const { tipoActoId, ...contract } = input ?? {};

@@ -8,6 +8,8 @@ import type {
   AssistantConversationStatus,
   AssistantReply,
   AssistantSuggestion,
+  AssistantAlert,
+  AssistantCollection,
 } from './assistant.types';
 
 export class AssistantUnavailableError extends Error {
@@ -31,6 +33,7 @@ export type AssistantService = {
   getSuggestions(context: AssistantContext, signal?: AbortSignal): Promise<AssistantSuggestion[]>;
   sendMessage(input: SendAssistantInput, signal?: AbortSignal): Promise<AssistantReply>;
   confirmAction(confirmationId: string, conversationId: string, context: AssistantContext, signal?: AbortSignal): Promise<AssistantReply>;
+  submitCollection(collection: AssistantCollection, args: Record<string, unknown>, conversationId: string, context: AssistantContext, signal?: AbortSignal): Promise<AssistantReply>;
   cancelAction?(confirmationId: string, conversationId: string, signal?: AbortSignal): Promise<AssistantReply>;
   dismissSuggestion(suggestionId: string, context: AssistantContext): Promise<void>;
   snoozeSuggestion(suggestionId: string, context: AssistantContext): Promise<void>;
@@ -44,6 +47,8 @@ export type AssistantService = {
   uploadAttachment(conversationId: string, file: File, signal?: AbortSignal): Promise<AssistantAttachment>;
   archiveAttachment(conversationId: string, attachmentId: string): Promise<AssistantAttachment>;
   transcribeAttachment(conversationId: string, attachmentId: string, signal?: AbortSignal): Promise<{ attachmentId: string; transcript: string }>;
+  listAlerts?(): Promise<AssistantAlert[]>;
+  transitionAlert?(id: string, action: 'ACKNOWLEDGE' | 'SNOOZE' | 'RESOLVE', snoozedUntil?: string): Promise<AssistantAlert>;
 };
 
 const requirePath = (path?: string) => {
@@ -82,6 +87,12 @@ export const assistantService: AssistantService = {
   async confirmAction(confirmationId, conversationId, context, signal) {
     const payload = await apiRequest<AssistantReply | { data: AssistantReply }>(requirePath(apiConfig.assistantConfirmPath), {
       method: 'POST', signal, body: JSON.stringify({ confirmationId, conversationId, context }),
+    });
+    return unwrap(payload);
+  },
+  async submitCollection(collection, args, conversationId, context, signal) {
+    const payload = await apiRequest<AssistantReply | { data: AssistantReply }>('/ia/assistant/actions/collect', {
+      method: 'POST', signal, body: JSON.stringify({ actionKey: collection.actionKey, args, conversationId, context, clientMessageId: globalThis.crypto?.randomUUID?.() }),
     });
     return unwrap(payload);
   },
@@ -138,5 +149,15 @@ export const assistantService: AssistantService = {
   },
   async transcribeAttachment(conversationId, attachmentId, signal) {
     return unwrap(await apiRequest<{ attachmentId: string; transcript: string } | { data: { attachmentId: string; transcript: string } }>(conversationPath(conversationId, `/attachments/${encodeURIComponent(attachmentId)}/transcribe`), { method: 'POST', signal }));
+  },
+  async listAlerts() {
+    const payload = await apiRequest<AssistantAlert[] | { data: AssistantAlert[] }>('/ia/assistant/alerts');
+    const result = unwrap(payload);
+    return Array.isArray(result) ? result : [];
+  },
+  async transitionAlert(id, action, snoozedUntil) {
+    return unwrap(await apiRequest<AssistantAlert | { data: AssistantAlert }>(`/ia/assistant/alerts/${encodeURIComponent(id)}`, {
+      method: 'POST', body: JSON.stringify({ action, snoozedUntil }),
+    }));
   },
 };

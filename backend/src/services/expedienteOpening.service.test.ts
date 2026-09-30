@@ -27,6 +27,7 @@ describe('motor único de apertura de expedientes', () => {
       expedienteActo: { create: vi.fn().mockResolvedValue({ id: 'exp-act-1' }) },
       configuracionActo: { findMany: vi.fn().mockResolvedValue([]) },
       expedienteSeguimientoActividad: { findMany: vi.fn().mockResolvedValue([]), upsert: vi.fn(), update: vi.fn() },
+      expedienteSeguimientoOrigen: { findMany: vi.fn().mockResolvedValue([]), findFirst: vi.fn().mockResolvedValue(null), updateMany: vi.fn(), upsert: vi.fn() },
       expedienteSeguimientoDependencia: { findMany: vi.fn().mockResolvedValue([]), upsert: vi.fn() },
       expedienteSeguimientoHistorial: { create: vi.fn(), count: vi.fn().mockResolvedValue(0) },
       expedienteComplianceState: { findFirst: vi.fn().mockResolvedValue(null) },

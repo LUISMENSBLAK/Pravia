@@ -10,10 +10,11 @@ import { isrService } from './isr.service';
 import type { ISRListResponse, ISRStatus, ISRView } from './isr.types';
 import styles from './ISR.module.css';
 
-const statusLabel: Record<ISRStatus, string> = { BORRADOR: 'Borrador', LISTO_PARA_CALCULAR: 'Listo para calcular', CALCULADO: 'Federal calculado', REQUIERE_REVISION: 'Requiere revisión' };
+const statusLabel: Record<ISRStatus, string> = { BORRADOR: 'Borrador', LISTO_PARA_CALCULAR: 'Listo para calcular', CALCULADO: 'Calculado', REQUIERE_REVISION: 'Requiere revisión' };
 const operationLabel = { ENAJENACION_INMUEBLE: 'Enajenación de inmueble', ADQUISICION_INMUEBLE: 'Adquisición de inmueble', CASO_ESPECIAL: 'Caso especial' };
 const tone = (status: ISRStatus) => status === 'CALCULADO' ? 'success' : status === 'LISTO_PARA_CALCULAR' ? 'neutral' : status === 'REQUIERE_REVISION' ? 'danger' : 'warning';
 const money = (value?: string) => value ? new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(value)) : '—';
+const resultAmount = (result?: { provisionalFederalISR?: string; saleISR?: Array<{ amount: string | null }> }) => result?.provisionalFederalISR || result?.saleISR?.find((item) => item.amount !== null)?.amount || undefined;
 
 export function ISRDirectoryPage() {
   const navigate = useNavigate(); const location = useLocation(); const { user } = useAuth();
@@ -43,7 +44,7 @@ export function ISRDirectoryPage() {
   return <PageContainer title="Cálculo ISR" subtitle="Determinaciones fiscales documentadas, reproducibles y sujetas a revisión humana." action={canWrite && <Button onClick={newCalculation}><Plus size={18}/>Nuevo cálculo</Button>}>
     <section className={styles.kpiGrid} aria-label="Resumen de cálculos ISR">
       <article className={styles.kpi}><span><Calculator/></span><div><p>Total de cálculos</p><strong>{data?.kpis.total ?? '—'}</strong><small>Registros dentro de tu alcance</small></div></article>
-      <article className={styles.kpi}><span className={styles.green}><Sigma/></span><div><p>Federales calculados</p><strong>{data?.kpis.calculated ?? '—'}</strong><small>Artículo 126 · versión inmutable</small></div></article>
+      <article className={styles.kpi}><span className={styles.green}><Sigma/></span><div><p>Cálculos determinados</p><strong>{data?.kpis.calculated ?? '—'}</strong><small>Motor fiscal · versión inmutable</small></div></article>
       <article className={styles.kpi}><span className={styles.amber}><FileClock/></span><div><p>Pendientes de información</p><strong>{data?.kpis.pending ?? '—'}</strong><small>Borrador o en revisión</small></div></article>
     </section>
 
@@ -63,9 +64,9 @@ export function ISRDirectoryPage() {
       {!loading && view === 'cards' && <div className={styles.cardGrid}>{items.map((item) => <button type="button" className={styles.calculationCard} key={item.id} onClick={()=>navigate(`/calculo-isr/${item.id}${fixture?'?fixture=result':''}`)}>
         <header><div><span>{item.folio}</span><h2>{item.contribuyente_nombre || 'Contribuyente pendiente'}</h2></div><Badge tone={tone(item.estado)}>{statusLabel[item.estado]}</Badge></header>
         <dl><div><dt>Operación</dt><dd>{operationLabel[item.tipo_operacion]}</dd></div><div><dt>Expediente</dt><dd>{item.expediente?.numero_pravia || 'Sin vincular'}</dd></div><div><dt>Inmueble</dt><dd>{item.inmueble_descripcion || 'Información pendiente'}</dd></div></dl>
-        <footer><span>{new Date(item.updated_at).toLocaleDateString('es-MX')}</span><strong>{item.estado==='CALCULADO'?money(item.versiones?.[0]?.result.provisionalFederalISR):'Resultado pendiente'}</strong></footer>
+        <footer><span>{new Date(item.updated_at).toLocaleDateString('es-MX')}</span><strong>{item.estado==='CALCULADO'?money(resultAmount(item.versiones?.[0]?.result)):'Resultado pendiente'}</strong></footer>
       </button>)}</div>}
-      {!loading && view === 'list' && <div className={styles.tableWrap}><table><thead><tr><th>Folio</th><th>Contribuyente</th><th>Operación</th><th>Expediente</th><th>Actualización</th><th>Resultado federal</th><th>Estado</th></tr></thead><tbody>{items.map((item)=><tr key={item.id} tabIndex={0} onClick={()=>navigate(`/calculo-isr/${item.id}${fixture?'?fixture=result':''}`)} onKeyDown={(event)=>{if(event.key==='Enter')navigate(`/calculo-isr/${item.id}`)}}><td><strong>{item.folio}</strong></td><td>{item.contribuyente_nombre || 'Pendiente'}<small>{item.contribuyente_rfc}</small></td><td>{operationLabel[item.tipo_operacion]}</td><td>{item.expediente?.numero_pravia || 'Sin vincular'}</td><td>{new Date(item.updated_at).toLocaleDateString('es-MX')}</td><td>{item.estado==='CALCULADO'?money(item.versiones?.[0]?.result.provisionalFederalISR):'—'}</td><td><Badge tone={tone(item.estado)}>{statusLabel[item.estado]}</Badge></td></tr>)}</tbody></table></div>}
+      {!loading && view === 'list' && <div className={styles.tableWrap}><table><thead><tr><th>Folio</th><th>Contribuyente</th><th>Operación</th><th>Expediente</th><th>Actualización</th><th>Resultado ISR</th><th>Estado</th></tr></thead><tbody>{items.map((item)=><tr key={item.id} tabIndex={0} onClick={()=>navigate(`/calculo-isr/${item.id}${fixture?'?fixture=result':''}`)} onKeyDown={(event)=>{if(event.key==='Enter')navigate(`/calculo-isr/${item.id}`)}}><td><strong>{item.folio}</strong></td><td>{item.contribuyente_nombre || 'Pendiente'}<small>{item.contribuyente_rfc}</small></td><td>{operationLabel[item.tipo_operacion]}</td><td>{item.expediente?.numero_pravia || 'Sin vincular'}</td><td>{new Date(item.updated_at).toLocaleDateString('es-MX')}</td><td>{item.estado==='CALCULADO'?money(resultAmount(item.versiones?.[0]?.result)):'—'}</td><td><Badge tone={tone(item.estado)}>{statusLabel[item.estado]}</Badge></td></tr>)}</tbody></table></div>}
     </section>
   </PageContainer>;
 }

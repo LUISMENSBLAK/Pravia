@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Check, Download, Eye, FilePlus2, FileText, LoaderCircle, Send, Trash2, X } from 'lucide-react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { DocumentViewer } from '../../components/documents/DocumentViewer';
 import { downloadPrivateUrl } from '../../components/documents/documentDownload';
 import { useAuth } from '../auth/AuthProvider';
@@ -22,6 +22,8 @@ type ContractDialogAction = 'COMENZAR_ELABORACION' | 'INICIAR_SEGUIMIENTO' | 'AC
 export function QuoteDetailPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const processedReturnedAct = useRef('');
   const { user } = useAuth();
   const [quote, setQuote] = useState<Quote | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -42,6 +44,16 @@ export function QuoteDetailPage() {
   }, [id]);
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
   const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(''), 3500); };
+  useEffect(() => {
+    const returned = location.state as { cfg001CreatedActId?: string; cfg001CreatedActName?: string } | null;
+    const actId = returned?.cfg001CreatedActId;
+    if (!actId || status !== 'ready' || processedReturnedAct.current === actId) return;
+    processedReturnedAct.current = actId;
+    void quotesService.attachAct(id, actId)
+      .then(async () => { await load(); notify(`${returned?.cfg001CreatedActName || 'Acto'} quedó seleccionado en la cotización.`); })
+      .catch((cause) => notify(cause instanceof Error ? cause.message : 'El acto se creó, pero no pudo vincularse a la cotización.'))
+      .finally(() => navigate(`/cotizaciones/${id}`, { replace: true, state: null }));
+  }, [id, load, location.state, navigate, status]);
   const updateLegacyState = async (state: QuoteState) => {
     if (!quote) return;
     setBusy(state);
@@ -108,7 +120,7 @@ export function QuoteDetailPage() {
   return <div className={styles.detailPage} data-ai-trigger={accepted && !quote.expediente ? 'COTIZACION_ACEPTADA_SIN_EXPEDIENTE' : undefined}>
     <Link className={styles.backLink} to="/cotizaciones"><ArrowLeft size={17} />Cotizaciones</Link>
     <header className={styles.detailHeader}>
-      <div><div className={styles.detailEyebrow}><QuoteStatusBadge quote={quote} />{!canonical && <span>Registro histórico</span>}</div><h1>{quote.numero_cotizacion || quote.numero_solicitud || 'Cotización'}</h1><p>{quote.prospecto?.nombre || 'Prospecto no disponible'} · {quote.prospecto?.tipo_acto || 'Acto sin especificar'}</p></div>
+      <div><div className={styles.detailEyebrow}><QuoteStatusBadge quote={quote} />{!canonical && <span>Registro histórico</span>}</div><h1>{quote.numero_cotizacion || quote.numero_solicitud || 'Cotización'}</h1><p>{quote.prospecto?.nombre || 'Prospecto no disponible'} · {quote.actos?.map((item) => item.tipo_acto.nombre).join(', ') || quote.prospecto?.tipo_acto || 'Acto sin especificar'}</p></div>
       <div className={styles.detailActions}>
         {canWrite && (quote.presupuesto?.concepts?.length ?? 0) > 0 && <button type="button" className={styles.primaryButton} onClick={() => void generateDocument()} disabled={busy === 'generate'}>{busy === 'generate' ? <LoaderCircle className={styles.spin} size={17} /> : <FilePlus2 size={17} />}Generar cotización</button>}
         {canonical && canWrite && actions.includes('ENVIAR_CLIENTE') && <button type="button" className={styles.primaryButton} onClick={() => setDelivery('CLIENTE')}><Send size={17} />Registrar envío al cliente</button>}
@@ -123,7 +135,7 @@ export function QuoteDetailPage() {
     <section className={styles.detailOverview} aria-label="Resumen de cotización">
       <article><small>Cliente</small><strong>{quote.prospecto?.nombre || 'Sin cliente visible'}</strong><span>{quote.prospecto?.email || quote.prospecto?.telefono || 'Sin contacto visible'}</span></article>
       <article><small>Importe cliente</small><strong>{quote.total_cliente == null ? 'Sin importe' : money(quote.total_cliente)}</strong><span>Total de la cotización</span></article>
-      <article><small>{canonical ? 'Hito actual' : 'Vigencia / plazo histórico'}</small><strong className={styles[`deadline-${deadline.tone}`]}>{deadline.label}</strong><span>{canonical ? 'Fecha contractual registrada' : quote.fecha_limite_respuesta_notaria ? shortDate(quote.fecha_limite_respuesta_notaria) : 'Sin vencimiento registrado'}</span></article>
+      <article><small>{quote.workflow?.daysWithoutResponse != null ? 'Días sin respuesta' : canonical ? 'Hito actual' : 'Vigencia / plazo histórico'}</small><strong className={styles[`deadline-${deadline.tone}`]}>{quote.workflow?.daysWithoutResponse != null ? `${quote.workflow.daysWithoutResponse} día${quote.workflow.daysWithoutResponse === 1 ? '' : 's'}` : deadline.label}</strong><span>{quote.workflow?.daysWithoutResponse != null ? `Desde el primer envío confirmado · ${shortDate(quote.workflow.firstSentAt)}` : canonical ? 'Fecha contractual registrada' : quote.fecha_limite_respuesta_notaria ? shortDate(quote.fecha_limite_respuesta_notaria) : 'Sin vencimiento registrado'}</span></article>
       <article><small>Responsable</small><strong>{quote.creada_por?.nombre || 'Sin asignar'}</strong><span>Presupuesto estructurado vigente</span></article>
     </section>
 
@@ -134,6 +146,7 @@ export function QuoteDetailPage() {
         <QuoteActivity quote={quote} />
       </main>
       <aside>
+        <section className={styles.detailSection}><header><div><h2>Actos de la cotización</h2><p>Fuente canónica compartida con Prospectos y Expedientes.</p></div></header>{quote.actos?.length ? <ul className={styles.documentList}>{quote.actos.map((item) => <li key={item.id}><span><strong>{item.tipo_acto.nombre}</strong><small>{item.tipo_acto.codigo_catalogo || 'Acto de esta Notaría'}</small></span></li>)}</ul> : <p className={styles.sectionEmpty}>Sin actos vinculados.</p>}{canonical && canWrite && ['BORRADOR', 'EN_ELABORACION'].includes(quote.workflow?.stage || '') && <Link className={styles.secondaryButton} to={`/configuracion/actos-tiempos?returnTo=${encodeURIComponent(`/cotizaciones/${quote.id}`)}`}>+ Crear nuevo acto en Actos y tiempos</Link>}</section>
         <section className={styles.detailSection}><header><div><h2>Acciones de negocio</h2><p>{canonical ? 'Acciones contractuales disponibles para el hito actual.' : 'Compatibilidad operativa del registro histórico.'}</p></div></header><div className={styles.businessActions}>
           {canonical && canWrite && actions.includes('COMENZAR_ELABORACION') && <button type="button" className={styles.primaryButton} onClick={() => setContractAction('COMENZAR_ELABORACION')}>Comenzar elaboración</button>}
           {canonical && canWrite && actions.includes('INICIAR_SEGUIMIENTO') && <button type="button" className={styles.primaryButton} onClick={() => setContractAction('INICIAR_SEGUIMIENTO')}>Iniciar seguimiento</button>}

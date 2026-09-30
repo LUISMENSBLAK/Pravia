@@ -86,9 +86,9 @@ export function ComparecienteForm(props: Props) {
       <label className={`${styles.workspaceField} ${styles.fullWidth}`}><span>Objeto social resumido</span><textarea value={draft.objeto_social_resumido || ''} readOnly={readOnly} onChange={(event)=>onChange('objeto_social_resumido',event.target.value)} rows={3} /></label>
     </Section>}
     <Section icon={Contact} title="Contacto"><Field {...props} name="telefono" label="Teléfono" type="tel" /><Field {...props} name="correo" label="Correo electrónico" type="email" /></Section>
-    {addressFields('dom_particular','Domicilio particular',props)}
+    {draft.tipo_persona === 'FISICA' && addressFields('dom_particular','Domicilio particular',props)}
     {addressFields('dom_fiscal','Domicilio fiscal',props)}
-    <Section icon={FileBadge} title="Identificación oficial">
+    {draft.tipo_persona === 'FISICA' && <Section icon={FileBadge} title="Identificación oficial">
       <SelectField {...props} name="tipo_identificacion" label="Tipo de identificación" options={[["INE","INE"],["PASAPORTE","Pasaporte"],["CEDULA_PROFESIONAL","Cédula profesional"],["DOCUMENTO_MIGRATORIO","Documento migratorio"],["OTRA","Otra"]]} source={sources.tipo_identificacion} />
       <Field {...props} name="folio_identificacion" label="Folio" source={sources.folio_identificacion} />
       {(props.ineIdentifiers?.cic||props.ineIdentifiers?.ocr)&&<fieldset className={styles.ineIdentifierSelector}><legend>Identificadores detectados en INE</legend>{props.ineIdentifiers.cic&&<label><input type="radio" name="ine-identifier" checked={draft.folio_identificacion===props.ineIdentifiers.cic} disabled={readOnly} onChange={()=>onChange('folio_identificacion',props.ineIdentifiers!.cic!)}/><span>CIC: <strong>{props.ineIdentifiers.cic}</strong></span></label>}{props.ineIdentifiers.ocr&&<label><input type="radio" name="ine-identifier" checked={draft.folio_identificacion===props.ineIdentifiers.ocr} disabled={readOnly} onChange={()=>onChange('folio_identificacion',props.ineIdentifiers!.ocr!)}/><span>OCR: <strong>{props.ineIdentifiers.ocr}</strong></span></label>}<small>Elige uno. Si ambos fueron detectados, PRAVIA no selecciona automáticamente.</small></fieldset>}
@@ -96,7 +96,7 @@ export function ComparecienteForm(props: Props) {
       <Field {...props} name="pais_emisor" label="País emisor" source={sources.pais_emisor} />
       <Field {...props} name="fecha_expedicion_identificacion" label="Fecha de expedición" type="date" source={sources.fecha_expedicion_identificacion} />
       <Field {...props} name="fecha_vencimiento_identificacion" label="Fecha de vencimiento" type="date" source={sources.fecha_vencimiento_identificacion} />
-    </Section>
+    </Section>}
     <section className={styles.formSection}><header><span><FileBadge size={17}/></span><h2>Observaciones notariales</h2></header><label className={styles.notarialNotes}><span className={styles.srOnly}>Observaciones notariales</span><textarea value={draft.observaciones || ''} readOnly={readOnly} onChange={(event)=>onChange('observaciones',event.target.value)} rows={5} placeholder="Notas humanas relevantes para la operación notarial" /></label></section>
   </div>;
 }

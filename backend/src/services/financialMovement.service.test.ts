@@ -15,6 +15,7 @@ function database(overrides: Record<string, unknown> = {}) {
     cuentaFinanciera: { findFirst: vi.fn().mockResolvedValue({ id: 'account-1', activa: true }) },
     movimientoFinanciero: {
       findUnique: vi.fn().mockResolvedValue(null),
+      findFirst: vi.fn().mockResolvedValue(null),
       create: vi.fn().mockImplementation(({ data }) => ({ id: 'movement-1', ...data, distribuciones: data.distribuciones.create, cuenta: { id: 'account-1' } })),
       update: vi.fn().mockImplementation(({ data }) => ({ id: 'movement-1', ...data })),
     },
@@ -33,6 +34,24 @@ describe('FinancialMovementService', () => {
     const result = await service.createDraft(baseInput, 'actor-1', 'corr-1');
     expect(result.movement).toMatchObject({ folio: 'MOV-2026-000042', naturaleza: 'INGRESO', estatus: 'PENDIENTE_COMPROBANTE', monto: 100_000 });
     expect(tx.movimientoFinanciero.create.mock.calls[0][0].data.validado_por_id).toBeUndefined();
+  });
+
+  it('scopea cuenta, categorías, movimiento y auditoría a la organización activa', async () => {
+    const { service, tx } = database();
+    await service.createDraft(baseInput, 'actor-1', 'corr-tenant', 'org-active');
+    expect(tx.movimientoFinanciero.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ idempotency_key: 'idem-1', organization_id: 'org-active' }),
+    }));
+    expect(tx.cuentaFinanciera.findFirst).toHaveBeenCalledWith({ where: { id: 'account-1', activa: true, organization_id: 'org-active' } });
+    expect(tx.categoriaFinanciera.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ OR: [{ organization_id: 'org-active' }, { organization_id: null }] }),
+    }));
+    expect(tx.movimientoFinanciero.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ organization_id: 'org-active' }),
+    }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ organization_id: 'org-active' }),
+    }));
   });
 
   it('acepta distribución parcial, conserva el remanente y no la aplica', async () => {

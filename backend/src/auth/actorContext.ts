@@ -27,7 +27,7 @@ export class TenantContextError extends Error {
 }
 
 export const actorScopeForRole = (role: Role): ActorScope =>
-  ['DIRECCION', 'ADMINISTRACION', 'CONSULTA'].includes(role) ? 'GLOBAL' : 'ASSIGNED_OBJECTS';
+  ['DIRECCION', 'ADMINISTRACION', 'CONSULTA', 'FINANCIERO'].includes(role) ? 'GLOBAL' : 'ASSIGNED_OBJECTS';
 
 export const currentActorContext = () => actorStorage.getStore();
 

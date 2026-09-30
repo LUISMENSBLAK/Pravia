@@ -45,11 +45,13 @@ import {
   getProyectoWorkspace,
   generarProyectoContractual,
   generarProyectoDesdeMachoteExcepcional,
+  aplicarIndicacionesProyecto,
 } from '../controllers/proyectos.controller';
 import { requireExpedienteAccess, requirePermission } from '../middleware/auth.middleware';
-import { applyExpedienteActoChange, listExpedienteActos, previewExpedienteActoChange } from '../controllers/expedienteActos.controller';
+import { applyExpedienteActoChange, listExpedienteActos, previewExpedienteActoChange, updateExpedienteActoObjectPercentage } from '../controllers/expedienteActos.controller';
 import {
   applyExpedientePartyChange,
+  createExpedientePartyRole,
   getExpedientePartyCatalogs,
   listExpedienteParties,
   previewExpedientePartyChange,
@@ -100,8 +102,8 @@ import {
   updateExpedienteBudget,
 } from '../controllers/expedienteBudget.controller';
 import {
-  applyExpedienteIncome, createExternalPaymentRequest, createInternalPaymentRequest,
-  generateExpedientePraviaReceipt, getExpedienteFinance, getExpedienteFinanceDocumentUrl,
+  applyExpedienteIncome, completeExpedienteIncomeInvoice, createExternalPaymentRequest, createInternalPaymentRequest,
+  generateExpedientePraviaReceipt, generateExpedienteAccountStatement, getExpedienteFinance, getExpedienteFinanceDocumentUrl,
   payExpedienteRequest, proposeExpedienteFinanceAI, reportExpedienteIncome,
   retireExpedienteFinanceDocument, uploadExp008, validateExpedienteFinanceAI,
   verifyExpedientePraviaReceipt, voidExpedienteIncome, voidExpedientePaymentRequest,
@@ -126,9 +128,11 @@ router.post('/:id/cuestionarios/respuestas', requirePermission('expedientes.writ
 router.get('/:id/actos', listExpedienteActos);
 router.post('/:id/actos/preview', requirePermission('expedientes.write'), previewExpedienteActoChange);
 router.post('/:id/actos/aplicar', requirePermission('expedientes.write'), applyExpedienteActoChange);
+router.patch('/:id/actos/:actId/porcentaje-objeto', requirePermission('expedientes.write'), updateExpedienteActoObjectPercentage);
 router.get('/:id/comparecientes', requirePermission('comparecientes.read'), listExpedienteParties);
 router.get('/:id/comparecientes/buscar', requirePermission('comparecientes.read'), searchExpedienteParties);
 router.get('/:id/comparecientes/catalogos', requirePermission('comparecientes.read'), getExpedientePartyCatalogs);
+router.post('/:id/comparecientes/roles', requirePermission('expedientes.write'), requirePermission('comparecientes.write'), createExpedientePartyRole);
 router.post('/:id/comparecientes/preview', requirePermission('expedientes.write'), requirePermission('comparecientes.write'), previewExpedientePartyChange);
 router.post('/:id/comparecientes/aplicar', requirePermission('expedientes.write'), requirePermission('comparecientes.write'), applyExpedientePartyChange);
 router.get('/:id/predios', listExpedientePredios);
@@ -155,12 +159,14 @@ router.post('/:id/presupuesto/generar', requirePermission('expedientes.write'), 
 router.get('/:id/presupuesto/documentos/:historyId/url', requirePermission('documentos.read'), getExpedienteBudgetPdfUrl);
 router.delete('/:id/presupuesto/documentos/:historyId', requirePermission('documentos.unlink'), deleteExpedienteBudgetPdf);
 router.get('/:id/finanzas-operativas', requirePermission('expedientes.read'), getExpedienteFinance);
-router.post('/:id/finanzas-operativas/ingresos', requirePermission('expedientes.write'), requirePermission('documentos.write'), uploadExp008.single('file'), reportExpedienteIncome);
+router.post('/:id/finanzas-operativas/estado-cuenta', requirePermission('expedientes.read'), requirePermission('documentos.write'), generateExpedienteAccountStatement);
+router.post('/:id/finanzas-operativas/ingresos', requirePermission('expedientes.write'), requirePermission('documentos.write'), uploadExp008.fields([{ name: 'file', maxCount: 1 }, { name: 'invoice_pdf', maxCount: 1 }, { name: 'invoice_xml', maxCount: 1 }]), reportExpedienteIncome);
 router.post('/:id/finanzas-operativas/solicitudes/interna', requirePermission('expedientes.write'), requirePermission('documentos.write'), createInternalPaymentRequest);
 router.post('/:id/finanzas-operativas/solicitudes/externa', requirePermission('expedientes.write'), requirePermission('documentos.write'), uploadExp008.single('file'), createExternalPaymentRequest);
 router.post('/:id/finanzas-operativas/ia/proponer', requirePermission('ia.execute'), proposeExpedienteFinanceAI);
 router.post('/:id/finanzas-operativas/ia/propuestas/:proposalId/validar', requirePermission('finanzas.validate'), validateExpedienteFinanceAI);
 router.post('/:id/finanzas-operativas/ingresos/:incomeId/aplicar', requirePermission('finanzas.validate'), applyExpedienteIncome);
+router.post('/:id/finanzas-operativas/ingresos/:incomeId/factura', requirePermission('finanzas.validate'), requirePermission('documentos.write'), uploadExp008.fields([{ name: 'invoice_pdf', maxCount: 1 }, { name: 'invoice_xml', maxCount: 1 }]), completeExpedienteIncomeInvoice);
 router.post('/:id/finanzas-operativas/solicitudes/:requestId/pagar', requirePermission('finanzas.validate'), uploadExp008.fields([{ name: 'payment_proof', maxCount: 1 }, { name: 'fiscal_document', maxCount: 1 }]), payExpedienteRequest);
 router.post('/:id/finanzas-operativas/movimientos/:movementId/comprobante-pravia', requirePermission('finanzas.validate'), requirePermission('documentos.write'), generateExpedientePraviaReceipt);
 router.get('/:id/finanzas-operativas/documentos/:linkId/url', requirePermission('documentos.read'), getExpedienteFinanceDocumentUrl);
@@ -211,6 +217,7 @@ router.get('/:id/proyecto/workspace', requirePermission('expedientes.project.rea
 router.get('/:id/proyecto/matriz-datos', requirePermission('expedientes.project.read'), getDatosDetectadosMatrix);
 router.post('/:id/proyecto/generar', requirePermission('expedientes.write'), requirePermission('documentos.write'), requirePermission('ia.execute'), generarProyectoContractual);
 router.post('/:id/proyecto/generar-desde-machote', requirePermission('expedientes.write'), requirePermission('documentos.write'), requirePermission('ia.execute'), uploadProyectoMulter.single('file'), generarProyectoDesdeMachoteExcepcional);
+router.post('/:id/proyecto/aplicar-indicaciones', requirePermission('expedientes.write'), requirePermission('documentos.write'), requirePermission('ia.execute'), aplicarIndicacionesProyecto);
 router.post('/:id/proyecto/upload', requirePermission('expedientes.write'), requirePermission('documentos.write'), uploadProyectoMulter.single('file'), uploadProyectoVersion);
 router.patch('/:id/proyecto/versions/:versionId', requirePermission('expedientes.write'), requirePermission('documentos.write'), updateProyectoVersion);
 router.get('/:id/proyecto/versions/:versionId/visualizar', requirePermission('expedientes.project.read'), streamProyectoVersion);

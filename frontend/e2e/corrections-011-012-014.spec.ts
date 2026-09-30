@@ -11,7 +11,7 @@ const open = (page: Page, path: string) => page.goto(path, { waitUntil: 'domcont
 async function login(page: Page) {
   await open(page, '/login');
   await page.getByRole('textbox', { name: 'Correo electrónico' }).fill('qa.correcciones@pravia.test');
-  await page.getByRole('textbox', { name: 'Contraseña', exact: true }).fill('Pravia!QA-Release-2026');
+  await page.getByRole('textbox', { name: 'Contraseña', exact: true }).fill((process.env.PRAVIA_E2E_PASSWORD ?? ''));
   await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
   await page.waitForURL('**/mi-dia');
 }

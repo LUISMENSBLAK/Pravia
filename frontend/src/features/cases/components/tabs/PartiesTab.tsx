@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { ApiError } from '../../../../services/api/client';
 import { expedienteReturnParams } from '../../expedienteNavigation';
 import { expedientesService } from '../../expedientes.service';
-import type { ExpedienteDetail, ExpedientePartyCatalogs, ExpedientePartyCommand, ExpedientePartyPreview, ExpedientePartyRelation, ExpedientePartySearchOption } from '../../expedientes.types';
+import type { ExpedienteDetail, ExpedientePartyCatalogs, ExpedientePartyCommand, ExpedientePartyPreview, ExpedientePartyRelation, ExpedientePartySearchOption, ExpedientePartyValidation } from '../../expedientes.types';
 import styles from '../../Expedientes.module.css';
 
 type DialogState = { operation: 'LINK' | 'UPDATE' | 'UNLINK'; current?: ExpedientePartyRelation };
@@ -29,6 +29,7 @@ export function PartiesTab({ expediente, onChanged = () => undefined }: { expedi
   const location = useLocation();
   const returned = location.state as { exp003NewComparecienteId?: string; exp003ActId?: string | null } | null;
   const [relations, setRelations] = useState<ExpedientePartyRelation[]>(expediente.comparecientes || []);
+  const [validations, setValidations] = useState<ExpedientePartyValidation[]>([]);
   const [catalogs, setCatalogs] = useState<ExpedientePartyCatalogs | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'denied' | 'error'>('loading');
   const [dialog, setDialog] = useState<DialogState | null>(null);
@@ -51,11 +52,14 @@ export function PartiesTab({ expediente, onChanged = () => undefined }: { expedi
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState('');
   const [idempotencyKey, setIdempotencyKey] = useState('');
+  const [creatingRole, setCreatingRole] = useState(false);
+  const [roleName, setRoleName] = useState('');
+  const [roleDescription, setRoleDescription] = useState('');
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
       const [relationResult, catalogResult] = await Promise.all([expedientesService.listParties(expediente.id, signal), expedientesService.partyCatalogs(expediente.id, signal)]);
-      setRelations(relationResult.data); setCatalogs(catalogResult); setStatus('ready');
+      setRelations(relationResult.data); setValidations(relationResult.validations || []); setCatalogs(catalogResult); setStatus('ready');
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) setStatus(error instanceof ApiError && error.status === 403 ? 'denied' : 'error');
     }
@@ -138,6 +142,17 @@ export function PartiesTab({ expediente, onChanged = () => undefined }: { expedi
     const params = new URLSearchParams(expedienteReturnParams(expediente.id, 'comparecientes')); if (actId) params.set('fromActo', actId);
     navigate(`/comparecientes/nuevo?${params.toString()}`);
   };
+  const createRole = async () => {
+    if (!actId || roleName.trim().length < 2) return;
+    setWorking(true); setMessage('');
+    try {
+      const result = await expedientesService.createPartyRole(expediente.id, { expediente_acto_id: actId, nombre: roleName, descripcion: roleDescription || null });
+      const updated = await expedientesService.partyCatalogs(expediente.id);
+      setCatalogs(updated); setCharacterId(result.role.id); setCreatingRole(false); setRoleName(''); setRoleDescription(''); setPreview(null);
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : 'No pudimos crear el nuevo rol.');
+    } finally { setWorking(false); }
+  };
   const relationGroups = useMemo(() => {
     const groups = new Map<string, ExpedientePartyRelation[]>();
     for (const relation of relations) groups.set(relation.compareciente_id, [...(groups.get(relation.compareciente_id) || []), relation]);
@@ -150,6 +165,7 @@ export function PartiesTab({ expediente, onChanged = () => undefined }: { expedi
     {status === 'loading' && <div className={styles.inlineState}><LoaderCircle className={styles.spin} />Cargando comparecientes…</div>}
     {status === 'denied' && <div className={styles.inlineState}><ShieldAlert />No tienes permiso para consultar los comparecientes de este expediente.</div>}
     {status === 'error' && <div className={styles.inlineState}><AlertTriangle />No pudimos cargar los comparecientes.<button type="button" className={styles.secondaryButton} onClick={() => void load()}>Reintentar</button></div>}
+    {status === 'ready' && validations.length > 0 && <div className={styles.partyValidationGrid} aria-label="Validación de participaciones por acto">{validations.map((validation) => <section key={validation.expediente_acto_id} data-consistent={validation.consistent}><header><strong>{validation.act_name}</strong><span>Objeto {validation.object_percentage}%</span></header><dl><div><dt>Transmitentes</dt><dd>{validation.transmitter_total}%</dd></div><div><dt>Adquirentes</dt><dd>{validation.acquirer_total}%</dd></div></dl>{validation.warnings.length > 0 ? <ul>{validation.warnings.map((warning) => <li key={warning}><AlertTriangle size={15} />{warning}</li>)}</ul> : <p>Participaciones consistentes con el porcentaje objeto.</p>}</section>)}</div>}
     {status === 'ready' && !relations.length && <p className={styles.sectionEmpty}>No hay comparecientes vinculados.</p>}
     {status === 'ready' && relations.length > 0 && <div className={styles.partyRelations}>{relationGroups.map((group) => { const first = group[0]; const physical = first.compareciente.tipo_persona === 'FISICA'; return <article key={first.compareciente_id} className={styles.partyPersonGroup}>
       <span>{physical ? <UserRound size={19} /> : <Building2 size={19} />}</span><div className={styles.partyRelationIdentity}><strong>{relationName(first)}</strong><small>Ficha maestra única · {physical ? 'Persona física' : 'Persona moral'} · {group.length} {group.length === 1 ? 'relación' : 'relaciones'}</small><button type="button" className={styles.createMasterLink} onClick={() => viewMaster(first.compareciente_id)}>Ver ficha maestra</button>{expediente.capabilities.canWrite && <button type="button" className={styles.createMasterLink} onClick={() => open('LINK', undefined, first.compareciente_id, null)}>Asignar a otro acto</button>}</div>
@@ -163,6 +179,7 @@ export function PartiesTab({ expediente, onChanged = () => undefined }: { expedi
         {dialog.operation !== 'UNLINK' && <>
           <label>Acto<select value={actId} onChange={(event) => { setActId(event.target.value); setPreview(null); }}><option value="">Selecciona un acto</option>{catalogs?.acts.map((act) => <option key={act.id} value={act.id}>{act.tipo_acto.nombre}</option>)}</select></label>
           <label>Rol / carácter<select value={characterId} onChange={(event) => { setCharacterId(event.target.value); setPreview(null); }}><option value="">Selecciona un rol</option>{characters.map((entry) => <option key={entry.caracter_id} value={entry.caracter_id}>{entry.caracter.nombre}</option>)}</select></label>
+          {!creatingRole ? <button type="button" className={styles.createMasterLink} disabled={!actId || working} onClick={() => setCreatingRole(true)}><Plus size={17} /><span><strong>Nueva comparecencia / rol</strong><small>Quedará disponible para futuras operaciones de esta Notaría</small></span></button> : <section className={styles.roleCreationPanel} aria-label="Crear nueva comparecencia o rol"><label>Nombre del rol<input value={roleName} maxLength={150} onChange={(event) => setRoleName(event.target.value)} placeholder="Ej. Albacea" autoFocus /></label><label>Descripción<textarea rows={2} value={roleDescription} maxLength={500} onChange={(event) => setRoleDescription(event.target.value)} placeholder="Opcional" /></label><div><button type="button" className={styles.secondaryButton} disabled={working} onClick={() => { setCreatingRole(false); setRoleName(''); setRoleDescription(''); }}>Cancelar</button><button type="button" className={styles.primaryButton} disabled={working || roleName.trim().length < 2} onClick={() => void createRole()}>{working && <LoaderCircle className={styles.spin} size={16} />}Crear y seleccionar</button></div></section>}
           <div className={styles.inlineFields}><label>Comparecencia<select value={appearance} onChange={(event) => { setAppearance(event.target.value as ExpedientePartyRelation['forma_comparecencia']); setPreview(null); }}>{catalogs?.appearanceForms.map((value) => <option key={value} value={value}>{appearanceLabels[value]}</option>)}</select></label><label>Participación (%)<input inputMode="decimal" value={participation} onChange={(event) => { setParticipation(event.target.value); setPreview(null); }} placeholder="Opcional" /></label></div>
           {requiresRepresentation && <fieldset className={styles.representationFields}><legend>Representación</legend><label className={styles.representedPartyField}>Buscar persona representada<input value={representationSearch} onChange={(event) => { setRepresentationSearch(event.target.value); setRepresentedId(''); setPreview(null); }} placeholder="Nombre, RFC o CURP" /><select aria-label="Persona representada" value={representedId} onChange={(event) => { setRepresentedId(event.target.value); setPreview(null); }}><option value="">Selecciona una persona</option>{representationOptions.filter((option) => option.id !== partyId).map((option) => <option key={option.id} value={option.id}>{option.nombre}</option>)}</select></label><label>Carácter de representación<select value={representationCharacterId} onChange={(event) => { setRepresentationCharacterId(event.target.value); setPreview(null); }}><option value="">Sin catálogo específico</option>{catalogs?.representationCharacters.map((value) => <option key={value.id} value={value.id}>{value.nombre}</option>)}</select></label><label>Descripción del carácter<input value={representationDescription} onChange={(event) => { setRepresentationDescription(event.target.value); setPreview(null); }} placeholder="Ej. Apoderado general" /></label><label>Facultades aplicables<textarea rows={2} value={representationPowers} onChange={(event) => { setRepresentationPowers(event.target.value); setPreview(null); }} placeholder="Opcional" /></label></fieldset>}
         </>}

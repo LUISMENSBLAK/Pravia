@@ -3,7 +3,7 @@ import type { FinanceSummary } from '../finance.types';
 import { money } from '../finance.utils';
 import styles from '../Finance.module.css';
 
-export function FinanceMetrics({kpis,onOpen}:{kpis:FinanceSummary['kpis'];onOpen:(view:'movimientos'|'cartera')=>void}){const items=[
+export function FinanceMetrics({kpis,onOpen}:{kpis:FinanceSummary['kpis'];onOpen:(view:'movimientos'|'cartera'|'proyeccion')=>void}){const items=[
 {key:'income',label:'Ingresos recibidos',value:kpis.ingresos_recibidos,help:'Efectivo total aplicado del periodo',icon:ArrowDownToLine,tone:'blue',view:'movimientos' as const},
 {key:'fees',label:'Honorarios cobrados',value:kpis.honorarios_cobrados,help:`${money(kpis.honorarios_generados)} generados`,icon:BriefcaseBusiness,tone:'gold',view:'cartera' as const},
 {key:'third',label:'Recursos no propios',value:kpis.fondos_terceros,help:kpis.otros_destinos?`${money(kpis.otros_destinos)} pendientes de clasificar`:'Distribución confirmada a terceros',icon:Landmark,tone:'teal',view:'movimientos' as const},

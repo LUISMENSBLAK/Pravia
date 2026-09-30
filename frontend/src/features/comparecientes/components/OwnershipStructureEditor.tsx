@@ -81,6 +81,14 @@ const controlLabels: Record<ControlFact["kind"], string> = {
   AGREEMENT: "Acuerdo",
   OTHER: "Otro",
 };
+export type MoralStructureSuggestion = {
+  accionistas?: Array<{ nombre?: string; tipo_persona?: "FISICA" | "MORAL" | "NO_DETERMINADO"; acciones_partes?: string; porcentaje?: string; clase_serie?: string; tipo_relacion?: string; fuente?: string; documento_id?: string; pagina?: number }>;
+  administracion?: Array<{ nombre?: string; cargo?: string; organo?: string; fuente?: string; documento_id?: string; pagina?: number }>;
+  beneficiarios_controladores?: Array<{ nombre?: string; criterio?: string; porcentaje?: string; fuente?: string; documento_id?: string; pagina?: number }>;
+  personas_por_identificar?: string[];
+  cadena_incompleta?: boolean;
+  faltantes?: string[];
+};
 /** A read projection shared by confirmation and diagram; never an editable second graph. */
 function GraphReview({
   graph,
@@ -324,6 +332,7 @@ export function OwnershipStructureEditor({
   documents,
   ownershipReturn = null,
   onOwnershipReturnConsumed,
+  extractedSuggestion = null,
 }: {
   comparecienteId: string;
   name: string;
@@ -335,6 +344,7 @@ export function OwnershipStructureEditor({
     ownershipNodeId?: string;
   } | null;
   onOwnershipReturnConsumed?: () => void;
+  extractedSuggestion?: MoralStructureSuggestion | null;
 }) {
   const consumedReturn = useRef("");
   const [value, setValue] = useState<OwnershipStructure | null>(null);
@@ -349,6 +359,7 @@ export function OwnershipStructureEditor({
     null,
   );
   const [aiReviewed, setAiReviewed] = useState(false);
+  const [extractedPreview, setExtractedPreview] = useState<OwnershipGraph | null>(null);
   const [reconciliationPreviews, setReconciliationPreviews] = useState<
     Record<string, OwnershipReconciliationPreview>
   >({});
@@ -434,6 +445,58 @@ export function OwnershipStructureEditor({
           }
         : current,
     );
+  const prepareExtractedStructure = () => {
+    if (!value || !extractedSuggestion) return;
+    const next: OwnershipGraph = structuredClone(graphOf(value));
+    const normalizedName = (name?: string) => String(name || "").trim().toLocaleUpperCase("es-MX");
+    const locate = (name?: string) => next.nodes.find((node, index) => normalizedName(nodeName(node, index)) === normalizedName(name));
+    const ensureNode = (name: string | undefined, kind: "PF" | "PM", metadata: Record<string, unknown>) => {
+      if (!normalizedName(name)) return null;
+      const existing = locate(name);
+      if (existing) {
+        existing.metadata = { ...(existing.metadata || {}), ...metadata };
+        if (existing.identity_mode === "STRUCTURED_ONLY") existing.display_name = normalizedName(name);
+        return existing;
+      }
+      const created: OwnershipNode = { id: uuid(), party_kind: kind, identity_mode: "STRUCTURED_ONLY", display_name: normalizedName(name), incomplete: true, metadata };
+      next.nodes.push(created);
+      return created;
+    };
+    for (const shareholder of extractedSuggestion.accionistas || []) {
+      const node = ensureNode(shareholder.nombre, shareholder.tipo_persona === "MORAL" ? "PM" : "PF", {
+        shareholder: true,
+        shares_or_parts: shareholder.acciones_partes || "",
+        share_class: shareholder.clase_serie || "",
+        relationship_type: shareholder.tipo_relacion || "",
+        source_label: shareholder.fuente || "",
+        requires_identification: (extractedSuggestion.personas_por_identificar || []).some((name) => normalizedName(name) === normalizedName(shareholder.nombre)),
+      });
+      if (!node) continue;
+      const existing = next.edges.find((edge) => edge.owner_node_id === node.id && edge.owned_node_id === next.root_node_id);
+      const evidence = { percentage: shareholder.porcentaje || null, evidence_document_id: shareholder.documento_id || null };
+      if (existing) Object.assign(existing, evidence);
+      else next.edges.push({ id: uuid(), owner_node_id: node.id, owned_node_id: next.root_node_id, ...evidence });
+    }
+    for (const administrator of extractedSuggestion.administracion || []) {
+      const node = ensureNode(administrator.nombre, "PF", { administration_role: administrator.cargo || "", administration_body: administrator.organo || "", requires_identification: true, source_label: administrator.fuente || "" });
+      if (!node) continue;
+      const description = [administrator.cargo, administrator.organo].filter(Boolean).join(" · ");
+      if (!next.controls.some((fact) => fact.subject_node_id === node.id && fact.kind === "MANAGEMENT" && fact.description === description)) next.controls.push({ id: uuid(), subject_node_id: node.id, kind: "MANAGEMENT", description, evidence_document_id: administrator.documento_id || null, human_confirmed: false });
+    }
+    for (const candidate of extractedSuggestion.beneficiarios_controladores || []) {
+      const node = ensureNode(candidate.nombre, "PF", { beneficial_controller_candidate: true, beneficial_controller_criterion: candidate.criterio || "", beneficial_controller_percentage: candidate.porcentaje || "", requires_identification: true, source_label: candidate.fuente || "" });
+      if (!node) continue;
+      const description = `Candidato a beneficiario controlador: ${candidate.criterio || "criterio pendiente"}`;
+      if (!next.controls.some((fact) => fact.subject_node_id === node.id && fact.kind === "OTHER" && fact.description === description)) next.controls.push({ id: uuid(), subject_node_id: node.id, kind: "OTHER", description, evidence_document_id: candidate.documento_id || null, human_confirmed: false });
+    }
+    for (const person of extractedSuggestion.personas_por_identificar || []) ensureNode(person, "PF", { requires_identification: true });
+    next.incomplete_markers = [...new Set([...(next.incomplete_markers || []), ...(extractedSuggestion.cadena_incompleta ? ["DOCUMENT_CHAIN_INCOMPLETE"] : []), ...((extractedSuggestion.faltantes || []).map((field) => `MISSING:${field}`))])];
+    const root = next.nodes.find((node) => node.id === next.root_node_id);
+    const governance = (extractedSuggestion.administracion || []).map((item) => normalizedName(item.organo)).join(" ");
+    if (root && governance.includes("CONSEJO")) root.metadata = { ...(root.metadata || {}), governance_type: "BOARD" };
+    else if (root && governance.includes("ADMINISTRADOR ÚNICO")) root.metadata = { ...(root.metadata || {}), governance_type: "SOLE_ADMINISTRATOR" };
+    setExtractedPreview(next);
+  };
   useEffect(() => {
     const returned = ownershipReturn;
     const key = `${returned?.ownershipNewComparecienteId || ""}:${returned?.ownershipNodeId || ""}`;
@@ -734,6 +797,25 @@ export function OwnershipStructureEditor({
         <p className={styles.message} role="status">
           {message}
         </p>
+      )}
+      {canWrite && extractedSuggestion && !extractedPreview && (
+        <div className={styles.notice}>
+          <Sparkles />
+          <span>
+            <strong>Propuesta societaria disponible desde la extracción documental</strong>
+            <small>Incluye únicamente hechos sustentados. Revísala antes de incorporarla al editor; no se guardará automáticamente.</small>
+          </span>
+          <button type="button" onClick={prepareExtractedStructure}>Revisar propuesta</button>
+        </div>
+      )}
+      {extractedPreview && (
+        <section className={styles.confirmPanel} aria-label="Revisión de estructura extraída">
+          <GraphReview graph={extractedPreview} before={graphOf(value)} title="Cambios propuestos por la extracción documental" documents={documents} />
+          <div>
+            <button type="button" onClick={() => setExtractedPreview(null)}><X />Conservar estructura actual</button>
+            <button type="button" onClick={() => { setValue((current) => current ? { ...current, ...extractedPreview } : current); setExtractedPreview(null); setMessage("Propuesta cargada en el editor. Revisa y guarda para confirmar los cambios."); }}><Check />Usar propuesta en el editor</button>
+          </div>
+        </section>
       )}
       {value.incomplete_markers.length > 0 && (
         <div className={styles.notice}>

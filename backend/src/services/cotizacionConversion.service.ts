@@ -15,6 +15,8 @@ import {
 } from '../domain/cotizacionContract';
 import { recordQuoteTransitionInTransaction } from './cotizacionWorkflow.service';
 import { createQuoteOperationalSnapshotInTransaction } from './quoteBudget.service';
+import { ExpedienteActosService } from './expedienteActos.service';
+import { ExpedienteSeguimientoService } from './expedienteSeguimiento.service';
 
 type Actor = NonNullable<Request['user']>;
 
@@ -62,6 +64,8 @@ export class CotizacionConversionService {
           versiones: { orderBy: { version: 'desc' }, include: { conceptos: { orderBy: { orden: 'asc' } } } },
           pagos: true,
           transicion_actual: true,
+          actos: { include: { tipo_acto: true }, orderBy: { orden: 'asc' } },
+          solicitante_formal: { select: { id: true, nombre_busqueda: true } },
         },
       });
 
@@ -126,12 +130,24 @@ export class CotizacionConversionService {
       if (!actor) throw new CotizacionBusinessError('El usuario que convierte no existe o está inactivo.', 'ACTOR_INVALID', 403);
       if (!lawyer) throw new CotizacionBusinessError('El abogado asignado no existe o está inactivo.', 'LAWYER_INVALID');
 
-      const tipoActo = await this.resolveTipoActo(
-        tx,
-        input.actorOrganizationId,
-        input.tipoActoId,
-        cotizacion.prospecto?.tipo_acto,
-      );
+      let tipoActo;
+      if (canonical) {
+        if (!cotizacion.actos.length) throw new CotizacionBusinessError('La cotización no tiene actos estructurados.', 'COTIZACION_ACTS_REQUIRED', 409);
+        if (cotizacion.actos.some((item) => !item.confirmed_at)) throw new CotizacionBusinessError('Confirma todos los actos al aceptar la cotización antes de convertir.', 'COTIZACION_ACTS_NOT_CONFIRMED', 409);
+        if (!cotizacion.solicitante_formal) throw new CotizacionBusinessError('La cotización no tiene solicitante formal confirmado.', 'COTIZACION_FORMAL_APPLICANT_REQUIRED', 409);
+        const selected = input.tipoActoId
+          ? cotizacion.actos.find((item) => item.tipo_acto_id === input.tipoActoId)
+          : cotizacion.actos[0];
+        if (!selected) throw new CotizacionBusinessError('El acto principal debe pertenecer a los actos aceptados de la cotización.', 'TIPO_ACTO_NOT_IN_QUOTE', 400);
+        tipoActo = selected.tipo_acto;
+      } else {
+        tipoActo = await this.resolveTipoActo(
+          tx,
+          input.actorOrganizationId,
+          input.tipoActoId,
+          cotizacion.prospecto?.tipo_acto,
+        );
+      }
       const approvedVersion = canonical
         ? await createQuoteOperationalSnapshotInTransaction(tx, {
           organizationId: input.actorOrganizationId,
@@ -162,9 +178,47 @@ export class CotizacionConversionService {
         clienteAlias: cotizacion.prospecto?.nombre || 'Cliente',
         notariaId: cotizacion.notaria_id,
         cotizacionId: cotizacion.id,
+        comparecienteId: cotizacion.solicitante_formal?.id || null,
         proximaAccion: 'Integrar documentación y comparecientes',
         correlationId,
       });
+      if (canonical && cotizacion.actos.length > 1) {
+        const additionalActs = cotizacion.actos.filter((item) => item.tipo_acto_id !== tipoActo.id);
+        for (const quoteAct of additionalActs) {
+          const additionalAct = await new ExpedienteActosService(this.prisma).createInitial(tx, {
+            organizationId: input.actorOrganizationId,
+            expedienteId: expediente.id,
+            tipoActoId: quoteAct.tipo_acto_id,
+            cotizacionId: cotizacion.id,
+            actorUserId: actor.id,
+            idempotencyKey: `QUOTE:${cotizacion.id}:ACT:${quoteAct.id}`,
+          });
+          await new ExpedienteSeguimientoService(this.prisma).materializeInTransaction(tx, {
+            id: actor.id,
+            organizationId: input.actorOrganizationId,
+            sessionId: input.actorSessionId || correlationId,
+          }, expediente.id, additionalAct.id);
+
+          const character = await tx.tipoActoCaracterCompareciente.findFirst({
+            where: { tipo_acto_id: quoteAct.tipo_acto_id },
+            orderBy: [{ sugerido: 'desc' }, { orden: 'asc' }],
+            select: { caracter_id: true },
+          });
+          if (!character) throw new CotizacionBusinessError(`El acto ${quoteAct.tipo_acto.nombre} no tiene carácter de compareciente configurado.`, 'EXPEDIENTE_PARTY_CHARACTER_MISSING', 409);
+          await tx.expedienteCompareciente.create({ data: {
+            organization_id: input.actorOrganizationId,
+            expediente_id: expediente.id,
+            expediente_acto_id: additionalAct.id,
+            compareciente_id: cotizacion.solicitante_formal!.id,
+            caracter_id: character.caracter_id,
+            forma_comparecencia: 'PROPIO_DERECHO',
+            orden_comparecencia: 1,
+            es_principal: true,
+            creado_por_id: actor.id,
+            idempotency_key: `QUOTE:${cotizacion.id}:APPLICANT:${quoteAct.id}`,
+          } });
+        }
+      }
       await new ExpedienteBudgetService(this.prisma).createFromQuoteInTransaction(tx, {
         actor: {
           id: actor.id,
@@ -237,7 +291,8 @@ export class CotizacionConversionService {
           key: key!,
           hash: hash!,
           quoteVersionId: approvedVersion.id,
-          evidence: { expedienteId: expediente.id, numeroPravia, source: 'COT-001' },
+          evidence: { expedienteId: expediente.id, numeroPravia, source: 'COT-001',
+            quoteActIds: cotizacion.actos.map((item) => item.id), formalApplicantId: cotizacion.solicitante_formal?.id || null },
         });
       } else {
         await tx.cotizacion.update({

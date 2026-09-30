@@ -18,14 +18,14 @@ const temporaryAct = `QA E2E FIRMA SOLVENCIA ${runId}`;
 async function login(page: Page) {
   await page.goto('/login');
   await page.getByRole('textbox', { name: 'Correo electrónico' }).fill('qa.correcciones@pravia.test');
-  await page.getByRole('textbox', { name: 'Contraseña', exact: true }).fill('Pravia!QA-Release-2026');
+  await page.getByRole('textbox', { name: 'Contraseña', exact: true }).fill((process.env.PRAVIA_E2E_PASSWORD ?? ''));
   await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
   await page.waitForURL('**/mi-dia');
 }
 
 async function qaAccessToken(page: Page) {
   const response = await page.request.post('/api/auth/login', { data: {
-    email: 'qa.correcciones@pravia.test', password: 'Pravia!QA-Release-2026', remember: false,
+    email: 'qa.correcciones@pravia.test', password: (process.env.PRAVIA_E2E_PASSWORD ?? ''), remember: false,
   } });
   expect(response.ok()).toBeTruthy();
   const body = await response.json() as { accessToken?: string; access_token?: string; token?: string };

@@ -54,6 +54,45 @@ export class ExpedienteActosService {
     );
   }
 
+  async setObjectPercentage(actor: Actor, expedienteId: string, expedienteActoId: string, raw: Record<string, unknown>) {
+    if (!actor.permissions.includes('expedientes.write')) throw new ExpedienteActoError(403, 'EXPEDIENTE_ACT_WRITE_DENIED', 'No tienes permiso para modificar el acto.');
+    const percentage = Number(raw.porcentaje_objeto);
+    if (!Number.isFinite(percentage) || percentage <= 0 || percentage > 100) {
+      throw new ExpedienteActoError(400, 'EXPEDIENTE_ACT_OBJECT_PERCENTAGE_INVALID', 'El porcentaje objeto debe ser mayor que 0 y no superar 100%.');
+    }
+    const expected = typeof raw.expected_updated_at === 'string' ? new Date(raw.expected_updated_at) : null;
+    if (!expected || Number.isNaN(expected.getTime())) throw new ExpedienteActoError(400, 'EXPEDIENTE_ACT_REVISION_REQUIRED', 'Actualiza la ficha antes de guardar el porcentaje objeto.');
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:expediente-actos:${expedienteId}`}))`);
+      await this.assertExpediente(tx, actor, expedienteId);
+      const current = await tx.expedienteActo.findFirst({ where: {
+        id: expedienteActoId, organization_id: actor.organizationId, expediente_id: expedienteId,
+        estatus: 'ACTIVO', removed_at: null,
+      } });
+      if (!current) throw new ExpedienteActoError(404, 'EXPEDIENTE_ACT_NOT_FOUND', 'El acto ya no está activo en este expediente.');
+      if (current.updated_at.getTime() !== expected.getTime()) throw new ExpedienteActoError(409, 'EXPEDIENTE_ACT_STALE', 'El acto cambió en otra sesión. Recarga antes de guardar.');
+      if (Number(current.porcentaje_objeto) === percentage) return { acto: current, idempotent: true };
+      const updated = await tx.expedienteActo.update({ where: { id: current.id }, data: { porcentaje_objeto: percentage }, include: activeActInclude });
+      const expediente = await tx.expediente.update({ where: { id: expedienteId }, data: { version: { increment: 1 } }, select: { version: true } });
+      const correlationId = randomUUID();
+      const summary = { expediente_acto_id: current.id, porcentaje_objeto_anterior: current.porcentaje_objeto, porcentaje_objeto: updated.porcentaje_objeto, version: expediente.version };
+      await tx.expedienteActividad.create({ data: {
+        organization_id: actor.organizationId, expediente_id: expedienteId, usuario_id: actor.id, tipo: 'AUDITORIA',
+        titulo: 'Porcentaje objeto del acto actualizado', descripcion: `${Number(updated.porcentaje_objeto)}%`, metadatos: json(summary),
+      } });
+      await tx.auditLog.create({ data: {
+        organization_id: actor.organizationId, user_id: actor.id, accion: 'UPDATE_EXPEDIENTE_ACT_OBJECT_PERCENTAGE',
+        entidad: 'ExpedienteActo', entidad_id: current.id, valores_anteriores: json({ porcentaje_objeto: current.porcentaje_objeto }),
+        valores_nuevos: json({ porcentaje_objeto: updated.porcentaje_objeto }), correlation_id: correlationId, session_id: actor.sessionId,
+      } });
+      await tx.domainEventOutbox.create({ data: {
+        organization_id: actor.organizationId, event_type: 'ExpedienteActObjectPercentageUpdated', aggregate_type: 'Expediente',
+        aggregate_id: expedienteId, actor_user_id: actor.id, correlation_id: correlationId, payload: json(summary),
+      } });
+      return { acto: updated, idempotent: false, version: expediente.version };
+    }, { timeout: 20_000 });
+  }
+
   async applyInTransaction(
     tx: Prisma.TransactionClient,
     actor: Actor,
@@ -164,7 +203,7 @@ export class ExpedienteActosService {
   }
 
   async createInitial(tx: Prisma.TransactionClient, input: {
-    organizationId: string; expedienteId: string; tipoActoId: string; cotizacionId: string; actorUserId: string;
+    organizationId: string; expedienteId: string; tipoActoId: string; cotizacionId: string; actorUserId: string; idempotencyKey?: string;
   }) {
     return tx.expedienteActo.create({ data: {
       organization_id: input.organizationId,
@@ -172,7 +211,7 @@ export class ExpedienteActosService {
       tipo_acto_id: input.tipoActoId,
       origen: 'COTIZACION' as ExpedienteActoOrigen,
       source_cotizacion_id: input.cotizacionId,
-      idempotency_key: `QUOTE:${input.cotizacionId}`,
+      idempotency_key: input.idempotencyKey || `QUOTE:${input.cotizacionId}`,
       created_by: input.actorUserId,
     } });
   }
@@ -201,7 +240,13 @@ export class ExpedienteActosService {
     const [operationalTracking, activePartyRelations, activePropertyRelations] = await Promise.all([
       db.expedienteSeguimientoActividad.findMany({
         where: { organization_id: actor.organizationId, expediente_id: expedienteId },
-        select: { id: true, expediente_acto_id: true, estado: true, version: true, updated_at: true, excepcion_operativa: true },
+        select: {
+          id: true, estado: true, version: true, updated_at: true, excepcion_operativa: true,
+          origenes: {
+            where: { en_alcance: true },
+            select: { expediente_acto_id: true, actividad_maestra_id: true, origen_clave: true },
+          },
+        },
       }),
       db.expedienteCompareciente.count({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, expediente_acto_id: command.expediente_acto_id || undefined, archived_at: null, estatus: 'ACTIVO' } }),
       db.expedienteActoPredio.count({ where: { organization_id: actor.organizationId, expediente_acto_id: command.expediente_acto_id || undefined, estatus: 'ACTIVO', expedientePredio: { expediente_id: expedienteId, estatus: 'ACTIVO' } } }),
@@ -248,7 +293,13 @@ export class ExpedienteActosService {
     const fingerprint = createHash('sha256').update(JSON.stringify({
       expediente_id: expediente.id, version: expediente.version, updated_at: expediente.updated_at.toISOString(),
       acts: expediente.actos.map((act) => [act.id, act.tipo_acto_id, act.updated_at.toISOString()]),
-      operational_tracking: operationalTracking.map((item) => [item.id, item.expediente_acto_id, item.estado, item.version, item.updated_at.toISOString()]),
+      operational_tracking: operationalTracking.map((item) => [
+        item.id,
+        item.estado,
+        item.version,
+        item.updated_at.toISOString(),
+        item.origenes.map((origin) => [origin.expediente_acto_id, origin.actividad_maestra_id, origin.origen_clave]),
+      ]),
       active_act_relations: { comparecientes: activePartyRelations, predios: activePropertyRelations },
       operation: command.operation, target: command.expediente_acto_id || null, type: targetAct?.id || null,
       impact: {

@@ -19,6 +19,10 @@ import {
   unlinkCotizacionDocumento,
   viewCotizacionDocumento,
   downloadCotizacionDocumento,
+  generateCotizacionAIProposal,
+  decideCotizacionAIProposal,
+  attachCotizacionAct,
+  draftCotizacionEmailWithAI,
 } from '../controllers/cotizaciones.controller';
 import { requirePermission } from '../middleware/auth.middleware';
 import { requireCotizacionObjectAccess, requireDocumentoObjectAccess } from '../middleware/objectAccess.middleware';
@@ -33,6 +37,9 @@ router.post('/', createCotizacion);
 router.put('/:id/estado', updateCotizacionEstado);
 router.post('/extraer-presupuesto', upload.single('archivo'), extractPresupuesto);
 router.put('/:id/presupuesto', updateCotizacionPresupuesto);
+router.post('/:id/propuestas-ia', requirePermission('ai.use'), generateCotizacionAIProposal);
+router.patch('/:id/propuestas-ia/:proposalId', decideCotizacionAIProposal);
+router.post('/:id/correo-ia', requirePermission('cotizaciones.write'), requirePermission('ai.use'), draftCotizacionEmailWithAI);
 router.post('/:id/generar-documento', generateCotizacionDocument);
 router.post('/:id/anticipo', requirePermission('finanzas.write'), registrarAnticipo);
 router.post('/pago/:pagoId/validar', requirePermission('finanzas.validate'), validarAnticipo);
@@ -41,6 +48,7 @@ router.get('/:id/seguimientos', getCotizacionSeguimientos);
 router.post('/:id/seguimientos', createCotizacionSeguimiento);
 router.post('/:id/registrar-envio', registerCotizacionDelivery);
 router.post('/:id/acciones', actCotizacionContract);
+router.post('/:id/actos', requirePermission('cotizaciones.write'), attachCotizacionAct);
 // Documentos de Cotización (Heredados de Prospecto + Subidos en Cotización)
 router.get('/:id/documentos', getCotizacionDocumentos);
 router.get('/:id/documentos/:documentoId/ver', requireDocumentoObjectAccess, requirePermission('documentos.read'), viewCotizacionDocumento);

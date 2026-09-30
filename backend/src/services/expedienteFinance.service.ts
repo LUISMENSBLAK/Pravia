@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'crypto';
-import { Prisma, PrismaClient } from '@prisma/client';
+import { CatalogoDestinoFuncional, Prisma, PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { hashVerificationToken, moneyDecimal, validateIncomeAllocation } from '../domain/expedienteFinance';
@@ -7,6 +7,10 @@ import { deleteFile, downloadFile, getSignedUrl, uploadFile } from '../storage/s
 import { extraerFinanzasDesdeDocumento, getOpenAIModelName } from './openaiDocument.service';
 import { recordAIFailure, recordAIUsage } from './aiUsage.service';
 import { FinancialMovementService } from './financialMovement.service';
+import { centsToMoney, moneyToCents } from '../domain/expedienteBudget';
+import { legacyFinanceAllocations } from '../domain/financeCore';
+import { AdministrativeQuoteTemplateError, DOCX_MIME_TYPE, resolveAdministrativeQuoteTemplate } from './administrativeQuoteTemplate.service';
+import { appendAccountStatement, quoteTemplateData, renderQuoteTemplate } from './quoteDocument.service';
 import {
   closePaymentRequestTiming,
   closeReceiptApplicationTiming,
@@ -14,6 +18,7 @@ import {
   openReceiptApplicationTiming,
 } from './timingPolicy.service';
 import { FunctionalDocumentRenderError, renderConfiguredFunctionalDocument } from './functionalDocumentRenderer.service';
+import { canonicalUploadedDocumentMime } from './documentUploadValidation';
 
 export type ExpedienteFinanceActor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -22,13 +27,33 @@ const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.Inp
 const clean = (value: unknown, max = 1_000) => String(value ?? '').trim().slice(0, max);
 const safeName = (value: string) => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 100);
 const checksum = (value: Buffer) => createHash('sha256').update(value).digest('hex');
+export const EXP008_PAYMENT_METHODS = ['CHEQUE', 'EFECTIVO', 'TRANSFERENCIA', 'OTRO'] as const;
+export type Exp008PaymentMethod = typeof EXP008_PAYMENT_METHODS[number];
+const invoiceMime = { PDF: 'application/pdf', XML: 'application/xml' } as const;
+
+export function normalizeExp008PaymentMethod(value: unknown, detail?: unknown): { method: Exp008PaymentMethod; detail: string | null } {
+  const method = clean(value, 40).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/ /g, '_') as Exp008PaymentMethod;
+  if (!EXP008_PAYMENT_METHODS.includes(method)) throw new ExpedienteFinanceError(400, 'EXP008_PAYMENT_METHOD_REQUIRED', 'Debe seleccionar una forma de pago.');
+  const normalizedDetail = clean(detail, 180);
+  if (method === 'OTRO' && !normalizedDetail) throw new ExpedienteFinanceError(400, 'EXP008_PAYMENT_METHOD_DETAIL_REQUIRED', 'Debe especificar la forma de pago.');
+  return { method, detail: method === 'OTRO' ? normalizedDetail : null };
+}
+
+export function assertExp008InvoiceFile(file: Upload | undefined, kind: keyof typeof invoiceMime) {
+  if (!file) return;
+  const extension = file.originalname.toLowerCase().split('.').pop();
+  const valid = kind === 'PDF'
+    ? file.mimetype === invoiceMime.PDF && extension === 'pdf'
+    : ['application/xml', 'text/xml'].includes(file.mimetype) && extension === 'xml';
+  if (!valid) throw new ExpedienteFinanceError(400, `EXP008_INVOICE_${kind}_INVALID`, `El archivo de factura ${kind} debe ser un ${kind} válido.`);
+}
 
 export class ExpedienteFinanceError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
 }
 
 const include = {
-  ingresosReportados: { orderBy: { created_at: 'desc' as const }, include: { documentos: { where: { estatus: 'ACTIVO' as const, documento: { estatus: 'VIGENTE' as const } }, include: { documento: true } }, propuestasIA: { orderBy: { created_at: 'desc' as const } }, movimiento: { include: { comprobanteInterno: true } }, reportadoPor: { select: { id: true, nombre: true, apellido: true } }, aplicadoPor: { select: { id: true, nombre: true, apellido: true } } } },
+  ingresosReportados: { orderBy: { created_at: 'desc' as const }, include: { documentos: { where: { estatus: 'ACTIVO' as const, documento: { estatus: 'VIGENTE' as const } }, include: { documento: true } }, propuestasIA: { orderBy: { created_at: 'desc' as const } }, movimiento: { include: { comprobanteInterno: true } }, facturarAVinculo: { include: { compareciente: { select: { id: true, nombre_busqueda: true, tipo_persona: true } } } }, reportadoPor: { select: { id: true, nombre: true, apellido: true } }, aplicadoPor: { select: { id: true, nombre: true, apellido: true } } } },
   solicitudesPago: { orderBy: { created_at: 'desc' as const }, include: { documentos: { where: { estatus: 'ACTIVO' as const, documento: { estatus: 'VIGENTE' as const } }, include: { documento: true } }, propuestasIA: { orderBy: { created_at: 'desc' as const } }, movimiento: { include: { comprobanteInterno: true } }, creadoPor: { select: { id: true, nombre: true, apellido: true } }, pagadoPor: { select: { id: true, nombre: true, apellido: true } } } },
   presupuesto: { select: { subtotal_honorarios: true, subtotal_impuestos_derechos: true, total: true, version: true } },
 } as const;
@@ -44,32 +69,198 @@ export class ExpedienteFinanceService {
       this.prisma.cuentaFinanciera.findMany({ where: { organization_id: actor.organizationId, activa: true }, select: { id: true, institucion: true, alias: true, ultimos_cuatro: true, moneda: true }, orderBy: [{ predeterminada: 'desc' }, { alias: 'asc' }] }),
       this.prisma.categoriaFinanciera.findMany({ where: { organization_id: actor.organizationId, activa: true }, select: { id: true, clave: true, nombre: true, direccion: true }, orderBy: [{ orden: 'asc' }, { nombre: 'asc' }] }),
     ]) : [[], []];
-    return { expediente: { id: expediente.id, numero_pravia: expediente.numero_pravia }, ...data, catalogs: { accounts, categories }, capabilities: this.capabilities(actor) };
+    const parties = this.capabilities(actor).canReport ? await this.prisma.expedienteCompareciente.findMany({
+      where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', archived_at: null },
+      select: { id: true, compareciente_id: true, compareciente: { select: { nombre_busqueda: true, tipo_persona: true } }, caracter: { select: { nombre: true } } },
+      orderBy: [{ orden_comparecencia: 'asc' }, { created_at: 'asc' }],
+    }) : [];
+    const accountStatement = await this.accountStatement(actor, expedienteId);
+    return { expediente: { id: expediente.id, numero_pravia: expediente.numero_pravia }, ...data, accountStatement, catalogs: { accounts, categories, parties }, capabilities: this.capabilities(actor) };
   }
 
-  async reportIncome(actor: ExpedienteFinanceActor, expedienteId: string, input: any, file: Upload) {
+  async accountStatement(actor: ExpedienteFinanceActor, expedienteId: string) {
+    await this.assertExpediente(this.prisma, actor, expedienteId);
+    const [budget, movements] = await Promise.all([
+      this.prisma.expedientePresupuesto.findFirst({
+        where: { organization_id: actor.organizationId, expediente_id: expedienteId },
+        include: { conceptos: { orderBy: [{ orden: 'asc' }, { created_at: 'asc' }] } },
+      }),
+      this.prisma.movimientoFinanciero.findMany({
+        where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: { in: ['APLICADO', 'RECIBIDO', 'VALIDADO'] } },
+        include: { distribuciones: { include: { categoria: true } } },
+        orderBy: [{ fecha_movimiento: 'asc' }, { id: 'asc' }],
+      }),
+    ]);
+    if (!budget) return null;
+    let honorariosCollected = 0n; let thirdPartyCollected = 0n; let thirdPartyDelivered = 0n; let totalCollected = 0n;
+    const movementRows = movements.map((movement) => {
+      const amount = moneyToCents(String(movement.monto));
+      const allocations = movement.distribuciones.length
+        ? movement.distribuciones.map((row) => ({ nature: row.categoria.naturaleza, amount: moneyToCents(String(row.monto)) }))
+        : legacyFinanceAllocations(movement.naturaleza, movement.categoria, Number(movement.monto)).map((row) => ({ nature: row.nature, amount: moneyToCents(String(row.amount)) }));
+      if (movement.naturaleza === 'INGRESO') {
+        totalCollected += amount;
+        honorariosCollected += allocations.filter((row) => row.nature === 'DESPACHO').reduce((sum, row) => sum + row.amount, 0n);
+        thirdPartyCollected += allocations.filter((row) => row.nature === 'TERCERO').reduce((sum, row) => sum + row.amount, 0n);
+      } else {
+        thirdPartyDelivered += allocations.filter((row) => row.nature === 'TERCERO').reduce((sum, row) => sum + row.amount, 0n);
+      }
+      return { id: movement.id, date: movement.fecha_movimiento, concept: movement.concepto, nature: movement.naturaleza, amount: centsToMoney(amount), status: movement.estatus };
+    });
+    const feesBudget = moneyToCents(String(budget.subtotal_honorarios));
+    const thirdPartyBudget = moneyToCents(String(budget.subtotal_impuestos_derechos));
+    const totalBudget = moneyToCents(String(budget.total));
+    const nonNegative = (value: bigint) => value > 0n ? value : 0n;
+    return {
+      budget: { id: budget.id, version: budget.version, concepts: budget.conceptos.map((row) => ({ id: row.id, concept: row.concepto, category: row.categoria, budgeted: centsToMoney(moneyToCents(String(row.importe))) })) },
+      sections: [
+        { key: 'FEES', label: 'Honorarios', budgeted: centsToMoney(feesBudget), collected: centsToMoney(honorariosCollected), pending: centsToMoney(nonNegative(feesBudget - honorariosCollected)) },
+        { key: 'THIRD_PARTY', label: 'Recursos no propios / impuestos y derechos', budgeted: centsToMoney(thirdPartyBudget), collected: centsToMoney(thirdPartyCollected), pending: centsToMoney(nonNegative(thirdPartyBudget - thirdPartyCollected)) },
+      ],
+      totals: { budget: centsToMoney(totalBudget), collected: centsToMoney(totalCollected), pending: centsToMoney(nonNegative(totalBudget - totalCollected)), thirdPartyPendingApplication: centsToMoney(nonNegative(thirdPartyCollected - thirdPartyDelivered)) },
+      movements: movementRows,
+      canonicalSource: 'ExpedientePresupuesto + MovimientoFinanciero',
+    };
+  }
+
+  async generateAccountStatement(actor: ExpedienteFinanceActor, expedienteId: string, input: { idempotency_key?: string }) {
+    if (!actor.permissions.includes('documentos.write')) throw new ExpedienteFinanceError(403, 'EXP_ACCOUNT_STATEMENT_DENIED', 'No tienes permiso para generar documentos.');
+    const idempotencyKey = this.idempotency(input.idempotency_key);
+    const expediente = await this.assertExpediente(this.prisma, actor, expedienteId);
+    const existing = await this.prisma.expedienteDocumento.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, idempotency_key: idempotencyKey }, include: { documento: true } });
+    if (existing) return { item: existing.documento, url: await getSignedUrl(existing.documento.storage_key, 600), idempotent: true };
+    const statement = await this.accountStatement(actor, expedienteId);
+    if (!statement) throw new ExpedienteFinanceError(409, 'EXP_ACCOUNT_STATEMENT_BUDGET_REQUIRED', 'El expediente necesita un presupuesto vigente para generar su estado de cuenta.');
+    const budget = await this.prisma.expedientePresupuesto.findFirstOrThrow({ where: { organization_id: actor.organizationId, expediente_id: expedienteId }, include: { conceptos: { orderBy: { orden: 'asc' } } } });
+    let resolved: Awaited<ReturnType<typeof resolveAdministrativeQuoteTemplate>>;
+    try { resolved = await resolveAdministrativeQuoteTemplate(this.prisma, actor.organizationId, CatalogoDestinoFuncional.EXPEDIENTE_PRESUPUESTO); }
+    catch (error) {
+      if (error instanceof AdministrativeQuoteTemplateError) throw new ExpedienteFinanceError(error.status, error.code.replace('ADMINISTRATIVE_', 'EXP_ACCOUNT_STATEMENT_'), error.message);
+      throw error;
+    }
+    const generatedAt = new Date();
+    const concepts = budget.conceptos.map((row) => ({ concepto: row.concepto, categoria: row.categoria, importeCents: moneyToCents(String(row.importe)) }));
+    const templateData = quoteTemplateData({ folio: expediente.numero_pravia, date: generatedAt, client: expediente.cliente_alias || 'Cliente pendiente', act: expediente.actos.map((row) => row.tipo_acto.nombre).join(', ') || 'Acto pendiente', notary: expediente.notaria?.nombre || 'Notaría', concepts, validatedAdvanceCents: moneyToCents(statement.totals.collected) });
+    let buffer: Buffer;
+    try {
+      const base = renderQuoteTemplate(resolved.source, templateData, concepts);
+      buffer = appendAccountStatement(base, { generatedAt: new Intl.DateTimeFormat('es-MX', { dateStyle: 'long', timeStyle: 'short' }).format(generatedAt), budgetVersion: statement.budget.version, sections: statement.sections, totals: statement.totals });
+    } catch { throw new ExpedienteFinanceError(422, 'EXP_ACCOUNT_STATEMENT_RENDER_FAILED', 'El formato configurado para Presupuesto no pudo generar el estado de cuenta.'); }
+    const fileName = `Estado_de_cuenta_${safeName(expediente.numero_pravia)}_${generatedAt.toISOString().slice(0, 10)}.docx`;
+    const stored = await this.storeBuffer(actor, expedienteId, buffer, fileName, DOCX_MIME_TYPE, 'estados-cuenta');
+    try {
+      const result = await this.prisma.$transaction(async (tx) => {
+        await this.lock(tx, `account-statement:${actor.organizationId}:${expedienteId}:${idempotencyKey}`);
+        const concurrent = await tx.expedienteDocumento.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, idempotency_key: idempotencyKey }, include: { documento: true } });
+        if (concurrent) return { document: concurrent.documento, discard: true, idempotent: true };
+        const document = await tx.documento.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, nombre_original: fileName, nombre_interno: `${randomUUID()}-${fileName}`, tipo: 'ESTADO_CUENTA_EXPEDIENTE', categoria: 'OTROS', storage_key: stored.storageKey, mime_type: DOCX_MIME_TYPE, size_bytes: buffer.length, checksum_sha256: stored.checksum, estatus: 'VIGENTE', subido_por_id: actor.id, datos_extraidos: json({ source: 'PRAVIA_IA_3_FINANCE', canonical_source: statement.canonicalSource, budget_version: statement.budget.version, totals: statement.totals, template_version_id: resolved.version.id }) } });
+        await tx.expedienteDocumento.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, documento_id: document.id, tipo_vinculo: 'ESTADO_CUENTA_EXPEDIENTE', creado_por_id: actor.id, origen: 'FINANZAS', source_entity_type: 'ExpedientePresupuesto', source_entity_id: statement.budget.id, source_context: 'ESTADO_CUENTA', source_key: `FINANZAS:ESTADO_CUENTA:${document.id}`, document_version: stored.checksum, idempotency_key: idempotencyKey, provenance: json({ budget_version: statement.budget.version, movement_ids: statement.movements.map((row) => row.id), regenerated: true }) } });
+        await this.record(tx, actor, expedienteId, 'EXP_GENERATE_ACCOUNT_STATEMENT', document.id, 'Estado de cuenta generado', 'Se generó el estado de cuenta con el presupuesto vigente y el ledger canónico.', { budget_version: statement.budget.version, movement_count: statement.movements.length, template_version_id: resolved.version.id });
+        return { document, discard: false, idempotent: false };
+      });
+      if (result.discard) await deleteFile(stored.storageKey).catch(() => undefined);
+      return { item: result.document, url: await getSignedUrl(result.document.storage_key, 600), idempotent: result.idempotent };
+    } catch (error) { await deleteFile(stored.storageKey).catch(() => undefined); throw error; }
+  }
+
+  async reportIncome(actor: ExpedienteFinanceActor, expedienteId: string, input: any, files: { receipt: Upload; invoicePdf?: Upload; invoiceXml?: Upload }) {
     this.requireOperationalWrite(actor);
     const key = this.idempotency(input.idempotency_key);
     await this.assertExpediente(this.prisma, actor, expedienteId);
+    const payment = normalizeExp008PaymentMethod(input.forma_pago, input.forma_pago_detalle);
+    const partyLinkId = clean(input.facturar_a_vinculo_id, 36);
+    if (!partyLinkId) throw new ExpedienteFinanceError(400, 'EXP008_INVOICE_PARTY_REQUIRED', 'Debe seleccionar a quién corresponde la factura.');
+    const party = await this.prisma.expedienteCompareciente.findFirst({ where: { id: partyLinkId, organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', archived_at: null }, select: { id: true, compareciente_id: true } });
+    if (!party) throw new ExpedienteFinanceError(403, 'EXP008_INVOICE_PARTY_DENIED', 'El compareciente seleccionado no pertenece a este expediente.');
+    const pending = String(input.factura_pendiente) === 'true' || input.factura_pendiente === true || input.factura_pendiente === 'on';
+    assertExp008InvoiceFile(files.invoicePdf, 'PDF');
+    assertExp008InvoiceFile(files.invoiceXml, 'XML');
+    if (!pending && (!files.invoicePdf || !files.invoiceXml)) throw new ExpedienteFinanceError(400, 'EXP008_INVOICE_FILES_REQUIRED', 'Para marcar la factura como cargada debe adjuntar PDF y XML.');
     const existing = await this.prisma.expedienteIngresoReportado.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, idempotency_key: key }, include: { documentos: { include: { documento: true } } } });
     if (existing) return { item: existing, idempotent: true };
-    const stored = await this.storeUpload(actor, expedienteId, file, 'comprobantes-ingreso');
+    const uploads = [
+      { stored: await this.storeUpload(actor, expedienteId, files.receipt, 'comprobantes-ingreso'), role: 'COMPROBANTE_INGRESO' as const, suffix: 'receipt' },
+      ...(files.invoicePdf ? [{ stored: await this.storeUpload(actor, expedienteId, files.invoicePdf, 'comprobantes-fiscales'), role: 'COMPROBANTE_FISCAL' as const, suffix: 'invoice-pdf' }] : []),
+      ...(files.invoiceXml ? [{ stored: await this.storeUpload(actor, expedienteId, files.invoiceXml, 'comprobantes-fiscales'), role: 'COMPROBANTE_FISCAL' as const, suffix: 'invoice-xml' }] : []),
+    ];
     try {
       const result = await this.prisma.$transaction(async (tx) => {
         await this.lock(tx, `income-report:${actor.organizationId}:${expedienteId}:${key}`);
         const concurrent = await tx.expedienteIngresoReportado.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, idempotency_key: key }, include: { documentos: { include: { documento: true } } } });
         if (concurrent) return { item: concurrent, idempotent: true };
         await this.assertExpediente(tx, actor, expedienteId);
-        const report = await tx.expedienteIngresoReportado.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, concepto_contexto: clean(input.concepto_contexto, 500) || null, referencia_solicitud: clean(input.referencia_solicitud, 180) || null, monto_reportado: input.monto_reportado ? moneyDecimal(input.monto_reportado, 'Monto reportado') : null, reportado_por_id: actor.id, idempotency_key: key } });
+        const completedAt = pending ? null : new Date();
+        const report = await tx.expedienteIngresoReportado.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, concepto_contexto: clean(input.concepto_contexto, 500) || null, referencia_solicitud: clean(input.referencia_solicitud, 180) || null, monto_reportado: input.monto_reportado ? moneyDecimal(input.monto_reportado, 'Monto reportado') : null, forma_pago: payment.method, forma_pago_detalle: payment.detail, factura_estado: pending ? 'PENDIENTE' : 'CARGADA', facturar_a_vinculo_id: party.id, facturar_a_compareciente_id: party.compareciente_id, factura_completada_por_id: pending ? null : actor.id, factura_completada_at: completedAt, reportado_por_id: actor.id, idempotency_key: key } });
         await openReceiptApplicationTiming(tx, actor.organizationId, { sourceId: report.id, openedAt: report.created_at });
-        const document = await this.createDocument(tx, actor, expedienteId, stored, 'EXP008_COMPROBANTE_INGRESO', { source: 'EXP-008', role: 'COMPROBANTE_INGRESO', auto_applied: false });
-        await this.linkDocument(tx, actor, expedienteId, document.id, 'COMPROBANTE_INGRESO', key, { ingreso_reportado_id: report.id });
-        await this.record(tx, actor, expedienteId, 'EXP008_REPORT_INCOME', report.id, 'Comprobante reportado', 'Se reportó un comprobante; permanece pendiente de aplicación.', { documento_id: document.id, auto_applied: false });
-        return { item: await tx.expedienteIngresoReportado.findUniqueOrThrow({ where: { id: report.id }, include: { documentos: { include: { documento: true } } } }), idempotent: false };
+        const documentIds: string[] = [];
+        for (const upload of uploads) {
+          const document = await this.createDocument(tx, actor, expedienteId, upload.stored, `EXP008_${upload.role}`, { source: 'EXP-008', role: upload.role, income_id: report.id, invoice_state: report.factura_estado, invoicee_link_id: party.id, auto_applied: false });
+          await this.linkDocument(tx, actor, expedienteId, document.id, upload.role, `${key}:${upload.suffix}`, { ingreso_reportado_id: report.id });
+          documentIds.push(document.id);
+        }
+        await this.record(tx, actor, expedienteId, 'EXP008_REPORT_INCOME', report.id, 'Ingreso reportado', pending ? 'Se registró el ingreso con factura pendiente.' : 'Se registró el ingreso con factura PDF y XML.', { documento_ids: documentIds, factura_estado: report.factura_estado, facturar_a_vinculo_id: party.id, forma_pago: payment.method, auto_applied: false });
+        return { item: await tx.expedienteIngresoReportado.findUniqueOrThrow({ where: { id: report.id }, include: { documentos: { include: { documento: true } }, facturarAVinculo: { include: { compareciente: true } } } }), idempotent: false };
       });
-      if (result.idempotent) await deleteFile(stored.storageKey).catch(() => undefined);
+      if (result.idempotent) await Promise.all(uploads.map(({ stored }) => deleteFile(stored.storageKey).catch(() => undefined)));
       return result;
-    } catch (error) { await deleteFile(stored.storageKey).catch(() => undefined); throw error; }
+    } catch (error) { await Promise.all(uploads.map(({ stored }) => deleteFile(stored.storageKey).catch(() => undefined))); throw error; }
+  }
+
+  async completeIncomeInvoice(actor: ExpedienteFinanceActor, expedienteId: string, incomeId: string, input: any, files: { invoicePdf?: Upload; invoiceXml?: Upload }) {
+    if (!this.canApply(actor) || !actor.permissions.includes('documentos.write')) throw new ExpedienteFinanceError(403, 'EXP008_INVOICE_COMPLETE_DENIED', 'No tienes permiso para completar facturas pendientes.');
+    const key = this.idempotency(input.idempotency_key);
+    if (!files.invoicePdf && !files.invoiceXml) throw new ExpedienteFinanceError(400, 'EXP008_INVOICE_FILE_REQUIRED', 'Adjunta el PDF o XML pendiente.');
+    assertExp008InvoiceFile(files.invoicePdf, 'PDF');
+    assertExp008InvoiceFile(files.invoiceXml, 'XML');
+    await this.assertExpediente(this.prisma, actor, expedienteId);
+    const uploads = [
+      ...(files.invoicePdf ? [{ stored: await this.storeUpload(actor, expedienteId, files.invoicePdf, 'comprobantes-fiscales'), kind: 'PDF' as const }] : []),
+      ...(files.invoiceXml ? [{ stored: await this.storeUpload(actor, expedienteId, files.invoiceXml, 'comprobantes-fiscales'), kind: 'XML' as const }] : []),
+    ];
+    try {
+      const result = await this.prisma.$transaction(async (tx) => {
+        await this.lock(tx, `invoice-complete:${actor.organizationId}:${incomeId}`);
+        await this.assertExpediente(tx, actor, expedienteId);
+        const income = await tx.expedienteIngresoReportado.findFirst({ where: { id: incomeId, organization_id: actor.organizationId, expediente_id: expedienteId }, include: { documentos: { where: { estatus: 'ACTIVO', tipo: 'COMPROBANTE_FISCAL', documento: { estatus: 'VIGENTE' } }, include: { documento: true } } } });
+        if (!income?.factura_estado) throw new ExpedienteFinanceError(404, 'EXP008_INVOICE_NOT_FOUND', 'El registro de factura no está disponible.');
+        if (income.factura_estado === 'CARGADA') return { item: income, idempotent: true };
+        const hasPdf = income.documentos.some((link) => link.documento.mime_type === invoiceMime.PDF || link.documento.nombre_original.toLowerCase().endsWith('.pdf'));
+        const hasXml = income.documentos.some((link) => ['application/xml', 'text/xml'].includes(link.documento.mime_type) || link.documento.nombre_original.toLowerCase().endsWith('.xml'));
+        if ((hasPdf && files.invoicePdf) || (hasXml && files.invoiceXml)) throw new ExpedienteFinanceError(409, 'EXP008_INVOICE_FILE_DUPLICATE', 'Ese componente de la factura ya está cargado.');
+        const documentIds: string[] = [];
+        for (const upload of uploads) {
+          const document = await this.createDocument(tx, actor, expedienteId, upload.stored, 'EXP008_COMPROBANTE_FISCAL', { source: 'EXP-008', role: 'COMPROBANTE_FISCAL', fiscal_component: upload.kind, income_id: income.id });
+          await this.linkDocument(tx, actor, expedienteId, document.id, 'COMPROBANTE_FISCAL', `${key}:invoice-${upload.kind.toLowerCase()}`, { ingreso_reportado_id: income.id });
+          documentIds.push(document.id);
+        }
+        const complete = (hasPdf || Boolean(files.invoicePdf)) && (hasXml || Boolean(files.invoiceXml));
+        const completedAt = complete ? new Date() : null;
+        const updated = await tx.expedienteIngresoReportado.update({ where: { id: income.id }, data: { factura_estado: complete ? 'CARGADA' : 'PENDIENTE', factura_completada_por_id: complete ? actor.id : null, factura_completada_at: completedAt, version: { increment: 1 } }, include: { documentos: { where: { estatus: 'ACTIVO', documento: { estatus: 'VIGENTE' } }, include: { documento: true } }, facturarAVinculo: { include: { compareciente: true } } } });
+        await this.record(tx, actor, expedienteId, 'EXP008_COMPLETE_INVOICE', income.id, complete ? 'Factura completada' : 'Documento fiscal agregado', complete ? 'La factura quedó completa con PDF y XML.' : 'Se agregó un componente fiscal; la factura continúa pendiente.', { documento_ids: documentIds, factura_estado: updated.factura_estado, pdf: hasPdf || Boolean(files.invoicePdf), xml: hasXml || Boolean(files.invoiceXml) });
+        return { item: updated, idempotent: false };
+      });
+      if (result.idempotent) await Promise.all(uploads.map(({ stored }) => deleteFile(stored.storageKey).catch(() => undefined)));
+      return result;
+    } catch (error) { await Promise.all(uploads.map(({ stored }) => deleteFile(stored.storageKey).catch(() => undefined))); throw error; }
+  }
+
+  async listInvoices(actor: ExpedienteFinanceActor, status?: string) {
+    const invoiceStatus = status === 'PENDIENTE' || status === 'CARGADA' ? status : undefined;
+    // Finanzas Central is a tenant-wide financial read model.  A FINANCIERO may
+    // inspect invoice state without receiving access to the legal expediente.
+    const expedienteScope = actor.rol === 'FINANCIERO' ? {} : expedienteAccessWhere(actor);
+    const items = await this.prisma.expedienteIngresoReportado.findMany({
+      where: { organization_id: actor.organizationId, factura_estado: invoiceStatus || { not: null }, expediente: { archived_at: null, ...expedienteScope } },
+      select: {
+        id: true, expediente_id: true, monto_reportado: true, monto_validado: true, factura_estado: true, created_at: true, factura_completada_at: true,
+        expediente: { select: { numero_pravia: true, cliente_alias: true } },
+        facturarAVinculo: { select: { id: true, compareciente: { select: { id: true, nombre_busqueda: true, tipo_persona: true } } } },
+        documentos: { where: { estatus: 'ACTIVO', tipo: 'COMPROBANTE_FISCAL', documento: { estatus: 'VIGENTE' } }, select: { id: true, documento: { select: { nombre_original: true, mime_type: true } } } },
+      },
+      orderBy: [{ factura_estado: 'desc' }, { created_at: 'desc' }],
+      take: 500,
+    });
+    return { items, source: 'expediente_ingresos_reportados', count: items.length };
   }
 
   async createInternalRequest(actor: ExpedienteFinanceActor, expedienteId: string, input: any) {
@@ -182,7 +373,8 @@ export class ExpedienteFinanceService {
       if (proposal.estado === 'VALIDADA') return { item: proposal, idempotent: true };
       if (proposal.estado === 'RECHAZADA') throw new ExpedienteFinanceError(409, 'EXP008_PROPOSAL_REJECTED', 'La propuesta fue rechazada.');
       const accepted = decision === 'ACCEPT' && input.accepted_fields && typeof input.accepted_fields === 'object' ? input.accepted_fields : {};
-      if (decision === 'ACCEPT' && proposal.ingreso_reportado_id) await tx.expedienteIngresoReportado.update({ where: { id: proposal.ingreso_reportado_id }, data: { monto_reportado: accepted.monto ? moneyDecimal(accepted.monto, 'Monto') : undefined, fecha_ingreso: accepted.fecha ? new Date(accepted.fecha) : undefined, forma_pago: accepted.forma_pago ? clean(accepted.forma_pago, 100) : undefined, referencia: accepted.referencia ? clean(accepted.referencia, 180) : undefined, concepto_contexto: accepted.concepto ? clean(accepted.concepto, 500) : undefined, version: { increment: 1 } } });
+      const acceptedPayment = accepted.forma_pago ? normalizeExp008PaymentMethod(accepted.forma_pago, accepted.forma_pago_detalle) : null;
+      if (decision === 'ACCEPT' && proposal.ingreso_reportado_id) await tx.expedienteIngresoReportado.update({ where: { id: proposal.ingreso_reportado_id }, data: { monto_reportado: accepted.monto ? moneyDecimal(accepted.monto, 'Monto') : undefined, fecha_ingreso: accepted.fecha ? new Date(accepted.fecha) : undefined, forma_pago: acceptedPayment?.method, forma_pago_detalle: acceptedPayment?.detail, referencia: accepted.referencia ? clean(accepted.referencia, 180) : undefined, concepto_contexto: accepted.concepto ? clean(accepted.concepto, 500) : undefined, version: { increment: 1 } } });
       if (decision === 'ACCEPT' && proposal.solicitud_pago_id) await tx.expedienteSolicitudPago.update({ where: { id: proposal.solicitud_pago_id }, data: { importe: accepted.monto ? moneyDecimal(accepted.monto, 'Importe') : undefined, concepto: accepted.concepto ? clean(accepted.concepto, 500) : undefined, beneficiario: accepted.beneficiario ? clean(accepted.beneficiario, 300) : undefined, dependencia: accepted.dependencia ? clean(accepted.dependencia, 300) : undefined, referencia: accepted.referencia ? clean(accepted.referencia, 180) : undefined, version: { increment: 1 } } });
       const item = await tx.expedienteFinanzaPropuestaIA.update({ where: { id: proposal.id }, data: { estado: decision === 'REJECT' ? 'RECHAZADA' : 'VALIDADA', revisado_por_id: actor.id, revisado_at: new Date() } });
       await this.record(tx, actor, expedienteId, 'EXP008_REVIEW_AI_PROPOSAL', item.id, 'Propuesta documental revisada', decision === 'REJECT' ? 'La propuesta fue rechazada.' : 'Los campos elegidos fueron confirmados por una persona.', { decision, accepted_fields: Object.keys(accepted), auto_applied: false });
@@ -202,12 +394,13 @@ export class ExpedienteFinanceService {
       if (report.estado === 'APLICADO' && report.movimiento_id) return { item: report, idempotent: true };
       if (report.estado !== 'PENDIENTE_APLICACION') throw new ExpedienteFinanceError(409, 'EXP008_INCOME_STATE_INVALID', 'El comprobante ya no puede aplicarse.');
       if (!report.documentos.length) throw new ExpedienteFinanceError(409, 'EXP008_INCOME_EVIDENCE_REQUIRED', 'El comprobante reportado debe conservar evidencia activa.');
+      const payment = normalizeExp008PaymentMethod(input.forma_pago || report.forma_pago, input.forma_pago_detalle || report.forma_pago_detalle);
       const categories = await tx.categoriaFinanciera.findMany({ where: { organization_id: actor.organizationId, clave: { in: ['HONORARIOS', 'IMPUESTOS'] }, activa: true } });
       const byKey = new Map(categories.map((category) => [category.clave, category]));
       if ((allocation.honorarios.gt(0) && !byKey.get('HONORARIOS')) || (allocation.impuestosDerechos.gt(0) && !byKey.get('IMPUESTOS'))) throw new ExpedienteFinanceError(409, 'EXP008_CANONICAL_CATEGORIES_MISSING', 'Configura las categorías canónicas Honorarios e Impuestos antes de aplicar.');
-      const result = await this.ledger.applyOperationalMovementInTransaction(tx, { organizationId: actor.organizationId, expedienteId, actorId: actor.id, correlationId: randomUUID(), nature: 'INGRESO', amount: allocation.total, concept: clean(input.concepto, 500) || report.concepto_contexto || 'Ingreso reportado en expediente', accountId: clean(input.cuenta_id, 36), paymentMethod: clean(input.forma_pago, 100) || report.forma_pago, reference: clean(input.referencia, 180) || report.referencia, idempotencyKey: `EXP008:INGRESO:${incomeId}:${key}`, allocations: [ ...(allocation.honorarios.gt(0) ? [{ categoryId: byKey.get('HONORARIOS')!.id, amount: allocation.honorarios, note: 'Aplicación general: Honorarios' }] : []), ...(allocation.impuestosDerechos.gt(0) ? [{ categoryId: byKey.get('IMPUESTOS')!.id, amount: allocation.impuestosDerechos, note: 'Aplicación general: Impuestos y derechos' }] : []) ] });
+      const result = await this.ledger.applyOperationalMovementInTransaction(tx, { organizationId: actor.organizationId, expedienteId, actorId: actor.id, correlationId: randomUUID(), nature: 'INGRESO', amount: allocation.total, concept: clean(input.concepto, 500) || report.concepto_contexto || 'Ingreso reportado en expediente', accountId: clean(input.cuenta_id, 36), paymentMethod: payment.method, reference: clean(input.referencia, 180) || report.referencia, idempotencyKey: `EXP008:INGRESO:${incomeId}:${key}`, allocations: [ ...(allocation.honorarios.gt(0) ? [{ categoryId: byKey.get('HONORARIOS')!.id, amount: allocation.honorarios, note: 'Aplicación general: Honorarios' }] : []), ...(allocation.impuestosDerechos.gt(0) ? [{ categoryId: byKey.get('IMPUESTOS')!.id, amount: allocation.impuestosDerechos, note: 'Aplicación general: Impuestos y derechos' }] : []) ] });
       const appliedAt = new Date();
-      const updated = await tx.expedienteIngresoReportado.update({ where: { id: report.id }, data: { estado: 'APLICADO', monto_validado: allocation.total, honorarios_aplicados: allocation.honorarios, impuestos_derechos_aplicados: allocation.impuestosDerechos, fecha_ingreso: input.fecha_ingreso ? new Date(input.fecha_ingreso) : report.fecha_ingreso || appliedAt, forma_pago: clean(input.forma_pago, 100) || report.forma_pago, referencia: clean(input.referencia, 180) || report.referencia, cuenta_id: input.cuenta_id, movimiento_id: result.movement.id, aplicado_por_id: actor.id, aplicado_at: appliedAt, version: { increment: 1 } } });
+      const updated = await tx.expedienteIngresoReportado.update({ where: { id: report.id }, data: { estado: 'APLICADO', monto_validado: allocation.total, honorarios_aplicados: allocation.honorarios, impuestos_derechos_aplicados: allocation.impuestosDerechos, fecha_ingreso: input.fecha_ingreso ? new Date(input.fecha_ingreso) : report.fecha_ingreso || appliedAt, forma_pago: payment.method, forma_pago_detalle: payment.detail, referencia: clean(input.referencia, 180) || report.referencia, cuenta_id: input.cuenta_id, movimiento_id: result.movement.id, aplicado_por_id: actor.id, aplicado_at: appliedAt, version: { increment: 1 } } });
       await closeReceiptApplicationTiming(tx, actor.organizationId, report.id, appliedAt);
       await tx.movimientoDocumento.createMany({ data: report.documentos.map((link) => ({ organization_id: actor.organizationId, movimiento_id: result.movement.id, documento_id: link.documento_id, tipo_vinculo: 'COMPROBANTE_PAGO', creado_por_id: actor.id })), skipDuplicates: true });
       await this.record(tx, actor, expedienteId, 'EXP008_APPLY_REPORTED_INCOME', report.id, 'Comprobante aplicado', `Se aplicó un ingreso por ${allocation.total.toFixed(2)} MXN.`, { movimiento_id: result.movement.id, honorarios: allocation.honorarios.toFixed(2), impuestos_derechos: allocation.impuestosDerechos.toFixed(2), idempotency_key: key });
@@ -222,6 +415,7 @@ export class ExpedienteFinanceService {
     const existing = await this.prisma.expedienteSolicitudPago.findFirst({ where: { id: requestId, organization_id: actor.organizationId, expediente_id: expedienteId } });
     if (!existing) throw new ExpedienteFinanceError(404, 'EXP008_REQUEST_NOT_FOUND', 'La solicitud no está disponible.');
     if (existing.estado === 'PAGADA' && existing.movimiento_id) return { item: existing, idempotent: true };
+    const payment = normalizeExp008PaymentMethod(input.forma_pago, input.forma_pago_detalle);
     const uploads: Array<{ stored: Awaited<ReturnType<ExpedienteFinanceService['storeUpload']>>; type: 'COMPROBANTE_PAGO' | 'COMPROBANTE_FISCAL' }> = [];
     if (files.payment) uploads.push({ stored: await this.storeUpload(actor, expedienteId, files.payment, 'comprobantes-pago'), type: 'COMPROBANTE_PAGO' });
     if (files.fiscal) uploads.push({ stored: await this.storeUpload(actor, expedienteId, files.fiscal, 'comprobantes-fiscales'), type: 'COMPROBANTE_FISCAL' });
@@ -235,7 +429,7 @@ export class ExpedienteFinanceService {
         if (request.estado !== 'PENDIENTE') throw new ExpedienteFinanceError(409, 'EXP008_REQUEST_STATE_INVALID', 'La solicitud ya no puede pagarse.');
         const category = await tx.categoriaFinanciera.findFirst({ where: { id: input.categoria_id, organization_id: actor.organizationId, activa: true } });
         if (!category) throw new ExpedienteFinanceError(409, 'EXP008_CATEGORY_INVALID', 'Selecciona una categoría de egreso válida.');
-        const movement = await this.ledger.applyOperationalMovementInTransaction(tx, { organizationId: actor.organizationId, expedienteId, actorId: actor.id, correlationId: randomUUID(), nature: 'EGRESO', amount: request.importe, concept: request.concepto, accountId: clean(input.cuenta_id, 36), paymentMethod: clean(input.forma_pago, 100) || null, reference: clean(input.referencia, 180) || request.referencia, idempotencyKey: `EXP008:EGRESO:${requestId}:${key}`, allocations: [{ categoryId: category.id, amount: request.importe, note: 'Solicitud de pago EXP-008' }] });
+        const movement = await this.ledger.applyOperationalMovementInTransaction(tx, { organizationId: actor.organizationId, expedienteId, actorId: actor.id, correlationId: randomUUID(), nature: 'EGRESO', amount: request.importe, concept: request.concepto, accountId: clean(input.cuenta_id, 36), paymentMethod: payment.method, reference: clean(input.referencia, 180) || request.referencia, idempotencyKey: `EXP008:EGRESO:${requestId}:${key}`, allocations: [{ categoryId: category.id, amount: request.importe, note: 'Solicitud de pago EXP-008' }] });
         for (const upload of uploads) {
           const document = await this.createDocument(tx, actor, expedienteId, upload.stored, `EXP008_${upload.type}`, { source: 'EXP-008', role: upload.type, request_id: request.id });
           await this.linkDocument(tx, actor, expedienteId, document.id, upload.type, `${key}:${upload.type}`, { solicitud_pago_id: request.id, movimiento_id: movement.movement.id });
@@ -357,12 +551,12 @@ export class ExpedienteFinanceService {
     });
   }
 
-  private capabilities(actor: ExpedienteFinanceActor) { return { canRead: actor.permissions.includes('expedientes.read'), canReport: actor.permissions.includes('expedientes.write') && actor.permissions.includes('documentos.write'), canCreateRequest: actor.permissions.includes('expedientes.write') && actor.permissions.includes('documentos.write'), canApply: this.canApply(actor), canUseAI: this.canApply(actor) && actor.permissions.includes('ia.execute'), canReadDocuments: actor.permissions.includes('documentos.read'), canRetireDocuments: actor.permissions.includes('documentos.unlink') }; }
+  private capabilities(actor: ExpedienteFinanceActor) { return { canRead: actor.permissions.includes('expedientes.read'), canReport: actor.permissions.includes('expedientes.write') && actor.permissions.includes('documentos.write'), canCreateRequest: actor.permissions.includes('expedientes.write') && actor.permissions.includes('documentos.write'), canApply: this.canApply(actor), canCompleteInvoice: this.canApply(actor) && actor.permissions.includes('documentos.write'), canUseAI: this.canApply(actor) && actor.permissions.includes('ia.execute'), canReadDocuments: actor.permissions.includes('documentos.read'), canRetireDocuments: actor.permissions.includes('documentos.unlink') }; }
   private canApply(actor: ExpedienteFinanceActor) { return actor.permissions.includes('finanzas.write') && actor.permissions.includes('finanzas.validate'); }
   private requireOperationalWrite(actor: ExpedienteFinanceActor) { if (!actor.permissions.includes('expedientes.write') || !actor.permissions.includes('documentos.write')) throw new ExpedienteFinanceError(403, 'EXP008_OPERATION_DENIED', 'No tienes permiso para registrar operaciones financieras del expediente.'); }
   private idempotency(value: unknown) { const key = clean(value, 160); if (!key) throw new ExpedienteFinanceError(400, 'EXP008_IDEMPOTENCY_REQUIRED', 'No fue posible identificar de forma segura la operación.'); return key; }
   private async lock(tx: Prisma.TransactionClient, key: string) { await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp008:${key}`}))`); }
-  private async assertExpediente(db: Db, actor: ExpedienteFinanceActor, expedienteId: string) { const record = await db.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) }, select: { id: true, numero_pravia: true, cliente_alias: true } }); if (!record) throw new ExpedienteFinanceError(403, 'EXP008_EXPEDIENTE_ACCESS_DENIED', 'No tienes acceso a este expediente.'); return record; }
+  private async assertExpediente(db: Db, actor: ExpedienteFinanceActor, expedienteId: string) { const record = await db.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) }, select: { id: true, numero_pravia: true, cliente_alias: true, notaria: { select: { nombre: true } }, actos: { where: { estatus: 'ACTIVO', removed_at: null }, orderBy: { created_at: 'asc' }, select: { tipo_acto: { select: { nombre: true } } } } } }); if (!record) throw new ExpedienteFinanceError(403, 'EXP008_EXPEDIENTE_ACCESS_DENIED', 'No tienes acceso a este expediente.'); return record; }
   private async resolveFormat(organizationId: string, kind: 'solicitud' | 'comprobante') {
     const destination = kind === 'solicitud' ? 'FINANZAS_SOLICITUD_PAGO' : 'FINANZAS_RECIBO_PAGO';
     const links = await this.prisma.catalogoArtefactoDestino.findMany({
@@ -384,7 +578,7 @@ export class ExpedienteFinanceService {
       throw error;
     }
   }
-  private async storeUpload(actor: ExpedienteFinanceActor, expedienteId: string, file: Upload, folder: string) { if (!file?.buffer?.length) throw new ExpedienteFinanceError(400, 'EXP008_FILE_REQUIRED', 'Selecciona un documento.'); if (file.size > 25 * 1024 * 1024) throw new ExpedienteFinanceError(413, 'EXP008_FILE_TOO_LARGE', 'El archivo supera 25 MB.'); return this.storeBuffer(actor, expedienteId, file.buffer, safeName(file.originalname), file.mimetype || 'application/octet-stream', folder); }
+  private async storeUpload(actor: ExpedienteFinanceActor, expedienteId: string, file: Upload, folder: string) { if (!file?.buffer?.length) throw new ExpedienteFinanceError(400, 'EXP008_FILE_REQUIRED', 'Selecciona un documento.'); if (file.size > 25 * 1024 * 1024) throw new ExpedienteFinanceError(413, 'EXP008_FILE_TOO_LARGE', 'El archivo supera 25 MB.'); let mimeType: string; try { mimeType = canonicalUploadedDocumentMime(file); } catch (error) { throw new ExpedienteFinanceError(400, 'EXP008_FILE_TYPE_INVALID', error instanceof Error ? error.message : 'El archivo no es compatible.'); } return this.storeBuffer(actor, expedienteId, file.buffer, safeName(file.originalname), mimeType, folder); }
   private async storeBuffer(actor: ExpedienteFinanceActor, expedienteId: string, buffer: Buffer, fileName: string, mimeType: string, folder: string) { const storageKey = `organizations/${actor.organizationId}/expedientes/${expedienteId}/finanzas/${folder}/${randomUUID()}_${safeName(fileName)}`; await uploadFile(buffer, storageKey, mimeType); return { storageKey, buffer, fileName, mimeType, checksum: checksum(buffer) }; }
   private async createDocument(tx: Prisma.TransactionClient, actor: ExpedienteFinanceActor, expedienteId: string, stored: { storageKey: string; buffer: Buffer; fileName: string; mimeType: string; checksum: string }, type: string, provenance: Record<string, unknown>) { const document = await tx.documento.create({ data: { organization_id: actor.organizationId, nombre_original: stored.fileName, nombre_interno: `${randomUUID()}-${stored.fileName}`, tipo: type, categoria: 'OTROS', storage_key: stored.storageKey, mime_type: stored.mimeType, size_bytes: stored.buffer.length, checksum_sha256: stored.checksum, estatus: 'VIGENTE', subido_por_id: actor.id, expediente_id: expedienteId, datos_extraidos: json(provenance) } }); await tx.expedienteDocumento.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, documento_id: document.id, tipo_vinculo: type, creado_por_id: actor.id, origen: 'FINANZAS', source_entity_type: 'ExpedienteFinanzaDocumento', source_entity_id: document.id, source_context: type, source_key: `FINANZAS:Documento:${document.id}:${type}`, document_version: stored.checksum, provenance: json(provenance) } }); return document; }
   private async linkDocument(tx: Prisma.TransactionClient, actor: ExpedienteFinanceActor, expedienteId: string, documentId: string, type: any, key: string, target: { ingreso_reportado_id?: string; solicitud_pago_id?: string; movimiento_id?: string; comprobante_id?: string }) { return tx.expedienteFinanzaDocumento.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, documento_id: documentId, tipo: type, ingreso_reportado_id: target.ingreso_reportado_id || null, solicitud_pago_id: target.solicitud_pago_id || null, movimiento_id: target.movimiento_id || null, comprobante_id: target.comprobante_id || null, vinculado_por_id: actor.id, idempotency_key: key } }); }

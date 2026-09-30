@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { Navigate, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Bell, Bot, Building2, Check, ChevronRight, ClipboardList, Clock3, Files, KeyRound, LayoutDashboard, LockKeyhole, Mail,
-  MonitorSmartphone, Pencil, Search, ShieldCheck, SlidersHorizontal, TimerReset, Trash2, UserRound, UsersRound, X,
+  Bell, BookOpenText, Bot, Building2, Check, ChevronRight, ClipboardList, Clock3, Files, KeyRound, LayoutDashboard, LockKeyhole, Mail,
+  MonitorSmartphone, Pencil, Search, ShieldCheck, SlidersHorizontal, Trash2, UserRound, UsersRound, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PageContainer } from '../../components/layout/PageContainer';
@@ -12,11 +12,12 @@ import { PasswordInput } from '../../components/ui/PasswordInput';
 import { humanizeRole } from '../../lib/formatters';
 import { useAuth } from '../auth/AuthProvider';
 import { settingsService } from './settings.service';
-import { ROLE_LABELS, type ManagedUser, type Session, type UserInvitation, type UserPreferences } from './settings.types';
+import { browserNotificationSupport, requestBrowserNotifications } from '../notifications/browserNotifications';
+import { ROLE_LABELS, type ManagedUser, type NotificationItem, type Session, type UserInvitation, type UserPreferences } from './settings.types';
 import { ActsTimesCatalog } from './catalogs/ActsTimesCatalog';
 import { TemplatesFormatsCatalog } from './catalogs/TemplatesFormatsCatalog';
 import { QuestionnairesCatalog } from './catalogs/QuestionnairesCatalog';
-import { TimingPolicies } from './timing/TimingPolicies';
+import { KnowledgeLibrary } from './knowledge/KnowledgeLibrary';
 import styles from './Settings.module.css';
 
 type AsyncState<T> = { loading: boolean; error: string; data: T | null };
@@ -65,10 +66,10 @@ const adminItems: SettingsNavItem[] = [
   { to: '/configuracion/auditoria', label: 'Auditoría', icon: Search, permission: 'configuracion.manage' },
 ];
 const catalogItems: SettingsNavItem[] = [
-  { to: '/configuracion/politicas-tiempo', label: 'Políticas de tiempo', icon: TimerReset, permission: 'configuracion.catalogos.read' },
   { to: '/configuracion/actos-tiempos', label: 'Actos y tiempos', icon: Clock3, permission: 'configuracion.catalogos.read' },
   { to: '/configuracion/plantillas-formatos', label: 'Plantillas y formatos', icon: Files, permission: 'configuracion.catalogos.read' },
   { to: '/configuracion/cuestionarios', label: 'Cuestionarios', icon: ClipboardList, permission: 'configuracion.catalogos.read' },
+  { to: '/configuracion/biblioteca-conocimiento', label: 'Biblioteca de conocimiento', icon: BookOpenText, permission: 'configuracion.catalogos.read' },
 ];
 
 function SettingsNavigation() {
@@ -193,19 +194,36 @@ function AuditSection() {
 }
 
 function NotificationsSection() {
-  const resource = useResource(settingsService.notifications, []);
-  const navigate = useNavigate(); const read = async (id: string, href?: string | null) => { await settingsService.readNotification(id); resource.reload(); if (href) navigate(href); };
-  return <section className={styles.tableCard}><div className={styles.cardHeader}><div><h2>Centro de notificaciones</h2><p>Eventos reales vinculados con tu cuenta y sus accesos.</p></div><Button variant="secondary" disabled={!resource.data?.unread} onClick={async () => { await settingsService.readAllNotifications(); resource.reload(); }}>Marcar todas como leídas</Button></div><StatePanel loading={resource.loading} error={resource.error} onRetry={resource.reload} empty={resource.data?.notifications.length === 0}><div className={styles.notificationList}>{resource.data?.notifications.map((item) => <button key={item.id} onClick={() => read(item.id, item.href)} className={!item.read_at ? styles.unread : ''}><span className={styles.notificationIcon}><Bell size={17} /></span><span><strong>{item.title}</strong><small>{item.body}</small><time>{formatDate(item.created_at)}</time></span>{!item.read_at && <i aria-label="No leída" />}</button>)}</div></StatePanel></section>;
+  const resource = useResource(() => settingsService.notifications(true), []);
+  const navigate = useNavigate();
+  const reloadRef = useRef(resource.reload); reloadRef.current = resource.reload;
+  const [permission, setPermission] = useState(browserNotificationSupport());
+  useEffect(() => {
+    const refresh = () => reloadRef.current();
+    const timer = window.setInterval(refresh, 30_000);
+    window.addEventListener('pravia:notifications-changed', refresh);
+    return () => { window.clearInterval(timer); window.removeEventListener('pravia:notifications-changed', refresh); };
+  }, []);
+  const read = async (item: NotificationItem) => { if (!item.read_at) await settingsService.readNotification(item.id); if (item.href) navigate(item.href); else resource.reload(); };
+  const transition = async (item: NotificationItem, action: 'dismiss' | 'not-applicable') => {
+    if (action === 'dismiss') await settingsService.dismissNotification(item.id);
+    else await settingsService.markNotificationNotApplicable(item.id);
+    resource.reload();
+  };
+  const statusLabel = (status: NotificationItem['status']) => ({ ACTIVE: 'Activa', RESOLVED: 'Resuelta', DISMISSED: 'Descartada', NOT_APPLICABLE: 'No aplica' }[status]);
+  const priorityLabel = (priority: NotificationItem['priority']) => ({ URGENT: 'Urgente', IMPORTANT: 'Importante', NORMAL: 'Normal', LOW: 'Baja' }[priority]);
+  return <section className={styles.tableCard}><div className={styles.cardHeader}><div><h2>Centro de notificaciones</h2><p>Alertas persistentes y recordatorios derivados de datos reales dentro de tu alcance.</p></div><div className={styles.notificationHeaderActions}>{permission === 'default' && <Button variant="secondary" onClick={async () => setPermission(await requestBrowserNotifications())}>Activar avisos</Button>}<Button variant="secondary" disabled={!resource.data?.unread} onClick={async () => { await settingsService.readAllNotifications(); resource.reload(); }}>Marcar leídas</Button></div></div>{permission === 'denied' && <p className={styles.notificationFallback}>Los avisos del navegador están bloqueados; el centro interno seguirá actualizándose.</p>}<StatePanel loading={resource.loading} error={resource.error} onRetry={resource.reload} empty={resource.data?.notifications.length === 0}><div className={styles.notificationList}>{resource.data?.notifications.map((item) => <article key={item.id} className={!item.read_at && item.status === 'ACTIVE' ? styles.unread : ''}><button className={styles.notificationMain} onClick={() => void read(item)}><span className={styles.notificationIcon}><Bell size={17} /></span><span className={styles.notificationCopy}><span className={styles.notificationMeta}><em data-priority={item.priority}>{priorityLabel(item.priority)}</em><em data-status={item.status}>{statusLabel(item.status)}</em>{item.source_module && <em>{item.source_module.toLocaleLowerCase('es-MX')}</em>}</span><strong>{item.title}</strong><small>{item.body}</small><time>{item.last_reminder_at ? `Último recordatorio ${formatDate(item.last_reminder_at)}` : formatDate(item.created_at)}</time></span>{!item.read_at && item.status === 'ACTIVE' && <i aria-label="No leída" />}</button>{item.status === 'ACTIVE' && <div className={styles.notificationActions}><button onClick={() => void transition(item, 'dismiss')}>Descartar</button><button onClick={() => void transition(item, 'not-applicable')}>No aplica</button></div>}</article>)}</div></StatePanel></section>;
 }
 
 export function SettingsPage() {
   const location = useLocation(); const { user } = useAuth();
   const segment = location.pathname.split('/')[2] || 'overview';
+  if (segment === 'politicas-tiempo') return <Navigate to="/configuracion/actos-tiempos" replace />;
   const titles: Record<string, [string, string]> = {
-    overview: ['Configuración', 'Administra tu cuenta, preferencias y controles de acceso.'], perfil: ['Mi perfil', 'Información personal y alcance operativo.'], seguridad: ['Seguridad y sesiones', 'Contraseña y dispositivos con acceso vigente.'], preferencias: ['Preferencias', 'Personaliza tu experiencia de trabajo.'], organizacion: ['Organización', 'Fuente operativa y ámbito de tu cuenta.'], usuarios: ['Usuarios y accesos', 'Invitaciones, estados, roles y trazabilidad.'], roles: ['Roles y permisos', 'Matriz efectiva definida por la política del servidor.'], inteligencia: ['Administración de IA', 'Estado técnico, política y consumo real.'], auditoria: ['Auditoría', 'Trazabilidad de acciones administrativas.'], notificaciones: ['Notificaciones', 'Actividad relevante de tu cuenta.'], 'politicas-tiempo': ['Políticas de tiempo', 'Revisiones organizacionales para intervalos comerciales y administrativos.'], 'actos-tiempos': ['Actos y tiempos', 'Catálogo canónico y configuración operativa privada.'], 'plantillas-formatos': ['Plantillas y formatos', 'Repositorio maestro privado por Notaría, banco o fiduciaria.'], cuestionarios: ['Cuestionarios', 'Captura estructurada, reutilizable y versionada para expedientes y formatos.'],
+    overview: ['Configuración', 'Administra tu cuenta, preferencias y controles de acceso.'], perfil: ['Mi perfil', 'Información personal y alcance operativo.'], seguridad: ['Seguridad y sesiones', 'Contraseña y dispositivos con acceso vigente.'], preferencias: ['Preferencias', 'Personaliza tu experiencia de trabajo.'], organizacion: ['Organización', 'Fuente operativa y ámbito de tu cuenta.'], usuarios: ['Usuarios y accesos', 'Invitaciones, estados, roles y trazabilidad.'], roles: ['Roles y permisos', 'Matriz efectiva definida por la política del servidor.'], inteligencia: ['Administración de IA', 'Estado técnico, política y consumo real.'], auditoria: ['Auditoría', 'Trazabilidad de acciones administrativas.'], notificaciones: ['Notificaciones', 'Actividad relevante de tu cuenta.'], 'actos-tiempos': ['Actos y tiempos', 'Catálogo canónico y configuración operativa privada.'], 'plantillas-formatos': ['Plantillas y formatos', 'Repositorio maestro privado por Notaría, banco o fiduciaria.'], cuestionarios: ['Cuestionarios', 'Captura estructurada, reutilizable y versionada para expedientes y formatos.'], 'biblioteca-conocimiento': ['Biblioteca de conocimiento', 'Fuentes jurídicas versionadas, evidencia y criterios internos separados.'],
   };
-  const denied = (segment === 'usuarios' && !user?.permissions?.includes('usuarios.manage')) || (segment === 'auditoria' && !user?.permissions?.includes('configuracion.manage')) || (segment === 'inteligencia' && !user?.permissions?.includes('ai.admin.read')) || (['politicas-tiempo', 'actos-tiempos', 'plantillas-formatos', 'cuestionarios'].includes(segment) && !user?.permissions?.includes('configuracion.catalogos.read'));
-  const section = denied ? <div className={styles.state} role="alert"><LockKeyhole /><strong>Acceso restringido</strong><span>Tu rol no incluye esta sección administrativa.</span></div> : segment === 'perfil' ? <ProfileSection /> : segment === 'seguridad' ? <SecuritySection /> : segment === 'preferencias' ? <PreferencesSection /> : segment === 'organizacion' ? <OrganizationSection /> : segment === 'usuarios' ? <UsersSection /> : segment === 'roles' ? <RolesSection /> : segment === 'inteligencia' ? <AISection /> : segment === 'auditoria' ? <AuditSection /> : segment === 'notificaciones' ? <NotificationsSection /> : segment === 'politicas-tiempo' ? <TimingPolicies /> : segment === 'actos-tiempos' ? <ActsTimesCatalog /> : segment === 'plantillas-formatos' ? <TemplatesFormatsCatalog /> : segment === 'cuestionarios' ? <QuestionnairesCatalog /> : <OverviewSection />;
+  const denied = (segment === 'usuarios' && !user?.permissions?.includes('usuarios.manage')) || (segment === 'auditoria' && !user?.permissions?.includes('configuracion.manage')) || (segment === 'inteligencia' && !user?.permissions?.includes('ai.admin.read')) || (['actos-tiempos', 'plantillas-formatos', 'cuestionarios', 'biblioteca-conocimiento'].includes(segment) && !user?.permissions?.includes('configuracion.catalogos.read'));
+  const section = denied ? <div className={styles.state} role="alert"><LockKeyhole /><strong>Acceso restringido</strong><span>Tu rol no incluye esta sección administrativa.</span></div> : segment === 'perfil' ? <ProfileSection /> : segment === 'seguridad' ? <SecuritySection /> : segment === 'preferencias' ? <PreferencesSection /> : segment === 'organizacion' ? <OrganizationSection /> : segment === 'usuarios' ? <UsersSection /> : segment === 'roles' ? <RolesSection /> : segment === 'inteligencia' ? <AISection /> : segment === 'auditoria' ? <AuditSection /> : segment === 'notificaciones' ? <NotificationsSection /> : segment === 'actos-tiempos' ? <ActsTimesCatalog /> : segment === 'plantillas-formatos' ? <TemplatesFormatsCatalog /> : segment === 'cuestionarios' ? <QuestionnairesCatalog /> : segment === 'biblioteca-conocimiento' ? <KnowledgeLibrary /> : <OverviewSection />;
   const [title, subtitle] = titles[segment] || titles.overview;
   return <PageContainer title={title} subtitle={subtitle}><div className={styles.layout}><SettingsNavigation /><div className={styles.content}>{section}</div></div></PageContainer>;
 }

@@ -24,3 +24,32 @@ export const formatRelativeDate = (value?: string) => {
 export const formatCurrency = (value: number, currency = 'MXN') => new Intl.NumberFormat('es-MX', {
   style: 'currency', currency, maximumFractionDigits: 0,
 }).format(value);
+
+const OPERATIONAL_STATUS_LABELS: Record<string, string> = {
+  ABIERTO: 'Abierto',
+  ACTIVO: 'Activo',
+  BORRADOR: 'Borrador',
+  CANCELADO: 'Cancelado',
+  CERRADO: 'Cerrado',
+  EN_INTEGRACION: 'En integración',
+  EN_PROCESO: 'En proceso',
+  ENTREGADO: 'Entregado',
+  FIRMADO: 'Firmado',
+  LISTO_ENTREGA: 'Listo para entrega',
+  PENDIENTE_CLIENTE: 'Pendiente del cliente',
+  PENDIENTE_NOTARIA: 'Pendiente de notaría',
+  SUSPENDIDO: 'Suspendido',
+};
+
+/**
+ * Conserva el valor canónico recibido del backend y humaniza únicamente su
+ * presentación. Los estados conocidos mantienen la redacción oficial de
+ * PRAVIA; un valor histórico desconocido sigue siendo legible sin alterarlo.
+ */
+export const formatOperationalStatus = (value?: string) => {
+  if (!value) return undefined;
+  return OPERATIONAL_STATUS_LABELS[value] ?? value
+    .toLocaleLowerCase('es-MX')
+    .replaceAll('_', ' ')
+    .replace(/^./, (letter) => letter.toLocaleUpperCase('es-MX'));
+};

@@ -1,3 +1,5 @@
+import { normalizeOperationalText } from '../utils/operationalText';
+
 export const BUDGET_CATEGORIES = ['HONORARIOS', 'IVA_HONORARIOS', 'IMPUESTOS_DERECHOS'] as const;
 export type BudgetCategory = typeof BUDGET_CATEGORIES[number];
 export type MoneyInput = string | number;
@@ -51,7 +53,7 @@ export function normalizeBudgetConcepts(input: unknown): NormalizedBudgetConcept
   if (!Array.isArray(input) || input.length === 0) throw new BudgetValidationError('EXP007_CONCEPTS_REQUIRED', 'Agrega al menos un concepto al presupuesto.');
   if (input.length > 200) throw new BudgetValidationError('EXP007_TOO_MANY_CONCEPTS', 'El presupuesto no puede contener más de 200 conceptos.');
   return input.map((raw: any, orden) => {
-    const concepto = String(raw?.concepto ?? '').trim();
+    const concepto = normalizeOperationalText(raw?.concepto, 240);
     if (!concepto || concepto.length > 240) throw new BudgetValidationError('EXP007_INVALID_CONCEPT', `El concepto ${orden + 1} debe tener entre 1 y 240 caracteres.`);
     const categoria = String(raw?.categoria ?? '') as BudgetCategory;
     if (!BUDGET_CATEGORIES.includes(categoria)) throw new BudgetValidationError('EXP007_INVALID_CATEGORY', `Selecciona una categoría válida para "${concepto}".`);

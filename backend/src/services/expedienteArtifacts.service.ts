@@ -7,6 +7,7 @@ import { deleteFile, downloadFile, getSignedUrl, uploadFile } from '../storage/s
 import { generateOperationalArtifactWithOpenAI, getOpenAIModelName, type AIUsageMetrics } from './openaiDocument.service';
 import { recordAIFailure, recordAIUsage, recordAIUsageInDb } from './aiUsage.service';
 import { extractDocxText } from './docxText';
+import { canonicalUploadedDocumentMime } from './documentUploadValidation';
 
 export type Exp006Actor = { id: string; organizationId: string; sessionId: string; rol: any; permissions: any[] };
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -135,14 +136,16 @@ export class ExpedienteArtifactsService {
     const pending = await this.pending(this.prisma, actor, expedienteId, pendingId);
     if (pending.version !== input.expected_version) throw new ExpedienteArtifactsError(409, 'EXP006_PENDING_STALE', 'El pendiente cambió. Recarga antes de cargar el archivo.');
     if (!file?.buffer?.length) throw new ExpedienteArtifactsError(400, 'EXP006_FILE_REQUIRED', 'Selecciona un archivo.');
-    const allowed = new Set(['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/png', 'image/jpeg']);
-    if (!allowed.has(file.mimetype) || file.size > 25 * 1024 * 1024) throw new ExpedienteArtifactsError(400, 'EXP006_FILE_INVALID', 'Carga un PDF, DOCX, PNG o JPG de hasta 25 MB.');
+    let canonicalMime: string;
+    try { canonicalMime = canonicalUploadedDocumentMime(file); }
+    catch (error) { throw new ExpedienteArtifactsError(400, 'EXP006_FILE_INVALID', error instanceof Error ? error.message : 'El archivo no es compatible.'); }
+    if (file.size > 25 * 1024 * 1024) throw new ExpedienteArtifactsError(400, 'EXP006_FILE_INVALID', 'El archivo supera 25 MB.');
     const existing = await this.prisma.expedienteArtefactoDocumento.findFirst({ where: { organization_id: actor.organizationId, pendiente_id: pending.id, idempotency_key: input.idempotency_key } });
     if (existing) return { document_id: existing.documento_id, idempotent: true, estado: 'PENDIENTE_REVISION' };
     const storageKey = `organizations/${actor.organizationId}/expedientes/${expedienteId}/exp006/${randomUUID()}_${safe(file.originalname)}`;
-    await uploadFile(file.buffer, storageKey, file.mimetype);
+    await uploadFile(file.buffer, storageKey, canonicalMime);
     try {
-      return { ...(await this.persistDocument(actor, expedienteId, pending, { buffer: file.buffer, storageKey, originalName: file.originalname, mimeType: file.mimetype, via: 'CARGA_EXTERNA', idempotencyKey: input.idempotency_key, sourceRevision: pending.source_revision, sourceManifest: null, review: {} })), idempotent: false, estado: 'PENDIENTE_REVISION' };
+      return { ...(await this.persistDocument(actor, expedienteId, pending, { buffer: file.buffer, storageKey, originalName: file.originalname, mimeType: canonicalMime, via: 'CARGA_EXTERNA', idempotencyKey: input.idempotency_key, sourceRevision: pending.source_revision, sourceManifest: null, review: {} })), idempotent: false, estado: 'PENDIENTE_REVISION' };
     } catch (error) { await deleteFile(storageKey).catch(() => undefined); throw error; }
   }
 
@@ -362,7 +365,21 @@ export class ExpedienteArtifactsService {
     if (!actId) return false;
     const remaining = await tx.expedienteArtefactoPendiente.count({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, expediente_acto_id: actId, en_alcance: true, obligatoria: true, estado: { notIn: ['VALIDADO', 'NO_APLICA'] }, explicacion_snapshot: { path: ['conditions', 'actividad_id'], equals: activityMasterId } } });
     if (remaining) return false;
-    const activity = await tx.expedienteSeguimientoActividad.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, expediente_acto_id: actId, actividad_maestra_id: activityMasterId, en_alcance: true } });
+    const activity = await tx.expedienteSeguimientoActividad.findFirst({
+      where: {
+        organization_id: actor.organizationId,
+        expediente_id: expedienteId,
+        en_alcance: true,
+        origenes: {
+          some: {
+            organization_id: actor.organizationId,
+            expediente_acto_id: actId,
+            actividad_maestra_id: activityMasterId,
+            en_alcance: true,
+          },
+        },
+      },
+    });
     if (!activity || ['COMPLETADO', 'NO_APLICA'].includes(activity.estado)) return false;
     const dependencies = await tx.expedienteSeguimientoDependencia.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, actividad_id: activity.id, bloqueante: true }, select: { depende_actividad_id: true } });
     if (dependencies.length && await tx.expedienteSeguimientoActividad.count({ where: { id: { in: dependencies.map((item) => item.depende_actividad_id) }, estado: { notIn: ['COMPLETADO', 'NO_APLICA'] } } })) return false;

@@ -14,11 +14,14 @@ const mocks = vi.hoisted(() => {
     catalogoArtefactoVersion: { findFirst: vi.fn(), create: vi.fn() },
     catalogoArtefactoActo: { deleteMany: vi.fn(), createMany: vi.fn() },
     catalogoArtefactoRegla: { deleteMany: vi.fn(), createMany: vi.fn() },
+    catalogoArtefactoDestino: { deleteMany: vi.fn(), createMany: vi.fn() },
+    projectTemplateAssignment: { findUnique: vi.fn(), upsert: vi.fn() },
     organizationMembership: { findFirst: vi.fn() },
     notaria: { findFirst: vi.fn(), findMany: vi.fn() },
     user: { findMany: vi.fn() },
     caracterCompareciente: { findMany: vi.fn() },
     auditLog: { create: vi.fn() },
+    $executeRaw: vi.fn(),
     $transaction: vi.fn(),
   };
   return { db, uploadFile: vi.fn(), deleteFile: vi.fn(), getSignedUrl: vi.fn() };
@@ -180,7 +183,7 @@ describe('CFG-001 forensic behavior', () => {
     mocks.db.configuracionActo.update.mockResolvedValue({ id: 'config-a', revision: 2 });
     await actsAndTimesService.update(actor, 'act-global', { nombre: 'Compraventa local' });
     expect(mocks.db.tipoActo.update).not.toHaveBeenCalled();
-    expect(mocks.db.configuracionActo.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ nombre_personalizado: 'Compraventa local', revision: { increment: 1 } }) }));
+    expect(mocks.db.configuracionActo.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ nombre_personalizado: 'COMPRAVENTA LOCAL', revision: { increment: 1 } }) }));
   });
 
   it('edita la identidad tenant-owned con updateMany compatible con el filtro multitenant', async () => {
@@ -188,7 +191,7 @@ describe('CFG-001 forensic behavior', () => {
     mocks.db.tipoActo.updateMany.mockResolvedValue({ count: 1 });
     mocks.db.configuracionActo.update.mockResolvedValue({ id: 'config-a', revision: 2, activa: true, requiere_revision: true, etapas: [] });
     await actsAndTimesService.update(actor, 'act-local', { descripcion: 'Descripción editada' });
-    expect(mocks.db.tipoActo.updateMany).toHaveBeenCalledWith({ where: { id: 'act-local' }, data: { descripcion: 'Descripción editada' } });
+    expect(mocks.db.tipoActo.updateMany).toHaveBeenCalledWith({ where: { id: 'act-local' }, data: { descripcion: 'DESCRIPCIÓN EDITADA' } });
     expect(mocks.db.tipoActo.update).not.toHaveBeenCalled();
   });
 
@@ -271,7 +274,7 @@ describe('CFG-002 forensic behavior', () => {
     mocks.db.catalogoCarpeta.findFirst.mockResolvedValueOnce(folder);
     mocks.db.catalogoCarpeta.update.mockResolvedValue({ ...folder, nombre: 'Después' });
     await templatesAndFormatsService.updateFolder(actor, 'folder-a', { nombre: 'Después' });
-    expect(mocks.db.catalogoCarpeta.update).toHaveBeenCalledWith({ where: { id: 'folder-a' }, data: { nombre: 'Después' } });
+    expect(mocks.db.catalogoCarpeta.update).toHaveBeenCalledWith({ where: { id: 'folder-a' }, data: { nombre: 'DESPUÉS' } });
     expect(mocks.db.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ accion: 'CFG_FOLDER_UPDATED' }) });
 
     vi.clearAllMocks();
@@ -295,11 +298,75 @@ describe('CFG-002 forensic behavior', () => {
 
   it('audita el upload inicial sin exponer el storage key anidado', async () => {
     mocks.db.tipoActo.findMany.mockResolvedValue([{ id: 'A' }]); mocks.uploadFile.mockResolvedValue(undefined);
-    mocks.db.catalogoArtefacto.create.mockImplementation(async ({ data }: any) => ({ id: 'artifact-a', ...data, versiones: [{ id: 'v1', ...data.versiones.create, storage_key: 'private/v1' }], actos: [{ tipo_acto_id: 'A' }], reglas: [] }));
+    mocks.db.catalogoArtefacto.create.mockImplementation(async ({ data }: any) => ({ id: 'artifact-a', ...data }));
+    mocks.db.catalogoArtefactoVersion.create.mockResolvedValue({ id: 'v1' });
+    mocks.db.catalogoArtefacto.findUniqueOrThrow.mockResolvedValue({ id: 'artifact-a', versiones: [{ id: 'v1', storage_key: 'private/v1' }], actos: [{ tipo_acto_id: 'A' }], reglas: [], destinosFuncionales: [] });
     await templatesAndFormatsService.createArtifact(actor, { tipo: 'FORMATO', propietario_tipo: 'NOTARIA', notaria_id: 'notary-a', nombre: 'Formato', act_ids: ['A'], rules: [] }, artifactFile);
     const auditCall = mocks.db.auditLog.create.mock.calls.at(-1)?.[0]?.data;
     expect(auditCall.accion).toBe('CFG_ARTIFACT_CREATED');
     expect(auditCall.valores_nuevos.versiones[0].storage_key).toBe('[PRIVATE]');
+  });
+
+  it('exige un único Acto exacto antes de cargar un machote Project a Storage', async () => {
+    await expect(templatesAndFormatsService.createArtifact(actor, {
+      tipo: 'PLANTILLA', propietario_tipo: 'NOTARIA', notaria_id: 'notary-a', nombre: 'Machote',
+      act_ids: [], destinos_funcionales: [{ destino: 'PROYECTO_MACHOTE', activo: true, predeterminado: true }],
+    }, artifactFile)).rejects.toMatchObject({ code: 'PROJECT_TEMPLATE_ACT_REQUIRED' });
+    expect(mocks.uploadFile).not.toHaveBeenCalled();
+  });
+
+  it('crea atómicamente el machote CFG-002 y su asignación estructurada Notaría + Acto', async () => {
+    mocks.db.tipoActo.findMany.mockResolvedValue([{ id: 'A' }]);
+    mocks.db.projectTemplateAssignment.findUnique.mockResolvedValue(null);
+    mocks.db.projectTemplateAssignment.upsert.mockResolvedValue({ id: 'assignment-a', active: true });
+    mocks.uploadFile.mockResolvedValue(undefined);
+    mocks.db.catalogoArtefacto.create.mockImplementation(async ({ data }: any) => ({ id: 'artifact-a', ...data }));
+    mocks.db.catalogoArtefactoVersion.create.mockResolvedValue({ id: 'version-a' });
+    mocks.db.catalogoArtefacto.findUniqueOrThrow.mockResolvedValue({
+      id: 'artifact-a', versiones: [{ id: 'version-a' }],
+      actos: [{ tipo_acto_id: 'A' }], reglas: [],
+      destinosFuncionales: [{ destino: 'PROYECTO_MACHOTE', predeterminado: false }],
+    });
+    await templatesAndFormatsService.createArtifact(actor, {
+      tipo: 'PLANTILLA', propietario_tipo: 'NOTARIA', notaria_id: 'notary-a', nombre: 'Machote',
+      act_ids: ['A'], destinos_funcionales: [{ destino: 'PROYECTO_MACHOTE', activo: true, predeterminado: true }],
+    }, artifactFile);
+    expect(mocks.db.$executeRaw).toHaveBeenCalledOnce();
+    expect(mocks.db.projectTemplateAssignment.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { organization_id_tipo_acto_id: { organization_id: actor.organizationId, tipo_acto_id: 'A' } },
+      create: expect.objectContaining({ organization_id: actor.organizationId, tipo_acto_id: 'A', artefacto_id: 'artifact-a', version_id: 'version-a' }),
+    }));
+    expect(mocks.db.catalogoArtefactoDestino.createMany).toHaveBeenCalledWith({ data: [expect.objectContaining({
+      organization_id: actor.organizationId,
+      artefacto_id: 'artifact-a',
+      destino: 'PROYECTO_MACHOTE',
+      predeterminado: false,
+    })] });
+    expect(mocks.db.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ accion: 'PROJECT_TEMPLATE_ASSIGNMENT_CREATED' }) });
+  });
+
+  it('rechaza conflicto sin reemplazo y compensa el blob sin crear un artefacto huérfano', async () => {
+    mocks.db.tipoActo.findMany.mockResolvedValue([{ id: 'A' }]);
+    mocks.db.projectTemplateAssignment.findUnique.mockResolvedValue({ id: 'assignment-old', active: true, artefacto_id: 'old', version_id: 'old-v1' });
+    mocks.uploadFile.mockResolvedValue(undefined);
+    await expect(templatesAndFormatsService.createArtifact(actor, {
+      tipo: 'PLANTILLA', propietario_tipo: 'NOTARIA', notaria_id: 'notary-a', nombre: 'Machote nuevo',
+      act_ids: ['A'], destinos_funcionales: [{ destino: 'PROYECTO_MACHOTE', activo: true }],
+    }, artifactFile)).rejects.toMatchObject({ code: 'PROJECT_TEMPLATE_CONFLICT' });
+    expect(mocks.db.catalogoArtefacto.create).not.toHaveBeenCalled();
+    expect(mocks.deleteFile).toHaveBeenCalledOnce();
+  });
+
+  it('valida Actos de machote sólo en el tenant actual o en el catálogo global', async () => {
+    mocks.db.tipoActo.findMany.mockResolvedValue([]);
+    await expect(templatesAndFormatsService.createArtifact(actor, {
+      tipo: 'PLANTILLA', propietario_tipo: 'NOTARIA', notaria_id: 'notary-a', nombre: 'Machote',
+      act_ids: ['ACT-ORG-B'], destinos_funcionales: [{ destino: 'PROYECTO_MACHOTE', activo: true }],
+    }, artifactFile)).rejects.toMatchObject({ code: 'ARTIFACT_ACT_INVALID' });
+    expect(mocks.db.tipoActo.findMany).toHaveBeenCalledWith({ where: expect.objectContaining({
+      OR: [{ organization_id: actor.organizationId }, { organization_id: null }],
+    }), select: { id: true } });
+    expect(mocks.uploadFile).not.toHaveBeenCalled();
   });
 
   it('niega URL firmada cross-tenant aunque se conozca el ID exacto', async () => {

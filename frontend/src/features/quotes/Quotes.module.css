@@ -24,6 +24,8 @@
 @keyframes spin { to { transform: rotate(360deg); } } @keyframes drawerIn { from { transform: translateX(22px); opacity: .8; } }
 
 .dangerButton { min-height: 42px; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--color-danger-200); border-radius: var(--radius-md); color: var(--color-danger-700); background: var(--color-danger-100); font-size: .72rem; font-weight: 750; cursor: pointer; }.dangerButton:disabled { opacity: .55; cursor: wait; }.contractNotice { margin: 0; padding: 12px; border: 1px solid var(--color-blue-200); border-radius: var(--radius-md); color: var(--color-blue-700); background: var(--color-blue-100); font-size: .7rem; line-height: 1.5; }.confirmDate { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; color: var(--color-text-secondary); font-size: .68rem; }.confirmDate input,.confirmDate select { width: 100%; min-height: 44px; padding: 9px 10px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); color: var(--color-text-primary); background: white; font: inherit; }
+.acceptanceActs { margin: 0; padding: 12px; display: grid; gap: 8px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); }.acceptanceActs legend { padding: 0 5px; color: var(--color-text-secondary); font-size: .7rem; font-weight: 760; }.acceptanceActs label { min-height: 42px; flex-direction: row; align-items: center; gap: 10px; }.acceptanceActs input { width: 18px; min-height: 18px; flex: 0 0 18px; accent-color: var(--color-gold-600); }
+.deliveryDraft { padding: 12px; display: grid; gap: 11px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-subtle); }.deliveryDraft .secondaryButton { width: fit-content; }
 
 @media (max-width: 1250px) { .filters { grid-template-columns: minmax(220px,1.5fr) repeat(3,minmax(120px,.75fr)); }.dateGroup { grid-column: 1 / 4; }.clearButton { grid-column: 4; }.contentGrid { grid-template-columns: minmax(0,1.65fr) minmax(300px,.8fr); }.quoteTable th:nth-child(3), .quoteTable td:nth-child(3) { display: none; } }
 @media (min-width: 768px) and (max-width: 1024px) { .metrics { grid-template-columns: repeat(5,minmax(170px,1fr)); overflow-x: auto; padding-bottom: 5px; scroll-snap-type: x mandatory; scroll-padding-inline: 1px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }.metrics::-webkit-scrollbar { display: none; }.metric { scroll-snap-align: start; scroll-snap-stop: always; }.filters { grid-template-columns: 1fr 1fr 1fr; }.searchField { grid-column: 1 / -1; }.dateGroup { grid-column: 1 / 3; }.clearButton { grid-column: 3; }.contentGrid, .loadingBody { grid-template-columns: 1fr; }.analytics { order: 2; }.detailHeader { align-items: flex-start; flex-direction: column; }.detailActions { justify-content: flex-start; }.detailGrid { grid-template-columns: 1fr; }.detailGrid aside { display: grid; grid-template-columns: 1fr 1fr; }.detailGrid aside .detailSection:first-child { grid-column: 1 / -1; } }
@@ -64,8 +66,35 @@
 
 /* Correction 002 v2: one structured quotation, edited directly in the work card. */
 .inlineBudget > header { overflow: visible; }
+.inlineBudgetHeaderActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.aiProposalButton { min-height: 44px; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--color-gold-500); border-radius: var(--radius-md); color: var(--color-navy-900); background: var(--color-gold-100); font: inherit; font-size: .68rem; font-weight: 780; cursor: pointer; text-transform: uppercase; letter-spacing: .02em; }
+.aiProposalButton:disabled { opacity: .55; cursor: wait; }
+.aiProposalPanel { margin: 12px 16px 2px; padding: 14px; border: 1px solid var(--color-gold-300); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--color-gold-100) 45%, white); }
+.aiProposalPanel > header span { display: inline-flex; align-items: center; gap: 7px; color: var(--color-navy-900); font-size: .72rem; font-weight: 800; text-transform: uppercase; }
+.aiProposalPanel > header p, .aiProposalNotice { margin: 5px 0 0; color: var(--color-text-secondary); font-size: .67rem; line-height: 1.5; }
+.aiProposalRows { margin-top: 12px; display: grid; gap: 7px; }
+.aiProposalRows article { min-width: 0; padding: 10px 11px; display: grid; grid-template-columns: minmax(0,1fr) auto minmax(130px,.5fr); align-items: center; gap: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: white; }
+.aiProposalRows article > div { min-width: 0; display: grid; gap: 3px; }
+.aiProposalRows small { color: var(--color-text-muted); font-size: .59rem; }
+.aiProposalRows strong { overflow-wrap: anywhere; font-size: .72rem; }
+.aiProposalRows b { font-size: .73rem; font-variant-numeric: tabular-nums; }
+.aiProposalRows details summary { min-height: 40px; display: flex; align-items: center; gap: 5px; color: var(--color-text-secondary); font-size: .63rem; font-weight: 720; cursor: pointer; }
+.aiProposalRows details p { margin: 4px 0; color: var(--color-text-secondary); font-size: .62rem; line-height: 1.45; }
+.aiEvidenceLayers { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--color-gold-300); }
+.aiEvidenceLayers h3 { margin: 0 0 8px; color: var(--color-navy-900); font-size: .68rem; }
+.aiEvidenceLayers > div { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
+.aiEvidenceLayers article { min-width: 0; padding: 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: white; }
+.aiEvidenceLayers article > strong { display: block; margin-bottom: 5px; color: var(--color-navy-900); font-size: .65rem; }
+.aiEvidenceLayers em { display: inline-block; margin-bottom: 6px; padding: 3px 6px; border-radius: 999px; color: var(--color-danger-700); background: var(--color-danger-50); font-size: .52rem; font-style: normal; font-weight: 800; letter-spacing: .02em; }
+.aiEvidenceLayers p, .aiEvidenceLayers ul { margin: 0; color: var(--color-text-secondary); font-size: .59rem; line-height: 1.45; }
+.aiEvidenceLayers ul { padding-left: 15px; }
+.aiEvidenceLayers li + li { margin-top: 4px; }
+.aiEvidenceLayers li span { margin-right: 5px; font-weight: 760; }
+.aiEvidenceLayers a { margin-left: 5px; color: var(--color-primary-700); font-weight: 720; }
+.aiProposalPanel > footer { margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px; }
 .inlineBudget > .formError, .inlineBudget > .importNotice { margin: 12px 16px 0; }
 .inlineBudget form { padding: 14px 16px 16px; }
+.operationContextField { margin-bottom: 14px; display: grid; gap: 6px; color: var(--color-text-secondary); font-size: .7rem; }.operationContextField textarea { width: 100%; min-height: 76px; resize: vertical; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); padding: 10px 11px; color: var(--color-text-primary); background: white; font: inherit; line-height: 1.5; }.operationContextField small { color: var(--color-text-muted); font-size: .64rem; line-height: 1.45; }
 .inlineConceptHeader, .inlineConceptRow { display: grid; grid-template-columns: minmax(130px,.8fr) minmax(190px,1.5fr) minmax(120px,.7fr) 92px 44px; gap: 8px; align-items: end; }
 .inlineConceptHeader { padding: 0 1px 7px; color: var(--color-text-muted); font-size: .59rem; font-weight: 740; letter-spacing: .03em; text-transform: uppercase; }
 .inlineConceptRows { display: flex; flex-direction: column; gap: 8px; }
@@ -108,6 +137,10 @@
 @media (max-width: 767px) {
   .inlineBudget > header { align-items: stretch; flex-direction: column; }
   .inlineBudget .importBudgetButton { min-height: 44px; justify-content: center; }
+  .inlineBudgetHeaderActions { display: grid; grid-template-columns: 1fr; }
+  .aiProposalRows article { grid-template-columns: minmax(0,1fr) auto; }
+  .aiProposalRows details { grid-column: 1 / -1; }
+  .aiEvidenceLayers > div { grid-template-columns: 1fr; }
   .inlineBudget form { padding: 12px; }
   .inlineBudgetActions { align-items: stretch; flex-direction: column; }
   .inlineBudgetActions > div { display: grid; grid-template-columns: 1fr 1fr; }
@@ -121,4 +154,10 @@
   .inlineConceptRow > .iconDangerButton { grid-column: 3; }
   .inlineBudgetActions > div { grid-template-columns: 1fr; }
   .documentActions { margin-left: 0; }
+}
+.aiDraftNotice {
+  margin: 0;
+  color: var(--text-muted, #5f6672);
+  font-size: 0.8125rem;
+  line-height: 1.4;
 }

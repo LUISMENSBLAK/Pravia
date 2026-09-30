@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { assistantToolCatalog, executeAssistantTool } from './assistantTools.service';
+import { ProjectRepository } from './projectRepository.service';
+import { permissionsForRole } from '../auth/permissions';
+import type { Role } from '@prisma/client';
 
 const user = (permissions: string[] = ['ai.use', 'ai.expedientes.read', 'expedientes.read']) => ({
   id: '11111111-1111-4111-8111-111111111111', email: 'user@example.test', nombre: 'Ana', apellido: 'Prueba',
@@ -60,7 +63,25 @@ describe('assistant backend tools', () => {
     expect(catalog.map((item) => item.name)).toContain('getExpedienteSummary');
     expect(catalog.map((item) => item.name)).not.toContain('getFinancialSummary');
     expect(catalog[0]).not.toHaveProperty('permission');
-    expect(catalog[0]).toEqual(expect.objectContaining({ mode: expect.any(String), object_scope: expect.any(String), sensitivity: expect.any(String) }));
+    expect(catalog[0]).not.toHaveProperty('requiredPermission');
+    expect(catalog[0]).not.toHaveProperty('systemPermissions');
+    expect(catalog[0]).toEqual(expect.objectContaining({
+      domain: expect.any(String),
+      description: expect.any(String),
+      mode: expect.any(String),
+      level: expect.stringMatching(/^[RPESA]$/),
+      risk: expect.any(String),
+      object_scope: expect.any(String),
+      sensitivity: expect.any(String),
+      input_schema: expect.objectContaining({ type: 'object' }),
+      output_schema: expect.objectContaining({ type: 'object' }),
+      tenant_policy: 'CURRENT_ORGANIZATION',
+      object_access_policy: expect.any(String),
+      confirmation_policy: 'NONE',
+      idempotency_policy: 'NOT_APPLICABLE',
+      canonical_service: expect.any(String),
+      audit_policy: expect.stringMatching(/_TRACE$/),
+    }));
   });
 
   it('publica Reportes para IA solo con la doble autorización requerida', () => {
@@ -68,6 +89,22 @@ describe('assistant backend tools', () => {
     expect(allowed.map((item) => item.name)).toContain('getReportingSummary');
     const missingModulePermission = assistantToolCatalog(user(['ai.use', 'ai.reportes.read']));
     expect(missingModulePermission.map((item) => item.name)).not.toContain('getReportingSummary');
+  });
+
+  it.each([
+    ['RECEPCION', 'getProspectFollowUps', 'getFinancialSummary'],
+    ['ABOGADO', 'getComplianceSummary', 'getFinancialSummary'],
+    ['GESTORIA', 'getExpedienteDocuments', 'getProspectFollowUps'],
+    ['CONSULTA', 'getReportingSummary', 'prepareTask'],
+    ['ADMINISTRACION', 'getFinancialSummary', null],
+    ['FINANCIERO', 'getFinancialSummary', 'getExpedienteSummary'],
+    ['DIRECCION', 'getCFG002Resolution', null],
+  ] as Array<[Role, string, string | null]>)('optimiza el perfil canónico %s sin elevar permisos', (role, allowed, denied) => {
+    const actor = { ...user(permissionsForRole(role)), rol: role };
+    const names = assistantToolCatalog(actor).map((item) => item.name);
+    expect(names).toContain(allowed);
+    if (denied) expect(names).not.toContain(denied);
+    expect(assistantToolCatalog({ ...actor, permissions: [] })).toHaveLength(0);
   });
 
   it('lee trabajo real exclusivamente del usuario autenticado', async () => {
@@ -150,5 +187,29 @@ describe('assistant backend tools', () => {
       ]),
     })]);
     expect(result.provenance).toEqual([expect.objectContaining({ entity: 'Expediente', id: 'exp-attention', label: 'EXP-2026-0099' })]);
+  });
+
+  it('expone observaciones del proyecto como propuestas y fuentes documentales sin aplicación automática', async () => {
+    const client = db({ id: 'exp-1', numero_pravia: 'EXP-2026-0042' });
+    vi.spyOn(ProjectRepository.prototype, 'listVersions').mockResolvedValue([{
+      id: 'project-document-1', nombre_original: 'Proyecto vigente.docx', version_numero: 3,
+      es_vigente: true, generation_observations: [{ code: 'SOURCE_MISSING', message: 'Falta un antecedente.' }],
+    }] as any);
+    vi.spyOn(ProjectRepository.prototype, 'latestReport').mockResolvedValue({
+      record: { id: 'report-document-1', nombre_reporte: 'Reporte de observaciones.pdf', observaciones: [{ severidad: 'MEDIA', detalle: 'Revisar cláusula.' }], documentos_no_leidos: [] },
+    } as any);
+    const projectUser = user(['ai.use', 'ai.expedientes.read', 'expedientes.read', 'expedientes.project.read']);
+
+    const result = await executeAssistantTool({ tool: 'getProjectObservations', args: { expediente_id: 'exp-1' }, user: projectUser, correlationId: 'corr-project' }, client);
+
+    expect(result.data).toMatchObject({
+      folio: 'EXP-2026-0042',
+      puede_aplicar_automaticamente: false,
+      observaciones: { generacion: [expect.objectContaining({ code: 'SOURCE_MISSING' })], revision_ia: [expect.objectContaining({ severidad: 'MEDIA' })] },
+    });
+    expect(result.provenance).toEqual(expect.arrayContaining([
+      expect.objectContaining({ entity: 'Documento', id: 'project-document-1' }),
+      expect.objectContaining({ entity: 'Documento', id: 'report-document-1' }),
+    ]));
   });
 });

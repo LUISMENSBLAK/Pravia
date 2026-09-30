@@ -13,6 +13,10 @@ import { getProspectoDocumentos, uploadDocumento } from './documentos.controller
 
 const response = () => { const res: any = {}; res.status = vi.fn(() => res); res.json = vi.fn(() => res); return res; };
 const user = { id: 'user-1', organizationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', rol: 'ABOGADO', permissions: ['documentos.write'] };
+const validPdf = (name = 'archivo.pdf') => {
+  const buffer = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF');
+  return { originalname: name, buffer, mimetype: 'application/pdf', size: buffer.length };
+};
 
 describe('documentos de Prospectos', () => {
   beforeEach(() => { vi.clearAllMocks(); storage.uploadFile.mockResolvedValue('private/object.pdf'); access.canAttachDocumento.mockResolvedValue(true); audit.logAudit.mockResolvedValue(undefined); });
@@ -28,7 +32,7 @@ describe('documentos de Prospectos', () => {
       cotizacionDocumento: { create: vi.fn() }, expedienteDocumento: { create: vi.fn() }, comparecienteDocumento: { create: vi.fn() },
     };
     db.$transaction.mockImplementation(async (callback: any) => callback(tx));
-    const req: any = { user, file: { originalname: 'archivo.pdf', buffer: Buffer.from('pdf'), mimetype: 'application/pdf', size: 3 }, body: { tipo, prospecto_id: 'prospect-1' } };
+    const req: any = { user, file: validPdf(), body: { tipo, prospecto_id: 'prospect-1' } };
     const res = response();
     await uploadDocumento(req, res);
     expect(storage.uploadFile).toHaveBeenCalledWith(expect.any(Buffer), expect.stringMatching(/^organizations\/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\/documentos\//), 'application/pdf');
@@ -40,7 +44,7 @@ describe('documentos de Prospectos', () => {
 
   it('rechaza el vínculo antes de tocar Storage cuando falla object access', async () => {
     access.canAttachDocumento.mockResolvedValue(false);
-    const req: any = { user, file: { originalname: 'archivo.pdf', buffer: Buffer.from('pdf'), mimetype: 'application/pdf', size: 3 }, body: { tipo: 'PREDIAL', prospecto_id: 'otro-prospecto' } };
+    const req: any = { user, file: validPdf(), body: { tipo: 'PREDIAL', prospecto_id: 'otro-prospecto' } };
     const res = response();
     await uploadDocumento(req, res);
     expect(res.status).toHaveBeenCalledWith(403);
@@ -54,7 +58,7 @@ describe('documentos de Prospectos', () => {
       expedienteDocumento: { create: vi.fn() }, comparecienteDocumento: { create: vi.fn() }, movimientoDocumento: { create: vi.fn().mockResolvedValue({}) },
     };
     db.$transaction.mockImplementation(async (callback: any) => callback(tx));
-    const req: any = { user: { ...user, permissions: ['documentos.write', 'finanzas.write'] }, file: { originalname: 'comprobante.pdf', buffer: Buffer.from('pdf'), mimetype: 'application/pdf', size: 3 }, body: { tipo: 'COMPROBANTE_PAGO', categoria: 'OTROS', movimiento_id: 'movement-1' } };
+    const req: any = { user: { ...user, permissions: ['documentos.write', 'finanzas.write'] }, file: validPdf('comprobante.pdf'), body: { tipo: 'COMPROBANTE_PAGO', categoria: 'OTROS', movimiento_id: 'movement-1' } };
     const res = response();
     await uploadDocumento(req, res);
     expect(access.canAttachDocumento).toHaveBeenCalledWith(req.user, expect.objectContaining({ movimiento_id: 'movement-1' }));

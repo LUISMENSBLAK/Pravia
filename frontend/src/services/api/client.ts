@@ -6,6 +6,31 @@ const ACCESS_TOKEN_KEY = 'pravia.access-token';
 const SESSION_HINT_KEY = 'pravia.session-active';
 let refreshInFlight: Promise<string | null> | null = null;
 let accessToken: string | null = null;
+const authChannel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('pravia.auth');
+const dataChannel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('pravia.data');
+
+type DataChangeDetail = { method: string; path: string; source: 'local' | 'broadcast' };
+
+const emitDataChange = (detail: DataChangeDetail, broadcast = true) => {
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent<DataChangeDetail>('pravia:data-changed', { detail }));
+  if (broadcast) dataChannel?.postMessage({ ...detail, source: 'broadcast' });
+};
+
+dataChannel?.addEventListener('message', (event: MessageEvent<Partial<DataChangeDetail>>) => {
+  if (!event.data?.method || !event.data.path) return;
+  emitDataChange({ method: event.data.method, path: event.data.path, source: 'broadcast' }, false);
+});
+
+authChannel?.addEventListener('message', (event: MessageEvent<{ type?: string; token?: string | null }>) => {
+  if (event.data?.type === 'ACCESS_TOKEN' && typeof event.data.token === 'string' && event.data.token) {
+    accessToken = event.data.token;
+    sessionStorage.setItem(SESSION_HINT_KEY, '1');
+  }
+  if (event.data?.type === 'SESSION_CLEARED') {
+    accessToken = null;
+    sessionStorage.removeItem(SESSION_HINT_KEY);
+  }
+});
 
 const extractToken = (payload: TokenPayload): string | null => {
   if (!payload) return null;
@@ -22,6 +47,7 @@ export const tokenStore = {
     localStorage.removeItem(ACCESS_TOKEN_KEY);
     sessionStorage.removeItem(ACCESS_TOKEN_KEY);
     sessionStorage.setItem(SESSION_HINT_KEY, '1');
+    authChannel?.postMessage({ type: 'ACCESS_TOKEN', token });
   },
   hasSessionHint: () => sessionStorage.getItem(SESSION_HINT_KEY) === '1',
   clear: () => {
@@ -29,6 +55,7 @@ export const tokenStore = {
     localStorage.removeItem(ACCESS_TOKEN_KEY);
     sessionStorage.removeItem(ACCESS_TOKEN_KEY);
     sessionStorage.removeItem(SESSION_HINT_KEY);
+    authChannel?.postMessage({ type: 'SESSION_CLEARED' });
   },
 };
 
@@ -71,9 +98,17 @@ const rawRefresh = async (): Promise<string | null> => {
   return token;
 };
 
-export const refreshSession = () => {
+export const refreshSession = (rejectedToken: string | null = accessToken) => {
   if (!refreshInFlight) {
-    refreshInFlight = rawRefresh().finally(() => {
+    const coordinatedRefresh = async () => {
+      const refresh = async () => {
+        if (accessToken && accessToken !== rejectedToken) return accessToken;
+        return rawRefresh();
+      };
+      const locks = typeof navigator === 'undefined' ? null : navigator.locks;
+      return locks ? locks.request('pravia.auth.refresh', refresh) : refresh();
+    };
+    refreshInFlight = coordinatedRefresh().finally(() => {
       refreshInFlight = null;
     });
   }
@@ -98,7 +133,7 @@ export const apiRequest = async <T>(path: string, options: RequestOptions = {}):
 
   if (response.status === 401 && retryOnUnauthorized) {
     try {
-      await refreshSession();
+      await refreshSession(token);
       return apiRequest<T>(path, { ...options, retryOnUnauthorized: false });
     } catch {
       tokenStore.clear();
@@ -115,6 +150,8 @@ export const apiRequest = async <T>(path: string, options: RequestOptions = {}):
     throw new ApiError(message, response.status, payload);
   }
 
+  const method = (init.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') emitDataChange({ method, path, source: 'local' });
   return payload as T;
 };
 
@@ -132,7 +169,7 @@ export const apiBlobRequest = async (path: string, options: RequestOptions = {})
 
   if (response.status === 401 && retryOnUnauthorized) {
     try {
-      await refreshSession();
+      await refreshSession(token);
       return apiBlobRequest(path, { ...options, retryOnUnauthorized: false });
     } catch {
       tokenStore.clear();
@@ -149,6 +186,8 @@ export const apiBlobRequest = async (path: string, options: RequestOptions = {})
     throw new ApiError(message, response.status, payload);
   }
 
+  const method = (init.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') emitDataChange({ method, path, source: 'local' });
   return response.blob();
 };
 

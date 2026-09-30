@@ -17,16 +17,23 @@ export type ProspectPipelineStage = keyof typeof PROSPECT_PIPELINE_STAGES;
 export const PROSPECT_ACTIONS = {
   COMENZAR_INTEGRACION: 'Comenzar integración',
   MARCAR_LISTO_PARA_COTIZAR: 'Marcar listo para cotizar',
-  CONVERTIR: 'Convertir en cotización',
+  CONVERTIR: 'Solicitar cotización',
   SUSPENDER: 'Suspender prospecto',
   CANCELAR: 'Cancelar prospecto',
+  REACTIVAR: 'Reactivar prospecto',
 } as const;
 export type ProspectAction = keyof typeof PROSPECT_ACTIONS;
 export class ProspectWorkflowError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
 }
 export const failProspect = (status: number, code: string, message: string): never => { throw new ProspectWorkflowError(status, code, message); };
-export const stageLabel = (stage: Stage | null) => PROSPECT_CONTRACT_STAGES.find((s) => s.code === stage)?.label ?? 'Etapa por confirmar';
+const PROSPECT_EXCEPTION_LABELS: Partial<Record<Stage, string>> = {
+  SUSPENDIDO: 'Suspendido',
+  CANCELADO: 'Cancelado',
+};
+export const stageLabel = (stage: Stage | null) => stage
+  ? PROSPECT_CONTRACT_STAGES.find((s) => s.code === stage)?.label ?? PROSPECT_EXCEPTION_LABELS[stage] ?? 'Etapa histórica'
+  : 'Etapa por confirmar';
 export const prospectWait = (stage: Stage | null) => {
   if (!stage) return { type: null, knowledge: 'UNKNOWN_LEGACY' as const, label: 'Espera por confirmar' };
   const types: Partial<Record<Stage, [string, string]>> = {
@@ -46,15 +53,23 @@ export function allowedProspectActions(stage: Stage | null, linkedQuote: boolean
   if (stage === Stage.NUEVO) return ['COMENZAR_INTEGRACION', 'SUSPENDER', 'CANCELAR'];
   if (stage === Stage.EN_INTEGRACION) return ['MARCAR_LISTO_PARA_COTIZAR', 'SUSPENDER', 'CANCELAR'];
   if (stage === Stage.LISTO_PARA_COTIZAR) return ['CONVERTIR', 'SUSPENDER', 'CANCELAR'];
+  if (stage === Stage.SUSPENDIDO || stage === Stage.CANCELADO) return ['REACTIVAR'];
   return [];
 }
-export function nextProspectStage(stage: Stage | null, action: ProspectAction, linkedQuote = false): Stage {
+export function nextProspectStage(stage: Stage | null, action: ProspectAction, linkedQuote = false, resumeStage?: Stage | null): Stage {
   if (!allowedProspectActions(stage, linkedQuote).includes(action)) failProspect(409, 'PRO001_TRANSITION_DENIED', 'Esta acción ya no corresponde a la etapa actual. Actualiza la ficha.');
+  if (action === 'REACTIVAR') {
+    const reactivationTargets = new Set<Stage>([Stage.NUEVO, Stage.EN_INTEGRACION, Stage.LISTO_PARA_COTIZAR]);
+    if (!resumeStage || !reactivationTargets.has(resumeStage)) {
+      failProspect(409, 'PRO001_REACTIVATION_TARGET_MISSING', 'No existe una etapa operativa anterior acreditada para reactivar este prospecto.');
+    }
+    return resumeStage as Stage;
+  }
   return ({ COMENZAR_INTEGRACION: Stage.EN_INTEGRACION,
     MARCAR_LISTO_PARA_COTIZAR: Stage.LISTO_PARA_COTIZAR,
     CONVERTIR: Stage.CONVERTIDO_EN_COTIZACION,
     SUSPENDER: Stage.SUSPENDIDO,
-    CANCELAR: Stage.CANCELADO })[action];
+    CANCELAR: Stage.CANCELADO })[action] as Stage;
 }
 export function assertProspectVersion(expected: unknown, current: number) {
   if (!Number.isInteger(expected) || Number(expected) < 0) failProspect(400, 'PRO001_VERSION_REQUIRED', 'Actualiza la ficha antes de continuar.');

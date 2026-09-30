@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { AgendaItem } from '../myDay.types';
-import { formatTime } from '../formatters';
+import { formatOperationalStatus, formatTime } from '../formatters';
 import { WidgetCard, WidgetEmpty, WidgetError, WidgetLoading } from './WidgetCard';
 import styles from './MyDayWidgets.module.css';
 
@@ -21,7 +21,7 @@ export function TodayAgenda({ items, loading, error, onRetry, className }: { ite
                 {(item.type || item.fileNumber) && <p>{[item.type, item.fileNumber].filter(Boolean).join(' · ')}</p>}
                 {item.context && <small>{item.context}</small>}
               </div>
-              {item.status && <span className={styles.status}>{item.status}</span>}
+              {item.status && <span className={styles.status}>{formatOperationalStatus(item.status)}</span>}
             </li>
           ))}
         </ol>

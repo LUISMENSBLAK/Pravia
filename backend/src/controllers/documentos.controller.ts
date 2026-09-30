@@ -7,6 +7,7 @@ import { createHash } from 'crypto';
 import { canAttachDocumento } from '../services/objectAccess.service';
 import { logAudit } from '../utils/auditLogger';
 import { prospectDocumentFlagsForType } from '../domain/prospectCatalog';
+import { canonicalUploadedDocumentMime } from '../services/documentUploadValidation';
 
 /**
  * Subir un documento a Supabase Storage y crear registro en DB
@@ -18,6 +19,7 @@ export const uploadDocumento = async (req: Request, res: Response) => {
     if (!file) {
       return res.status(400).json({ error: 'No se envió ningún archivo' });
     }
+    const canonicalMime = canonicalUploadedDocumentMime(file);
 
     const {
       tipo,
@@ -55,7 +57,7 @@ export const uploadDocumento = async (req: Request, res: Response) => {
     nombre_interno = `organizations/${req.user!.organizationId}/documentos/${uuidv4()}${ext}`;
 
     // Upload to Supabase Storage
-    const storage_key = await uploadFile(file.buffer, nombre_interno, file.mimetype);
+    const storage_key = await uploadFile(file.buffer, nombre_interno, canonicalMime);
 
     const documentoData = {
       nombre_original: file.originalname,
@@ -63,7 +65,7 @@ export const uploadDocumento = async (req: Request, res: Response) => {
       tipo,
       categoria: validCategoria,
       storage_key,
-      mime_type: file.mimetype,
+      mime_type: canonicalMime,
       size_bytes: file.size,
       checksum_sha256: createHash('sha256').update(file.buffer).digest('hex'),
       observaciones: observaciones || null,

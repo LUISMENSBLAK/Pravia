@@ -36,6 +36,7 @@ const cases: Array<[string, () => void]> = [
   ['17 exige una o varias fuentes IA explícitas', () => { expect(workspace).toContain('sourceDocumentIds'); expect(workspace).toContain('fuentes vigentes'); }],
   ['18 procesa sólo los documentos expresamente seleccionados', () => { expect(extraction).toContain('extraerPredioDesdeDocumento(\n  documento: DocumentoParaExtraccion'); expect(master).toContain('documentoIds.filter(Boolean)'); }],
   ['19 la extracción no recibe expediente completo', () => expect(extraction.slice(extraction.indexOf('extraerPredioDesdeDocumento'), extraction.indexOf('COMPATIBILIDAD: extracción'))).not.toContain('expedienteId')],
+  ['19-B la extracción de predio usa esfuerzo documental acotado para no agotar la salida estructurada', () => expect(extraction.slice(extraction.indexOf('export async function extraerPredioDesdeDocumento'), extraction.indexOf('export async function extraerFinanzasDesdeDocumento'))).toContain('getDocumentExtractionReasoningEffort()')],
   ['20 la propuesta no escribe silenciosamente', () => expect(master).toContain('persisted_master: false')],
   ['21 el prompt prohíbe inventar datos', () => expect(extraction).toContain('No infieras ni completes datos ausentes')],
   ['22 muestra actual contra propuesto', () => { expect(workspace).toContain('Actual'); expect(workspace).toContain('Propuesto'); }],
@@ -71,7 +72,10 @@ const cases: Array<[string, () => void]> = [
   ['52 vincular predio no genera ni importa documentos', () => expect(relations).toContain('automatic_document_generation: false')],
   ['53 importación específica concurrente es idempotente', () => { expect(master).toContain('pg_advisory_xact_lock'); expect(master).toContain('blob_copies: 0'); }],
   ['54 no amplía ISR-001', () => { expect(master).not.toContain('deduccion'); expect(relations).not.toContain('calculoISR'); }],
-  ['55 admite el MIME estándar de documentos DOCX', () => expect(controller).toContain('application/vnd.openxmlformats-officedocument.wordprocessingml.document')],
+  ['55 valida el MIME real de documentos DOCX con el validador canónico', () => { expect(controller).toContain('canonicalUploadedDocumentMime'); expect(read('backend/src/services/documentUploadValidation.ts')).toContain('application/vnd.openxmlformats-officedocument.wordprocessingml.document'); }],
+  ['56 expone actividad persistente y tenant-scoped', () => { expect(master).toContain('auditLog.findMany'); expect(master).toContain("organization_id: actor.organizationId"); expect(workspace).toContain('Actividad / últimos movimientos'); }],
+  ['57 elimina sólo el vínculo documental y conserva el archivo maestro', () => { expect(routes).toContain("requirePermission('documentos.unlink')"); expect(controller).toContain('master_document_preserved: true'); expect(workspace).toContain('unlinkDocument'); }],
+  ['58 reporta explícitamente campos faltantes sin persistir el sentinel', () => { expect(master).toContain('DATO\\s+NO\\s+ENCONTRADO'); expect(master).toContain('faltantes'); expect(workspace).toContain('DATO NO ENCONTRADO'); }],
 ];
 
 describe('PRD-001 contrato atómico', () => {

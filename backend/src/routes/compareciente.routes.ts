@@ -5,7 +5,7 @@ import { requireComparecienteObjectAccess } from '../middleware/objectAccess.mid
 import { requirePermission } from '../middleware/auth.middleware';
 import { BeneficialControllerController } from '../controllers/beneficialController.controller';
 
-const upload = multer({ limits: { fileSize: 25 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 10 } });
 const router = Router();
 router.param('id', requireComparecienteObjectAccess);
 

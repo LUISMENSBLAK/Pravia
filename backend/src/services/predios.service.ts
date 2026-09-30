@@ -24,6 +24,10 @@ const text = (value: unknown, max = 500) => {
   const cleaned = String(value ?? '').trim().slice(0, max);
   return cleaned || null;
 };
+const upperText = (value: unknown, max = 500) => {
+  const cleaned = text(value, max);
+  return cleaned ? cleaned.toLocaleUpperCase('es-MX') : null;
+};
 const decimal = (value: unknown, field: string, scale = 4) => {
   if (value === '' || value == null) return null;
   const normalized = String(value).replace(/,/g, '').trim();
@@ -74,24 +78,25 @@ const decimalFields = [
   'valor_catastral', 'valor_avaluo', 'valor_operacion',
 ] as const;
 const aiFields = new Set<string>([...scalarFields, ...decimalFields, 'datos_registrales', 'colindancias']);
+const propertyAiApplicableFields = [...aiFields];
 const currentDocumentStatuses = ['PENDIENTE', 'VIGENTE', 'POR_VENCER'] as const;
 
 function normalizeInput(input: PredioInput) {
   const data: Record<string, unknown> = {};
-  for (const field of scalarFields) data[field] = text(input[field], field === 'descripcion' ? 5_000 : 500);
+  for (const field of scalarFields) data[field] = upperText(input[field], field === 'descripcion' ? 5_000 : 500);
   for (const field of decimalFields) data[field] = decimal(input[field], field.replace(/_/g, ' '), field.startsWith('valor_') ? 2 : 4);
   if (input.datos_registrales === null || input.datos_registrales === undefined || input.datos_registrales === '') data.datos_registrales = Prisma.JsonNull;
   else if (typeof input.datos_registrales === 'object') data.datos_registrales = json(input.datos_registrales);
-  else data.datos_registrales = json({ referencia: text(input.datos_registrales, 2_000) });
+  else data.datos_registrales = json({ referencia: upperText(input.datos_registrales, 2_000) });
   const identifiable = ['apodo', 'clave_catastral', 'cuenta_predial', 'folio_real', 'ubicacion_texto', 'calle'].some((field) => Boolean(data[field]));
   if (!identifiable) throw new PredioError(400, 'PREDIO_IDENTITY_REQUIRED', 'Captura al menos un identificador, apodo o ubicación del inmueble.');
   const boundaries = Array.isArray(input.colindancias) ? input.colindancias.map((item, index) => ({
     orden: index,
-    referencia: text(item.referencia, 180),
+    referencia: upperText(item.referencia, 180),
     medida: decimal(item.medida, `medida de colindancia ${index + 1}`),
-    unidad: text(item.unidad, 40),
-    colindante: text(item.colindante, 500),
-    descripcion: text(item.descripcion, 2_000),
+    unidad: upperText(item.unidad, 40),
+    colindante: upperText(item.colindante, 500),
+    descripcion: upperText(item.descripcion, 2_000),
   })).filter((item) => item.referencia || item.medida || item.unidad || item.colindante || item.descripcion) : [];
   return { data, boundaries };
 }
@@ -134,7 +139,24 @@ export class PrediosService {
       include: propertyInclude,
     });
     if (!record) throw new PredioError(403, 'PREDIO_ACCESS_DENIED', 'No tienes acceso a este inmueble.');
-    return record;
+    const [documentLinks, expedienteLinks] = await Promise.all([
+      this.prisma.predioDocumento.findMany({ where: { organization_id: actor.organizationId, predio_id: id }, select: { id: true } }),
+      this.prisma.expedientePredio.findMany({ where: { organization_id: actor.organizationId, predio_id: id }, select: { id: true } }),
+    ]);
+    const relatedIds = [...documentLinks.map((item) => item.id), ...expedienteLinks.map((item) => item.id)];
+    const activity = await this.prisma.auditLog.findMany({
+      where: {
+        organization_id: actor.organizationId,
+        OR: [
+          { entidad: 'Predio', entidad_id: id },
+          { entidad: { in: ['PredioDocumento', 'ExpedientePredio'] }, entidad_id: { in: relatedIds } },
+        ],
+      },
+      include: { usuario: { select: { id: true, nombre: true, apellido: true } } },
+      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+      take: 100,
+    });
+    return { ...record, actividad: activity };
   }
 
   async create(actor: Actor, input: PredioInput) {
@@ -249,16 +271,26 @@ export class PrediosService {
     const links = current.documentos.filter((item) => ids.includes(item.documento_id) && item.estatus === 'ACTIVO' && item.vigencia === 'VIGENTE');
     if (links.length !== ids.length || !(await Promise.all(ids.map((id) => canAccessDocumento(actor, id)))).every(Boolean)) throw new PredioError(403, 'PREDIO_AI_SOURCE_DENIED', 'Selecciona únicamente documentos vigentes, autorizados y vinculados a este inmueble.');
     try {
-      const results = await Promise.all(links.map(async (link) => extraerPredioDesdeDocumento({ buffer: await downloadFile(link.documento.storage_key), mimeType: link.documento.mime_type, tipoDocumento: link.tipo_vinculo, documentoId: link.documento_id, nombreOriginal: link.documento.nombre_original })));
+      const attempted = await Promise.allSettled(links.map(async (link) => ({
+        link,
+        result: await extraerPredioDesdeDocumento({ buffer: await downloadFile(link.documento.storage_key), mimeType: link.documento.mime_type, tipoDocumento: link.tipo_vinculo, documentoId: link.documento_id, nombreOriginal: link.documento.nombre_original }),
+      })));
+      const succeeded = attempted.filter((entry): entry is PromiseFulfilledResult<{ link: typeof links[number]; result: Awaited<ReturnType<typeof extraerPredioDesdeDocumento>> }> => entry.status === 'fulfilled').map((entry) => entry.value);
+      const extractionErrors = attempted.flatMap((entry, index) => entry.status === 'rejected' ? [{ documento_id: links[index].documento_id, nombre: links[index].documento.nombre_original, error: entry.reason instanceof Error ? entry.reason.message : 'No fue posible procesar el documento.' }] : []);
+      if (!succeeded.length) throw new PredioError(422, 'PREDIO_AI_NO_READABLE_SOURCE', 'No fue posible interpretar ninguno de los documentos seleccionados. Revisa que no estén corruptos y vuelve a intentar.');
+      const results = succeeded.map((entry) => entry.result);
+      const resultLinks = succeeded.map((entry) => entry.link);
       const extractionId = crypto.randomUUID();
       const currentData = current as unknown as Record<string, unknown>;
-      const candidates = results.flatMap((result, index) => result.campos.filter((field) => aiFields.has(field.campo) && text(field.valor, 5_000)).map((field) => ({ ...field, documento_id: links[index].documento_id, documento_nombre: links[index].documento.nombre_original })));
+      const candidates = results.flatMap((result, index) => result.campos.filter((field) => aiFields.has(field.campo) && text(field.valor, 5_000) && !/DATO\s+NO\s+ENCONTRADO/i.test(field.valor)).map((field) => ({ ...field, documento_id: resultLinks[index].documento_id, documento_nombre: resultLinks[index].documento.nombre_original })));
       const proposals = [...new Set(candidates.map((field) => field.campo))].map((campo) => {
         const values = candidates.filter((field) => field.campo === campo); const unique = [...new Set(values.map((field) => text(field.valor, 5_000)).filter(Boolean))]; const chosen = values[0];
         return { campo, valor_actual: proposalValue(currentData[campo]), valor_propuesto: unique.length === 1 ? unique[0] : null, pagina: chosen.pagina || null, seccion: text(chosen.seccion, 180), fragmento_fuente: text(chosen.fragmento, 800), confianza: chosen.confianza, fuentes: values.map((field) => ({ documento_id: field.documento_id, nombre: field.documento_nombre, valor: text(field.valor, 5_000) })), conflicto: unique.length > 1 };
       });
-      const boundaries = results.flatMap((result, index) => result.colindancias.map((item) => ({ ...item, documento_id: links[index].documento_id })));
-      if (boundaries.length) proposals.push({ campo: 'colindancias', valor_actual: JSON.stringify(current.colindancias), valor_propuesto: JSON.stringify(boundaries), pagina: null, seccion: null, fragmento_fuente: null, confianza: 'LECTURA_DUDOSA', fuentes: links.map((link) => ({ documento_id: link.documento_id, nombre: link.documento.nombre_original, valor: 'Colindancias propuestas' })), conflicto: false });
+      const boundaries = results.flatMap((result, index) => result.colindancias.map((item) => ({ ...item, documento_id: resultLinks[index].documento_id })));
+      if (boundaries.length) proposals.push({ campo: 'colindancias', valor_actual: JSON.stringify(current.colindancias), valor_propuesto: JSON.stringify(boundaries), pagina: null, seccion: null, fragmento_fuente: null, confianza: 'LECTURA_DUDOSA', fuentes: resultLinks.map((link) => ({ documento_id: link.documento_id, nombre: link.documento.nombre_original, valor: 'Colindancias propuestas' })), conflicto: false });
+      const found = new Set(proposals.map((item) => item.campo));
+      const faltantes = propertyAiApplicableFields.filter((field) => !found.has(field));
       await this.prisma.$transaction(async (tx) => {
         for (const proposal of proposals) await tx.predioDatoFuente.create({ data: {
           organization_id: actor.organizationId, predio_id: predioId, extraccion_id: extractionId, documento_id: proposal.fuentes[0].documento_id, source_document_ids: json(proposal.fuentes.map((source) => source.documento_id)),
@@ -269,12 +301,12 @@ export class PrediosService {
         } });
         await tx.auditLog.create({ data: {
           organization_id: actor.organizationId, user_id: actor.id, accion: 'PROPOSE_PROPERTY_FIELDS_AI', entidad: 'Predio', entidad_id: predioId,
-          valores_nuevos: json({ extraccion_id: extractionId, documento_ids: ids, campos: proposals.map((item) => item.campo), conflictos: proposals.filter((item) => item.conflicto).map((item) => item.campo), persistencia_maestra: false }),
+          valores_nuevos: json({ extraccion_id: extractionId, documento_ids: ids, campos: proposals.map((item) => item.campo), conflictos: proposals.filter((item) => item.conflicto).map((item) => item.campo), faltantes, errores: extractionErrors.map((item) => ({ documento_id: item.documento_id, error: item.error })), persistencia_maestra: false }),
           correlation_id: crypto.randomUUID(), session_id: actor.sessionId,
         } });
       });
       for (const result of results) await recordAIUsage(result.uso, { operacion: 'PROPERTY_DOCUMENT_EXTRACTION', usuarioId: actor.id, metadata: { predio_id: predioId, documento_ids: ids, source_count: ids.length } });
-      return { extraccion_id: extractionId, documentos: links.map((link) => ({ id: link.documento_id, nombre: link.documento.nombre_original })), propuestas: proposals, alertas: [...new Set(results.flatMap((result) => result.alertas))], conflictos: proposals.filter((item) => item.conflicto).map((item) => ({ campo: item.campo, fuentes: item.fuentes })), persisted_master: false };
+      return { extraccion_id: extractionId, documentos: links.map((link) => ({ id: link.documento_id, nombre: link.documento.nombre_original })), propuestas: proposals, faltantes, errores: extractionErrors, alertas: [...new Set(results.flatMap((result) => result.alertas))], conflictos: proposals.filter((item) => item.conflicto).map((item) => ({ campo: item.campo, fuentes: item.fuentes })), persisted_master: false };
     } catch (error) {
       await recordAIFailure({ operacion: 'PROPERTY_DOCUMENT_EXTRACTION', usuarioId: actor.id, modelo: getOpenAIModelName(), durationMs: Date.now() - started, metadata: { predio_id: predioId, documento_ids: ids } });
       throw error;
@@ -295,16 +327,16 @@ export class PrediosService {
         if (decision === 'ACCEPT' && proposal.valor_propuesto != null) {
           if (proposal.campo === 'colindancias') boundaries = JSON.parse(proposal.valor_propuesto);
           else if (decimalFields.includes(proposal.campo as typeof decimalFields[number])) updates[proposal.campo] = decimal(normalizeAIProposalDecimal(proposal.valor_propuesto), proposal.campo, proposal.campo.startsWith('valor_') ? 2 : 4);
-          else if (proposal.campo === 'datos_registrales') updates[proposal.campo] = json({ referencia: proposal.valor_propuesto });
-          else if (aiFields.has(proposal.campo)) updates[proposal.campo] = text(proposal.valor_propuesto, proposal.campo === 'descripcion' ? 5_000 : 500);
+          else if (proposal.campo === 'datos_registrales') updates[proposal.campo] = json({ referencia: upperText(proposal.valor_propuesto, 2_000) });
+          else if (aiFields.has(proposal.campo)) updates[proposal.campo] = upperText(proposal.valor_propuesto, proposal.campo === 'descripcion' ? 5_000 : 500);
         }
         await tx.predioDatoFuente.update({ where: { id: proposal.id }, data: { estado: decision === 'ACCEPT' ? 'CONFIRMADO' : 'DESCARTADO', decidido_por_id: actor.id, decidido_at: new Date() } });
       }
       if (boundaries) {
         await tx.predioColindancia.deleteMany({ where: { organization_id: actor.organizationId, predio_id: predioId } });
         await tx.predioColindancia.createMany({ data: boundaries.map((item, index) => ({
-          organization_id: actor.organizationId, predio_id: predioId, orden: index, referencia: text(item.referencia, 180),
-          medida: decimal(item.medida, `medida ${index + 1}`), unidad: text(item.unidad, 40), colindante: text(item.colindante, 500), descripcion: text(item.descripcion, 2_000),
+          organization_id: actor.organizationId, predio_id: predioId, orden: index, referencia: upperText(item.referencia, 180),
+          medida: decimal(item.medida, `medida ${index + 1}`), unidad: upperText(item.unidad, 40), colindante: upperText(item.colindante, 500), descripcion: upperText(item.descripcion, 2_000),
         })) });
       }
       const updated = await tx.predio.update({ where: { id: predioId }, data: { ...updates, updated_by: actor.id, version: { increment: 1 } }, include: propertyInclude });

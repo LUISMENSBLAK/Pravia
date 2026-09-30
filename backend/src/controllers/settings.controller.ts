@@ -4,6 +4,7 @@ import prisma from '../config/prisma';
 import { PERMISSIONS, ROLE_PERMISSIONS } from '../auth/permissions';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { comparecienteObjectWhere, cotizacionObjectWhere, prospectoObjectWhere } from '../services/objectAccess.service';
+import { intelligentNotificationService } from '../services/intelligentNotification.service';
 
 const PREFERENCE_VALUES = {
   default_view: new Set(['CARDS', 'LIST']),
@@ -41,7 +42,7 @@ export class SettingsController {
     if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
     const [sessions, unread, activeUsers, primaryNotary] = await Promise.all([
       prisma.authSession.count({ where: { user_id: req.user.id, revoked_at: null, expires_at: { gt: new Date() } } }),
-      prisma.notification.count({ where: { recipient_id: req.user.id, read_at: null } }),
+      prisma.notification.count({ where: { organization_id: req.user.organizationId, recipient_id: req.user.id, status: 'ACTIVE', read_at: null } }),
       req.user.permissions.includes('usuarios.read') ? prisma.user.count({ where: { activo: true } }) : Promise.resolve(0),
       prisma.notaria.findFirst({ where: { activa: true, predeterminada: true }, select: { id: true, nombre: true, numero_notaria: true, ciudad: true, entidad_federativa: true } }),
     ]);
@@ -144,21 +145,40 @@ export class SettingsController {
 
   static async notifications(req: Request, res: Response) {
     if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
-    const records = await prisma.notification.findMany({ where: { recipient_id: req.user.id }, select: { id: true, type: true, title: true, body: true, href: true, read_at: true, created_at: true }, orderBy: { created_at: 'desc' }, take: 50 });
-    return res.json({ notifications: records, unread: records.filter((item) => !item.read_at).length });
+    const includeHistory = req.query.history === '1';
+    const records = await intelligentNotificationService.refreshAndList(req.user, { includeHistory, limit: includeHistory ? 200 : 50 });
+    const priority = { URGENT: 4, IMPORTANT: 3, NORMAL: 2, LOW: 1 } as Record<string, number>;
+    records.sort((a, b) => (priority[b.priority] || 0) - (priority[a.priority] || 0)
+      || new Date(b.last_reminder_at || b.created_at).getTime() - new Date(a.last_reminder_at || a.created_at).getTime());
+    const unread = await prisma.notification.count({ where: { organization_id: req.user.organizationId, recipient_id: req.user.id, status: 'ACTIVE', read_at: null } });
+    return res.json({ notifications: records, unread, generated_at: new Date().toISOString(), refresh_seconds: 30 });
   }
 
   static async readNotification(req: Request, res: Response) {
     if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
-    const result = await prisma.notification.updateMany({ where: { id: req.params.id, recipient_id: req.user.id }, data: { read_at: new Date() } });
+    const result = await prisma.notification.updateMany({ where: { id: req.params.id, organization_id: req.user.organizationId, recipient_id: req.user.id }, data: { read_at: new Date() } });
     if (!result.count) return res.status(404).json({ code: 'NOTIFICATION_NOT_FOUND', error: 'Notificación no encontrada.' });
     return res.json({ success: true });
   }
 
   static async readAllNotifications(req: Request, res: Response) {
     if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
-    const result = await prisma.notification.updateMany({ where: { recipient_id: req.user.id, read_at: null }, data: { read_at: new Date() } });
+    const result = await prisma.notification.updateMany({ where: { organization_id: req.user.organizationId, recipient_id: req.user.id, status: 'ACTIVE', read_at: null }, data: { read_at: new Date() } });
     return res.json({ success: true, updated: result.count });
+  }
+
+  static async dismissNotification(req: Request, res: Response) {
+    if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
+    const notification = await intelligentNotificationService.transition(req.user, req.params.id, 'DISMISSED');
+    if (!notification) return res.status(404).json({ code: 'NOTIFICATION_NOT_FOUND', error: 'Notificación no encontrada.' });
+    return res.json({ success: true, notification });
+  }
+
+  static async markNotificationNotApplicable(req: Request, res: Response) {
+    if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
+    const notification = await intelligentNotificationService.transition(req.user, req.params.id, 'NOT_APPLICABLE');
+    if (!notification) return res.status(404).json({ code: 'NOTIFICATION_NOT_FOUND', error: 'Notificación no encontrada.' });
+    return res.json({ success: true, notification });
   }
 
   static async search(req: Request, res: Response) {

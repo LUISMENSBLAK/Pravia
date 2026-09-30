@@ -2,11 +2,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const db = vi.hoisted(() => ({
   catalogoArtefacto: { findFirst: vi.fn() }, documento: { findFirst: vi.fn() }, notaria: { findMany: vi.fn() },
+  expediente: { findFirst: vi.fn() },
   $transaction: vi.fn(),
 }));
 const storage = vi.hoisted(() => ({ downloadFile: vi.fn(), uploadFile: vi.fn(), deleteFile: vi.fn() }));
+const assignments = vi.hoisted(() => ({ assign: vi.fn() }));
 vi.mock('../config/prisma', () => ({ default: db }));
 vi.mock('./supabase.service', () => storage);
+vi.mock('./projectTemplateAssignment.service', () => ({ projectTemplateAssignmentService: assignments }));
 
 import { configurationCatalogV4Service } from './configurationCatalogV4.service';
 
@@ -16,6 +19,8 @@ describe('CFG-002 integración explícita con EXP-010', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     db.catalogoArtefacto.findFirst.mockResolvedValue(null);
+    db.expediente.findFirst.mockResolvedValue({ tipo_acto_id: 'act-1', actos: [{ tipo_acto_id: 'act-1' }] });
+    assignments.assign.mockResolvedValue({ assignment: { id: 'assignment-1' }, idempotent: false, replaced: false });
     db.documento.findFirst.mockResolvedValue({ id: 'project-v1', organization_id: 'org-1', expediente_id: 'case-1', tipo: 'PROYECTO_ESCRITURA', estatus: 'VIGENTE', storage_key: 'private/project.docx', nombre_original: 'Proyecto compraventa.docx', mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', checksum_sha256: 'source-sha' });
     db.notaria.findMany.mockResolvedValue([{ id: 'notary-1', nombre: 'Notaría', numero_notaria: '1', activa: true, predeterminada: true, created_at: new Date() }]);
     storage.downloadFile.mockResolvedValue(Buffer.from('project'));
@@ -31,10 +36,11 @@ describe('CFG-002 integración explícita con EXP-010', () => {
     };
     db.$transaction.mockImplementation((callback: any) => callback(tx));
     const result = await configurationCatalogV4Service.saveProjectAsNotaryTemplate(actor, 'case-1', 'project-v1');
-    expect(result).toEqual({ artifact_id: 'artifact-1', version_id: 'version-1', idempotent: false });
+    expect(result).toEqual({ artifact_id: 'artifact-1', version_id: 'version-1', idempotent: false, assignment_id: 'assignment-1', assignment_replaced: false });
     expect(tx.catalogoArtefacto.create).toHaveBeenCalledWith({ data: expect.objectContaining({ tipo: 'PLANTILLA', propietario_tipo: 'NOTARIA', notaria_id: 'notary-1', codigo_biblioteca: 'EXP010:project-v1' }) });
     expect(tx.catalogoArtefactoVersion.create).toHaveBeenCalledWith({ data: expect.objectContaining({ origen: 'EXP010_PROJECT_PROMOTION', checksum_sha256: 'source-sha' }) });
     expect(tx.auditLog.create).toHaveBeenCalled();
+    expect(assignments.assign).toHaveBeenCalledWith(actor, { actId: 'act-1', artifactId: 'artifact-1', versionId: 'version-1', replace: false });
   });
 
   it('rechaza un proyecto de otra organización sin leer ni copiar el blob', async () => {
@@ -46,7 +52,8 @@ describe('CFG-002 integración explícita con EXP-010', () => {
 
   it('es idempotente para la misma versión de proyecto', async () => {
     db.catalogoArtefacto.findFirst.mockResolvedValue({ id: 'artifact-existing', versiones: [{ id: 'version-existing' }] });
-    await expect(configurationCatalogV4Service.saveProjectAsNotaryTemplate(actor, 'case-1', 'project-v1')).resolves.toEqual({ artifact_id: 'artifact-existing', version_id: 'version-existing', idempotent: true });
+    assignments.assign.mockResolvedValue({ assignment: { id: 'assignment-existing' }, idempotent: true, replaced: false });
+    await expect(configurationCatalogV4Service.saveProjectAsNotaryTemplate(actor, 'case-1', 'project-v1')).resolves.toEqual({ artifact_id: 'artifact-existing', version_id: 'version-existing', assignment_id: 'assignment-existing', idempotent: true });
     expect(storage.uploadFile).not.toHaveBeenCalled();
   });
 });

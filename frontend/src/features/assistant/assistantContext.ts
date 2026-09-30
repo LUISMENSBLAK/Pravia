@@ -3,6 +3,7 @@ import type { AssistantAction, AssistantContext, AssistantModule } from './assis
 
 const labels: Record<AssistantModule, string> = {
   'mi-dia': 'Mi Día', prospectos: 'Prospectos', cotizaciones: 'Cotizaciones', expedientes: 'Expedientes',
+  predios: 'Predios / Inmuebles',
   notarias: 'Notarías', comparecientes: 'Comparecientes', finanzas: 'Finanzas', agenda: 'Agenda',
   reportes: 'Reportes', isr: 'Cálculo ISR', compliance: 'Riesgos / UIF', configuracion: 'Configuración', unknown: 'PRAVIA OS',
 };
@@ -10,20 +11,40 @@ const labels: Record<AssistantModule, string> = {
 const entityRoutes = new Map<string, AssistantContext['entityType']>([
   ['expedientes', 'expediente'], ['comparecientes', 'compareciente'], ['notarias', 'notaria'],
   ['prospectos', 'prospecto'], ['cotizaciones', 'cotizacion'], ['calculo-isr', 'isrCalculation'],
+  ['predios', 'predio'],
 ]);
 
-export function resolveAssistantContext(location: Pick<Location, 'pathname' | 'hash'>): AssistantContext {
+export function resolveAssistantContext(location: Pick<Location, 'pathname' | 'hash'> & Partial<Pick<Location, 'search'>>): AssistantContext {
   const segments = location.pathname.split('/').filter(Boolean);
   const first = segments[0] ?? '';
   const module = (first === 'riesgos' ? 'compliance' : first === 'calculo-isr' ? 'isr' : first === 'mi-dia' ? 'mi-dia' : first in labels ? first : 'unknown') as AssistantModule;
   const agendaEventId = module === 'agenda' ? new URLSearchParams(location.hash.replace(/^#/, '')).get('evento') : null;
   const entityType = agendaEventId ? 'evento' : first === 'riesgos' && segments[1] === 'revisiones' && segments[2] ? 'complianceReview' : segments[1] ? entityRoutes.get(first) : undefined;
+  const query = new URLSearchParams(location.search || '');
+  const contextual = {
+    expedienteId: entityType === 'expediente' ? segments[1] : query.get('expediente_id') || undefined,
+    expedienteActoId: query.get('expediente_acto_id') || undefined,
+    procesoId: query.get('proceso_id') || undefined,
+    actividadId: query.get('actividad_id') || undefined,
+    comparecienteId: entityType === 'compareciente' ? segments[1] : query.get('compareciente_id') || undefined,
+    predioId: entityType === 'predio' ? segments[1] : query.get('predio_id') || undefined,
+    documentoId: query.get('documento_id') || undefined,
+    cotizacionId: entityType === 'cotizacion' ? segments[1] : query.get('cotizacion_id') || undefined,
+    presupuestoId: query.get('presupuesto_id') || undefined,
+    isrCalculationId: entityType === 'isrCalculation' ? segments[1] : query.get('calculo_id') || undefined,
+    complianceReviewId: entityType === 'complianceReview' ? segments[2] : query.get('review_id') || undefined,
+    selectedDate: query.get('fecha') || undefined,
+    selectedFrom: query.get('fecha_desde') || undefined,
+    selectedTo: query.get('fecha_hasta') || undefined,
+    activeDocumentId: query.get('documento_activo') || undefined,
+  };
   return {
     route: location.pathname,
     module,
     label: labels[module],
     ...(agendaEventId ? { entityType, entityId: agendaEventId } : entityType === 'complianceReview' ? { entityType, entityId: decodeURIComponent(segments[2]) } : entityType && segments[1] ? { entityType, entityId: decodeURIComponent(segments[1]) } : {}),
     ...(location.hash ? { subview: location.hash.slice(1) } : {}),
+    ...Object.fromEntries(Object.entries(contextual).filter(([, value]) => Boolean(value))),
   };
 }
 
@@ -45,6 +66,12 @@ const actions: Partial<Record<AssistantModule, AssistantAction[]>> = {
     { id: 'people-documents', label: 'Documentos pendientes', prompt: 'Muéstrame comparecientes con documentos pendientes.' },
     { id: 'people-observed', label: 'Con observaciones', prompt: 'Muéstrame comparecientes con observaciones.' },
     { id: 'people-duplicates', label: 'Duplicados posibles', prompt: 'Busca posibles comparecientes duplicados.' },
+  ],
+  predios: [
+    { id: 'properties-search', label: 'Buscar predio', prompt: 'Ayúdame a buscar un predio por ubicación, clave catastral, cuenta predial o folio real.' },
+    { id: 'properties-summary', label: 'Resumen del predio', prompt: 'Resume el predio actual y sus relaciones autorizadas.' },
+    { id: 'properties-cases', label: 'Expedientes relacionados', prompt: '¿En qué expedientes autorizados aparece este predio?' },
+    { id: 'properties-docs', label: 'Documentos del predio', prompt: 'Muéstrame los documentos vigentes de este predio.' },
   ],
   prospectos: [
     { id: 'prospects-stale', label: 'Sin seguimiento', prompt: 'Muéstrame los prospectos sin seguimiento reciente.' },
@@ -130,6 +157,13 @@ const comparecienteDetailActions: AssistantAction[] = [
   { id: 'person-files', label: 'Expedientes relacionados', prompt: 'Muéstrame sus expedientes relacionados.' },
 ];
 
+const predioDetailActions: AssistantAction[] = [
+  { id: 'property-summary', label: 'Resumen', prompt: 'Resume este predio usando su ficha canónica.' },
+  { id: 'property-cases', label: 'Expedientes relacionados', prompt: '¿En qué expedientes autorizados aparece este predio?' },
+  { id: 'property-documents', label: 'Documentos', prompt: 'Muéstrame los documentos vigentes de este predio.' },
+  { id: 'property-sources', label: 'Fuentes registrales', prompt: 'Resume las fuentes registrales persistidas de este predio sin inventar datos.' },
+];
+
 const notariaDetailActions: AssistantAction[] = [
   { id: 'notary-summary', label: 'Resumen de notaría', prompt: 'Resume esta notaría.' },
   { id: 'notary-cases', label: 'Expedientes activos', prompt: 'Muéstrame los expedientes activos de esta notaría.' },
@@ -158,6 +192,8 @@ export const getAssistantActions = (context: AssistantContext) => context.entity
   ? notariaDetailActions
   : context.entityType === 'compareciente'
   ? comparecienteDetailActions
+  : context.entityType === 'predio'
+  ? predioDetailActions
   : context.entityType === 'prospecto'
   ? prospectDetailActions
   : context.entityType === 'cotizacion'

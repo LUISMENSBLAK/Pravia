@@ -6,6 +6,7 @@ export type NotaryOption = { id: string; nombre: string; numero_notaria?: string
 export type ActTypeOption = { id: string; nombre: string; descripcion?: string | null; configuracionesOperativas?: Array<{ id: string; clasificacion?: string | null; familia?: string | null; nombre_personalizado?: string | null; descripcion_personalizada?: string | null; revision: number }>; tipoActoCaracteresCompareciente?: Array<{ caracter_id: string; sugerido: boolean; caracter: { id: string; nombre: string } }> };
 export type ExpedienteAct = {
   id: string; expediente_id: string; tipo_acto_id: string;
+  porcentaje_objeto: number | string; updated_at: string;
   origen: 'COTIZACION' | 'ADICIONAL' | 'LEGACY_MIGRATION';
   estatus: 'ACTIVO' | 'RETIRADO'; created_at: string;
   removed_at?: string | null; removed_reason?: string | null;
@@ -34,6 +35,11 @@ export type ExpedientePartyCatalogs = { acts: Array<ExpedienteAct & { tipo_acto:
 export type ExpedientePartyOperation = 'LINK' | 'UPDATE' | 'UNLINK';
 export type ExpedientePartyCommand = { operation: ExpedientePartyOperation; relation_id?: string; expediente_acto_id?: string; compareciente_id?: string; caracter_id?: string; forma_comparecencia?: ExpedientePartyRelation['forma_comparecencia']; participacion_porcentaje?: number | null; representation?: Omit<ExpedientePartyRepresentation, 'id' | 'representado' | 'caracterRepresentacion'> | null; reason?: string; idempotency_key?: string; preview_fingerprint?: string; confirm_protected_work?: boolean };
 export type ExpedientePartyPreview = { fingerprint: string; classification: 'SAFE' | 'REVIEW_REQUIRED' | 'BLOCKED'; impact: { added: Array<{ key: string; id: string; name: string; source: 'CFG-002' }>; removed_or_no_longer_applicable: Array<{ key: string; id: string; name: string; source: 'CFG-002' }>; retained: Array<{ key: string; id: string; name: string; source: 'CFG-002' }>; protected_work: { count: number; requires_human_confirmation: boolean }; sources: { cfg002: true } } };
+export type ExpedientePartyValidation = {
+  expediente_acto_id: string; act_name: string; object_percentage: number;
+  transmitter_total: number; acquirer_total: number; transmitter_count: number; acquirer_count: number;
+  moral_without_representative: Array<{ id: string; name: string }>; warnings: string[]; consistent: boolean;
+};
 
 export type PredioSummary = { id: string; apodo?: string | null; clave_catastral?: string | null; cuenta_predial?: string | null; folio_real?: string | null; ubicacion_texto?: string | null; calle?: string | null; numero_exterior?: string | null; colonia?: string | null; municipio?: string | null; estado?: string | null };
 export type ExpedientePredioRelation = { id: string; expediente_id: string; predio_id: string; estatus: string; predio: PredioSummary; actos: Array<{ id: string; expediente_acto_id: string; expedienteActo: ExpedienteAct }> };
@@ -60,7 +66,7 @@ export type ExpedienteDocumentAppendix = {
 
 export type SeguimientoEstado = 'NO_INICIADO' | 'EN_PROCESO' | 'EN_ESPERA_EXTERNA' | 'COMPLETADO' | 'BLOQUEADO' | 'NO_APLICA';
 export type SeguimientoActivity = {
-  id: string; expediente_acto_id: string; etapa_nombre_snapshot: string; actividad_nombre_snapshot: string;
+  id: string; expediente_acto_id: string; proceso_clave: string; etapa_nombre_snapshot: string; actividad_nombre_snapshot: string;
   actividad_descripcion_snapshot?: string | null; estado: SeguimientoEstado; estado_operativo: SeguimientoEstado;
   estado_efectivo: SeguimientoEstado; estado_label: string; version: number; en_alcance: boolean; requiere_revision: boolean;
   motivo_revision?: string | null; responsable_id?: string | null; responsable?: PersonOption | null; aplica_por_defecto: boolean;
@@ -68,12 +74,17 @@ export type SeguimientoActivity = {
   extraordinaria?: boolean; naturaleza_snapshot?: string; alcance_instancia?: 'EXPEDIENTE' | 'ACTO' | 'INMUEBLE'; alcance_referencia_id?: string | null; orden_operativo?: number; fecha_inicio_base?: string | null; fecha_objetivo_base?: string | null; fecha_inicio_proyectada?: string | null; fecha_objetivo_proyectada?: string | null;
   dependencias: Array<{ id: string; actividad_id: string; nombre: string; estado: SeguimientoEstado; bloqueante: boolean }>;
   bloqueada_por: Array<{ id: string; nombre: string; estado: SeguimientoEstado }>;
+  actos_origen: Array<{ expediente_acto_id: string; tipo_acto_id: string; duracion_configurada: number; tipo_dias_configurado: 'HABILES' | 'NATURALES'; configuracion_revision?: number | null }>;
+  dias_restantes: { value: number | null; due: string | null; label: string; overdue: boolean };
+  fecha_cumplimiento?: string | null;
+  estatus_presentacion: 'PENDIENTE' | 'REALIZAR' | 'REALIZADO' | 'NO_APLICA';
   tiempo: { estimado: number; tipo_dias: 'HABILES' | 'NATURALES'; margen: number; transcurrido: number; fecha_objetivo?: string | null; limite_margen?: string | null; atrasada: boolean; margen_consumido: boolean };
 };
 export type ExpedienteSeguimiento = {
   expediente_id: string; configuracion_actual_no_reaplicada: true; fecha_firma_manual?: string | null;
   firma: { programada?: string | null; efectiva?: string | null; snapshot_canonico: boolean };
   entrega: { completada: boolean; fecha?: string | null; alertas_operativas_activas: boolean };
+  procesos: SeguimientoActivity[];
   actos: Array<{ expediente_acto_id: string; tipo_acto_id?: string; nombre: string; estatus: string; etapas: Array<{ nombre: string; orden: number; actividades: SeguimientoActivity[] }> }>;
   responsables: PersonOption[];
   proyeccion: { dias_restantes_ruta_critica: number; fecha_final_estimada?: string | null; semantica_paralelo: 'MAX'; altera_fecha_estimada_firma: false };
@@ -204,7 +215,8 @@ export type ProjectGenerationObservation = {
   location?: string;
   detail?: string;
 };
-export type ProjectVersion = { id: string; version_numero: number; nombre_original?: string; nota_version?: string; es_vigente: boolean; es_version_final?: boolean; subido_por_nombre?: string; cargado_por_nombre?: string; created_at: string; pending_count?: number; generation_observations?: ProjectGenerationObservation[]; docx_structural_fidelity?: { status?: string; sections?: number; tables?: number; immutable_parts?: number }; template_artifact_id?: string | null; template_version_id?: string | null; template_version?: number | null; template_name?: string | null; generation_mode?: string; generation_origin?: 'UI' | 'PRAVIA_IA' | string; instructions?: string | null; instructions_consumed?: boolean };
+export type ProjectFact = { field: string; value: string; status: 'CONFIRMADO' | 'PENDIENTE' | 'CONFLICTO'; mutability: 'FIJO' | 'VARIABLE'; provenance: { type: 'USER_CONFIRMED' | 'STRUCTURED_AND_DOCUMENTARY' | 'STRUCTURED'; document_ids: string[] }; conflicts: ProjectGenerationObservation[] };
+export type ProjectVersion = { id: string; version_numero: number; nombre_original?: string; nota_version?: string; es_vigente: boolean; es_version_final?: boolean; validation_cycle?: number; validated_by_id?: string | null; validated_at?: string | null; reopened_from_document_id?: string | null; reopened_by_id?: string | null; reopened_at?: string | null; subido_por_nombre?: string; cargado_por_nombre?: string; created_at: string; pending_count?: number; generation_observations?: ProjectGenerationObservation[]; docx_structural_fidelity?: { status?: string; sections?: number; tables?: number; immutable_parts?: number }; template_artifact_id?: string | null; template_version_id?: string | null; template_version?: number | null; template_name?: string | null; generation_mode?: string; generation_origin?: 'UI' | 'PRAVIA_IA' | string; instructions?: string | null; instructions_consumed?: boolean; fact_snapshot?: { facts: ProjectFact[]; conflicts: ProjectGenerationObservation[]; created_at: string } | null };
 export type ProjectObservation = {
   id: string;
   titulo: string;
@@ -224,6 +236,13 @@ export type ProjectReport = {
   documentos_analizados_count: number;
   documentos_totales_count: number;
   documentos_no_leidos: string[];
+  areas_revision: Array<{
+    area: string;
+    etiqueta: string;
+    estado: 'REVISADO_SIN_HALLAZGOS' | 'HALLAZGOS' | 'NO_VERIFICABLE';
+    resumen: string;
+    hallazgos: number;
+  }>;
   observaciones: ProjectObservation[];
   solicitado_por: string;
   created_at: string;

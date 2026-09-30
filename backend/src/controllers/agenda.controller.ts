@@ -20,9 +20,9 @@ const EVENT_COLORS: Record<string, string> = {
 
 const actorIdFrom = (req: Request) => req.user?.id;
 
-async function requireActiveUser(id: unknown, label: string) {
+async function requireActiveUser(id: unknown, label: string, organizationId?: string) {
   if (!id) throw new AgendaError(`${label} es obligatorio.`, 'AGENDA_USER_REQUIRED', 401);
-  const user = await prisma.user.findFirst({ where: { id: String(id), activo: true }, select: { id: true } });
+  const user = await prisma.user.findFirst({ where: { id: String(id), activo: true, ...(organizationId ? { organizationMemberships: { some: activeOrganizationMembershipWhere(organizationId) } } : {}) }, select: { id: true } });
   if (!user) throw new AgendaError(`${label} no corresponde a un usuario activo.`, 'AGENDA_USER_INVALID', 401);
   return user.id;
 }
@@ -89,19 +89,21 @@ const serializeEvent = (event: any) => ({
 const agendaObjectWhere = (req: Request): Prisma.EventoAgendaWhereInput => {
   if (!req.user) return { id: '00000000-0000-0000-0000-000000000000' };
   if (canManageAgendaTeam(req.user)) {
-    return req.query.user_id && req.query.user_id !== 'TODOS' ? { user_id: String(req.query.user_id) } : {};
+    return { organization_id: req.user.organizationId, ...(req.query.user_id && req.query.user_id !== 'TODOS' ? { user_id: String(req.query.user_id) } : {}) };
   }
   const expedienteScope = expedienteAccessWhere(req.user);
   return {
+    organization_id: req.user.organizationId,
     user_id: req.user.id,
     AND: [{ OR: [{ expediente_id: null }, { expediente: expedienteScope }] }],
   };
 };
 
-async function findConflicts(input: { responsableId: string; start: Date; end: Date | null; excludeId?: string }) {
+async function findConflicts(input: { organizationId: string; responsableId: string; start: Date; end: Date | null; excludeId?: string }) {
   const proposedEnd = input.end || new Date(input.start.getTime() + 30 * 60 * 1000);
   const candidates = await prisma.eventoAgenda.findMany({
     where: {
+      organization_id: input.organizationId,
       user_id: input.responsableId,
       estatus: 'ACTIVO',
       ...(input.excludeId ? { id: { not: input.excludeId } } : {}),
@@ -123,6 +125,7 @@ export class AgendaController {
       const canManageTeam = canManageAgendaTeam(req.user);
       const tasks = await prisma.tarea.findMany({
         where: {
+          ...(req.user ? { organization_id: req.user.organizationId } : { id: '00000000-0000-0000-0000-000000000000' }),
           ...(!canManageTeam && req.user ? { asignado_a_id: req.user.id } : req.query.user_id && req.query.user_id !== 'TODOS' ? { asignado_a_id: String(req.query.user_id) } : {}),
           ...(req.query.estatus && req.query.estatus !== 'TODOS' ? { estatus: String(req.query.estatus) as any } : { estatus: { not: 'CANCELADA' } }),
           ...(req.query.expediente_id ? { expediente_id: String(req.query.expediente_id) } : {}),
@@ -142,21 +145,23 @@ export class AgendaController {
 
   static async createTask(req: Request, res: Response) {
     try {
-      const actorId = await requireActiveUser(actorIdFrom(req), 'El usuario que registra');
+      if (!req.user) throw new AgendaError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
+      const organizationId = req.user.organizationId;
+      const actorId = await requireActiveUser(actorIdFrom(req), 'El usuario que registra', req.user.organizationId);
       const requestedResponsible = req.body.responsable_id || actorId;
       if (!canAssignAgendaResponsibility(req.user, requestedResponsible)) throw new AgendaError('Solo puedes asignarte tareas a ti mismo.', 'TASK_ASSIGNMENT_DENIED', 403);
-      const responsableId = await requireActiveUser(requestedResponsible, 'El responsable');
+      const responsableId = await requireActiveUser(requestedResponsible, 'El responsable', req.user.organizationId);
       const title = String(req.body.titulo || '').trim();
       if (title.length < 3 || title.length > 180) throw new AgendaError('El título debe tener entre 3 y 180 caracteres.', 'TASK_TITLE_INVALID');
       const priority = String(req.body.prioridad || 'MEDIA').toUpperCase();
       if (!['BAJA', 'MEDIA', 'ALTA', 'URGENTE'].includes(priority)) throw new AgendaError('La prioridad de la tarea no es válida.', 'TASK_PRIORITY_INVALID');
-      if (!req.user) throw new AgendaError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
       const links = await validateAgendaLinks({ expedienteId: req.body.expediente_id }, req.user);
       const deadline = req.body.fecha_limite ? new Date(req.body.fecha_limite) : null;
       if (deadline && Number.isNaN(deadline.getTime())) throw new AgendaError('La fecha límite no es válida.', 'TASK_DEADLINE_INVALID');
       const task = await prisma.$transaction(async (tx) => {
         const created = await tx.tarea.create({
           data: {
+            organization_id: organizationId,
             titulo: title,
             descripcion: String(req.body.descripcion || '').trim() || null,
             prioridad: priority as any,
@@ -186,8 +191,9 @@ export class AgendaController {
 
   static async updateTask(req: Request, res: Response) {
     try {
-      const actorId = await requireActiveUser(actorIdFrom(req), 'El usuario que modifica');
-      const current = await prisma.tarea.findUnique({ where: { id: req.params.id } });
+      if (!req.user) throw new AgendaError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
+      const actorId = await requireActiveUser(actorIdFrom(req), 'El usuario que modifica', req.user.organizationId);
+      const current = await prisma.tarea.findFirst({ where: { id: req.params.id, organization_id: req.user.organizationId } });
       if (!current) throw new AgendaError('Tarea no encontrada.', 'TASK_NOT_FOUND', 404);
       const canManageTeam = canManageAgendaTeam(req.user);
       if (!canManageTeam && current.asignado_a_id !== actorId) throw new AgendaError('Solo puedes modificar tus tareas asignadas.', 'TASK_ACCESS_DENIED', 403);
@@ -200,7 +206,7 @@ export class AgendaController {
       const deadline = req.body.fecha_limite === undefined ? current.fecha_limite : req.body.fecha_limite ? new Date(req.body.fecha_limite) : null;
       if (deadline && Number.isNaN(deadline.getTime())) throw new AgendaError('La fecha límite no es válida.', 'TASK_DEADLINE_INVALID');
       if (req.body.responsable_id && !canAssignAgendaResponsibility(req.user, req.body.responsable_id)) throw new AgendaError('No puedes reasignar la tarea.', 'TASK_ASSIGNMENT_DENIED', 403);
-      const responsible = req.body.responsable_id ? await requireActiveUser(req.body.responsable_id, 'El responsable') : current.asignado_a_id;
+      const responsible = req.body.responsable_id ? await requireActiveUser(req.body.responsable_id, 'El responsable', req.user.organizationId) : current.asignado_a_id;
       const updated = await prisma.$transaction(async (tx) => {
         const task = await tx.tarea.update({
           where: { id: current.id },
@@ -290,9 +296,9 @@ export class AgendaController {
       if (!req.user) throw new AgendaError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
       const responsableId = String(req.query.responsable_id || req.user.id);
       if (!canAssignAgendaResponsibility(req.user, responsableId)) throw new AgendaError('No puedes consultar la disponibilidad de ese responsable.', 'AGENDA_ASSIGNMENT_DENIED', 403);
-      await requireActiveUser(responsableId, 'El responsable');
+      await requireActiveUser(responsableId, 'El responsable', req.user.organizationId);
       const range = parseAgendaRange({ fechaInicio: req.query.desde, fechaFin: req.query.hasta });
-      const conflictos = await findConflicts({ responsableId, start: range.start, end: range.end, excludeId: req.query.excluir_id ? String(req.query.excluir_id) : undefined });
+      const conflictos = await findConflicts({ organizationId: req.user.organizationId, responsableId, start: range.start, end: range.end, excludeId: req.query.excluir_id ? String(req.query.excluir_id) : undefined });
       return res.json({ success: true, conflictos, meta: { total: conflictos.length, timezone: AGENDA_TIME_ZONE, blocking: false } });
     } catch (error: any) {
       const status = error instanceof AgendaError ? error.status : 500;
@@ -348,19 +354,20 @@ export class AgendaController {
 
   static async create(req: Request, res: Response) {
     try {
-      const actorId = await requireActiveUser(actorIdFrom(req), 'El usuario que registra');
+      if (!req.user) throw new AgendaError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
+      const organizationId = req.user.organizationId;
+      const actorId = await requireActiveUser(actorIdFrom(req), 'El usuario que registra', req.user.organizationId);
       const requestedResponsible = req.body.responsable_id || actorId;
       if (!canAssignAgendaResponsibility(req.user, requestedResponsible)) throw new AgendaError('Solo puedes registrar eventos para ti mismo.', 'AGENDA_ASSIGNMENT_DENIED', 403);
-      const responsableId = await requireActiveUser(requestedResponsible, 'El responsable');
+      const responsableId = await requireActiveUser(requestedResponsible, 'El responsable', req.user.organizationId);
       const titulo = String(req.body.titulo || '').trim();
       if (titulo.length < 3 || titulo.length > 180) throw new AgendaError('El título debe tener entre 3 y 180 caracteres.', 'AGENDA_TITLE_INVALID');
       const tipo = normalizeAgendaType(req.body.tipo);
       const range = parseAgendaRange({ fechaInicio: req.body.fecha_inicio, fechaFin: req.body.fecha_fin, todoElDia: req.body.todo_el_dia });
       const reminders = normalizeReminders(req.body.recordatorios);
-      if (!req.user) throw new AgendaError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
       const links = await validateAgendaLinks({ expedienteId: req.body.expediente_id, comparecienteId: req.body.compareciente_id }, req.user);
       if (tipo === 'FIRMA' && !links.expedienteId) throw new AgendaError('Una firma programada debe vincularse con un expediente.', 'AGENDA_SIGNATURE_CASE_REQUIRED');
-      const conflicts = await findConflicts({ responsableId, start: range.start, end: range.end });
+      const conflicts = await findConflicts({ organizationId: req.user.organizationId, responsableId, start: range.start, end: range.end });
       const idempotencyKey = String(req.body.idempotency_key || '').trim() || null;
 
       const result = await prisma.$transaction(async (tx) => {
@@ -371,6 +378,7 @@ export class AgendaController {
         }
         const event = await tx.eventoAgenda.create({
           data: {
+            organization_id: organizationId,
             titulo,
             descripcion: String(req.body.descripcion || '').trim() || null,
             tipo,
@@ -424,15 +432,16 @@ export class AgendaController {
 
   static async update(req: Request, res: Response) {
     try {
-      const actorId = await requireActiveUser(actorIdFrom(req), 'El usuario que modifica');
-      const current = await prisma.eventoAgenda.findUnique({ where: { id: req.params.id } });
+      if (!req.user) throw new AgendaError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
+      const actorId = await requireActiveUser(actorIdFrom(req), 'El usuario que modifica', req.user.organizationId);
+      const current = await prisma.eventoAgenda.findFirst({ where: { id: req.params.id, organization_id: req.user.organizationId } });
       if (!current) throw new AgendaError('Evento no encontrado.', 'AGENDA_EVENT_NOT_FOUND', 404);
       const canManageTeam = canManageAgendaTeam(req.user);
       if (!canManageTeam && current.user_id !== actorId) throw new AgendaError('Solo puedes modificar tus eventos.', 'AGENDA_ACCESS_DENIED', 403);
       if (current.estatus === 'CANCELADO') throw new AgendaError('Un evento cancelado ya no puede modificarse.', 'AGENDA_EVENT_CANCELLED', 409);
       if (req.body.responsable_id && !canAssignAgendaResponsibility(req.user, req.body.responsable_id)) throw new AgendaError('No puedes reasignar el evento.', 'AGENDA_ASSIGNMENT_DENIED', 403);
       const responsableId = req.body.responsable_id
-        ? await requireActiveUser(req.body.responsable_id, 'El responsable')
+        ? await requireActiveUser(req.body.responsable_id, 'El responsable', req.user.organizationId)
         : current.user_id;
       if (!req.user) throw new AgendaError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
       const links = await validateAgendaLinks({
@@ -450,7 +459,7 @@ export class AgendaController {
       if (!['ACTIVO', 'COMPLETADO'].includes(estatus)) throw new AgendaError('El estado solicitado no es válido.', 'AGENDA_STATUS_INVALID');
       const tipo = req.body.tipo ? normalizeAgendaType(req.body.tipo) : current.tipo;
       if (tipo === 'FIRMA' && !links.expedienteId) throw new AgendaError('Una firma programada debe vincularse con un expediente.', 'AGENDA_SIGNATURE_CASE_REQUIRED');
-      const conflicts = await findConflicts({ responsableId: responsableId || actorId, start: range.start, end: range.end, excludeId: current.id });
+      const conflicts = await findConflicts({ organizationId: req.user.organizationId, responsableId: responsableId || actorId, start: range.start, end: range.end, excludeId: current.id });
 
       const updated = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:agenda-event:${current.id}`}))`);
@@ -498,12 +507,13 @@ export class AgendaController {
 
   static async cancel(req: Request, res: Response) {
     try {
-      const actorId = await requireActiveUser(actorIdFrom(req), 'El usuario que cancela');
+      if (!req.user) throw new AgendaError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
+      const actorId = await requireActiveUser(actorIdFrom(req), 'El usuario que cancela', req.user.organizationId);
       const reason = String(req.body.motivo_cancelacion || '').trim();
       if (reason.length < 5) throw new AgendaError('El motivo de cancelación debe tener al menos 5 caracteres.', 'AGENDA_CANCEL_REASON_REQUIRED');
       const event = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:agenda-event:${req.params.id}`}))`);
-        const current = await tx.eventoAgenda.findUnique({ where: { id: req.params.id } });
+        const current = await tx.eventoAgenda.findFirst({ where: { id: req.params.id, organization_id: req.user!.organizationId } });
         if (!current) throw new AgendaError('Evento no encontrado.', 'AGENDA_EVENT_NOT_FOUND', 404);
         const canManageTeam = canManageAgendaTeam(req.user);
         if (!canManageTeam && current.user_id !== actorId) throw new AgendaError('Solo puedes cancelar tus eventos.', 'AGENDA_ACCESS_DENIED', 403);

@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { ArrowRight, Check, Circle, LoaderCircle } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ApiError } from '../../../services/api/client';
 import { prospectsService } from '../prospects.service';
 import type { Prospect, ProspectWorkflow, ProspectWorkflowAction } from '../prospects.types';
@@ -16,6 +16,8 @@ const primaryByStage: Record<string, ProspectWorkflowAction | undefined> = {
   NUEVO: 'COMENZAR_INTEGRACION',
   EN_INTEGRACION: 'MARCAR_LISTO_PARA_COTIZAR',
   LISTO_PARA_COTIZAR: 'CONVERTIR',
+  SUSPENDIDO: 'REACTIVAR',
+  CANCELADO: 'REACTIVAR',
 };
 
 export function ProspectWorkflowPanel({ prospect, workflow: w, canWrite, onChanged }: {
@@ -24,10 +26,12 @@ export function ProspectWorkflowPanel({ prospect, workflow: w, canWrite, onChang
   canWrite: boolean;
   onChanged: () => Promise<void>;
 }) {
+  const navigate = useNavigate();
   const [pending, setPending] = useState<ProspectWorkflowAction | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [reason, setReason] = useState('');
   const lock = useRef(false);
   const attempts = useRef(new Map<ProspectWorkflowAction, string>());
   const currentIndex = w.stages.findIndex((stage) => stage.code === w.stage);
@@ -44,15 +48,20 @@ export function ProspectWorkflowPanel({ prospect, workflow: w, canWrite, onChang
     try {
       const key = attempts.current.get(pending) ?? crypto.randomUUID();
       attempts.current.set(pending, key);
-      await prospectsService.act(prospect.id, {
+      const result = await prospectsService.act(prospect.id, {
         action: pending,
         expectedVersion: w.version,
         confirm: true,
         idempotencyKey: key,
-        ...(pending === 'SUSPENDER' || pending === 'CANCELAR' ? { reason: 'Confirmado desde la ficha de trabajo' } : {}),
+        ...(['SUSPENDER', 'CANCELAR', 'REACTIVAR'].includes(pending) ? { reason: reason.trim() } : {}),
       });
       attempts.current.delete(pending);
+      if (pending === 'CONVERTIR' && result.quoteId) {
+        navigate(`/cotizaciones/${encodeURIComponent(result.quoteId)}`);
+        return;
+      }
       setPending(null);
+      setReason('');
       await onChanged();
       setNotice(pending === 'CONVERTIR' ? 'Cotización creada y vinculada.' : 'Etapa actualizada y registrada.');
     } catch (caught) {
@@ -84,8 +93,9 @@ export function ProspectWorkflowPanel({ prospect, workflow: w, canWrite, onChang
 
     {pending && <div className={styles.confirmation} role="group" aria-label="Confirmar acción">
       <h3>{w.actions.find((action) => action.code === pending)?.label}</h3>
-      <p>{pending === 'CONVERTIR' ? 'Se creará exactamente una cotización real con los datos, documentos y preparación económica de esta ficha.' : 'La acción registrará usuario, fecha y hora en el historial.'}</p>
-      <div className={styles.actions}><button type="button" className={styles.primaryAction} disabled={busy} onClick={() => void confirm()}>{busy && <LoaderCircle className={styles.spin} size={16} />}{busy ? 'Guardando…' : 'Confirmar'}</button><button type="button" disabled={busy} onClick={() => setPending(null)}>Cancelar</button></div>
+      <p>{pending === 'CONVERTIR' ? 'Se creará exactamente una cotización real, se notificará al abogado responsable y se abrirá esa misma ficha sin recaptura.' : 'La acción registrará usuario, fecha y hora en el historial.'}</p>
+      {['SUSPENDER', 'CANCELAR', 'REACTIVAR'].includes(pending) && <label>Motivo{pending === 'REACTIVAR' ? ' (opcional)' : ''}<textarea required={pending !== 'REACTIVAR'} maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} /></label>}
+      <div className={styles.actions}><button type="button" className={styles.primaryAction} disabled={busy || (['SUSPENDER', 'CANCELAR'].includes(pending) && !reason.trim())} onClick={() => void confirm()}>{busy && <LoaderCircle className={styles.spin} size={16} />}{busy ? 'Guardando…' : 'Confirmar'}</button><button type="button" disabled={busy} onClick={() => { setPending(null); setReason(''); }}>Cancelar</button></div>
     </div>}
     {error && <p className={styles.error} role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}

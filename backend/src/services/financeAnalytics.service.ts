@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { calculateFinanceAggregates, calculateReceivable, legacyFinanceAllocations, type EconomicNature } from '../domain/financeCore';
+import { FinanceProjectionService } from './financeProjection.service';
 
 export type FinancePeriod = { from: Date; to: Date; key: string; label: string };
 
@@ -9,7 +10,18 @@ export function resolveFinancePeriod(input: { periodo?: string; fecha_desde?: st
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
   const key = input.periodo || 'ESTE_MES';
-  if (key === 'MES_ANTERIOR') {
+  if (key === '7_DIAS') {
+    start.setDate(start.getDate() - 6);
+  } else if (key === '30_DIAS') {
+    start.setDate(start.getDate() - 29);
+  } else if (key === '3_MESES') {
+    start.setMonth(start.getMonth() - 2, 1);
+  } else if (key === '6_MESES') {
+    start.setMonth(start.getMonth() - 5, 1);
+  } else if (key === '1_ANO') {
+    start.setFullYear(start.getFullYear() - 1);
+    start.setDate(start.getDate() + 1);
+  } else if (key === 'MES_ANTERIOR') {
     start.setDate(1); start.setMonth(start.getMonth() - 1);
     end.setDate(0); end.setHours(23, 59, 59, 999);
   } else if (key === 'TRIMESTRE') {
@@ -32,19 +44,20 @@ export function resolveFinancePeriod(input: { periodo?: string; fecha_desde?: st
 export class FinanceAnalyticsService {
   constructor(private readonly db: PrismaClient) {}
 
-  async summary(period: FinancePeriod) {
+  async summary(period: FinancePeriod, organizationId?: string) {
+    const tenant = organizationId ? { organization_id: organizationId } : {};
     const [movements, movementsAsOf, fees] = await Promise.all([
       this.db.movimientoFinanciero.findMany({
-        where: { fecha_movimiento: { gte: period.from, lte: period.to }, estatus: { in: ['APLICADO', 'RECIBIDO', 'VALIDADO'] } },
+        where: { ...tenant, fecha_movimiento: { gte: period.from, lte: period.to }, estatus: { in: ['APLICADO', 'RECIBIDO', 'VALIDADO'] } },
         include: { distribuciones: { include: { categoria: true } } },
         orderBy: { fecha_movimiento: 'asc' },
       }),
       this.db.movimientoFinanciero.findMany({
-        where: { fecha_movimiento: { lte: period.to }, estatus: { in: ['APLICADO', 'RECIBIDO', 'VALIDADO'] } },
+        where: { ...tenant, fecha_movimiento: { lte: period.to }, estatus: { in: ['APLICADO', 'RECIBIDO', 'VALIDADO'] } },
         include: { distribuciones: { include: { categoria: true } } },
         orderBy: { fecha_movimiento: 'asc' },
       }),
-      this.db.honorarioGenerado.findMany({ where: { fecha_reconocimiento: { lte: period.to }, estado: { not: 'CANCELADO' } }, select: { monto: true } }),
+      this.db.honorarioGenerado.findMany({ where: { ...tenant, fecha_reconocimiento: { lte: period.to }, estado: { not: 'CANCELADO' } }, select: { monto: true } }),
     ]);
     const canonicalMovement = (movement: typeof movements[number]) => ({
       nature: movement.naturaleza,
@@ -76,14 +89,28 @@ export class FinanceAnalyticsService {
       terceros: kpis.fondos_terceros,
       otros: kpis.otros_destinos,
     };
-    return { period, kpis, cashFlow: [...monthly.values()], allocation };
+    const supportsAdvanced = Boolean(
+      (this.db as any).gastoRecurrenteFinanciero?.findMany
+      && (this.db as any).expedientePresupuesto?.findMany,
+    );
+    const advanced = supportsAdvanced
+      ? await new FinanceProjectionService(this.db).additions(period, new Date(), organizationId)
+      : {
+        series: [] as Array<{ period: string; generated: number; collected: number; difference: number }>,
+        byLawyer: [], byAct: [],
+        collectionStatus: { collected: asOfKpis.honorarios_cobrados, outstanding: asOfKpis.honorarios_por_cobrar, overdue: 0 },
+        projection: { months: [], noDate: { fees: 0, otherIncome: 0, expenses: 0 } },
+        collectionAlerts: [], recentMovements: [],
+      };
+    return { period, kpis, cashFlow: [...monthly.values()], allocation, ...advanced };
   }
 
-  async receivables(input: { page?: number; pageSize?: number; search?: string; responsable_id?: string; notaria_id?: string; fecha_desde?: Date; fecha_hasta?: Date }) {
+  async receivables(input: { page?: number; pageSize?: number; search?: string; responsable_id?: string; notaria_id?: string; fecha_desde?: Date; fecha_hasta?: Date; organization_id?: string }) {
     const page = Math.max(1, Number(input.page || 1));
     const pageSize = Math.min(100, Math.max(1, Number(input.pageSize || 20)));
     const records = await this.db.honorarioGenerado.findMany({
       where: {
+        ...(input.organization_id ? { organization_id: input.organization_id } : {}),
         estado: { not: 'CANCELADO' },
         ...(input.fecha_hasta ? { fecha_reconocimiento: { lte: input.fecha_hasta } } : {}),
         ...(input.responsable_id ? { responsable_id: input.responsable_id } : {}),
@@ -94,7 +121,6 @@ export class FinanceAnalyticsService {
         expediente: { select: { id: true, numero_pravia: true, cliente_alias: true } },
         cotizacion: { select: { id: true, numero_cotizacion: true, prospecto: { select: { nombre: true } } } },
         responsable: { select: { id: true, nombre: true, apellido: true } },
-        notaria: { select: { id: true, nombre: true, numero_notaria: true } },
         distribuciones: { where: { movimiento: { estatus: { in: ['APLICADO', 'RECIBIDO', 'VALIDADO'] }, naturaleza: 'INGRESO', ...(input.fecha_hasta ? { fecha_movimiento: { lte: input.fecha_hasta } } : {}) } }, select: { monto: true } },
       },
       orderBy: { fecha_reconocimiento: 'desc' },
@@ -105,7 +131,6 @@ export class FinanceAnalyticsService {
       cotizacion: item.cotizacion,
       cliente: item.expediente?.cliente_alias || item.cotizacion.prospecto?.nombre || 'Cliente sin registrar',
       responsable: item.responsable ? `${item.responsable.nombre} ${item.responsable.apellido}`.trim() : 'Sin responsable',
-      notaria: item.notaria?.nombre || 'Sin notaría',
       fecha_reconocimiento: item.fecha_reconocimiento,
       fecha_vencimiento: item.fecha_vencimiento,
       ultimo_pago: null,

@@ -4,10 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 
 const detailId = '770a40da-3ba5-4d24-a293-75fa8d064c05';
-const selectorId = '30000000-0000-4000-8000-000000000102';
 const quoteId = '30000000-0000-4000-8000-000000000403';
 const quoteArtifactId = '30000000-0000-4000-8000-000000000408';
-const root = '/private/tmp/pravia-corr003v2-007-storage-qa';
+const root = process.env.PRAVIA_E2E_STORAGE_ROOT || '/tmp/pravia-local-storage-qa';
 const inePath = `${root}/qa-inputs/CMP-008-INE.docx`;
 const predioPath = `${root}/qa-inputs/PRD-009-PREDIO.docx`;
 const templateAPath = `${root}/organizations/30000000-0000-4000-8000-000000000001/catalogos/qa/ADM-001-A.docx`;
@@ -17,11 +16,14 @@ const pngPath = `${root}/organizations/30000000-0000-4000-8000-000000000001/docu
 const jpgPath = `${root}/organizations/30000000-0000-4000-8000-000000000001/documentos/expedientes/${detailId}/qa-preview-real.jpg`;
 const evidenceDir = resolve(process.cwd(), 'artifacts/qa-corrections-008-009-010');
 const runId = Date.now().toString().slice(-8);
+const predioName = `CASA QA ${runId}`;
+const apiBase = process.env.PRAVIA_E2E_API_URL || 'http://127.0.0.1:3001';
+const api = (path: string) => `${apiBase}${path}`;
 
 async function login(page: Page) {
   await open(page, '/login');
   await page.getByRole('textbox', { name: 'Correo electrónico' }).fill('qa.correcciones@pravia.test');
-  await page.getByRole('textbox', { name: 'Contraseña', exact: true }).fill('Pravia!QA-Release-2026');
+  await page.getByRole('textbox', { name: 'Contraseña', exact: true }).fill((process.env.PRAVIA_E2E_PASSWORD ?? ''));
   await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
   await page.waitForURL('**/mi-dia');
 }
@@ -29,7 +31,7 @@ async function login(page: Page) {
 const open = (page: Page, path: string) => page.goto(path, { waitUntil: 'domcontentloaded', timeout: 90_000 });
 
 async function token(request: APIRequestContext) {
-  const response = await request.post('/api/auth/login', { data: { email: 'qa.correcciones@pravia.test', password: 'Pravia!QA-Release-2026', remember: false } });
+  const response = await request.post(api('/api/auth/login'), { data: { email: 'qa.correcciones@pravia.test', password: (process.env.PRAVIA_E2E_PASSWORD ?? ''), remember: false } });
   expect(response.ok()).toBeTruthy();
   const body = await response.json() as { accessToken?: string; access_token?: string; token?: string };
   const value = body.accessToken || body.access_token || body.token;
@@ -45,7 +47,7 @@ const bodyData = async (response: any) => {
 };
 
 async function upload(request: APIRequestContext, path: string, bearer: string, multipart: Record<string, string>, filePath: string, name: string, mimeType: string) {
-  const response = await request.post(path, {
+  const response = await request.post(api(path), {
     headers: auth(bearer),
     multipart: { ...multipart, file: { name, mimeType, buffer: readFileSync(filePath) } },
   });
@@ -69,7 +71,7 @@ test('Correcciones 008 v2 + 009 + 010: recorrido integrado en Chrome real', asyn
   let predioId = '';
 
   await test.step('PF 1..12: documentos vigentes, IA real, CIC/OCR, decisión humana y persistencia', async () => {
-    const created = await bodyData(await request.post('/api/comparecientes/persona-fisica', {
+    const created = await bodyData(await request.post(api('/api/comparecientes/persona-fisica'), {
       headers: auth(bearer),
       data: { nombre: `María QA ${runId}`, apellido_paterno: 'Controlada', apellido_materno: 'Local', nacionalidad: 'Mexicana', pep_estado: 'NO' },
     }));
@@ -99,14 +101,14 @@ test('Correcciones 008 v2 + 009 + 010: recorrido integrado en Chrome real', asyn
   });
 
   await test.step('PM 1..18: estructura vigente, vinculación canónica, administración e identificación separada de BC', async () => {
-    const created = await bodyData(await request.post('/api/comparecientes/persona-moral', {
+    const created = await bodyData(await request.post(api('/api/comparecientes/persona-moral'), {
       headers: auth(bearer),
       data: { razon_social: `Sociedad QA ${runId}, S.A. de C.V.`, tipo_societario: 'SOCIEDAD ANÓNIMA', nacionalidad: 'Mexicana' },
     }));
     pmId = created.compareciente.id;
     await upload(request, `/api/comparecientes/${pmId}/documentos`, bearer, { categoria: 'ACTA_CONSTITUTIVA', vigencia: 'VIGENTE' }, predioPath, `ACTA-VIGENTE-${runId}.docx`, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     await upload(request, `/api/comparecientes/${pmId}/documentos`, bearer, { categoria: 'ACTA_CONSTITUTIVA', vigencia: 'HISTORICO' }, pdfPath, `ACTA-HISTORICA-${runId}.pdf`, 'application/pdf');
-    const current = await bodyData(await request.get(`/api/comparecientes/${pmId}/estructura-propiedad`, { headers: auth(bearer) }));
+    const current = await bodyData(await request.get(api(`/api/comparecientes/${pmId}/estructura-propiedad`), { headers: auth(bearer) }));
     const rootId = current.root_node_id || randomUUID();
     const rootNode = current.nodes.find((node: any) => node.id === current.root_node_id) || { id: rootId, party_kind: 'PM', identity_mode: 'LINKED', linked_compareciente_id: pmId, canonical_label: `Sociedad QA ${runId}, S.A. de C.V.`, incomplete: false, metadata: {} };
     const shareholderId = randomUUID();
@@ -122,9 +124,9 @@ test('Correcciones 008 v2 + 009 + 010: recorrido integrado en Chrome real', asyn
       controls: [{ id: randomUUID(), subject_node_id: adminId, kind: 'MANAGEMENT', description: 'Administrador único vigente', human_confirmed: true }],
       incomplete_markers: ['Cadena indirecta pendiente de evidencia'],
     };
-    const previews = await bodyData(await request.post(`/api/comparecientes/${pmId}/estructura-propiedad/vinculos/preview`, { headers: auth(bearer), data: graph }));
+    const previews = await bodyData(await request.post(api(`/api/comparecientes/${pmId}/estructura-propiedad/vinculos/preview`), { headers: auth(bearer), data: graph }));
     const confirmations = Object.fromEntries(previews.map((item: any) => [item.node_id, item.confirmation]));
-    await bodyData(await request.put(`/api/comparecientes/${pmId}/estructura-propiedad`, {
+    await bodyData(await request.put(api(`/api/comparecientes/${pmId}/estructura-propiedad`), {
       headers: auth(bearer), data: { ...graph, expected_revision: current.revision, idempotency_key: randomUUID(), identity_confirmations: confirmations },
     }));
 
@@ -138,7 +140,7 @@ test('Correcciones 008 v2 + 009 + 010: recorrido integrado en Chrome real', asyn
     await expect(ownership.getByText('Beneficiario controlador', { exact: true }).first()).toBeVisible();
     await expect(ownership.locator('input[value="Administrador único"]')).toBeVisible();
     await ownership.getByText('Vista derivada de la estructura', { exact: true }).click();
-    await expect(ownership.getByLabel('Expansión canónica').getByText('MARÍA PRUEBA OCHO CONTROLADA LOCAL', { exact: true })).toBeVisible();
+    await expect(ownership.getByLabel('Expansión canónica').getByText(`MARÍA QA ${runId} CONTROLADA LOCAL`, { exact: true })).toBeVisible();
     const governance = ownership.getByText('Forma de administración vigente').locator('..').getByRole('combobox');
     await expect(governance).toHaveValue('SOLE_ADMINISTRATOR');
     const summaries = ownership.locator('div').filter({ has: page.getByText('Personas a identificar', { exact: true }) });
@@ -153,7 +155,7 @@ test('Correcciones 008 v2 + 009 + 010: recorrido integrado en Chrome real', asyn
     await page.getByRole('button', { name: 'Crear nuevo', exact: true }).click();
     await page.waitForURL('**/predios/nuevo?**');
     const createdResponse = page.waitForResponse((response) => response.url().endsWith('/api/predios') && response.request().method() === 'POST');
-    await page.getByLabel('Apodo / nombre corto').fill(`Casa QA ${runId}`);
+    await page.getByLabel('Apodo / nombre corto').fill(predioName);
     await page.getByLabel('Ubicación descriptiva').fill('Avenida Pruebas 109, Tepic, Nayarit');
     await page.getByRole('button', { name: 'Guardar ficha', exact: true }).click();
     const createdPayload = await (await createdResponse).json();
@@ -166,8 +168,16 @@ test('Correcciones 008 v2 + 009 + 010: recorrido integrado en Chrome real', asyn
     await upload(request, `/api/predios/${predioId}/documentos`, bearer, { tipo: 'ANTECEDENTE', vigencia: 'HISTORICO', es_antecedente_principal: 'false' }, jpgPath, `ANTECEDENTE-HISTORICO-${runId}.jpg`, 'image/jpeg');
 
     await open(page, `/predios/${predioId}`);
-    await expect(page.getByRole('heading', { name: `Casa QA ${runId}`, exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: predioName, exact: true })).toBeVisible();
     await expect(page.getByText(`ANTECEDENTE-HISTORICO-${runId}.jpg`, { exact: true })).toBeVisible();
+    await page.getByRole('checkbox', { name: `AVALUO-VIGENTE-${runId}.pdf`, exact: true }).check();
+    await page.getByRole('button', { name: 'Analizar 1 fuente seleccionada', exact: true }).click();
+    const pdfReview = page.getByRole('dialog', { name: /Propuesta desde 1 fuente/ });
+    await expect(pdfReview).toBeVisible({ timeout: 180_000 });
+    await expect(pdfReview.getByText('No se encontraron datos aplicables para proponer. La ficha permanece sin cambios.', { exact: true })).toBeVisible();
+    await expect(pdfReview.getByText('Extracción completada con faltantes', { exact: true })).toBeVisible();
+    await pdfReview.getByRole('button', { name: 'Cerrar', exact: true }).click();
+    await page.getByRole('checkbox', { name: `AVALUO-VIGENTE-${runId}.pdf`, exact: true }).uncheck();
     await page.getByRole('checkbox', { name: `PREDIO-VIGENTE-${runId}.docx`, exact: true }).check();
     await page.getByRole('button', { name: 'Analizar 1 fuente seleccionada', exact: true }).click();
     const review = page.getByRole('dialog', { name: /Propuesta desde 1 fuente/ });
@@ -188,8 +198,8 @@ test('Correcciones 008 v2 + 009 + 010: recorrido integrado en Chrome real', asyn
     await expect(page.getByLabel('Terreno (m²)')).toHaveValue('250.5');
 
     await open(page, '/predios');
-    await page.getByPlaceholder(/Buscar por apodo/).fill(`Casa QA ${runId}`);
-    await expect(page.getByRole('link', { name: new RegExp(`Casa QA ${runId}`) })).toBeVisible();
+    await page.getByPlaceholder(/Buscar por apodo/).fill(predioName);
+    await expect(page.getByRole('link', { name: new RegExp(predioName) })).toBeVisible();
 
     await open(page, `/expedientes/${detailId}#documentos`);
     await expect(page.getByText(`PREDIO-VIGENTE-${runId}.docx`, { exact: true })).toHaveCount(0);
@@ -207,19 +217,45 @@ test('Correcciones 008 v2 + 009 + 010: recorrido integrado en Chrome real', asyn
     await page.reload();
     await expect(page.getByText(`PREDIO-VIGENTE-${runId}.docx`, { exact: true })).toHaveCount(1);
 
-    await open(page, `/expedientes/${selectorId}#predios`);
+    const expedientes = await bodyData(await request.get(api('/api/expedientes?limit=50'), { headers: auth(bearer) }));
+    const reusableTarget = expedientes.find((item: { id: string; actos?: unknown[] }) => item.id !== detailId && (item.actos?.length || 0) > 0);
+    expect(reusableTarget).toBeTruthy();
+    await open(page, `/expedientes/${reusableTarget.id}#predios`);
     await page.getByRole('button', { name: 'Vincular existente', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Vincular inmueble' });
-    await dialog.getByPlaceholder(/Apodo, clave/).fill(`Casa QA ${runId}`);
-    await dialog.getByRole('button', { name: new RegExp(`Casa QA ${runId}`) }).click();
+    await dialog.getByPlaceholder(/Apodo, clave/).fill(predioName);
+    await dialog.getByRole('button', { name: new RegExp(predioName) }).click();
     await dialog.getByRole('checkbox').first().check();
     await dialog.getByRole('button', { name: 'Revisar impacto', exact: true }).click();
     await expect(dialog.getByText(/Cambio seguro|Revisión requerida/)).toBeVisible();
     const confirmation = dialog.getByText(/Confirmo que revisé/);
     if (await confirmation.count()) await confirmation.click();
     await dialog.getByRole('button', { name: 'Guardar relación', exact: true }).click();
-    await expect(page.getByRole('heading', { name: `Casa QA ${runId}`, exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: predioName, exact: true })).toBeVisible();
   });
+
+  if (process.env.PRAVIA_E2E_ONLY_016 === '1') {
+    await test.step('Corrección 016 responsive 1440/1366/1024/768/390/320 sin overflow', async () => {
+      for (const width of [1440, 1366, 1024, 768, 390, 320]) {
+        await page.setViewportSize({ width, height: width <= 390 ? 844 : 900 });
+        const routes: Array<[string, () => ReturnType<Page['locator']>]> = [
+          [`/comparecientes/${pfId}`, () => page.getByRole('heading', { name: 'Datos notariales', exact: true })],
+          [`/comparecientes/${pmId}#ownership`, () => page.getByRole('region', { name: 'Estructura de propiedad y control' })],
+          [`/predios/${predioId}`, () => page.getByRole('heading', { name: predioName, exact: true })],
+        ];
+        for (const [path, ready] of routes) {
+          await open(page, path);
+          await expect(ready()).toBeVisible({ timeout: 30_000 });
+          const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+          expect(overflow, `${path} desborda ${overflow}px a ${width}px`).toBeLessThanOrEqual(1);
+        }
+        await page.screenshot({ path: `${evidenceDir}/correction-016-${width}.png`, fullPage: true });
+      }
+    });
+    expect(networkErrors).toEqual([]);
+    expect(consoleErrors.filter((item) => !item.includes('favicon') && !item.includes('409 (Conflict)'))).toEqual([]);
+    return;
+  }
 
   await test.step('Presupuesto 1..15: lista inline, independencia, ADM-001 A→B, histórico y fallo sin fallback', async () => {
     // Cada ejecución fija su propia precondición A desde la UI. La prueba
@@ -292,7 +328,7 @@ test('Correcciones 008 v2 + 009 + 010: recorrido integrado en Chrome real', asyn
     viewer = page.getByRole('dialog', { name: /Presupuesto_EXP-0001-2026/ });
     await expect(viewer.getByText('PRUEBA_CFG002_COTIZACION_A_20260916', { exact: true })).toBeVisible();
     await viewer.getByRole('button', { name: 'Cerrar vista previa' }).click();
-    const deactivate = await request.patch(`/api/settings/catalogs/artifacts/${quoteArtifactId}`, { headers: auth(bearer), data: { activo: false } });
+    const deactivate = await request.patch(api(`/api/settings/catalogs/artifacts/${quoteArtifactId}`), { headers: auth(bearer), data: { activo: false } });
     expect(deactivate.ok()).toBeTruthy();
     try {
       await page.getByRole('button', { name: 'Generar con ADM-001', exact: true }).click();
@@ -301,7 +337,7 @@ test('Correcciones 008 v2 + 009 + 010: recorrido integrado en Chrome real', asyn
       await page.getByRole('button', { name: 'Generar cotización', exact: true }).click();
       await expect(page.getByRole('status').filter({ hasText: 'Configura y activa un formato para este destino funcional' })).toBeVisible();
     } finally {
-      const restore = await request.patch(`/api/settings/catalogs/artifacts/${quoteArtifactId}`, { headers: auth(bearer), data: { activo: true } });
+      const restore = await request.patch(api(`/api/settings/catalogs/artifacts/${quoteArtifactId}`), { headers: auth(bearer), data: { activo: true } });
       expect(restore.ok()).toBeTruthy();
     }
     await page.reload();
@@ -322,7 +358,7 @@ test('Correcciones 008 v2 + 009 + 010: recorrido integrado en Chrome real', asyn
       const responsiveRoutes: Array<[string, () => ReturnType<Page['locator']>]> = [
         [`/comparecientes/${pfId}`, () => page.getByRole('heading', { name: 'Datos notariales', exact: true })],
         [`/comparecientes/${pmId}#ownership`, () => page.getByRole('region', { name: 'Estructura de propiedad y control' })],
-        [`/predios/${predioId}`, () => page.getByRole('heading', { name: `Casa QA ${runId}`, exact: true })],
+        [`/predios/${predioId}`, () => page.getByRole('heading', { name: predioName, exact: true })],
         [`/expedientes/${detailId}#presupuesto`, () => page.getByRole('tabpanel', { name: 'Presupuesto' })],
       ];
       for (const [path, ready] of responsiveRoutes) {

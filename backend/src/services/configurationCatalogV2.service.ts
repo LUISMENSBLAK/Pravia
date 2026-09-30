@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import {
   ConfiguracionActividadNaturaleza,
+  ConfiguracionProcesoTipo,
   ConfiguracionAlcanceInstancia,
   ConfiguracionFuenteTiempo,
   ConfiguracionTipoDias,
@@ -11,6 +12,7 @@ import {
 import type { Request } from 'express';
 import prisma from '../config/prisma';
 import { CatalogConfigurationError } from './configurationCatalogError';
+import { normalizeOperationalText, optionalOperationalText } from '../utils/operationalText';
 import {
   inheritableActivityAttributes,
   resolveInheritedActivity,
@@ -24,6 +26,7 @@ type Actor = NonNullable<Request['user']>;
 type Db = typeof prisma | Prisma.TransactionClient;
 
 const clean = (value: unknown, max = 240) => String(value || '').trim().slice(0, max);
+const operational = (value: unknown, max = 240) => normalizeOperationalText(value, max);
 const code = (value: unknown) => clean(value, 100).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_|_$/g, '');
 const enumInput = <T extends Record<string, string>>(values: T, value: unknown, label: string): T[keyof T] => {
   if (!Object.values(values).includes(value as T[keyof T])) throw new CatalogConfigurationError(400, 'CFG_ENUM_INVALID', `${label} no es válido.`);
@@ -64,6 +67,20 @@ export function calculateCriticalPath(nodes: CriticalPathNode[]) {
 }
 
 type StandardConcept = { code: string; name: string; duration: number; nature?: ConfiguracionActividadNaturaleza; dayType?: ConfiguracionTipoDias; source?: ConfiguracionFuenteTiempo };
+const processTypeForNature = (nature?: ConfiguracionActividadNaturaleza): ConfiguracionProcesoTipo => {
+  if (nature === 'CLIENTE_HITO') return 'HITO';
+  if (nature === 'INGRESO_A_EXTERNO' || nature === 'ESPERA_EXTERNA') return 'SOLICITUD_ESPERA';
+  return 'ACTIVIDAD';
+};
+const standardComplementPairs = [
+  ['SOLICITUD_CLG', 'OBTENCION_CLG'],
+  ['SOLICITUD_AVALUO', 'OBTENCION_AVALUO'],
+  ['SRE_SOLICITUD', 'SRE_OBTENCION'],
+  ['SOLVENCIA_INGRESO', 'SOLVENCIA_OBTENCION'],
+  ['RPP_INGRESO', 'RPP_OBTENCION'],
+  ['ENVIO_ACREEDOR', 'VOBO_ACREEDOR'],
+  ['REVISION_BANCO', 'VOBO_BANCO'],
+] as const;
 export const standardConcepts: StandardConcept[] = [
   { code: 'REVISION_INICIAL', name: 'Revisión de expediente', duration: 3 },
   { code: 'SOLICITUD_CLG', name: 'Solicitud aviso preventivo y CLG', duration: 2, nature: 'INGRESO_A_EXTERNO' },
@@ -216,21 +233,28 @@ export const standardFlowSpecs: Record<string, FlowStep[]> = {
 
 export class ConfigurationCatalogV2Service {
   async listConcepts(actor: Actor) {
-    return prisma.configuracionConceptoActividad.findMany({ where: { organization_id: actor.organizationId }, orderBy: [{ activa: 'desc' }, { nombre: 'asc' }] });
+    return prisma.configuracionConceptoActividad.findMany({
+      where: { organization_id: actor.organizationId },
+      include: { proceso_complementario: { select: { id: true, codigo: true, nombre: true, tipo_proceso: true } } },
+      orderBy: [{ activa: 'desc' }, { nombre: 'asc' }],
+    });
   }
 
   async createConcept(actor: Actor, input: any) {
-    const name = clean(input.nombre); if (!name) throw new CatalogConfigurationError(400, 'CFG_CONCEPT_NAME_REQUIRED', 'El nombre del concepto es obligatorio.');
+    const name = operational(input.nombre); if (!name) throw new CatalogConfigurationError(400, 'CFG_CONCEPT_NAME_REQUIRED', 'El nombre del concepto es obligatorio.');
     const duration = Number(input.duracion_estimada ?? 0); const margin = Number(input.margen_seguridad ?? 0);
     if (!Number.isInteger(duration) || duration < 0 || !Number.isInteger(margin) || margin < 0) throw new CatalogConfigurationError(400, 'CFG_CONCEPT_TIME_INVALID', 'Duración y margen deben ser enteros iguales o mayores a cero.');
     const condition = validateDeclarativeCondition(input.condicion_json);
     const responsibleUserId = clean(input.responsable_usuario_id, 64) || null;
     const responsibleRole = input.responsable_rol ? enumInput(Role, input.responsable_rol, 'Rol responsable') : null;
+    const complementId = clean(input.proceso_complementario_id, 64) || null;
     if (responsibleRole && responsibleUserId) throw new CatalogConfigurationError(400, 'DEFAULT_RESPONSIBLE_AMBIGUOUS', 'Selecciona un rol o un usuario, no ambos.');
     if (responsibleUserId && !(await prisma.organizationMembership.findFirst({ where: { organization_id: actor.organizationId, user_id: responsibleUserId, status: 'ACTIVE', user: { activo: true } }, select: { id: true } }))) throw new CatalogConfigurationError(400, 'DEFAULT_RESPONSIBLE_OUTSIDE_TENANT', 'El responsable debe pertenecer a la organización activa.');
+    if (complementId && !(await prisma.configuracionConceptoActividad.findFirst({ where: { id: complementId, organization_id: actor.organizationId, activa: true }, select: { id: true } }))) throw new CatalogConfigurationError(400, 'CFG_COMPLEMENT_OUTSIDE_TENANT', 'Selecciona un proceso complementario activo de la organización.');
     return prisma.$transaction(async (tx) => {
       const item = await tx.configuracionConceptoActividad.create({ data: {
-        organization_id: actor.organizationId, codigo: code(input.codigo || name), nombre: name, descripcion: clean(input.descripcion, 600) || null,
+        organization_id: actor.organizationId, codigo: code(input.codigo || name), nombre: name, descripcion: optionalOperationalText(input.descripcion, 600),
+        tipo_proceso: enumInput(ConfiguracionProcesoTipo, input.tipo_proceso || 'ACTIVIDAD', 'Tipo de proceso'), proceso_complementario_id: complementId,
         naturaleza: enumInput(ConfiguracionActividadNaturaleza, input.naturaleza || 'INTERNA', 'Naturaleza'), duracion_estimada: duration,
         unidad_tiempo: enumInput(ConfiguracionUnidadTiempo, input.unidad_tiempo || 'DIAS', 'Unidad'), tipo_dias: enumInput(ConfiguracionTipoDias, input.tipo_dias || 'HABILES', 'Tipo de días'),
         margen_seguridad: margin, responsable_rol: responsibleRole, responsable_usuario_id: responsibleUserId,
@@ -247,8 +271,15 @@ export class ConfigurationCatalogV2Service {
       throw new CatalogConfigurationError(409, 'CFG_CONCEPT_VERSION_CONFLICT', 'El concepto cambió en otra sesión. Recarga antes de guardar.');
     }
     const data: Prisma.ConfiguracionConceptoActividadUpdateInput = { revision: { increment: 1 } };
-    if (input.nombre !== undefined) { const name = clean(input.nombre); if (!name) throw new CatalogConfigurationError(400, 'CFG_CONCEPT_NAME_REQUIRED', 'El nombre del concepto es obligatorio.'); data.nombre = name; }
-    if (input.descripcion !== undefined) data.descripcion = clean(input.descripcion, 600) || null;
+    if (input.nombre !== undefined) { const name = operational(input.nombre); if (!name) throw new CatalogConfigurationError(400, 'CFG_CONCEPT_NAME_REQUIRED', 'El nombre del concepto es obligatorio.'); data.nombre = name; }
+    if (input.descripcion !== undefined) data.descripcion = optionalOperationalText(input.descripcion, 600);
+    if (input.tipo_proceso !== undefined) data.tipo_proceso = enumInput(ConfiguracionProcesoTipo, input.tipo_proceso, 'Tipo de proceso');
+    if (input.proceso_complementario_id !== undefined) {
+      const complementId = clean(input.proceso_complementario_id, 64) || null;
+      if (complementId === id) throw new CatalogConfigurationError(400, 'CFG_COMPLEMENT_SELF_REFERENCE', 'Un proceso no puede ser complementario de sí mismo.');
+      if (complementId && !(await prisma.configuracionConceptoActividad.findFirst({ where: { id: complementId, organization_id: actor.organizationId, activa: true }, select: { id: true } }))) throw new CatalogConfigurationError(400, 'CFG_COMPLEMENT_OUTSIDE_TENANT', 'Selecciona un proceso complementario activo de la organización.');
+      data.proceso_complementario = complementId ? { connect: { id_organization_id: { id: complementId, organization_id: actor.organizationId } } } : { disconnect: true };
+    }
     for (const key of ['duracion_estimada', 'margen_seguridad'] as const) if (input[key] !== undefined) {
       const value = Number(input[key]);
       if (!Number.isInteger(value) || value < 0) throw new CatalogConfigurationError(400, 'CFG_CONCEPT_TIME_INVALID', 'Duración y margen deben ser enteros iguales o mayores a cero.');
@@ -272,7 +303,7 @@ export class ConfigurationCatalogV2Service {
     return prisma.$transaction(async (tx) => {
       const updated = await tx.configuracionConceptoActividad.updateMany({ where: { id, organization_id: actor.organizationId, revision: before.revision }, data });
       if (updated.count !== 1) throw new CatalogConfigurationError(409, 'CFG_CONCEPT_VERSION_CONFLICT', 'El concepto cambió en otra sesión. Recarga antes de guardar.');
-      const item = await tx.configuracionConceptoActividad.findUniqueOrThrow({ where: { id } });
+      const item = await tx.configuracionConceptoActividad.findUniqueOrThrow({ where: { id }, include: { proceso_complementario: { select: { id: true, codigo: true, nombre: true, tipo_proceso: true } } } });
       await audit(tx, actor, 'CFG_V2_CONCEPT_UPDATED', 'ConfiguracionConceptoActividad', id, before, item); return item;
     });
   }
@@ -492,7 +523,7 @@ export class ConfigurationCatalogV2Service {
       let actsCreated = 0;
       for (const concept of standardConcepts) {
         const existing = await tx.configuracionConceptoActividad.findUnique({ where: { organization_id_codigo: { organization_id: actor.organizationId, codigo: concept.code } } });
-        if (!existing) { await tx.configuracionConceptoActividad.create({ data: { organization_id: actor.organizationId, codigo: concept.code, nombre: concept.name, duracion_estimada: concept.duration, naturaleza: concept.nature || 'INTERNA', tipo_dias: concept.dayType || 'HABILES', fuente_tiempo: concept.source || 'GENERAL' } }); conceptsCreated += 1; }
+        if (!existing) { await tx.configuracionConceptoActividad.create({ data: { organization_id: actor.organizationId, codigo: concept.code, nombre: concept.name, duracion_estimada: concept.duration, naturaleza: concept.nature || 'INTERNA', tipo_proceso: processTypeForNature(concept.nature), es_base_pravia: true, tipo_dias: concept.dayType || 'HABILES', fuente_tiempo: concept.source || 'GENERAL' } }); conceptsCreated += 1; }
       }
       let acts = await tx.tipoActo.findMany({ where: { archived_at: null, OR: [{ organization_id: actor.organizationId }, { organization_id: null }] }, include: { configuracionesOperativas: { where: { organization_id: actor.organizationId }, include: { etapas: { include: { actividades: true } } } } } });
       const normalized = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es-MX');
@@ -514,6 +545,12 @@ export class ConfigurationCatalogV2Service {
       }
       const concepts = await tx.configuracionConceptoActividad.findMany({ where: { organization_id: actor.organizationId } });
       const conceptByCode = new Map(concepts.map((item) => [item.codigo, item]));
+      for (const [leftCode, rightCode] of standardComplementPairs) {
+        const left = conceptByCode.get(leftCode); const right = conceptByCode.get(rightCode);
+        if (!left || !right) continue;
+        if (!left.proceso_complementario_id) await tx.configuracionConceptoActividad.update({ where: { id: left.id }, data: { proceso_complementario_id: right.id } });
+        if (!right.proceso_complementario_id) await tx.configuracionConceptoActividad.update({ where: { id: right.id }, data: { proceso_complementario_id: left.id } });
+      }
       const configByActName = new Map<string, any>();
       for (const [actName, steps] of Object.entries(standardFlowSpecs)) {
         const act = acts.find((item) => normalized(item.nombre) === normalized(actName)); if (!act) continue;

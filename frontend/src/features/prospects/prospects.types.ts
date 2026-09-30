@@ -17,7 +17,8 @@ export type ProspectCatalogService = {
   states: string[];
   personTypes: string[];
 };
-export type ProspectCatalogs = { stages: ProspectCatalogStage[]; services: ProspectCatalogService[] };
+export type ProspectActType = { id: string; nombre: string; codigo_catalogo?: string | null; organization_id?: string | null };
+export type ProspectCatalogs = { stages: ProspectCatalogStage[]; services: ProspectCatalogService[]; actTypes: ProspectActType[] };
 
 export type ProspectFollowUp = {
   id: string;
@@ -49,6 +50,7 @@ export type Prospect = {
   email?: string | null;
   tipo_acto?: string | null;
   necesidad?: string | null;
+  contexto_operacion?: string | null;
   documentos_disponibles?: string | null;
   tiene_antecedente?: boolean | null;
   tiene_predial?: boolean | null;
@@ -73,6 +75,7 @@ export type Prospect = {
   documentos?: Array<{ id: string }>;
   cotizacion?: { id: string; estado?: string | null } | null;
   seguimientos?: ProspectFollowUp[];
+  actos?: Array<{ id: string; tipo_acto_id: string; orden: number; tipo_acto: ProspectActType }>;
 };
 
 export type ProspectListFilters = {
@@ -112,6 +115,8 @@ export type ProspectMutationInput = {
   etapa_operativa_codigo?: string;
   prioridad: ProspectPriority;
   necesidad?: string;
+  contexto_operacion?: string;
+  tipo_acto_ids?: string[];
   tiene_predial: boolean;
   tiene_antecedente: boolean;
   honorarios_estimados?: number | string | null;
@@ -122,7 +127,7 @@ export type ProspectMutationInput = {
 export type NewProspectInput = { nombre: string };
 export type UpdateProspectInput = Partial<ProspectMutationInput> & { expectedVersion?: number; responsable_id?: string };
 
-export type ProspectWorkflowAction = 'COMENZAR_INTEGRACION' | 'MARCAR_LISTO_PARA_COTIZAR' | 'CONVERTIR' | 'SUSPENDER' | 'CANCELAR';
+export type ProspectWorkflowAction = 'COMENZAR_INTEGRACION' | 'MARCAR_LISTO_PARA_COTIZAR' | 'CONVERTIR' | 'SUSPENDER' | 'CANCELAR' | 'REACTIVAR';
 export type ProspectSource = {
   id: string; version: number; received_at: string; recorded_at: string; motivo: string;
   documento: ProspectDocument; notaria: { id: string; nombre: string };

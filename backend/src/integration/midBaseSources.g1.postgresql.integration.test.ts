@@ -128,7 +128,7 @@ beforeAll(async () => {
   ] });
   const operational = (id: string, caseId: string, actId: string, masterId: string, stageId: string, stage: string, order: number) => ({
     id, organization_id: ids.org, expediente_id: caseId, expediente_acto_id: actId, tipo_acto_id: ids.type, configuracion_acto_id: ids.configuration,
-    configuracion_revision: 1, etapa_maestra_id: stageId, actividad_maestra_id: masterId, etapa_nombre_snapshot: stage, etapa_orden_snapshot: order,
+    configuracion_revision: 1, etapa_maestra_id: stageId, actividad_maestra_id: masterId, proceso_clave: `PROCESS:${masterId}`, etapa_nombre_snapshot: stage, etapa_orden_snapshot: order,
     actividad_nombre_snapshot: stage === 'Postfirma' ? 'Registrar' : 'Integrar', duracion_estimada: stage === 'Postfirma' ? 3 : 2,
     tipo_dias: 'NATURALES' as const, margen_seguridad: 1, responsable_rol_snapshot: stage === 'Postfirma' ? 'GESTORIA' as const : 'ABOGADO' as const,
     responsable_id: ids.user, responsable_default_id: ids.user, resolucion_fuente: 'GENERAL', estado: 'EN_PROCESO' as const,

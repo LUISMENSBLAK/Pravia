@@ -108,7 +108,7 @@ export function MovementDetail({ movement, permissions, onChanged, onClose }: Pr
           <section className={styles.movementEvidence} aria-labelledby="movement-evidence-title">
             <header>
               <div><h3 id="movement-evidence-title">Comprobantes</h3><p>Archivos privados vinculados directamente a este movimiento.</p></div>
-              {permissions?.documentosEscribir && <><button type="button" className={styles.secondaryButton} disabled={busy} onClick={() => inputRef.current?.click()}><UploadCloud size={15} />Adjuntar</button><input ref={inputRef} type="file" hidden accept=".pdf,.png,.jpg,.jpeg,.bmp,.doc,.docx" onChange={(event) => void upload(event.target.files?.[0])} /></>}
+              {permissions?.documentosEscribir && !movement.central_read_only && <><button type="button" className={styles.secondaryButton} disabled={busy} onClick={() => inputRef.current?.click()}><UploadCloud size={15} />Adjuntar</button><input ref={inputRef} type="file" hidden accept=".pdf,.png,.jpg,.jpeg,.bmp,.webp,.doc,.docx,.xml,.zip" onChange={(event) => void upload(event.target.files?.[0])} /></>}
             </header>
             {evidence.length ? <div className={styles.evidenceList}>{evidence.map((link) => <article key={link.id}>
               <span><FileCheck2 /></span>
@@ -116,7 +116,7 @@ export function MovementDetail({ movement, permissions, onChanged, onClose }: Pr
               <nav aria-label={`Acciones de ${link.documento.nombre_original}`}>
                 {permissions?.documentosLeer && <button type="button" aria-label={`Visualizar ${link.documento.nombre_original}`} onClick={() => void openPreview(link.documento)}><Eye /></button>}
                 {permissions?.documentosLeer && <button type="button" aria-label={`Descargar ${link.documento.nombre_original}`} onClick={() => void download(link.documento)}><Download /></button>}
-                {permissions?.documentosEliminar && <button type="button" aria-label={`Retirar ${link.documento.nombre_original}`} onClick={() => setDeleteTarget(link.documento)}><Trash2 /></button>}
+                {permissions?.documentosEliminar && !movement.central_read_only && <button type="button" aria-label={`Retirar ${link.documento.nombre_original}`} onClick={() => setDeleteTarget(link.documento)}><Trash2 /></button>}
               </nav>
             </article>)}</div> : <div className={styles.receiptAbsent}><FileWarning /><p><strong>Sin comprobante</strong><span>{permissions?.documentosEscribir ? 'Puedes adjuntarlo sin abandonar el movimiento.' : 'No hay evidencia documental vinculada.'}</span></p></div>}
           </section>

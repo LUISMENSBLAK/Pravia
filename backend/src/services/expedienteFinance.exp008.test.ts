@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { describe, expect, it } from 'vitest';
 import { hashVerificationToken, moneyDecimal, renderPaymentRequestPdf, renderPraviaReceiptPdf, validateIncomeAllocation } from '../domain/expedienteFinance';
+import { assertExp008InvoiceFile, normalizeExp008PaymentMethod } from './expedienteFinance.service';
 
 const root = resolve(process.cwd(), '..');
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
@@ -9,12 +10,14 @@ const service = () => read('backend/src/services/expedienteFinance.service.ts');
 const ledger = () => read('backend/src/services/financialMovement.service.ts');
 const schema = () => read('backend/prisma/schema.prisma');
 const migration = () => read('backend/prisma/migrations/20260829020000_create_exp008_case_finance/migration.sql');
+const invoiceMigration = () => read('backend/prisma/migrations/20260929040000_exp008_invoice_workflow/migration.sql');
 const routes = () => read('backend/src/routes/expedientes.routes.ts');
 const ai = () => read('backend/src/services/openaiDocument.service.ts');
 const ui = () => read('frontend/src/features/cases/components/tabs/FinanceTab.tsx');
 const css = () => read('frontend/src/features/cases/Expedientes.module.css');
 const tenant = () => read('backend/src/config/tenantPrisma.ts');
 const myDay = () => read('backend/src/controllers/miDia.controller.ts');
+const intelligentNotifications = () => read('backend/src/services/intelligentNotification.service.ts');
 
 describe('EXP-008 · precisión monetaria y documentos operativos', () => {
   it('acepta dinero decimal con dos posiciones', () => expect(moneyDecimal('100.10').toFixed(2)).toBe('100.10'));
@@ -34,7 +37,7 @@ const cases: Array<[string, () => boolean]> = [
   ['02 no segundo ledger',()=>!schema().includes('ExpedienteMovimientoFinanciero')],
   ['03 comprobante reportado es operativo',()=>schema().includes('model ExpedienteIngresoReportado')],
   ['04 upload no auto-aplica',()=>service().includes('auto_applied: false')],
-  ['05 abogado reporta con expediente y documentos',()=>routes().includes("requirePermission('expedientes.write'), requirePermission('documentos.write'), uploadExp008.single('file')")],
+  ['05 abogado reporta con expediente y documentos',()=>routes().includes("requirePermission('expedientes.write'), requirePermission('documentos.write'), uploadExp008.fields")],
   ['06 abogado no aplica',()=>routes().includes("ingresos/:incomeId/aplicar', requirePermission('finanzas.validate')")],
   ['07 administración valida con RBAC',()=>service().includes("actor.permissions.includes('finanzas.validate')")],
   ['08 aplicación transaccional',()=>service().includes('this.prisma.$transaction')&&service().includes('income-apply:')],
@@ -82,13 +85,13 @@ const cases: Array<[string, () => boolean]> = [
   ['50 actividad operacional',()=>service().includes('tx.expedienteActividad.create')],
   ['51 auditoría técnica',()=>service().includes('tx.auditLog.create')],
   ['52 outbox reutilizado',()=>service().includes('tx.domainEventOutbox.create')],
-  ['53 fuente Mi Día',()=>myDay().includes('INGRESO_PENDIENTE_APLICACION')&&myDay().includes('SOLICITUD_PAGO_PENDIENTE')],
+  ['53 fuente Mi Día',()=>intelligentNotifications().includes('INGRESO_PENDIENTE_APLICACION')&&intelligentNotifications().includes('SOLICITUD_PAGO_PENDIENTE')&&myDay().includes('intelligentNotificationService.refreshAndList')],
   ['54 sin rediseño Mi Día',()=>!myDay().includes('EXP008_DASHBOARD')],
   ['55 presupuesto sólo lectura',()=>service().includes('presupuesto: { select:')&&!service().match(/expedientePresupuesto\.(update|delete|upsert)/)],
   ['56 documento origen no se confunde con pago',()=>migration().includes("'SOLICITUD_ORIGEN', 'SOLICITUD_GENERADA', 'COMPROBANTE_PAGO', 'COMPROBANTE_FISCAL'")],
   ['57 UI estados explícitos',()=>ui().includes('Pendiente de aplicación')&&ui().includes('Pagada')],
   ['58 UI abogado no muestra aplicar sin capability',()=>ui().includes("canApply&&item.estado==='PENDIENTE_APLICACION'")],
-  ['59 UI advierte no auto-aplicar',()=>ui().includes('Subir evidencia no aplica ningún movimiento')],
+  ['59 UI advierte no auto-aplicar',()=>ui().includes('Registrar evidencia no aplica ningún movimiento financiero')],
   ['60 UI accesible',()=>ui().includes('aria-modal="true"')&&ui().includes('aria-label="Cerrar"')],
   ['61 responsive tablet',()=>css().includes('@media(max-width:1024px)')],
   ['62 responsive mobile y safe area',()=>css().includes('@media(max-width:767px)')&&css().includes('env(safe-area-inset-bottom)')],
@@ -109,4 +112,39 @@ const cases: Array<[string, () => boolean]> = [
 
 describe('EXP-008 · 75 invariantes forenses de negocio', () => {
   it.each(cases)('%s',(_name,check)=>expect(check()).toBe(true));
+});
+
+describe('EXP-008 · corrección pago y facturación', () => {
+  it('normaliza exclusivamente las cuatro formas de pago canónicas', () => {
+    expect(normalizeExp008PaymentMethod('transferencia')).toEqual({ method: 'TRANSFERENCIA', detail: null });
+    expect(normalizeExp008PaymentMethod('OTRO', 'Depósito referenciado')).toEqual({ method: 'OTRO', detail: 'Depósito referenciado' });
+    expect(() => normalizeExp008PaymentMethod('Bitcoin')).toThrow(/forma de pago/i);
+    expect(() => normalizeExp008PaymentMethod('OTRO')).toThrow(/especificar la forma de pago/i);
+  });
+  it('valida por separado los componentes PDF y XML de la factura', () => {
+    const file = (originalname: string, mimetype: string) => ({ originalname, mimetype, buffer: Buffer.from('qa'), size: 2 });
+    expect(() => assertExp008InvoiceFile(file('factura.pdf', 'application/pdf'), 'PDF')).not.toThrow();
+    expect(() => assertExp008InvoiceFile(file('factura.xml', 'application/xml'), 'XML')).not.toThrow();
+    expect(() => assertExp008InvoiceFile(file('factura.jpg', 'image/jpeg'), 'PDF')).toThrow(/PDF/i);
+  });
+  it('controla el catálogo de formas de pago y exige detalle para Otro', () => {
+    expect(service()).toContain("['CHEQUE', 'EFECTIVO', 'TRANSFERENCIA', 'OTRO']");
+    expect(service()).toContain('EXP008_PAYMENT_METHOD_DETAIL_REQUIRED');
+    expect(invoiceMigration()).toContain('ck_exp008_controlled_payment_method');
+  });
+  it('impide físicamente facturar a una identidad fuera del expediente', () => {
+    expect(invoiceMigration()).toContain('fk_exp008_ingreso_invoice_party_case');
+    expect(schema()).toContain('facturarAVinculo');
+  });
+  it('conserva PDF y XML en el mismo ingreso sin duplicar el ledger', () => {
+    expect(service()).toContain("invoicePdf");
+    expect(service()).toContain("invoiceXml");
+    expect(service()).toContain("ingreso_reportado_id: income.id");
+    expect(invoiceMigration()).toContain("\"tipo\" = 'COMPROBANTE_FISCAL'");
+  });
+  it('expone facturas pendientes desde la fuente financiera del expediente', () => {
+    expect(service()).toContain("source: 'expediente_ingresos_reportados'");
+    expect(service()).toContain('listInvoices');
+    expect(service()).toContain("actor.rol === 'FINANCIERO' ? {} : expedienteAccessWhere(actor)");
+  });
 });

@@ -55,7 +55,7 @@ const clearRefreshCookie = (res: Response) => res.clearCookie(REFRESH_COOKIE, {
 });
 
 async function activeMembershipFor(userId: string, requestedOrganizationId?: string) {
-  const memberships = await runWithPlatformOperation('AUTH_MEMBERSHIP_RESOLUTION', () => prisma.organizationMembership.findMany({
+  const memberships = await runWithPlatformOperation('AUTH_MEMBERSHIP_RESOLUTION', async () => await prisma.organizationMembership.findMany({
     where: { user_id: userId, status: 'ACTIVE', organization: { status: 'ACTIVE' } },
     include: { organization: true }, orderBy: { created_at: 'asc' }, take: 20,
   }));
@@ -100,7 +100,7 @@ export class AuthController {
   static async activationInfo(req: Request, res: Response) {
     const token = String(req.query.token || '');
     if (!token) return res.status(400).json({ code: 'ACTIVATION_TOKEN_REQUIRED', error: 'El enlace de activación no es válido.' });
-    const invitation = await runWithPlatformOperation('ACTIVATION_TOKEN_LOOKUP', () => prisma.userInvitation.findUnique({ where: { token_hash: hashOpaqueToken(token) }, select: { email: true, nombre: true, apellido: true, rol: true, expires_at: true, accepted_at: true, revoked_at: true } }));
+    const invitation = await runWithPlatformOperation('ACTIVATION_TOKEN_LOOKUP', async () => await prisma.userInvitation.findUnique({ where: { token_hash: hashOpaqueToken(token) }, select: { email: true, nombre: true, apellido: true, rol: true, expires_at: true, accepted_at: true, revoked_at: true } }));
     if (!invitation || invitation.accepted_at || invitation.revoked_at || invitation.expires_at <= new Date()) return res.status(400).json({ code: 'ACTIVATION_TOKEN_INVALID', error: 'El enlace de activación es inválido o expiró.' });
     return res.json({ invitation: { email: invitation.email, nombre: invitation.nombre, apellido: invitation.apellido, rol: invitation.rol, expires_at: invitation.expires_at } });
   }
@@ -110,13 +110,13 @@ export class AuthController {
     const password = String(req.body?.password || '');
     const failures = validatePasswordStrength(password);
     if (!token || failures.length) return res.status(400).json({ code: 'ACTIVATION_INPUT_INVALID', error: failures.join(' ') || 'El enlace de activación no es válido.', requirements: failures });
-    const invitation = await runWithPlatformOperation('ACTIVATION_TOKEN_LOOKUP', () => prisma.userInvitation.findUnique({ where: { token_hash: hashOpaqueToken(token) } }));
+    const invitation = await runWithPlatformOperation('ACTIVATION_TOKEN_LOOKUP', async () => await prisma.userInvitation.findUnique({ where: { token_hash: hashOpaqueToken(token) } }));
     if (!invitation || invitation.accepted_at || invitation.revoked_at || invitation.expires_at <= new Date()) return res.status(400).json({ code: 'ACTIVATION_TOKEN_INVALID', error: 'El enlace de activación es inválido o expiró.' });
     if (!invitation.organization_id) return res.status(409).json({ code: 'INVITATION_ORGANIZATION_REQUIRED', error: 'La invitación no tiene una organización válida. Solicita una nueva invitación.' });
     const existing = await prisma.user.findUnique({ where: { email: invitation.email }, select: { id: true } });
     if (existing) return res.status(409).json({ code: 'USER_EMAIL_EXISTS', error: 'La cuenta ya fue activada.' });
     const passwordHash = await bcrypt.hash(password, 12);
-    const user = await runWithPlatformOperation('ACTIVATION_CLAIM', () => prisma.$transaction(async (tx) => {
+    const user = await runWithPlatformOperation('ACTIVATION_CLAIM', async () => await prisma.$transaction(async (tx) => {
       const created = await tx.user.create({ data: { email: invitation.email, nombre: invitation.nombre, apellido: invitation.apellido, rol: invitation.rol, password_hash: passwordHash, activo: true, requires_password_change: false, password_changed_at: new Date() } });
       const membership = await tx.organizationMembership.create({ data: { user_id: created.id, organization_id: invitation.organization_id!, rol: invitation.rol } });
       const claimed = await tx.userInvitation.updateMany({ where: { id: invitation.id, accepted_at: null, revoked_at: null }, data: { accepted_at: new Date(), accepted_user_id: created.id } });
@@ -173,7 +173,7 @@ export class AuthController {
       const context = requestContext(req);
       const permissions = permissionsForRole(membership.rol); const scope = actorScopeForRole(membership.rol);
       await runWithActorContext({ userId: user.id, organizationId: membership.organization_id, membershipId: membership.id, role: membership.rol, permissions, scope, sessionId: 'LOGIN' }, () => prisma.auditLog.create({ data: {
-        user_id: user.id, accion: 'AUTH_LOGIN', entidad: 'User', entidad_id: user.id,
+        organization_id: membership.organization_id, user_id: user.id, accion: 'AUTH_LOGIN', entidad: 'User', entidad_id: user.id,
         correlation_id: context.correlationId, ip_address: context.ip, user_agent: context.userAgent,
       } }));
       return res.json({ success: true, ...session });
@@ -234,7 +234,7 @@ export class AuthController {
 
   static async me(req: Request, res: Response) {
     if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
-    const memberships = await runWithPlatformOperation('AUTH_MEMBERSHIP_OPTIONS', () => prisma.organizationMembership.findMany({
+    const memberships = await runWithPlatformOperation('AUTH_MEMBERSHIP_OPTIONS', async () => await prisma.organizationMembership.findMany({
       where: { user_id: req.user!.id, status: 'ACTIVE', organization: { status: 'ACTIVE' } },
       select: { id: true, organization_id: true, rol: true, organization: { select: { id: true, name: true } } },
       orderBy: { created_at: 'asc' }, take: 20,
@@ -253,7 +253,7 @@ export class AuthController {
   static async switchOrganization(req: Request, res: Response) {
     if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
     const organizationId = String(req.body?.organizationId || '').trim();
-    const membership = await runWithPlatformOperation('AUTH_ORGANIZATION_SWITCH', () => prisma.organizationMembership.findFirst({
+    const membership = await runWithPlatformOperation('AUTH_ORGANIZATION_SWITCH', async () => await prisma.organizationMembership.findFirst({
       where: { user_id: req.user!.id, organization_id: organizationId, status: 'ACTIVE', organization: { status: 'ACTIVE' } },
       include: { organization: true },
     }));

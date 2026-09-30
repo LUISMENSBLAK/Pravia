@@ -2,11 +2,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   db: {
+    $transaction: vi.fn(),
     assistantConversation: { findFirst: vi.fn(), findMany: vi.fn(), update: vi.fn() },
     assistantAttachment: { findFirst: vi.fn(), findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
-    documento: { findUnique: vi.fn() },
+    documento: { findUnique: vi.fn(), create: vi.fn() },
+    expedienteDocumento: { create: vi.fn() },
+    auditLog: { create: vi.fn() },
   } as any,
   canAccessDocumento: vi.fn(),
+  canAttachDocumento: vi.fn(),
   uploadFile: vi.fn(),
   deleteFile: vi.fn(),
   downloadFile: vi.fn(),
@@ -14,7 +18,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../config/prisma', () => ({ default: mocks.db }));
-vi.mock('./objectAccess.service', () => ({ canAccessDocumento: mocks.canAccessDocumento }));
+vi.mock('./objectAccess.service', () => ({
+  canAccessDocumento: mocks.canAccessDocumento,
+  canAttachDocumento: mocks.canAttachDocumento,
+}));
 vi.mock('./supabase.service', () => ({
   uploadFile: mocks.uploadFile,
   deleteFile: mocks.deleteFile,
@@ -35,7 +42,10 @@ const conversation = {
 };
 
 describe('conversaciones persistentes de PRAVIA IA', () => {
-  beforeEach(() => { vi.clearAllMocks(); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.db.$transaction.mockImplementation(async (callback: (tx: typeof mocks.db) => unknown) => callback(mocks.db));
+  });
 
   it('aplica ownership estricto y no permite IDOR ni siquiera a otro usuario autenticado', async () => {
     mocks.db.assistantConversation.findFirst.mockResolvedValue(null);
@@ -81,7 +91,7 @@ describe('conversaciones persistentes de PRAVIA IA', () => {
       id: 'attachment-existing', original_name: 'identificacion.pdf', source: 'TEMPORARY_UPLOAD', status: 'AVAILABLE',
     });
     const result = await assistantConversationService.uploadAttachment(user, conversation.id, {
-      buffer: Buffer.from('contenido idéntico'), mimetype: 'application/pdf', originalname: 'identificacion.pdf', size: 18,
+      buffer: Buffer.from('%PDF-1.7\ncontenido idéntico'), mimetype: 'application/pdf', originalname: 'identificacion.pdf', size: 27,
     } as Express.Multer.File);
     expect(result).toMatchObject({ id: 'attachment-existing', duplicate: true });
     expect(mocks.uploadFile).not.toHaveBeenCalled();
@@ -101,6 +111,49 @@ describe('conversaciones persistentes de PRAVIA IA', () => {
     await expect(assistantConversationService.linkAttachmentsToMessage(user, conversation.id, 'message-1', ['foreign-attachment']))
       .rejects.toMatchObject({ code: 'ASSISTANT_ATTACHMENT_INVALID', status: 409 });
     expect(mocks.db.assistantAttachment.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('no presenta como éxito una segunda incorporación del mismo adjunto oficial', async () => {
+    const writer = { ...user, permissions: [...user.permissions, 'documentos.write'] };
+    mocks.db.assistantConversation.findFirst.mockResolvedValue(conversation);
+    mocks.db.assistantAttachment.findFirst.mockResolvedValue({
+      id: 'attachment-promoted', conversation_id: conversation.id, source: 'OFFICIAL_DOCUMENT',
+      documento_id: 'documento-1', storage_key: 'organizations/org/documento.pdf', expires_at: null,
+    });
+    mocks.canAccessDocumento.mockResolvedValue(true);
+    mocks.canAttachDocumento.mockResolvedValue(true);
+
+    await expect(assistantConversationService.promoteAttachment(writer, conversation.id, 'attachment-promoted', {
+      targetType: 'EXPEDIENTE', targetId: 'expediente-2', documentType: 'OTROS',
+    })).rejects.toMatchObject({ code: 'ASSISTANT_ATTACHMENT_ALREADY_PROMOTED', status: 409 });
+  });
+
+  it('transfiere la propiedad del storage al documento oficial sin violar la invariancia de origen', async () => {
+    const writer = { ...user, permissions: [...user.permissions, 'documentos.write'] };
+    const temporary = {
+      id: 'attachment-temporary', conversation_id: conversation.id, organization_id: user.organizationId,
+      source: 'TEMPORARY_UPLOAD', documento_id: null, storage_key: 'organizations/org/assistant/file.pdf',
+      original_name: 'file.pdf', mime_type: 'application/pdf', size_bytes: 128, sha256: 'abc123',
+    };
+    mocks.db.assistantConversation.findFirst.mockResolvedValue(conversation);
+    mocks.db.assistantAttachment.findFirst.mockResolvedValue(temporary);
+    mocks.canAttachDocumento.mockResolvedValue(true);
+    mocks.db.documento.create.mockResolvedValue({ id: 'documento-promoted' });
+    mocks.db.expedienteDocumento.create.mockResolvedValue({});
+    mocks.db.assistantAttachment.update.mockResolvedValue({});
+    mocks.db.auditLog.create.mockResolvedValue({});
+
+    await expect(assistantConversationService.promoteAttachment(writer, conversation.id, temporary.id, {
+      targetType: 'EXPEDIENTE', targetId: 'expediente-2', documentType: 'OTROS',
+    })).resolves.toMatchObject({ documentId: 'documento-promoted', attachmentId: temporary.id });
+
+    expect(mocks.db.documento.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ storage_key: temporary.storage_key }),
+    }));
+    expect(mocks.db.assistantAttachment.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: temporary.id },
+      data: expect.objectContaining({ source: 'OFFICIAL_DOCUMENT', documento_id: 'documento-promoted', storage_key: null }),
+    }));
   });
 
   it('no emite URL firmada cuando la conversación no pertenece al tenant y propietario activos', async () => {

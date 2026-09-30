@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
@@ -6,6 +6,13 @@ import { AssistantProvider, useAssistant } from '../features/assistant/Assistant
 import type { AssistantService } from '../features/assistant/assistant.service';
 import type { AssistantAttachment, AssistantConversation, AssistantReply, AssistantSuggestion } from '../features/assistant/assistant.types';
 import { AssistantLayer } from '../features/assistant/components/AssistantLayer';
+import appShellCss from '../components/layout/AppShell.module.css?inline';
+
+const apiRequestMock = vi.hoisted(() => vi.fn());
+vi.mock('../services/api/client', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../services/api/client')>(),
+  apiRequest: apiRequestMock,
+}));
 
 const suggestion: AssistantSuggestion = {
   id: 'suggestion-1', type: 'missing-requirements', title: 'Requisitos pendientes',
@@ -27,6 +34,7 @@ const makeService = (overrides: Partial<AssistantService> = {}): AssistantServic
   getSuggestions: vi.fn(async () => []),
   sendMessage: vi.fn(async (): Promise<AssistantReply> => ({ status: 'idle', message: 'Respuesta disponible.' })),
   confirmAction: vi.fn(async (): Promise<AssistantReply> => ({ status: 'success', message: 'Acción completada correctamente.' })),
+  submitCollection: vi.fn(async (): Promise<AssistantReply> => ({ status: 'confirmation-required', message: 'Revisa la acción antes de confirmarla.' })),
   dismissSuggestion: vi.fn(async () => undefined),
   snoozeSuggestion: vi.fn(async () => undefined),
   createConversation: vi.fn(async () => conversation),
@@ -61,6 +69,11 @@ const renderAssistant = (service = makeService(), extra?: React.ReactNode) => re
 );
 
 describe('PRAVIA IA global', () => {
+  it('reserva un dock móvil real para que el búho no cubra contenido', () => {
+    expect(appShellCss).toMatch(/grid-template-rows:\s*var\(--topbar-height\)\s+minmax\(0,\s*1fr\)\s+calc\(var\(--assistant-mobile-dock-height\)\s*\+\s*env\(safe-area-inset-bottom\)\)/);
+    expect(appShellCss).toMatch(/workspace[^\{]*\{\s*height:\s*auto;\s*min-height:\s*0;\s*overflow-x:\s*hidden;\s*overflow-y:\s*auto/);
+  });
+
   it('abre y cierra el drawer global, incluyendo ESC', async () => {
     const user = userEvent.setup();
     renderAssistant();
@@ -195,6 +208,32 @@ describe('PRAVIA IA global', () => {
     await waitFor(() => expect(service.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ attachmentIds: ['attachment-1'] }), expect.any(AbortSignal)));
   });
 
+  it('mantiene una sola conversación al cargar varios archivos en secuencia', async () => {
+    const createConversation = vi.fn(async () => {
+      await Promise.resolve();
+      return conversation;
+    });
+    const uploadAttachment = vi.fn(async (_conversationId: string, file: File) => ({
+      ...attachment, id: `attachment-${file.name}`, original_name: file.name,
+    }));
+    const service = makeService({ createConversation, uploadAttachment });
+    const user = userEvent.setup();
+    const view = renderAssistant(service);
+    await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA' }));
+    const input = view.container.querySelector<HTMLInputElement>('input[type="file"][multiple]');
+    await user.upload(input!, [
+      new File(['pdf'], 'uno.pdf', { type: 'application/pdf' }),
+      new File(['xml'], 'dos.xml', { type: 'application/xml' }),
+      new File(['zip'], 'tres.zip', { type: 'application/zip' }),
+    ]);
+    await screen.findByText('tres.zip');
+    expect(createConversation).toHaveBeenCalledTimes(1);
+    expect(uploadAttachment).toHaveBeenCalledTimes(3);
+    expect(uploadAttachment.mock.calls.map(([conversationId]) => conversationId)).toEqual([
+      conversation.id, conversation.id, conversation.id,
+    ]);
+  });
+
   it('marca como abandonados los adjuntos pendientes al iniciar otra conversación', async () => {
     const service = makeService();
     const user = userEvent.setup();
@@ -274,6 +313,37 @@ describe('PRAVIA IA global', () => {
     await waitFor(() => expect(service.confirmAction).toHaveBeenCalledWith('confirm-1', 'conversation-1', expect.objectContaining({ module: 'mi-dia' }), expect.any(AbortSignal)));
   });
 
+  it('convierte datos faltantes en un formulario accesible y los devuelve al motor canónico', async () => {
+    const collection = {
+      actionKey: 'agenda.event.create', title: 'Crear una cita o evento en Agenda.',
+      description: 'Completa únicamente los datos faltantes.',
+      fields: [
+        { name: 'fecha_inicio', label: 'Fecha y hora', type: 'text' as const, required: true },
+        { name: 'tipo', label: 'Tipo', type: 'select' as const, required: false, options: [{ value: 'CITA', label: 'Cita' }] },
+        { name: 'document_ids', label: 'Documentos', type: 'multiline' as const, required: false },
+      ],
+    };
+    const submitCollection = vi.fn(async (): Promise<AssistantReply> => ({ status: 'confirmation-required', message: 'Revisa la acción.', confirmation: { id: 'confirm-form', title: 'Crear cita', details: [] } }));
+    const service = makeService({
+      sendMessage: vi.fn(async (): Promise<AssistantReply> => ({ status: 'idle', message: 'Necesito fecha y hora.', collection })),
+      submitCollection,
+    });
+    const user = userEvent.setup();
+    renderAssistant(service);
+    await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA' }));
+    await user.type(screen.getByLabelText('Pregúntame algo...'), 'Crea una cita');
+    await user.click(screen.getByRole('button', { name: 'Enviar mensaje' }));
+    const form = await screen.findByRole('form', { name: 'Formulario operativo de PRAVIA IA' });
+    await user.type(screen.getByLabelText('Fecha y hora *'), '2026-10-01T10:00:00-06:00');
+    await user.selectOptions(screen.getByLabelText('Tipo'), 'CITA');
+    await user.type(screen.getByLabelText('Documentos'), 'documento-1{enter}documento-2, documento-3');
+    await user.click(within(form).getByRole('button', { name: 'Continuar' }));
+    await waitFor(() => expect(submitCollection).toHaveBeenCalledWith(collection, {
+      fecha_inicio: '2026-10-01T10:00:00-06:00', tipo: 'CITA', document_ids: ['documento-1', 'documento-2', 'documento-3'],
+    }, 'conversation-1', expect.objectContaining({ module: 'mi-dia' }), expect.any(AbortSignal)));
+    expect(await screen.findByLabelText('Confirmación requerida')).toBeInTheDocument();
+  });
+
   it('restaura una confirmación pendiente al reabrir la conversación persistida', async () => {
     const pending = { id: 'confirm-persisted', title: 'Cancelar evento', details: [{ label: 'Motivo', value: 'Reprogramación' }] };
     const service = makeService({
@@ -288,6 +358,25 @@ describe('PRAVIA IA global', () => {
     expect(service.confirmAction).not.toHaveBeenCalled();
   });
 
+  it('mantiene una conversación nueva aunque termine después la carga de la anterior', async () => {
+    let resolveDetail!: (detail: Awaited<ReturnType<AssistantService['getConversation']>>) => void;
+    const detail = new Promise<Awaited<ReturnType<AssistantService['getConversation']>>>((resolve) => { resolveDetail = resolve; });
+    const pending = { id: 'confirm-stale', title: 'Acción anterior', details: [] };
+    const service = makeService({
+      listConversations: vi.fn(async () => [conversation]),
+      getConversation: vi.fn(() => detail),
+    });
+    const user = userEvent.setup();
+    renderAssistant(service);
+    await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA' }));
+    await waitFor(() => expect(service.getConversation).toHaveBeenCalledWith(conversation.id));
+    await user.click(screen.getByRole('button', { name: 'Nueva conversación' }));
+    resolveDetail({ ...conversation, messages: [], attachments: [], pending_confirmation: pending });
+    await Promise.resolve();
+    await waitFor(() => expect(screen.getByLabelText('Pregúntame algo...')).toBeEnabled());
+    expect(screen.queryByLabelText('Confirmación requerida')).not.toBeInTheDocument();
+  });
+
   it('refresca la superficie visible después de una escritura confirmada por backend', async () => {
     const changed = vi.fn(); window.addEventListener('pravia:data-changed', changed);
     const service = makeService({ sendMessage: vi.fn(async (): Promise<AssistantReply> => ({ status: 'success', message: 'Evento creado.', refresh: 'agenda' })) });
@@ -298,6 +387,32 @@ describe('PRAVIA IA global', () => {
     await screen.findByText('Evento creado.');
     expect(changed).toHaveBeenCalledWith(expect.objectContaining({ detail: { scope: 'agenda' } }));
     window.removeEventListener('pravia:data-changed', changed);
+  });
+
+  it('abre una fuente documental autorizada en el visor y enfoca PRAVIA IA en ese documento', async () => {
+    apiRequestMock.mockResolvedValueOnce({ url: 'https://storage.local/identificacion.txt' });
+    const service = makeService({
+      sendMessage: vi.fn(async (): Promise<AssistantReply> => ({
+        status: 'idle',
+        message: 'Encontré el documento solicitado.',
+        sources: [{ id: 'source-1', type: 'Documento', entityId: 'document-1', label: 'identificacion.txt' }],
+      })),
+    });
+    const user = userEvent.setup();
+    renderAssistant(service, <ContextProbe />);
+    await user.click(screen.getByRole('button', { name: 'Abrir PRAVIA IA' }));
+    await user.type(screen.getByLabelText('Pregúntame algo...'), 'Busca la identificación.');
+    await user.click(screen.getByRole('button', { name: 'Enviar mensaje' }));
+    await user.click(await screen.findByText('Fuentes (1)'));
+    await user.click(screen.getByRole('button', { name: 'Abrir' }));
+
+    expect(apiRequestMock).toHaveBeenCalledWith('/documentos/document-1/url');
+    expect(await screen.findByRole('dialog', { name: 'identificacion.txt' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Preguntar a IA' }));
+
+    expect(screen.queryByRole('dialog', { name: 'identificacion.txt' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('context')).toHaveTextContent('mi-dia:document-1:/mi-dia');
+    expect(screen.getByLabelText('Pregúntame algo...')).toHaveValue('¿Qué datos importantes ves en este documento?');
   });
 
   it('desactiva el movimiento del búho cuando el sistema lo solicita', () => {

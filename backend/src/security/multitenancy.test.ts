@@ -106,21 +106,23 @@ describe('frontera tenant canónica', () => {
     }
   });
 
-  it('expone actos canónicos globales y actos privados del tenant sin filtrar identidades de otra organización', async () => {
-    const next = vi.fn(async (params) => params);
-    await invoke('TipoActo', 'findMany', { where: { activo: true } }, next);
-    expect(next.mock.calls[0][0].args.where).toEqual({
-      AND: [{ activo: true }, { OR: [{ organization_id: null }, { organization_id: ORG_A }] }],
-    });
-    const create = vi.fn(async (params) => params);
-    await invoke('TipoActo', 'create', { data: { nombre: 'Acto privado' } }, create);
-    expect(create.mock.calls[0][0].args.data.organization_id).toBe(ORG_A);
+  it('expone catálogos canónicos globales y extensiones privadas del tenant sin filtrar identidades ajenas', async () => {
+    for (const model of ['TipoActo', 'CaracterCompareciente']) {
+      const next = vi.fn(async (params) => params);
+      await invoke(model, 'findMany', { where: { activo: true } }, next);
+      expect(next.mock.calls[0][0].args.where, model).toEqual({
+        AND: [{ activo: true }, { OR: [{ organization_id: null }, { organization_id: ORG_A }] }],
+      });
+      const create = vi.fn(async (params) => params);
+      await invoke(model, 'create', { data: { nombre: 'Extensión privada' } }, create);
+      expect(create.mock.calls[0][0].args.data.organization_id, model).toBe(ORG_A);
 
-    const update = vi.fn(async (params) => params);
-    await invoke('TipoActo', 'update', { where: { id: 'global-or-tenant-act' }, data: { nombre: 'Cambio' } }, update);
-    expect(update.mock.calls[0][0].args.where).toEqual({
-      AND: [{ id: 'global-or-tenant-act' }, { organization_id: ORG_A }],
-    });
+      const update = vi.fn(async (params) => params);
+      await invoke(model, 'update', { where: { id: 'global-or-tenant-item' }, data: { nombre: 'Cambio' } }, update);
+      expect(update.mock.calls[0][0].args.where, model).toEqual({
+        AND: [{ id: 'global-or-tenant-item' }, { organization_id: ORG_A }],
+      });
+    }
   });
 
   it('la migración valida sin inferir tenant y bloquea relaciones cross-tenant críticas', () => {
@@ -212,7 +214,13 @@ describe('frontera tenant canónica', () => {
             const explicitTrigger = new RegExp(`ON\\s+pravia_os\\.${model.table}[\\s\\S]{0,220}enforce_organization_membership\\('${field}'\\)`);
             expect(migrations.includes(tuple) || explicitTrigger.test(migrations), `${model.table}.${field} debe exigir Membership`).toBe(true);
           } else if (SHARED_OR_TENANT_MODELS.has(parentName)) {
-            expect(normalizedMigrations).toContain(`FOREIGN KEY (${field}) REFERENCES pravia_os.${parent.table}(id)`);
+            const sharedCatalogFk = [
+              `FOREIGN KEY (${field}) REFERENCES pravia_os.${parent.table}(id)`,
+              `FOREIGN KEY (${field}) REFERENCES ${parent.table}(id)`,
+              `${field} UUID NOT NULL REFERENCES pravia_os.${parent.table}(id)`,
+              `${field} UUID NOT NULL REFERENCES ${parent.table}(id)`,
+            ].some((candidate) => normalizedMigrations.includes(candidate));
+            expect(sharedCatalogFk, `${model.table}.${field} debe referenciar el catálogo híbrido ${parent.table}`).toBe(true);
           } else if (parent.tenant) {
             const tuple = `('${model.table}','${parent.table}','${field}')`;
             const explicitTrigger = new RegExp(`ON(?:pravia_os\\.)?${model.table}[\\s\\S]{0,400}enforce_same_organization\\('${parent.table}','${field}'\\)`);

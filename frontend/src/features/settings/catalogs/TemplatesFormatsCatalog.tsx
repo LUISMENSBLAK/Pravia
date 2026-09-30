@@ -34,6 +34,7 @@ import type {
   FunctionalDestination,
   ArtifactDestination,
   ArtifactVersion,
+  ProjectTemplateAssignment,
 } from "./catalogs.types";
 import { CatalogModal } from "./CatalogModal";
 import styles from "./Catalogs.module.css";
@@ -98,6 +99,7 @@ export function TemplatesFormatsCatalog() {
   }>({ notaria: null, institutions: [] });
   const [support, setSupport] = useState<SupportingCatalogs | null>(null);
   const [destinationCatalog, setDestinationCatalog] = useState<FunctionalDestinationOption[]>([]);
+  const [projectAssignments, setProjectAssignments] = useState<ProjectTemplateAssignment[]>([]);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [explorer, setExplorer] = useState<ExplorerPayload | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
@@ -114,6 +116,8 @@ export function TemplatesFormatsCatalog() {
   const [quickFile, setQuickFile] = useState<File | null>(null);
   const [quickName, setQuickName] = useState("");
   const [quickDestination, setQuickDestination] = useState<FunctionalDestination | "">("");
+  const [quickActId, setQuickActId] = useState("");
+  const [quickReplaceProjectTemplate, setQuickReplaceProjectTemplate] = useState(false);
   const [quickDefault, setQuickDefault] = useState(true);
   const [quickActive, setQuickActive] = useState(true);
   const [manageName, setManageName] = useState("");
@@ -168,14 +172,19 @@ export function TemplatesFormatsCatalog() {
     setLoading(true);
     setError("");
     try {
-      setExplorer(
-        await settingsService.catalogExplorer(
+      const [nextExplorer, nextAssignments] = await Promise.all([
+        settingsService.catalogExplorer(
           next.ownerType,
           next.owner.id,
           next.kind,
           next.folderId,
         ),
-      );
+        next.kind === "PLANTILLA" && next.ownerType === "NOTARIA"
+          ? settingsService.projectTemplateAssignments()
+          : Promise.resolve([]),
+      ]);
+      setExplorer(nextExplorer);
+      setProjectAssignments(nextAssignments);
     } catch {
       setError("No pudimos cargar esta carpeta.");
     } finally {
@@ -271,7 +280,9 @@ export function TemplatesFormatsCatalog() {
         carpeta_id: selection.folderId || null,
         nombre: quickName.trim(),
         activo: quickActive,
-        destinos_funcionales: [{ destino: quickDestination, activo: quickActive, predeterminado: quickDefault }],
+        act_ids: quickDestination === "PROYECTO_MACHOTE" ? [quickActId] : [],
+        replace_project_template: quickDestination === "PROYECTO_MACHOTE" && quickReplaceProjectTemplate,
+        destinos_funcionales: [{ destino: quickDestination, activo: quickActive, predeterminado: quickDestination === "PROYECTO_MACHOTE" ? false : quickDefault }],
       }, quickFile),
       `${selection.kind === "PLANTILLA" ? "Plantilla" : "Formato"} creado en la carpeta actual.`,
     );
@@ -744,6 +755,8 @@ export function TemplatesFormatsCatalog() {
                   setQuickFile(null);
                   setQuickName("");
                   setQuickDestination("");
+                  setQuickActId("");
+                  setQuickReplaceProjectTemplate(false);
                   setQuickDefault(true);
                   setQuickActive(true);
                   setError("");
@@ -752,7 +765,7 @@ export function TemplatesFormatsCatalog() {
               >
                 <Plus />
                 {current.kind === "PLANTILLA"
-                  ? "Nueva plantilla"
+                  ? "Agregar machote"
                   : "Nuevo formato"}
               </Button>
               <Button variant="secondary" onClick={() => setModal("folder")}>
@@ -837,6 +850,7 @@ export function TemplatesFormatsCatalog() {
   }
 
   function ArtifactCard({ artifact }: { artifact: CatalogArtifact }) {
+    const projectAssignment = projectAssignments.find((item) => item.artefacto_id === artifact.id);
     return (
       <article className={styles.artifactCard}>
         <header>
@@ -860,6 +874,7 @@ export function TemplatesFormatsCatalog() {
             {artifact.revisionesNormativas?.length || 0} revisión normativa
           </span>
           {artifact.destinosFuncionales?.map((item) => <span key={item.destino}>{destinationCatalog.find((option) => option.value === item.destino)?.label || item.destino}{item.predeterminado ? " · principal" : ""}</span>)}
+          {projectAssignment && <span>Machote de {projectAssignment.tipoActo.nombre} · v{projectAssignment.version.version}</span>}
         </div>
         <div className={styles.versionList}>
           {artifact.versiones.map((version) => (
@@ -901,6 +916,15 @@ export function TemplatesFormatsCatalog() {
             <button type="button" onClick={() => { setDestinationDraft(artifact.destinosFuncionales || []); setModal({ destinations: artifact }); }}>
               Conectar a módulos
             </button>
+            {projectAssignment && <button type="button" onClick={() => {
+              if (!window.confirm(`¿Retirar este machote maestro de ${projectAssignment.tipoActo.nombre}? El archivo y su historial se conservarán.`)) return;
+              void run(
+                () => settingsService.removeProjectTemplateAssignment(projectAssignment.tipo_acto_id),
+                "Asignación retirada; el archivo y su historial permanecen intactos.",
+              );
+            }}>
+              Retirar asignación
+            </button>}
             <button
               type="button"
               onClick={() => void run(
@@ -950,18 +974,23 @@ export function TemplatesFormatsCatalog() {
     if (modal === "quick")
       return (
         <CatalogModal
-          title={current.kind === "PLANTILLA" ? "Nueva plantilla" : "Nuevo formato"}
+          title={current.kind === "PLANTILLA" ? "Agregar machote" : "Nuevo formato"}
           description="Carga el archivo en la carpeta actual y conecta su punto de uso mediante un destino controlado."
           onClose={() => setModal(null)}
         >
           <form className={styles.modalForm} onSubmit={createQuickArtifact}>
             <label>Nombre<input required value={quickName} onChange={(event) => setQuickName(event.target.value)} /></label>
             <label className={styles.fileField}>Archivo<input required type="file" accept=".docx,.pdf,.xlsx,.xls,.odt,.txt,.rtf" onChange={(event) => setQuickFile(event.target.files?.[0] || null)} /><span><UploadCloud />{quickFile?.name || "Seleccionar archivo"}</span></label>
-            <label>Destino funcional<select required value={quickDestination} onChange={(event) => setQuickDestination(event.target.value as FunctionalDestination)}><option value="">Selecciona un punto de uso</option>{destinationCatalog.filter((item) => item.artifactTypes.includes(current.kind!)).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+            <label>Destino funcional<select required value={quickDestination} onChange={(event) => { const destination = event.target.value as FunctionalDestination; setQuickDestination(destination); if (destination !== "PROYECTO_MACHOTE") { setQuickActId(""); setQuickReplaceProjectTemplate(false); } }}><option value="">Selecciona un punto de uso</option>{destinationCatalog.filter((item) => item.artifactTypes.includes(current.kind!)).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+            {quickDestination === "PROYECTO_MACHOTE" && <>
+              <label>Acto<select required aria-label="Acto para el machote" value={quickActId} onChange={(event) => setQuickActId(event.target.value)}><option value="">Selecciona el Acto exacto</option>{support?.acts.map((act) => <option key={act.id} value={act.id}>{act.nombre}</option>)}</select></label>
+              <p className={styles.definitionNote}>La asignación se guardará por la identidad exacta de esta Notaría y este Acto; el nombre del archivo no participa en la resolución.</p>
+              <label><input type="checkbox" checked={quickReplaceProjectTemplate} onChange={(event) => setQuickReplaceProjectTemplate(event.target.checked)} />Reemplazar el machote maestro actual de este Acto, si existe</label>
+            </>}
             <label><input type="checkbox" checked={quickActive} onChange={(event) => setQuickActive(event.target.checked)} />Activo</label>
-            <label><input type="checkbox" checked={quickDefault} onChange={(event) => setQuickDefault(event.target.checked)} />Predeterminado para este destino</label>
+            {quickDestination !== "PROYECTO_MACHOTE" && <label><input type="checkbox" checked={quickDefault} onChange={(event) => setQuickDefault(event.target.checked)} />Predeterminado para este destino</label>}
             {error && <p className={styles.error} role="alert">{error}</p>}
-            <footer><Button type="button" variant="secondary" onClick={() => setModal(null)}>Cancelar</Button><Button type="submit" disabled={busy || !quickFile || !quickName.trim() || !quickDestination}>{busy ? "Guardando…" : "Guardar"}</Button></footer>
+            <footer><Button type="button" variant="secondary" onClick={() => setModal(null)}>Cancelar</Button><Button type="submit" disabled={busy || !quickFile || !quickName.trim() || !quickDestination || (quickDestination === "PROYECTO_MACHOTE" && !quickActId)}>{busy ? "Guardando…" : "Guardar"}</Button></footer>
           </form>
         </CatalogModal>
       );

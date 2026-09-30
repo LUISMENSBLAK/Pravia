@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Document, Packer, Paragraph } from 'docx';
 import {
   extraerMultiplesDocumentos,
   getOpenAIAssistantModelName,
@@ -96,5 +97,39 @@ describe('routing canónico de modelos PRAVIA IA', () => {
     process.env.OPENAI_DOCUMENT_MODEL = 'gpt-5.4-nano';
     delete process.env.OPENAI_ASSISTANT_MODEL;
     expect(getOpenAIAssistantModelName()).toBe('gpt-5.4-mini');
+  });
+
+  it('trata el MIME OpenXML de DOCX como Word y no como XML plano', async () => {
+    process.env.OPENAI_API_KEY = 'test-key-never-sent';
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      status: 'completed',
+      output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({
+        tipo_persona_detectado: 'FISICA', resumen_ejecutivo: 'Documento Word leído.', alertas: [],
+        campos: [
+          { campo: 'nombre', valor: 'Persona QA', confianza: 'LECTURA_CLARA', fuente: 'ficha.docx', documento_id: 'doc-word' },
+          { campo: 'nombre_del_campo', valor: 'No debe persistir', confianza: 'LECTURA_CLARA', fuente: 'ficha.docx', documento_id: 'doc-word' },
+          { campo: 'rfc', valor: 'FUENTE000000AAA', confianza: 'LECTURA_CLARA', fuente: 'ficha.docx', documento_id: 'documento-inventado' },
+        ],
+        domicilios_detectados: [], actividades_economicas: [], regimenes: [],
+        identificadores_ine: { cic: '', ocr: '' },
+        estructura_persona_moral: { accionistas: [], administracion: [], beneficiarios_controladores: [], personas_por_identificar: [], cadena_incompleta: false, faltantes: [] },
+      }) }] }],
+      usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const buffer = await Packer.toBuffer(new Document({ sections: [{ children: [new Paragraph('Nombre: Persona QA')] }] }));
+
+    const result = await extraerMultiplesDocumentos([{
+      documentoId: 'doc-word', nombreOriginal: 'ficha.docx', tipoDocumento: 'GENERALES',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer,
+    }]);
+
+    const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(request.input[0].content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'input_text', text: expect.stringContaining('[DOCUMENTO WORD "ficha.docx"') }),
+    ]));
+    expect(request.text.format.schema.properties.campos.items.properties.campo.enum).toContain('nombre');
+    expect(request.text.format.schema.properties.campos.items.properties.campo.enum).not.toContain('nombre_del_campo');
+    expect(result.campos).toEqual([expect.objectContaining({ campo: 'nombre', valor: 'Persona QA' })]);
   });
 });

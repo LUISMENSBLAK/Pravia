@@ -9,21 +9,21 @@ import { Tooltip } from '../ui/Tooltip';
 import styles from './Sidebar.module.css';
 import type { SessionUser } from '../../features/auth/auth.types';
 
-type NavItem = { label: string; to: string; icon: LucideIcon };
+type NavItem = { label: string; to: string; icon: LucideIcon; permission: string };
 
 const navigation: NavItem[] = [
-  { label: 'Mi Día', to: '/mi-dia', icon: Sun },
-  { label: 'Prospectos', to: '/prospectos', icon: UsersRound },
-  { label: 'Cotizaciones', to: '/cotizaciones', icon: FileText },
-  { label: 'Expedientes', to: '/expedientes', icon: FolderClosed },
-  { label: 'Predios', to: '/predios', icon: Building2 },
-  { label: 'Notarías', to: '/notarias', icon: Landmark },
-  { label: 'Comparecientes', to: '/comparecientes', icon: ContactRound },
-  { label: 'Finanzas', to: '/finanzas', icon: CircleDollarSign },
-  { label: 'Agenda', to: '/agenda', icon: CalendarDays },
-  { label: 'Reportes', to: '/reportes', icon: ChartNoAxesColumnIncreasing },
-  { label: 'Cálculo ISR', to: '/calculo-isr', icon: Calculator },
-  { label: 'Cumplimiento', to: '/cumplimiento', icon: ShieldCheck },
+  { label: 'Mi Día', to: '/mi-dia', icon: Sun, permission: 'mi_dia.read' },
+  { label: 'Prospectos', to: '/prospectos', icon: UsersRound, permission: 'prospectos.read' },
+  { label: 'Cotizaciones', to: '/cotizaciones', icon: FileText, permission: 'cotizaciones.read' },
+  { label: 'Expedientes', to: '/expedientes', icon: FolderClosed, permission: 'expedientes.read' },
+  { label: 'Predios', to: '/predios', icon: Building2, permission: 'expedientes.read' },
+  { label: 'Notarías', to: '/notarias', icon: Landmark, permission: 'notarias.read' },
+  { label: 'Comparecientes', to: '/comparecientes', icon: ContactRound, permission: 'comparecientes.read' },
+  { label: 'Finanzas', to: '/finanzas', icon: CircleDollarSign, permission: 'finanzas.read' },
+  { label: 'Agenda', to: '/agenda', icon: CalendarDays, permission: 'agenda.read' },
+  { label: 'Reportes', to: '/reportes', icon: ChartNoAxesColumnIncreasing, permission: 'reportes.read' },
+  { label: 'Cálculo ISR', to: '/calculo-isr', icon: Calculator, permission: 'isr.read' },
+  { label: 'Cumplimiento', to: '/cumplimiento', icon: ShieldCheck, permission: 'compliance.read' },
 ];
 
 function SidebarLink({ item, collapsed, onNavigate }: { item: NavItem; collapsed: boolean; onNavigate: () => void }) {
@@ -54,11 +54,9 @@ export function Sidebar({ collapsed, mobileOpen, onToggle, onCloseMobile, user }
   const localISRFixture = import.meta.env.DEV && window.location.pathname.startsWith('/calculo-isr') && new URLSearchParams(window.location.search).get('visual') === '1';
   const visibleNavigation = navigation.filter((item) => {
     if (!user?.permissions) return true;
-    if (item.to === '/finanzas') return user.permissions.includes('finanzas.read');
-    if (item.to === '/reportes') return user.permissions.includes('reportes.read');
     if (item.to === '/calculo-isr') return localISRFixture || user.permissions.includes('isr.read');
     if (item.to === '/cumplimiento') return user.permissions.some((permission) => ['compliance.read', 'cumplimiento.read'].includes(permission));
-    return true;
+    return user.permissions.includes(item.permission);
   });
   return (
     <>

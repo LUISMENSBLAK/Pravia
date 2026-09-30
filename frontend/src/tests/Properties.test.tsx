@@ -6,11 +6,11 @@ import { PropertyWorkspace } from '../features/properties/PropertyWorkspace';
 import { PropertiesPage } from '../features/properties/PropertiesPage';
 import { PropertiesTab } from '../features/cases/components/tabs/PropertiesTab';
 
-const mocks = vi.hoisted(() => ({ list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), uploadDocument: vi.fn(), updateDocument: vi.fn(), expedienteDocuments: vi.fn(), importExpedienteDocument: vi.fn(), documentUrl: vi.fn(), propose: vi.fn(), applyProposal: vi.fn() }));
+const mocks = vi.hoisted(() => ({ list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), uploadDocument: vi.fn(), updateDocument: vi.fn(), unlinkDocument: vi.fn(), expedienteDocuments: vi.fn(), importExpedienteDocument: vi.fn(), documentUrl: vi.fn(), propose: vi.fn(), applyProposal: vi.fn() }));
 const expedienteMocks = vi.hoisted(() => ({ listProperties: vi.fn(), propertyCatalogs: vi.fn(), searchProperties: vi.fn(), previewProperty: vi.fn(), applyProperty: vi.fn() }));
 vi.mock('../features/properties/properties.service', () => ({ propertiesService: mocks }));
 vi.mock('../features/cases/expedientes.service', () => ({ expedientesService: expedienteMocks }));
-vi.mock('../features/auth/AuthProvider', () => ({ useAuth: () => ({ user: { permissions: ['expedientes.read', 'expedientes.write', 'documentos.read', 'documentos.write', 'ia.execute'] } }) }));
+vi.mock('../features/auth/AuthProvider', () => ({ useAuth: () => ({ user: { permissions: ['expedientes.read', 'expedientes.write', 'documentos.read', 'documentos.write', 'documentos.unlink', 'ia.execute'] } }) }));
 
 const record: any = {
   id: 'property-1', version: 2, apodo: 'Casa Bucerías', clave_catastral: 'CAT-001', cuenta_predial: 'PRED-001', folio_real: 'FR-001', updated_at: '2026-09-01T12:00:00.000Z', datos_registrales: { libro: '12' },
@@ -19,14 +19,16 @@ const record: any = {
   valor_catastral: '1200000.00', valor_avaluo: '1800000.00', valor_operacion: '1900000.00', regimen: 'Propiedad privada', descripcion: 'Casa habitación',
   colindancias: [{ id: 'b-1', orden: 0, referencia: 'Del vértice 1 al 2', medida: '12.5', unidad: 'm', colindante: 'Lote 4', descripcion: '' }],
   documentos: [{ id: 'link-1', documento_id: 'doc-1', tipo_vinculo: 'TÍTULO', estatus: 'ACTIVO', vigencia: 'VIGENTE', es_antecedente_principal: true, origen: 'CARGA_DIRECTA', documento: { id: 'doc-1', nombre_original: 'titulo.pdf', mime_type: 'application/pdf', size_bytes: 1200, fecha_carga: '2026-08-28T12:00:00Z' } }], expedientes: [],
+  actividad: [{ id: 'audit-1', accion: 'LINK_PROPERTY_DOCUMENT', entidad: 'PredioDocumento', created_at: '2026-09-01T12:00:00.000Z', usuario: { id: 'user-1', nombre: 'Elena', apellido: 'QA' } }],
 };
 
 const renderPath = (path: string) => render(<MemoryRouter initialEntries={[path]}><Routes><Route path="/predios" element={<PropertiesPage />} /><Route path="/predios/nuevo" element={<PropertyWorkspace />} /><Route path="/predios/:id" element={<PropertyWorkspace />} /><Route path="/expedientes/:id" element={<div>Regreso seguro al expediente</div>} /></Routes></MemoryRouter>);
 
 describe('PRD-001 ficha maestra inmobiliaria', () => {
-  beforeEach(() => { vi.clearAllMocks(); mocks.list.mockResolvedValue({ data: [record] }); mocks.get.mockResolvedValue(record); mocks.create.mockResolvedValue({ ...record, id: 'property-new' }); mocks.update.mockResolvedValue(record); mocks.updateDocument.mockResolvedValue(record); mocks.expedienteDocuments.mockResolvedValue([]); mocks.propose.mockResolvedValue({ extraccion_id: 'extract-1', documentos: [{ id: 'doc-1', nombre: 'titulo.pdf' }], propuestas: [{ campo: 'folio_real', valor_actual: 'FR-001', valor_propuesto: 'FR-002', confianza: 'LECTURA_CLARA', fragmento_fuente: 'Folio real FR-002', fuentes: [{ documento_id: 'doc-1', nombre: 'titulo.pdf', valor: 'FR-002' }] }], alertas: [], conflictos: [], persisted_master: false }); mocks.applyProposal.mockResolvedValue({ ...record, version: 3, folio_real: 'FR-002' }); expedienteMocks.listProperties.mockResolvedValue({ data: [] }); expedienteMocks.propertyCatalogs.mockResolvedValue({ acts: [] }); });
+  beforeEach(() => { vi.clearAllMocks(); mocks.list.mockResolvedValue({ data: [record] }); mocks.get.mockResolvedValue(record); mocks.create.mockResolvedValue({ ...record, id: 'property-new' }); mocks.update.mockResolvedValue(record); mocks.updateDocument.mockResolvedValue(record); mocks.unlinkDocument.mockResolvedValue({ success: true, master_document_preserved: true }); mocks.expedienteDocuments.mockResolvedValue([]); mocks.propose.mockResolvedValue({ extraccion_id: 'extract-1', documentos: [{ id: 'doc-1', nombre: 'titulo.pdf' }], propuestas: [{ campo: 'folio_real', valor_actual: 'FR-001', valor_propuesto: 'FR-002', confianza: 'LECTURA_CLARA', fragmento_fuente: 'Folio real FR-002', fuentes: [{ documento_id: 'doc-1', nombre: 'titulo.pdf', valor: 'FR-002' }] }], alertas: [], faltantes: [], errores: [], conflictos: [], persisted_master: false }); mocks.applyProposal.mockResolvedValue({ ...record, version: 3, folio_real: 'FR-002' }); expedienteMocks.listProperties.mockResolvedValue({ data: [] }); expedienteMocks.propertyCatalogs.mockResolvedValue({ acts: [] }); });
   it('expone el catálogo maestro global con búsqueda y alta directa', async () => { renderPath('/predios'); expect(await screen.findByRole('link', { name: /Casa Bucerías/ })).toHaveAttribute('href', '/predios/property-1'); expect(screen.getByRole('heading', { name: 'Predios / Inmuebles' })).toBeInTheDocument(); expect(screen.getByRole('button', { name: 'Nuevo predio' })).toBeInTheDocument(); expect(screen.getByPlaceholderText(/Buscar por apodo/)).toBeInTheDocument(); });
   it('muestra las cinco secciones contractuales en una ficha completa', async () => { renderPath('/predios/property-1'); expect(await screen.findByRole('heading', { name: 'Casa Bucerías' })).toBeInTheDocument(); for (const heading of ['Datos generales', 'Registro y catastro', 'Superficies y valores', 'Medidas y colindancias', 'Documentos y antecedentes']) expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument(); });
+  it('ofrece la carga documental universal admitida por el backend', async () => { renderPath('/predios/property-1'); await screen.findByRole('heading', { name: 'Casa Bucerías' }); expect(screen.getByLabelText('Archivo')).toHaveAttribute('accept', '.pdf,.png,.jpg,.jpeg,.bmp,.webp,.doc,.docx,.xml,.zip'); });
   it('separa clave catastral, cuenta predial y folio real', async () => { renderPath('/predios/property-1'); await screen.findByDisplayValue('Casa Bucerías'); expect(screen.getByDisplayValue('CAT-001')).toBeInTheDocument(); expect(screen.getByDisplayValue('PRED-001')).toBeInTheDocument(); expect(screen.getByDisplayValue('FR-001')).toBeInTheDocument(); });
   it('presenta una referencia registral simple como texto humano y preserva JSON estructurado', async () => {
     mocks.get.mockResolvedValueOnce({ ...record, datos_registrales: { referencia: 'Libro 10, tomo 2, partida 77' } });
@@ -56,6 +58,24 @@ describe('PRD-001 ficha maestra inmobiliaria', () => {
     expect(within(dialog).queryByText(/\{"referencia"/)).not.toBeInTheDocument();
   });
   it('acepta una propuesta sólo tras decisión humana', async () => { const user = userEvent.setup(); renderPath('/predios/property-1'); await screen.findByText('Extracción asistida'); await user.click(screen.getByLabelText('titulo.pdf')); await user.click(screen.getByRole('button', { name: /Analizar 1 fuente seleccionada/ })); const dialog = await screen.findByRole('dialog'); await user.click(within(dialog).getByLabelText('Aceptar propuesto')); await user.click(within(dialog).getByRole('button', { name: 'Aplicar decisiones' })); await waitFor(() => expect(mocks.applyProposal).toHaveBeenCalledWith('property-1', 'extract-1', 2, { folio_real: 'ACCEPT' })); });
+  it('reporta faltantes sin insertar DATO NO ENCONTRADO en la ficha', async () => {
+    mocks.propose.mockResolvedValueOnce({ extraccion_id: 'extract-missing', documentos: [{ id: 'doc-1', nombre: 'titulo.pdf' }], propuestas: [], alertas: [], faltantes: ['folio_real'], errores: [], conflictos: [], persisted_master: false });
+    const user = userEvent.setup(); renderPath('/predios/property-1'); await screen.findByText('Extracción asistida'); await user.click(screen.getByLabelText('titulo.pdf')); await user.click(screen.getByRole('button', { name: /Analizar 1 fuente seleccionada/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Folio real: DATO NO ENCONTRADO')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Aplicar decisiones' })).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue('FR-001')).toBeInTheDocument();
+  });
+  it('muestra actividad persistente y elimina sólo el vínculo documental con motivo', async () => {
+    const user = userEvent.setup(); const prompt = vi.spyOn(window, 'prompt').mockReturnValue('DOCUMENTO DUPLICADO');
+    mocks.get.mockResolvedValueOnce(record).mockResolvedValueOnce({ ...record, documentos: [], actividad: [{ id: 'audit-2', accion: 'UNLINK_PROPERTY_DOCUMENT', entidad: 'PredioDocumento', created_at: '2026-09-01T12:01:00.000Z', usuario: { id: 'user-1', nombre: 'Elena', apellido: 'QA' } }, ...record.actividad] });
+    renderPath('/predios/property-1');
+    expect(await screen.findByText('Documento cargado')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Eliminar titulo.pdf de la ficha' }));
+    await waitFor(() => expect(mocks.unlinkDocument).toHaveBeenCalledWith('property-1', 'doc-1', 'DOCUMENTO DUPLICADO'));
+    expect(await screen.findByText('Documento eliminado de la ficha')).toBeInTheDocument();
+    prompt.mockRestore();
+  });
   it('regresa al mismo expediente al crear desde contexto autorizado', async () => { const user = userEvent.setup(); renderPath('/predios/nuevo?fromExpediente=exp-1&fromSection=predios'); await user.type(screen.getByLabelText('Apodo / nombre corto'), 'Casa nueva'); await user.click(screen.getByRole('button', { name: 'Guardar ficha' })); expect(await screen.findByText('Regreso seguro al expediente')).toBeInTheDocument(); expect(mocks.create).toHaveBeenCalled(); });
   it('completa el auto-vínculo antes de limpiar el estado de retorno', async () => {
     mocks.get.mockResolvedValueOnce(record);

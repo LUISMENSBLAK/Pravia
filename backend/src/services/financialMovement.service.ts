@@ -5,6 +5,9 @@ type Database = PrismaClient;
 type AllocationInput = { categoria_id: string; monto: number; honorario_generado_id?: string | null; observaciones?: string | null };
 
 const clean = (value: unknown) => String(value || '').trim();
+const assertCentralMutable = (movement: { expediente_id?: string | null }) => {
+  if (movement.expediente_id) throw new FinanceDomainError('Este movimiento se administra desde Finanzas del expediente. Ábrelo en su fuente para modificarlo.', 'FINANCE_EXPEDIENTE_SOURCE_READ_ONLY', 409);
+};
 
 async function nextFolio(tx: any, sequence: 'finance_movement_folio_seq' | 'finance_receipt_folio_seq', prefix: 'MOV' | 'COM') {
   const rows = await tx.$queryRawUnsafe(`SELECT nextval('${sequence}') AS value`) as Array<{ value: bigint }>;
@@ -68,6 +71,7 @@ export class FinancialMovementService {
     const page = Math.max(1, Number(input.page || 1));
     const pageSize = Math.min(100, Math.max(1, Number(input.pageSize || 20)));
     const where: Prisma.MovimientoFinancieroWhereInput = {
+      ...(input.organization_id ? { organization_id: input.organization_id } : {}),
       ...(input.naturaleza && input.naturaleza !== 'TODOS' ? { naturaleza: input.naturaleza } : {}),
       ...(input.estatus && input.estatus !== 'TODOS' ? { estatus: input.estatus } : {}),
       ...(input.cuenta_id ? { cuenta_id: input.cuenta_id } : {}),
@@ -103,15 +107,18 @@ export class FinancialMovementService {
       this.db.movimientoFinanciero.findMany({ where, include, orderBy: [{ fecha_movimiento: 'desc' }, { fecha_registro: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
       this.db.movimientoFinanciero.count({ where }),
     ]);
-    return { items, meta: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) } };
+    return { items: items.map((item) => ({ ...item, origin: item.expediente_id ? 'EXPEDIENTE' : 'EXTERNO', source_href: item.expediente_id ? `/expedientes/${item.expediente_id}?tab=finanzas` : null, central_read_only: Boolean(item.expediente_id) })), meta: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) } };
   }
 
-  async retireEvidence(movementId: string, documentId: string, actorId: string, reason: string, correlationId?: string) {
+  async retireEvidence(movementId: string, documentId: string, actorId: string, reason: string, correlationId?: string, organizationId?: string) {
     if (!clean(reason)) throw new FinanceDomainError('Indica el motivo para retirar el comprobante.', 'FINANCE_EVIDENCE_REASON_REQUIRED');
     return this.db.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:finance-evidence:${movementId}:${documentId}`}))`);
-      const movement = await tx.movimientoFinanciero.findUnique({ where: { id: movementId }, select: { id: true } });
+      const movement = organizationId
+        ? await tx.movimientoFinanciero.findFirst({ where: { id: movementId, organization_id: organizationId }, select: { id: true, expediente_id: true } })
+        : await tx.movimientoFinanciero.findUnique({ where: { id: movementId }, select: { id: true, expediente_id: true } });
       if (!movement) throw new FinanceDomainError('Movimiento no encontrado.', 'FINANCE_MOVEMENT_NOT_FOUND', 404);
+      assertCentralMutable(movement);
       const result = await tx.movimientoDocumento.updateMany({
         where: { movimiento_id: movementId, documento_id: documentId, tipo_vinculo: 'COMPROBANTE_PAGO', estatus: 'ACTIVO' },
         data: { estatus: 'INACTIVO', inactivado_at: new Date(), inactivado_por_id: actorId, motivo_inactivacion: clean(reason) },
@@ -119,6 +126,7 @@ export class FinancialMovementService {
       if (!result.count) throw new FinanceDomainError('El comprobante ya no está vinculado a este movimiento.', 'FINANCE_EVIDENCE_NOT_FOUND', 404);
       await tx.auditLog.create({
         data: {
+          organization_id: organizationId,
           user_id: actorId,
           accion: 'RETIRE_FINANCIAL_EVIDENCE',
           entidad: 'MovimientoFinanciero',
@@ -131,30 +139,34 @@ export class FinancialMovementService {
     });
   }
 
-  async createDraft(input: any, actorId: string, correlationId?: string) {
+  async createDraft(input: any, actorId: string, correlationId?: string, organizationId?: string) {
     const amount = Number(input.monto);
     const allocations: AllocationInput[] = Array.isArray(input.distribuciones) ? input.distribuciones.map((item: any) => ({ ...item, monto: Number(item.monto) })) : [];
     const distribution = validateDistribution(amount, allocations.map((item) => ({ amount: item.monto })));
     if (!['INGRESO', 'EGRESO'].includes(input.naturaleza)) throw new FinanceDomainError('Selecciona ingreso o egreso.', 'FINANCE_NATURE_INVALID');
     if (!clean(input.concepto) || !input.cuenta_id) throw new FinanceDomainError('Concepto y cuenta son obligatorios.', 'FINANCE_REQUIRED_FIELDS');
+    if (input.expediente_id) throw new FinanceDomainError('Los movimientos de un expediente se registran desde Finanzas del expediente.', 'FINANCE_EXPEDIENTE_SOURCE_REQUIRED', 409);
     return this.db.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:finance-idempotency:${clean(input.idempotency_key) || crypto.randomUUID()}`}))`);
       if (input.idempotency_key) {
-        const existing = await tx.movimientoFinanciero.findUnique({ where: { idempotency_key: clean(input.idempotency_key) }, include: { distribuciones: true, comprobanteInterno: true } });
+        const existing = organizationId
+          ? await tx.movimientoFinanciero.findFirst({ where: { idempotency_key: clean(input.idempotency_key), organization_id: organizationId }, include: { distribuciones: true, comprobanteInterno: true } })
+          : await tx.movimientoFinanciero.findUnique({ where: { idempotency_key: clean(input.idempotency_key) }, include: { distribuciones: true, comprobanteInterno: true } });
         if (existing) return { movement: existing, idempotent: true };
       }
-      const categories = await tx.categoriaFinanciera.findMany({ where: { id: { in: allocations.map((item) => item.categoria_id) }, activa: true } });
+      const categories = await tx.categoriaFinanciera.findMany({ where: { id: { in: allocations.map((item) => item.categoria_id) }, activa: true, ...(organizationId ? { OR: [{ organization_id: organizationId }, { organization_id: null }] } : {}) } });
       if (categories.length !== new Set(allocations.map((item) => item.categoria_id)).size) throw new FinanceDomainError('Una clasificación financiera no está disponible.', 'FINANCE_CATEGORY_INVALID');
       categories.forEach((category) => {
         if (category.direccion !== 'AMBAS' && category.direccion !== input.naturaleza) throw new FinanceDomainError(`La categoría ${category.nombre} no corresponde a este tipo de movimiento.`, 'FINANCE_CATEGORY_DIRECTION_MISMATCH');
       });
-      const account = await tx.cuentaFinanciera.findFirst({ where: { id: input.cuenta_id, activa: true } });
+      const account = await tx.cuentaFinanciera.findFirst({ where: { id: input.cuenta_id, activa: true, ...(organizationId ? { organization_id: organizationId } : {}) } });
       if (!account) throw new FinanceDomainError('Selecciona una cuenta activa.', 'FINANCE_ACCOUNT_INVALID');
       const folio = await nextFolio(tx, 'finance_movement_folio_seq', 'MOV');
       const movement = await tx.movimientoFinanciero.create({
         data: {
+          organization_id: organizationId,
           folio,
-          expediente_id: input.expediente_id || null,
+          expediente_id: null,
           cotizacion_id: input.cotizacion_id || null,
           compareciente_id: input.compareciente_id || null,
           notaria_id: input.notaria_id || null,
@@ -172,97 +184,110 @@ export class FinancialMovementService {
           idempotency_key: clean(input.idempotency_key) || null,
           estatus: distribution.balanced ? 'PENDIENTE_COMPROBANTE' : 'BORRADOR',
           capturado_por_id: actorId,
-          distribuciones: { create: allocations.map((item) => ({ categoria_id: item.categoria_id, honorario_generado_id: item.honorario_generado_id || null, monto: item.monto, observaciones: clean(item.observaciones) || null })) },
+          distribuciones: { create: allocations.map((item) => ({ organization_id: organizationId, categoria_id: item.categoria_id, honorario_generado_id: item.honorario_generado_id || null, monto: item.monto, observaciones: clean(item.observaciones) || null })) },
         },
         include: { distribuciones: { include: { categoria: true } }, cuenta: true },
       });
-      await tx.auditLog.create({ data: { user_id: actorId, accion: 'CREATE_FINANCIAL_DRAFT', entidad: 'MovimientoFinanciero', entidad_id: movement.id, valores_nuevos: { folio, naturaleza: input.naturaleza, monto: amount, estatus: movement.estatus }, correlation_id: correlationId } });
+      await tx.auditLog.create({ data: { organization_id: organizationId, user_id: actorId, accion: 'CREATE_FINANCIAL_DRAFT', entidad: 'MovimientoFinanciero', entidad_id: movement.id, valores_nuevos: { folio, naturaleza: input.naturaleza, monto: amount, estatus: movement.estatus }, correlation_id: correlationId } });
       return { movement, idempotent: false };
     });
   }
 
-  async replaceDistribution(movementId: string, allocations: AllocationInput[], actorId: string, correlationId?: string) {
+  async replaceDistribution(movementId: string, allocations: AllocationInput[], actorId: string, correlationId?: string, organizationId?: string) {
     return this.db.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:finance-movement:${movementId}`}))`);
-      const movement = await tx.movimientoFinanciero.findUnique({ where: { id: movementId }, include: { distribuciones: true, comprobanteInterno: true } });
+      const movement = organizationId
+        ? await tx.movimientoFinanciero.findFirst({ where: { id: movementId, organization_id: organizationId }, include: { distribuciones: true, comprobanteInterno: true } })
+        : await tx.movimientoFinanciero.findUnique({ where: { id: movementId }, include: { distribuciones: true, comprobanteInterno: true } });
       if (!movement) throw new FinanceDomainError('Movimiento no encontrado.', 'FINANCE_MOVEMENT_NOT_FOUND', 404);
+      assertCentralMutable(movement);
       if (!canMutateFinancialRecord(movement.estatus)) throw new FinanceDomainError('Un movimiento aplicado no puede editarse.', 'FINANCE_MOVEMENT_IMMUTABLE', 409);
       const normalized = allocations.map((item) => ({ ...item, monto: Number(item.monto) }));
       const distribution = validateDistribution(Number(movement.monto), normalized.map((item) => ({ amount: item.monto })));
-      const categories = await tx.categoriaFinanciera.findMany({ where: { id: { in: normalized.map((item) => item.categoria_id) }, activa: true } });
+      const categories = await tx.categoriaFinanciera.findMany({ where: { id: { in: normalized.map((item) => item.categoria_id) }, activa: true, ...(organizationId ? { OR: [{ organization_id: organizationId }, { organization_id: null }] } : {}) } });
       if (categories.length !== new Set(normalized.map((item) => item.categoria_id)).size) throw new FinanceDomainError('Una clasificación financiera no está disponible.', 'FINANCE_CATEGORY_INVALID');
       categories.forEach((category) => {
         if (category.direccion !== 'AMBAS' && category.direccion !== movement.naturaleza) throw new FinanceDomainError(`La categoría ${category.nombre} no corresponde a este tipo de movimiento.`, 'FINANCE_CATEGORY_DIRECTION_MISMATCH');
       });
       await tx.movimientoDistribucion.deleteMany({ where: { movimiento_id: movementId } });
-      await tx.movimientoDistribucion.createMany({ data: normalized.map((item) => ({ movimiento_id: movementId, categoria_id: item.categoria_id, honorario_generado_id: item.honorario_generado_id || null, monto: item.monto, observaciones: clean(item.observaciones) || null })) });
+      await tx.movimientoDistribucion.createMany({ data: normalized.map((item) => ({ organization_id: organizationId, movimiento_id: movementId, categoria_id: item.categoria_id, honorario_generado_id: item.honorario_generado_id || null, monto: item.monto, observaciones: clean(item.observaciones) || null })) });
       if (movement.comprobanteInterno?.estado === 'VIGENTE') {
         await tx.comprobanteFinanciero.update({ where: { id: movement.comprobanteInterno.id }, data: { estado: 'ANULADO', anulado_por_id: actorId, fecha_anulacion: new Date(), motivo_anulacion: 'Distribución económica actualizada' } });
       }
       await tx.movimientoFinanciero.update({ where: { id: movementId }, data: { estatus: distribution.balanced ? 'PENDIENTE_COMPROBANTE' : 'BORRADOR' } });
-      await tx.auditLog.create({ data: { user_id: actorId, accion: 'REPLACE_FINANCIAL_DISTRIBUTION', entidad: 'MovimientoFinanciero', entidad_id: movementId, valores_anteriores: movement.distribuciones.map((item) => ({ categoria_id: item.categoria_id, monto: Number(item.monto) })), valores_nuevos: normalized, correlation_id: correlationId } });
+      await tx.auditLog.create({ data: { organization_id: organizationId, user_id: actorId, accion: 'REPLACE_FINANCIAL_DISTRIBUTION', entidad: 'MovimientoFinanciero', entidad_id: movementId, valores_anteriores: movement.distribuciones.map((item) => ({ categoria_id: item.categoria_id, monto: Number(item.monto) })), valores_nuevos: normalized, correlation_id: correlationId } });
       return tx.movimientoFinanciero.findUnique({ where: { id: movementId }, include: { distribuciones: { include: { categoria: true } } } });
     });
   }
 
-  async generateReceipt(movementId: string, actorId: string, observaciones?: string, correlationId?: string) {
+  async generateReceipt(movementId: string, actorId: string, observaciones?: string, correlationId?: string, organizationId?: string) {
     return this.db.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:finance-receipt:${movementId}`}))`);
-      const movement = await tx.movimientoFinanciero.findUnique({ where: { id: movementId }, include: { cuenta: true, expediente: true, distribuciones: { include: { categoria: true } }, comprobanteInterno: true } });
+      const movement = organizationId
+        ? await tx.movimientoFinanciero.findFirst({ where: { id: movementId, organization_id: organizationId }, include: { cuenta: true, expediente: true, distribuciones: { include: { categoria: true } }, comprobanteInterno: true } })
+        : await tx.movimientoFinanciero.findUnique({ where: { id: movementId }, include: { cuenta: true, expediente: true, distribuciones: { include: { categoria: true } }, comprobanteInterno: true } });
       if (!movement) throw new FinanceDomainError('Movimiento no encontrado.', 'FINANCE_MOVEMENT_NOT_FOUND', 404);
+      assertCentralMutable(movement);
       if (movement.comprobanteInterno?.estado === 'VIGENTE') return { receipt: movement.comprobanteInterno, idempotent: true };
       if (!canMutateFinancialRecord(movement.estatus)) throw new FinanceDomainError('No se puede generar un comprobante para este movimiento.', 'FINANCE_RECEIPT_NOT_ALLOWED', 409);
       const distribution = validateDistribution(Number(movement.monto), movement.distribuciones.map((item) => ({ amount: Number(item.monto) })));
       if (!distribution.balanced) throw new FinanceDomainError('La distribución debe cuadrar antes de generar el comprobante.', 'FINANCE_DISTRIBUTION_UNBALANCED', 409);
       const folio = await nextFolio(tx, 'finance_receipt_folio_seq', 'COM');
       const snapshot = { movimiento_folio: movement.folio, expediente: movement.expediente?.numero_pravia || null, distribuciones: movement.distribuciones.map((item) => ({ categoria: item.categoria.nombre, naturaleza: item.categoria.naturaleza, monto: Number(item.monto) })) };
-      const receipt = await tx.comprobanteFinanciero.create({ data: { folio, movimiento_id: movement.id, tipo: movement.naturaleza, importe: movement.monto, concepto: movement.concepto, persona: movement.expediente?.cliente_alias || null, forma_pago: movement.forma_pago, cuenta_snapshot: movement.cuenta ? { institucion: movement.cuenta.institucion, alias: movement.cuenta.alias, ultimos_cuatro: movement.cuenta.ultimos_cuatro, moneda: movement.cuenta.moneda } : Prisma.JsonNull, observaciones: clean(observaciones) || null, snapshot, registrado_por_id: actorId } });
+      const receipt = await tx.comprobanteFinanciero.create({ data: { organization_id: organizationId, folio, movimiento_id: movement.id, tipo: movement.naturaleza, importe: movement.monto, concepto: movement.concepto, persona: movement.expediente?.cliente_alias || null, forma_pago: movement.forma_pago, cuenta_snapshot: movement.cuenta ? { institucion: movement.cuenta.institucion, alias: movement.cuenta.alias, ultimos_cuatro: movement.cuenta.ultimos_cuatro, moneda: movement.cuenta.moneda } : Prisma.JsonNull, observaciones: clean(observaciones) || null, snapshot, registrado_por_id: actorId } });
       await tx.movimientoFinanciero.update({ where: { id: movement.id }, data: { estatus: 'LISTO_APLICAR' } });
-      await tx.auditLog.create({ data: { user_id: actorId, accion: 'GENERATE_FINANCIAL_RECEIPT', entidad: 'ComprobanteFinanciero', entidad_id: receipt.id, valores_nuevos: { folio, movimiento_id: movement.id, importe: Number(movement.monto) }, correlation_id: correlationId } });
+      await tx.auditLog.create({ data: { organization_id: organizationId, user_id: actorId, accion: 'GENERATE_FINANCIAL_RECEIPT', entidad: 'ComprobanteFinanciero', entidad_id: receipt.id, valores_nuevos: { folio, movimiento_id: movement.id, importe: Number(movement.monto) }, correlation_id: correlationId } });
       return { receipt, idempotent: false };
     });
   }
 
-  async apply(movementId: string, actorId: string, correlationId?: string) {
+  async apply(movementId: string, actorId: string, correlationId?: string, organizationId?: string) {
     return this.db.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:finance-apply:${movementId}`}))`);
-      const movement = await tx.movimientoFinanciero.findUnique({ where: { id: movementId }, include: { distribuciones: true, comprobanteInterno: true } });
+      const movement = organizationId
+        ? await tx.movimientoFinanciero.findFirst({ where: { id: movementId, organization_id: organizationId }, include: { distribuciones: true, comprobanteInterno: true } })
+        : await tx.movimientoFinanciero.findUnique({ where: { id: movementId }, include: { distribuciones: true, comprobanteInterno: true } });
       if (!movement) throw new FinanceDomainError('Movimiento no encontrado.', 'FINANCE_MOVEMENT_NOT_FOUND', 404);
+      assertCentralMutable(movement);
       const validation = assertMovementApplicable({ status: movement.estatus, total: Number(movement.monto), allocations: movement.distribuciones.map((item) => ({ amount: Number(item.monto) })), receipt: movement.comprobanteInterno ? { status: movement.comprobanteInterno.estado } : null });
       if (validation.idempotent) return { movement, idempotent: true };
       const applied = await tx.movimientoFinanciero.update({ where: { id: movement.id }, data: { estatus: 'APLICADO', aplicado_por_id: actorId, fecha_aplicacion: new Date(), validado_por_id: actorId, fecha_validacion: new Date() } });
-      await tx.auditLog.create({ data: { user_id: actorId, accion: 'APPLY_FINANCIAL_MOVEMENT', entidad: 'MovimientoFinanciero', entidad_id: movement.id, valores_anteriores: { estatus: movement.estatus }, valores_nuevos: { estatus: 'APLICADO', monto: Number(movement.monto) }, correlation_id: correlationId } });
+      await tx.auditLog.create({ data: { organization_id: organizationId, user_id: actorId, accion: 'APPLY_FINANCIAL_MOVEMENT', entidad: 'MovimientoFinanciero', entidad_id: movement.id, valores_anteriores: { estatus: movement.estatus }, valores_nuevos: { estatus: 'APLICADO', monto: Number(movement.monto) }, correlation_id: correlationId } });
       return { movement: applied, idempotent: false };
     });
   }
 
-  async cancelDraft(movementId: string, actorId: string, reason: string, correlationId?: string) {
+  async cancelDraft(movementId: string, actorId: string, reason: string, correlationId?: string, organizationId?: string) {
     if (!clean(reason)) throw new FinanceDomainError('Indica el motivo de cancelación.', 'FINANCE_CANCEL_REASON_REQUIRED');
     return this.db.$transaction(async (tx) => {
-      const movement = await tx.movimientoFinanciero.findUnique({ where: { id: movementId } });
+      const movement = organizationId
+        ? await tx.movimientoFinanciero.findFirst({ where: { id: movementId, organization_id: organizationId } })
+        : await tx.movimientoFinanciero.findUnique({ where: { id: movementId } });
       if (!movement) throw new FinanceDomainError('Movimiento no encontrado.', 'FINANCE_MOVEMENT_NOT_FOUND', 404);
+      assertCentralMutable(movement);
       if (!canMutateFinancialRecord(movement.estatus)) throw new FinanceDomainError('Un movimiento aplicado debe corregirse mediante reverso.', 'FINANCE_REVERSE_REQUIRED', 409);
       const cancelled = await tx.movimientoFinanciero.update({ where: { id: movementId }, data: { estatus: 'CANCELADO', cancelado_por_id: actorId, fecha_cancelacion: new Date(), motivo_cancelacion: clean(reason) } });
-      await tx.auditLog.create({ data: { user_id: actorId, accion: 'CANCEL_FINANCIAL_DRAFT', entidad: 'MovimientoFinanciero', entidad_id: movementId, valores_anteriores: { estatus: movement.estatus }, valores_nuevos: { estatus: 'CANCELADO', motivo: clean(reason) }, correlation_id: correlationId } });
+      await tx.auditLog.create({ data: { organization_id: organizationId, user_id: actorId, accion: 'CANCEL_FINANCIAL_DRAFT', entidad: 'MovimientoFinanciero', entidad_id: movementId, valores_anteriores: { estatus: movement.estatus }, valores_nuevos: { estatus: 'CANCELADO', motivo: clean(reason) }, correlation_id: correlationId } });
       return cancelled;
     });
   }
 
-  async reverseApplied(movementId: string, actorId: string, reason: string, correlationId?: string) {
+  async reverseApplied(movementId: string, actorId: string, reason: string, correlationId?: string, organizationId?: string) {
     if (!clean(reason)) throw new FinanceDomainError('Indica el motivo del reverso.', 'FINANCE_REVERSE_REASON_REQUIRED');
     return this.db.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:finance-reverse:${movementId}`}))`);
-      const movement = await tx.movimientoFinanciero.findUnique({
-        where: { id: movementId },
-        include: {
-          cuenta: true,
-          expediente: true,
-          distribuciones: { include: { categoria: true } },
-          comprobanteInterno: true,
-          reversosGenerados: { include: { comprobanteInterno: true, distribuciones: true } },
-        },
-      });
+      const movementInclude = {
+        cuenta: true,
+        expediente: true,
+        distribuciones: { include: { categoria: true } },
+        comprobanteInterno: true,
+        reversosGenerados: { include: { comprobanteInterno: true, distribuciones: true } },
+      } as const;
+      const movement = organizationId
+        ? await tx.movimientoFinanciero.findFirst({ where: { id: movementId, organization_id: organizationId }, include: movementInclude })
+        : await tx.movimientoFinanciero.findUnique({ where: { id: movementId }, include: movementInclude });
       if (!movement) throw new FinanceDomainError('Movimiento no encontrado.', 'FINANCE_MOVEMENT_NOT_FOUND', 404);
+      assertCentralMutable(movement);
       const existing = movement.reversosGenerados.find((item: any) => item.estatus === 'APLICADO');
       if (existing) return { movement: existing, original: movement, idempotent: true };
       if (!['APLICADO', 'RECIBIDO', 'VALIDADO'].includes(movement.estatus)) {
@@ -277,6 +302,7 @@ export class FinancialMovementService {
       const reversedNature = movement.naturaleza === 'INGRESO' ? 'EGRESO' : 'INGRESO';
       const reversed = await tx.movimientoFinanciero.create({
         data: {
+          organization_id: organizationId,
           folio: movementFolio,
           expediente_id: movement.expediente_id,
           cotizacion_id: movement.cotizacion_id,
@@ -305,6 +331,7 @@ export class FinancialMovementService {
           fecha_reversion: new Date(),
           distribuciones: {
             create: movement.distribuciones.map((item: any) => ({
+              organization_id: organizationId,
               categoria_id: item.categoria_id,
               honorario_generado_id: item.honorario_generado_id,
               monto: item.monto,
@@ -316,6 +343,7 @@ export class FinancialMovementService {
       });
       const receipt = await tx.comprobanteFinanciero.create({
         data: {
+          organization_id: organizationId,
           folio: receiptFolio,
           movimiento_id: reversed.id,
           tipo: reversedNature,
@@ -340,6 +368,7 @@ export class FinancialMovementService {
       });
       await tx.auditLog.create({
         data: {
+          organization_id: organizationId,
           user_id: actorId,
           accion: 'REVERSE_FINANCIAL_MOVEMENT',
           entidad: 'MovimientoFinanciero',

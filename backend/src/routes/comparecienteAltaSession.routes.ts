@@ -5,7 +5,8 @@ import { requirePermission } from '../middleware/auth.middleware';
 import { requireAltaCargaObjectAccess, requireAltaSessionObjectAccess } from '../middleware/objectAccess.middleware';
 
 const upload = multer({
-  limits: { fileSize: 25 * 1024 * 1024 } // 25 MB max limit
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024, files: 10 } // 25 MB max limit
 });
 
 const router = Router();

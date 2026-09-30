@@ -36,6 +36,7 @@ export const prospectsService = {
     return {
       stages: Array.isArray(payload?.stages) ? payload.stages : [],
       services: Array.isArray(payload?.services) ? payload.services : [],
+      actTypes: Array.isArray(payload?.actTypes) ? payload.actTypes : [],
     };
   },
   async list(filters: ProspectListFilters = {}, signal?: AbortSignal): Promise<ProspectListResult> {

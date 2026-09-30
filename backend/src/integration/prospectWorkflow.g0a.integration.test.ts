@@ -30,6 +30,9 @@ const actor = (n: number): Actor => ({
 });
 const primary = actor(1);
 const foreign = actor(2);
+let formalApplicantId = '';
+let primaryActTypeId = '';
+let secondaryActTypeId = '';
 const quoteWorkflow = new CotizacionWorkflowService(scoped);
 const quoteConversion = new CotizacionConversionService(scoped);
 const expedienteBudget = new ExpedienteBudgetService(scoped);
@@ -38,7 +41,7 @@ const run = <T>(who: Actor, fn: () => T) => runWithActorContext({
   sessionId: who.sessionId, role: who.rol, permissions: who.permissions, scope: who.scope,
 }, fn);
 const create = (who = primary, key = randomUUID(), nombre = '  cliente   corrección 001 ') =>
-  run(who, () => service.create(who, { nombre }, key)).then((result) => result.prospecto);
+  run(who, () => service.create(who, { nombre, servicio_catalogo_codigo: 'COMPRAVENTA' }, key)).then((result) => result.prospecto);
 const read = (id: string, who = primary) => run(who, () => service.read(who, id));
 const mutate = (who: Actor, id: string, payload: Record<string, unknown>) => run(who, () => service.act(who, id, payload));
 const act = async (id: string, action: string, who = primary, extra: Record<string, unknown> = {}) => {
@@ -66,7 +69,7 @@ const actQuote = async (id: string, action: string, extra: Record<string, unknow
 describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 · PostgreSQL aislado Prospecto → Cotización', () => {
   beforeAll(async () => {
     const [database] = await db.$queryRaw`SELECT current_database() AS name`;
-    expect(database.name).toMatch(/^pravia_c001_/);
+    expect(database.name).toMatch(/^pravia_c(?:001|015)_/);
     for (const who of [primary, foreign]) {
       await db.organization.upsert({ where: { id: who.organizationId }, update: {}, create: { id: who.organizationId, name: `Tenant ${who.apellido}` } });
       await db.user.upsert({ where: { id: who.id }, update: {}, create: {
@@ -82,6 +85,25 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
       update: {},
       create: { codigo_catalogo: 'COMPRAVENTA', nombre: 'Compraventa', activo: true },
     });
+    primaryActTypeId = actType.id;
+    const secondaryActType = await db.tipoActo.upsert({
+      where: { codigo_catalogo: 'PODER_GENERAL_QA_C015' },
+      update: {},
+      create: { codigo_catalogo: 'PODER_GENERAL_QA_C015', nombre: 'Poder general', activo: true },
+    });
+    secondaryActTypeId = secondaryActType.id;
+    const character = await db.caracterCompareciente.upsert({
+      where: { clave: 'SOLICITANTE_PRINCIPAL_QA_C015' },
+      update: { activo: true },
+      create: { clave: 'SOLICITANTE_PRINCIPAL_QA_C015', nombre: 'Solicitante principal', activo: true },
+    });
+    for (const tipoActoId of [primaryActTypeId, secondaryActTypeId]) {
+      await db.tipoActoCaracterCompareciente.upsert({
+        where: { tipo_acto_id_caracter_id: { tipo_acto_id: tipoActoId, caracter_id: character.id } },
+        update: { sugerido: true },
+        create: { tipo_acto_id: tipoActoId, caracter_id: character.id, sugerido: true, orden: 0 },
+      });
+    }
     await db.prospectoServicioCatalogo.upsert({
       where: { codigo: 'COMPRAVENTA' },
       update: { tipo_acto_id: actType.id },
@@ -90,6 +112,13 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
         estados: ['Nayarit', 'Jalisco'], tipos_persona: [], tipo_acto_id: actType.id,
       },
     });
+    const applicant = await db.compareciente.create({ data: {
+      organization_id: primary.organizationId,
+      tipo_persona: 'FISICA',
+      nombre_busqueda: `SOLICITANTE FORMAL ${randomUUID()}`,
+      creado_por_id: primary.id,
+    } });
+    formalApplicantId = applicant.id;
   });
   afterAll(async () => { await Promise.all([db.$disconnect(), scoped.$disconnect()]); });
 
@@ -124,8 +153,31 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
 
   it.each([['SUSPENDER', 'SUSPENDIDO'], ['CANCELAR', 'CANCELADO']])('permite la salida excepcional %s', async (action, stage) => {
     const prospect = await create();
-    await act(prospect.id, action);
+    await act(prospect.id, action, primary, { reason: 'Pausa operativa solicitada' });
     expect((await read(prospect.id)).stage).toBe(stage);
+  });
+
+  it.each(['SUSPENDER', 'CANCELAR'])('reactiva desde %s y restaura exactamente la etapa operativa anterior', async (exceptionalAction) => {
+    const prospect = await create();
+    await act(prospect.id, 'COMENZAR_INTEGRACION');
+    await act(prospect.id, exceptionalAction, primary, { reason: 'Pausa temporal acreditada' });
+    expect((await read(prospect.id)).stage).toBe(exceptionalAction === 'SUSPENDER' ? 'SUSPENDIDO' : 'CANCELADO');
+    await act(prospect.id, 'REACTIVAR', primary, { reason: 'Se reanudó la atención' });
+    const workflow = await read(prospect.id);
+    expect(workflow.stage).toBe('EN_INTEGRACION');
+    expect(workflow.events.at(-1)).toMatchObject({ previousLabel: exceptionalAction === 'SUSPENDER' ? 'Suspendido' : 'Cancelado', nextLabel: 'En integración', actionLabel: 'Reactivar prospecto' });
+    const event = await db.prospectoTransicion.findFirstOrThrow({ where: { prospecto_id: prospect.id, accion: 'REACTIVAR' } });
+    expect(event.evidencia).toMatchObject({ reason: 'SE REANUDÓ LA ATENCIÓN', restoredStage: 'EN_INTEGRACION' });
+  });
+
+  it('exige causa para suspender/cancelar y permite motivo opcional al reactivar', async () => {
+    const prospect = await create();
+    const current = await read(prospect.id);
+    await expect(mutate(primary, prospect.id, { action: 'SUSPENDER', expectedVersion: current.version, confirm: true, idempotencyKey: randomUUID() }))
+      .rejects.toMatchObject({ status: 400, code: 'PRO001_REASON_REQUIRED' });
+    await act(prospect.id, 'SUSPENDER', primary, { reason: 'Pausa temporal' });
+    await act(prospect.id, 'REACTIVAR');
+    expect((await read(prospect.id)).stage).toBe('NUEVO');
   });
 
   it('persiste contacto, acto, responsable y preparación económica', async () => {
@@ -163,7 +215,7 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
     });
     expect(quote.numero_cotizacion).toMatch(/^COT-\d{4}-\d{4}$/);
     expect(quote).toMatchObject({ prospecto_id: prospect.id, user_id: primary.id, organization_id: primary.organizationId });
-    expect(quote.prospecto).toMatchObject({ telefono: '3111002000', email: 'cliente@example.test', tipo_acto: 'Compraventa', necesidad: 'Operación directa' });
+    expect(quote.prospecto).toMatchObject({ telefono: '3111002000', email: 'cliente@example.test', tipo_acto: 'Compraventa', necesidad: 'OPERACIÓN DIRECTA' });
     expect(quote.total_cliente?.toString()).toBe('1160');
     expect(quote.versiones).toHaveLength(0);
     expect(quote.honorarios_pravia).toBeNull();
@@ -216,10 +268,19 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
     });
     expect(await run(primary, () => quoteWorkflow.read(primary, quoteId))).toMatchObject({ stage: 'EN_ELABORACION' });
     await actQuote(quoteId, 'ENVIAR_CLIENTE', {
-      channel: 'Correo', recipient: 'cotizacion-002@example.test', evidence: 'Entrega confirmada',
+      channel: 'correo',
+      recipient: 'cotizacion-002@example.test',
+      subject: 'Cotización de servicios notariales',
+      messageBody: 'Se adjunta la cotización preparada para su revisión.',
+      deliveryMode: 'MANUAL_CONFIRMED',
+      evidence: 'Entrega confirmada manualmente por el usuario',
     });
     await actQuote(quoteId, 'INICIAR_SEGUIMIENTO');
-    await actQuote(quoteId, 'ACEPTAR');
+    const beforeAcceptance = await run(primary, () => quoteWorkflow.read(primary, quoteId));
+    await actQuote(quoteId, 'ACEPTAR', {
+      confirmedActIds: beforeAcceptance.acts.map((item: any) => item.id),
+      formalApplicantId,
+    });
     const accepted = await run(primary, () => quoteWorkflow.read(primary, quoteId));
     expect(accepted).toMatchObject({ stage: 'ACEPTADA' });
     expect(accepted.events.at(-1)).toMatchObject({ action: 'ACEPTAR', quoteVersion: { id: expect.any(String) } });
@@ -247,8 +308,8 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
     const operational = await run(primary, () => expedienteBudget.read(primary, first.expediente.id));
     expect(operational.quote_origin).toMatchObject({ quote_id: quoteId, quote_version_id: expect.any(String), immutable: true });
     expect(operational.concepts.map((item: any) => [item.concepto, item.categoria, item.importe])).toEqual([
-      ['Honorarios', 'HONORARIOS', '1000.00'],
-      ['Impuestos y derechos', 'IMPUESTOS_DERECHOS', '160.00'],
+      ['HONORARIOS', 'HONORARIOS', '1000.00'],
+      ['IMPUESTOS Y DERECHOS', 'IMPUESTOS_DERECHOS', '160.00'],
     ]);
     await run(primary, () => expedienteBudget.save(primary, first.expediente.id, {
       expected_version: operational.version,
@@ -267,6 +328,75 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
     ]);
     expect(await run(primary, () => quoteWorkflow.read(primary, quoteId))).toMatchObject({
       stage: 'CONVERTIDA_EXPEDIENTE', linkedCase: { id: first.expediente.id }, originProspect: { id: prospect.id },
+    });
+  }, 30_000);
+
+  it('Corrección 015 hereda múltiples actos, contexto, solicitante formal y avisos hasta el Expediente', async () => {
+    const created = await run(primary, () => service.create(primary, {
+      nombre: 'CLIENTE MULTIACTO C015',
+      email: 'multiacto@example.test',
+      necesidad: 'Operación con compraventa y poder general',
+      contexto_operacion: 'Adquisición financiada con representación mediante poder.',
+      tipo_acto_ids: [primaryActTypeId, secondaryActTypeId],
+    }, randomUUID()));
+    const prospect = created.prospecto;
+    await run(primary, () => service.update(primary, prospect.id, {
+      expectedVersion: 1,
+      honorarios_estimados: '1500.00',
+      impuestos_derechos_estimados: '240.00',
+      total_estimado: '1740.00',
+    }));
+    await act(prospect.id, 'COMENZAR_INTEGRACION');
+    await act(prospect.id, 'MARCAR_LISTO_PARA_COTIZAR');
+    const prospectConversion = await act(prospect.id, 'CONVERTIR');
+    const quoteId = prospectConversion.quoteId!;
+    const quote = await db.cotizacion.findUniqueOrThrow({ where: { id: quoteId }, include: { actos: { orderBy: { orden: 'asc' } } } });
+    expect(quote.contexto_operacion).toBe('ADQUISICIÓN FINANCIADA CON REPRESENTACIÓN MEDIANTE PODER.');
+    expect(quote.actos.map((item: any) => item.tipo_acto_id)).toEqual([primaryActTypeId, secondaryActTypeId]);
+    expect(await db.notification.count({ where: { organization_id: primary.organizationId, href: `/cotizaciones/${quoteId}` } })).toBe(1);
+    expect(await db.tarea.count({ where: { organization_id: primary.organizationId, idempotency_key: `PRO001:COTIZACION:${prospect.id}` } })).toBe(1);
+
+    await actQuote(quoteId, 'COMENZAR_ELABORACION');
+    await actQuote(quoteId, 'ENVIAR_CLIENTE', {
+      channel: 'correo', recipient: 'multiacto@example.test', cc: 'archivo@example.test',
+      subject: 'Cotización multiacto', messageBody: 'Cotización preparada para su revisión.',
+      deliveryMode: 'MANUAL_CONFIRMED', evidence: 'Envío manual confirmado por el usuario',
+    });
+    await actQuote(quoteId, 'INICIAR_SEGUIMIENTO');
+    const beforeAcceptance = await run(primary, () => quoteWorkflow.read(primary, quoteId));
+    await actQuote(quoteId, 'ACEPTAR', {
+      confirmedActIds: beforeAcceptance.acts.map((item: any) => item.id),
+      formalApplicantId,
+    });
+    const accepted = await run(primary, () => quoteWorkflow.read(primary, quoteId));
+    expect(accepted).toMatchObject({
+      stage: 'ACEPTADA',
+      formalApplicant: { id: formalApplicantId },
+      acts: [{ confirmed_at: expect.any(Date) }, { confirmed_at: expect.any(Date) }],
+    });
+
+    const conversion = await run(primary, () => quoteConversion.convert({
+      cotizacionId: quoteId,
+      actorUserId: primary.id,
+      actorOrganizationId: primary.organizationId,
+      actorSessionId: primary.sessionId,
+      actor: primary,
+      expectedVersion: accepted.version,
+      idempotencyKey: randomUUID(),
+      confirm: true,
+      effectiveAt: new Date().toISOString(),
+      tipoActoId: primaryActTypeId,
+    }));
+    expect(await db.expedienteActo.count({ where: { organization_id: primary.organizationId, expediente_id: conversion.expediente.id } })).toBe(2);
+    expect(await db.expedienteCompareciente.count({ where: {
+      organization_id: primary.organizationId,
+      expediente_id: conversion.expediente.id,
+      compareciente_id: formalApplicantId,
+      estatus: 'ACTIVO',
+    } })).toBe(2);
+    expect(await run(primary, () => quoteWorkflow.read(primary, quoteId))).toMatchObject({
+      stage: 'CONVERTIDA_EXPEDIENTE',
+      linkedCase: { id: conversion.expediente.id },
     });
   }, 30_000);
 

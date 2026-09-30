@@ -2,6 +2,7 @@ export const ROLE_LABELS = {
   DIRECCION: 'Dirección',
   ADMINISTRACION: 'Administración',
   ABOGADO: 'Abogado',
+  FINANCIERO: 'Financiero',
   RECEPCION: 'Recepción',
   GESTORIA: 'Gestoría',
   CONSULTA: 'Consulta',

@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { Document, Footer, Header, Packer, Paragraph, Table, TableCell, TableRow, TextRun } from 'docx';
 import JSZip from 'jszip';
-import { buildProjectDocumentContext, buildProjectTemplateData, detectProjectTemplateResidues, formatNotarialAmount, isDefaultProjectSource, projectTemplateFields, renderProjectTemplate, resolveAssignedProjectVersion, resolveProjectInstructions, reviewProjectAgainstTemplate } from './projectGeneration.service';
+import { buildLiteralProjectSources, buildProjectDocumentContext, buildProjectTemplateData, completeLiteralProjectPatchPlan, detectProjectTemplateResidues, docxVisibleText, formatNotarialAmount, isDefaultProjectSource, isRetryableLiteralProjectPlanError, ProjectGenerationError, projectTemplateFields, renderLiteralProjectTemplate, renderProjectTemplate, resolveAssignedProjectVersion, resolveProjectInstructions, reviewProjectAgainstTemplate, validateLiteralProjectPatches, verifyLiteralProjectTemplateIntegrity } from './projectGeneration.service';
+import { canonicalizeLiteralProjectPatchReferences } from './openaiDocument.service';
 
 async function template() {
   const buffer = await Packer.toBuffer(new Document({
@@ -22,6 +23,12 @@ async function template() {
 }
 
 describe('EXP-010 · motor DOCX sobre machote real', () => {
+  it('reintenta únicamente defectos corregibles del plan IA sin relajar integridad documental', () => {
+    expect(isRetryableLiteralProjectPlanError(new ProjectGenerationError(422, 'PROJECT_LITERAL_VALUE_WITHOUT_SOURCE', 'sin fuente'))).toBe(true);
+    expect(isRetryableLiteralProjectPlanError(new ProjectGenerationError(422, 'PROJECT_LITERAL_PATCH_NOT_FOUND', 'target inválido'))).toBe(true);
+    expect(isRetryableLiteralProjectPlanError(new ProjectGenerationError(422, 'PROJECT_TEMPLATE_STRUCTURE_CHANGED', 'estructura'))).toBe(false);
+    expect(isRetryableLiteralProjectPlanError(new Error('otro error'))).toBe(false);
+  });
   it('no preselecciona proyectos o reportes previos como fuente factual', () => {
     expect(isDefaultProjectSource({ tipo_vinculo: 'FUENTE_PROYECTO', source_context: 'PROYECTO_FUENTE_LITERAL', documento: { tipo: 'FUENTE_PROYECTO_QA' } })).toBe(true);
     expect(isDefaultProjectSource({ tipo_vinculo: 'PROYECTO_ESCRITURA', documento: { tipo: 'PROYECTO_ESCRITURA' } })).toBe(false);
@@ -29,6 +36,29 @@ describe('EXP-010 · motor DOCX sobre machote real', () => {
     expect(isDefaultProjectSource({ tipo_vinculo: 'EXP007_PRESUPUESTO', source_context: 'PRESUPUESTO', documento: { tipo: 'PRESUPUESTO' } })).toBe(false);
     expect(isDefaultProjectSource({ tipo_vinculo: 'IMPORT_PREDIO_001', source_context: 'PREDIO_IMPORT', documento: { tipo: 'OTRO' } })).toBe(false);
     expect(isDefaultProjectSource({ tipo_vinculo: 'DOCUMENTO', documento: { tipo: 'OTRO' } })).toBe(false);
+  });
+
+  it('conserva un DOC legacy no disponible como fuente trazable y exige revisión manual sin abortar la proyección', async () => {
+    const result = await buildLiteralProjectSources([{
+      documento_id: 'doc-legacy',
+      documento: {
+        nombre_original: 'PRIMER AVISO PREVENTIVO.doc',
+        mime_type: 'application/msword',
+        datos_extraidos: {},
+      },
+    }], async () => { throw Object.assign(new Error('missing local blob'), { code: 'ENOENT' }); });
+
+    expect(result.sources).toEqual([expect.objectContaining({
+      id: 'doc-legacy',
+      name: 'PRIMER AVISO PREVENTIVO.doc',
+      text: expect.stringContaining('FUENTE NO LEGIBLE'),
+    })]);
+    expect(result.observations).toEqual([expect.objectContaining({
+      kind: 'AI_PLANNER_MISSING',
+      field: 'FUENTE: PRIMER AVISO PREVENTIVO.doc',
+      document_id: 'doc-legacy',
+      detail: expect.stringMatching(/trazabilidad.*revisi[oó]n manual/i),
+    })]);
   });
 
   it('protege todas las mutaciones de Proyecto con RBAC de escritura', () => {
@@ -83,6 +113,10 @@ describe('EXP-010 · motor DOCX sobre machote real', () => {
     expect(controller).toContain('const inheritedLineage = projectTemplateLineage(projectMeta(previousActive?.documento))');
     expect(controller).toContain('supersedes_project_version_id: previousActive?.documento.id || null');
     expect(controller).toContain('loadProjectTemplateBaseline(req.user!.organizationId, id, vigente.id)');
+    expect(controller).toContain("tipoDocumento: 'MACHOTE_ORIGEN'");
+    expect(controller).toContain('nombreOriginal: templateBaseline.name');
+    const reviewService = readFileSync('src/services/openaiDocument.service.ts', 'utf8');
+    expect(reviewService).toContain("appendDocument(machoteOrigen, 'MACHOTE ORIGINAL — REFERENCIA ESTRUCTURAL, NO FUENTE FACTUAL')");
   });
 
   it('serializa la asignación de versión y no congela el nombre con una versión calculada fuera del lock', () => {
@@ -125,6 +159,142 @@ describe('EXP-010 · motor DOCX sobre machote real', () => {
     expect(await after.file('word/header1.xml')!.async('string')).toContain('Notaría de prueba');
     expect(await after.file('word/footer1.xml')!.async('string')).toContain('EXP-0001-2026');
     expect(rendered.pendingCount).toBe(0);
+  });
+
+  it('rechaza un machote visual sin campos PRAVIA para no producir una proyección falsa con residuos', async () => {
+    const source = await Packer.toBuffer(new Document({ sections: [{ children: [
+      new Paragraph('CLIENTE: ***************'),
+      new Paragraph('VALOR: $4,000,000.00'),
+    ] }] }));
+    await expect(renderProjectTemplate(source, {})).rejects.toMatchObject({
+      status: 422,
+      code: 'PROJECT_TEMPLATE_FIELDS_REQUIRED',
+    });
+  });
+
+  it('proyecta un machote literal mediante sustituciones trazables sin reconstruir el DOCX', async () => {
+    const source = await Packer.toBuffer(new Document({ sections: [{ children: [
+      new Paragraph('CLIENTE: PERSONA DEL EJEMPLO'),
+      new Paragraph('PRECIO: ***************'),
+      new Paragraph('CLÁUSULA PRIMERA.- El texto fijo permanece íntegro.'),
+    ] }] }));
+    const usage = { modelo: 'qa', input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_tokens: 0, total_tokens: 2, duracion_ms: 1, documentos_enviados: 1, costo_estimado_usd: 0, precios_version: 'qa', escalamiento_utilizado: false };
+    const rendered = await renderLiteralProjectTemplate(source, {
+      patches: [
+        { find: 'PERSONA DEL EJEMPLO', replace: 'PERSONA VIGENTE', source_references: ['CANONICAL_FACTS'], reason: 'Cliente canónico', confidence: 'ALTA' },
+        { find: '***************', replace: '[PENDIENTE: PRECIO ACREDITADO]', source_references: ['TEMPLATE_MISSING'], reason: 'No consta precio', confidence: 'MEDIA' },
+      ],
+      missing_fields: ['precio'], conflicts: [], possible_residues: [], usage, model: 'qa',
+    }, []);
+    const visible = await docxVisibleText(rendered.buffer);
+    expect(visible).toContain('CLIENTE: PERSONA VIGENTE');
+    expect(visible).toContain('[PENDIENTE: PRECIO ACREDITADO]');
+    expect(visible).toContain('CLÁUSULA PRIMERA.- El texto fijo permanece íntegro.');
+    expect(rendered.pendingCount).toBe(1);
+    const xml = await (await JSZip.loadAsync(rendered.buffer)).file('word/document.xml')!.async('string');
+    expect(xml).toContain('<w:highlight w:val="yellow"/>');
+  });
+
+  it('neutraliza todos los valores enmascarados y residuos reportados que la IA no pudo acreditar', () => {
+    const usage = { modelo: 'qa', input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_tokens: 0, total_tokens: 2, duracion_ms: 1, documentos_enviados: 1, costo_estimado_usd: 0, precios_version: 'qa', escalamiento_utilizado: false };
+    const completed = completeLiteralProjectPatchPlan({
+      patches: [{
+        find: 'OTORGANTE: NOMBRE ANTERIOR; RFC GACR8********9.',
+        replace: 'OTORGANTE: NOMBRE VIGENTE; RFC GACR8********9.',
+        target_paragraph_index: 3,
+        source_references: ['CANONICAL_FACTS'], reason: 'Nombre acreditado', confidence: 'ALTA',
+      }],
+      missing_fields: [], conflicts: [],
+      possible_residues: [{ value: 'NOMBRE ANTERIOR', location: 'otorgante', detail: 'Dato de ejemplo' }],
+      usage, model: 'qa',
+    }, [
+      { paragraph_index: 3, text: 'OTORGANTE: NOMBRE ANTERIOR; RFC GACR8********9.' },
+      { paragraph_index: 9, text: 'REGISTRO: ***************.' },
+      { paragraph_index: 10, text: 'CLÁUSULA FIJA SIN CAMBIOS.' },
+    ]);
+    expect(completed.patches).toHaveLength(2);
+    expect(completed.patches[0].replace).toBe('OTORGANTE: NOMBRE VIGENTE; RFC [PENDIENTE: DATO DEL MACHOTE POR ACREDITAR].');
+    expect(completed.patches[0].source_references).toEqual(['CANONICAL_FACTS', 'TEMPLATE_MISSING']);
+    expect(completed.patches[1]).toMatchObject({
+      find: 'REGISTRO: ***************.',
+      replace: 'REGISTRO: [PENDIENTE: DATO DEL MACHOTE POR ACREDITAR].',
+      target_paragraph_index: 9,
+      source_references: ['TEMPLATE_MISSING'],
+    });
+    expect(completed.missing_fields).toContain('datos variables del machote pendientes de acreditar');
+  });
+
+  it('rechaza sustituciones literales ambiguas o sin fuente cerrada', () => {
+    expect(() => validateLiteralProjectPatches('DATO DATO', { patches: [{ find: 'DATO', replace: 'VALOR', source_references: ['CANONICAL_FACTS'], reason: '', confidence: 'ALTA' }] }, []))
+      .toThrow(/texto único/);
+    expect(() => validateLiteralProjectPatches('DATO', { patches: [{ find: 'DATO', replace: 'VALOR', source_references: ['FUENTE_AJENA'], reason: '', confidence: 'ALTA' }] }, []))
+      .toThrow(/fuente cerrada/);
+  });
+
+  it('resuelve diferencias inocuas de espacios de Word a un objetivo literal único', () => {
+    const [patch] = validateLiteralProjectPatches(
+      'PRIMERO.  El señor\tJUAN PÉREZ acredita su identidad.',
+      { patches: [{ find: 'PRIMERO. El señor JUAN PÉREZ acredita su identidad.', replace: 'PRIMERO. El señor [PENDIENTE: NOMBRE] acredita su identidad.', source_references: ['TEMPLATE_MISSING'], reason: 'Dato faltante', confidence: 'ALTA' }] },
+      [],
+    );
+    expect(patch.find).toBe('PRIMERO.  El señor\tJUAN PÉREZ acredita su identidad.');
+  });
+
+  it('aplica una sustitución segura cuando Word conserva un espacio no separable', async () => {
+    const source = Buffer.from(await Packer.toBuffer(new Document({ sections: [{ children: [
+      new Paragraph('---INSTRUMENTO PUBLICO NUMERO: *************************.\u00a0'),
+    ] }] })));
+    const usage = { modelo: 'qa', input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_tokens: 0, total_tokens: 2, duracion_ms: 1, documentos_enviados: 1, costo_estimado_usd: 0, precios_version: 'qa', escalamiento_utilizado: false };
+    const rendered = await renderLiteralProjectTemplate(source, {
+      patches: [{ find: '---INSTRUMENTO PUBLICO NUMERO: *************************. ', replace: '---INSTRUMENTO PUBLICO NUMERO: [PENDIENTE: NÚMERO]. ', source_references: ['TEMPLATE_MISSING'], reason: 'Dato faltante', confidence: 'ALTA' }],
+      missing_fields: ['número'], conflicts: [], possible_residues: [], usage, model: 'qa',
+    }, []);
+    expect(await docxVisibleText(rendered.buffer)).toContain('[PENDIENTE: NÚMERO]');
+  });
+
+  it('canoniza únicamente referencias inequívocas del conjunto cerrado', () => {
+    const [patch] = canonicalizeLiteralProjectPatchReferences([{
+      find: 'A', replace: 'B', source_references: ['CANONICAL_FACTS.expediente', 'TEMPLATE_MISSING: folio', 'Identificación vigente'], reason: '', confidence: 'ALTA',
+    }], [{ id: 'doc-1', name: 'Identificación vigente' }]);
+    expect(patch.source_references).toEqual(['CANONICAL_FACTS', 'TEMPLATE_MISSING', 'doc-1']);
+  });
+
+  it('conserva la fuente acreditante y añade trazabilidad de faltante a reemplazos mixtos', () => {
+    const [patch] = canonicalizeLiteralProjectPatchReferences([{
+      find: 'VENDEDOR Y PRECIO', replace: 'VENDEDOR VIGENTE Y [PENDIENTE: PRECIO]', source_references: ['Documento base'], reason: '', confidence: 'ALTA',
+    }], [{ id: 'doc-base', name: 'Documento base' }]);
+    expect(patch.source_references).toEqual(['doc-base', 'TEMPLATE_MISSING']);
+  });
+
+  it('descarta etiquetas de fuente desconocidas sin perder una referencia cerrada válida', () => {
+    const [patch] = canonicalizeLiteralProjectPatchReferences([{
+      find: 'A', replace: 'B', source_references: ['Documento base', 'explicación libre no autorizada'], reason: '', confidence: 'ALTA',
+    }], [{ id: 'doc-base', name: 'Documento base' }]);
+    expect(patch.source_references).toEqual(['doc-base']);
+  });
+
+  it('descarta sustituciones vacías o sin cambio sin relajar las sustituciones efectivas', () => {
+    const patches = validateLiteralProjectPatches('DATO ORIGINAL', { patches: [
+      { find: '', replace: 'IGNORADO', source_references: ['CANONICAL_FACTS'], reason: '', confidence: 'ALTA' },
+      { find: 'SIN CAMBIO', replace: 'SIN CAMBIO', source_references: ['CANONICAL_FACTS'], reason: '', confidence: 'ALTA' },
+      { find: 'DATO ORIGINAL', replace: 'DATO VIGENTE', source_references: ['CANONICAL_FACTS'], reason: '', confidence: 'ALTA' },
+    ] }, []);
+    expect(patches).toHaveLength(1);
+    expect(patches[0].replace).toBe('DATO VIGENTE');
+  });
+
+  it('edita por índice físico un párrafo repetido elegido por ID cerrado', async () => {
+    const source = Buffer.from(await Packer.toBuffer(new Document({ sections: [{ children: [
+      new Paragraph('DATO REPETIDO'),
+      new Paragraph('DATO REPETIDO'),
+    ] }] })));
+    const usage = { modelo: 'qa', input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_tokens: 0, total_tokens: 2, duracion_ms: 1, documentos_enviados: 1, costo_estimado_usd: 0, precios_version: 'qa', escalamiento_utilizado: false };
+    const rendered = await renderLiteralProjectTemplate(source, {
+      patches: [{ find: 'DATO REPETIDO', replace: 'DATO SEGUNDO', target_paragraph_index: 1, source_references: ['CANONICAL_FACTS'], reason: '', confidence: 'ALTA' }],
+      missing_fields: [], conflicts: [], possible_residues: [], usage, model: 'qa',
+    }, []);
+    expect((await docxVisibleText(rendered.buffer)).split('DATO REPETIDO')).toHaveLength(2);
+    expect(await docxVisibleText(rendered.buffer)).toContain('DATO SEGUNDO');
   });
 
   it('deja el faltante en su ubicación exacta y lo resalta en amarillo', async () => {
@@ -191,6 +361,32 @@ describe('EXP-010 · motor DOCX sobre machote real', () => {
     const defective = await zip.generateAsync({ type: 'nodebuffer' });
     const observations = await reviewProjectAgainstTemplate(defective, source, '1234.50', 'Machote QA');
     expect(observations.map((item) => item.tipo_discrepancia)).toEqual(['CANTIDAD_FORMAL', 'ESTILO_ESTRUCTURA']);
+  });
+
+  it('acredita cláusulas y texto fijo sólo cuando cada párrafo no autorizado conserva posición, texto y estilo', async () => {
+    const source = await Packer.toBuffer(new Document({ sections: [{ children: [
+      new Paragraph({ children: [new TextRun({ text: 'CLÁUSULA PRIMERA. TEXTO FIJO', bold: true })] }),
+      new Paragraph('OTORGANTE: NOMBRE DEL MACHOTE'),
+      new Paragraph('CLÁUSULA SEGUNDA. TEXTO FIJO'),
+    ] }] }));
+    const rendered = await renderLiteralProjectTemplate(source, {
+      model: 'qa', usage: undefined, missing_fields: [], conflicts: [], possible_residues: [],
+      patches: [{
+        find: 'NOMBRE DEL MACHOTE', replace: 'PERSONA ACREDITADA', target_paragraph_index: 1,
+        source_references: ['CANONICAL_FACTS'], reason: 'Dato acreditado', confidence: 'ALTA',
+      }],
+    }, []);
+    const integrity = await verifyLiteralProjectTemplateIntegrity(rendered.buffer, source, ['NOMBRE DEL MACHOTE']);
+    expect(integrity.status).toBe('PASS');
+    expect(integrity.authorizedParagraphs).toBe(1);
+
+    const zip = await JSZip.loadAsync(rendered.buffer);
+    const document = zip.file('word/document.xml')!;
+    zip.file('word/document.xml', (await document.async('string')).replace('CLÁUSULA SEGUNDA. TEXTO FIJO', 'CLÁUSULA SUPRIMIDA'));
+    const defective = await zip.generateAsync({ type: 'nodebuffer' });
+    const rejected = await verifyLiteralProjectTemplateIntegrity(defective, source, ['NOMBRE DEL MACHOTE']);
+    expect(rejected.status).toBe('FAIL');
+    expect(rejected.reasons.join(' ')).toMatch(/texto fijo fue modificado/i);
   });
 
   it('serializa comparecientes, predios y actos como texto jurídico legible', () => {

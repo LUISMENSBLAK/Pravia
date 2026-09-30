@@ -8,7 +8,7 @@ export default defineConfig({
   workers: 1,
   reporter: [['list']],
   use: {
-    baseURL: 'http://127.0.0.1:4173',
+    baseURL: process.env.PRAVIA_E2E_BASE_URL || 'http://127.0.0.1:4173',
     browserName: 'chromium',
     actionTimeout: 15_000,
     navigationTimeout: 30_000,
@@ -16,5 +16,5 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',
   },
-  outputDir: 'test-results/corrections-003v2-007',
+  outputDir: process.env.PRAVIA_E2E_OUTPUT_DIR || 'test-results/local-chrome',
 });

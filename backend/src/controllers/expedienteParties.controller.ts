@@ -24,6 +24,13 @@ export async function getExpedientePartyCatalogs(req: Request, res: Response) {
   try { return res.json(await service.catalogs(actor(req), req.params.id)); } catch (error) { return handle(error, res); }
 }
 
+export async function createExpedientePartyRole(req: Request, res: Response) {
+  try {
+    const result = await service.createTenantRole(actor(req), req.params.id, req.body || {});
+    return res.status(result.created ? 201 : 200).json(result);
+  } catch (error) { return handle(error, res); }
+}
+
 export async function previewExpedientePartyChange(req: Request, res: Response) {
   try { return res.json(await service.preview(actor(req), req.params.id, req.body)); } catch (error) { return handle(error, res); }
 }

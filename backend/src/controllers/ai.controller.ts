@@ -8,7 +8,9 @@ import { AssistantConversationError, assistantConversationService } from '../ser
 import { AssistantTranscriptionError, transcribeAssistantAudio } from '../services/assistantTranscription.service';
 import { recordAIFailure, recordAIUsages } from '../services/aiUsage.service';
 import { logAudit } from '../utils/auditLogger';
-import { AssistantActionError, assistantActionCatalog, cancelAssistantConfirmation, confirmAssistantAction } from '../services/assistantActions.service';
+import { AssistantActionError, assistantActionCatalog, cancelAssistantConfirmation, confirmAssistantAction, prepareOrExecuteAssistantAction } from '../services/assistantActions.service';
+import { AssistantMemoryError, assistantMemoryService } from '../services/assistantMemory.service';
+import { AssistantAlertError, assistantAlertService } from '../services/assistantAlert.service';
 
 const asNumber = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : 0;
 
@@ -22,6 +24,44 @@ function periodStart(value: unknown) {
 }
 
 export class AIController {
+  static async listMemories(req: Request, res: Response) {
+    try {
+      if (!req.user) return res.status(401).json({ success: false, code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
+      return res.json({ success: true, data: await assistantMemoryService.list(req.user, req.query as any) });
+    } catch (error: any) { const status = error instanceof AssistantMemoryError ? error.status : 500; return res.status(status).json({ success: false, code: error?.code || 'AI_MEMORY_FAILED', error: status >= 500 ? 'No fue posible consultar la memoria controlada.' : error.message }); }
+  }
+
+  static async proposeMemory(req: Request, res: Response) {
+    try {
+      if (!req.user) return res.status(401).json({ success: false, code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
+      return res.status(201).json({ success: true, data: await assistantMemoryService.propose(req.user, req.body || {}) });
+    } catch (error: any) { const status = error instanceof AssistantMemoryError ? error.status : 500; return res.status(status).json({ success: false, code: error?.code || 'AI_MEMORY_FAILED', error: status >= 500 ? 'No fue posible registrar la propuesta de memoria.' : error.message }); }
+  }
+
+  static async decideMemory(req: Request, res: Response) {
+    try {
+      if (!req.user) return res.status(401).json({ success: false, code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
+      return res.json({ success: true, data: await assistantMemoryService.decide(req.user, req.params.memoryId, req.body?.approved === true) });
+    } catch (error: any) { const status = error instanceof AssistantMemoryError ? error.status : 500; return res.status(status).json({ success: false, code: error?.code || 'AI_MEMORY_FAILED', error: status >= 500 ? 'No fue posible revisar la memoria.' : error.message }); }
+  }
+
+  static async listAlerts(req: Request, res: Response) {
+    try {
+      if (!req.user) return res.status(401).json({ success: false, code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
+      return res.json({ success: true, data: await assistantAlertService.list(req.user) });
+    } catch { return res.status(500).json({ success: false, code: 'AI_ALERT_FAILED', error: 'No fue posible consultar el centro de acciones.' }); }
+  }
+
+  static async transitionAlert(req: Request, res: Response) {
+    try {
+      if (!req.user) return res.status(401).json({ success: false, code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
+      const action = String(req.body?.action || '').toUpperCase() as 'ACKNOWLEDGE' | 'SNOOZE' | 'RESOLVE';
+      if (!['ACKNOWLEDGE', 'SNOOZE', 'RESOLVE'].includes(action)) return res.status(400).json({ success: false, code: 'AI_ALERT_ACTION_INVALID', error: 'La acción de alerta no es válida.' });
+      const until = req.body?.snoozed_until ? new Date(req.body.snoozed_until) : undefined;
+      return res.json({ success: true, data: await assistantAlertService.transition(req.user, req.params.alertId, action, until) });
+    } catch (error: any) { const status = error instanceof AssistantAlertError ? error.status : 500; return res.status(status).json({ success: false, code: error?.code || 'AI_ALERT_FAILED', error: status >= 500 ? 'No fue posible actualizar la alerta.' : error.message }); }
+  }
+
   static async message(req: Request, res: Response) {
     let conversationId = '';
     try {
@@ -72,6 +112,8 @@ export class AIController {
           timezone: preference?.timezone,
           conversationId: conversation.id,
           messageId: userMessage.message.id,
+          attachmentIds: Array.isArray(req.body?.attachmentIds) ? req.body.attachmentIds.map(String).slice(0, 6) : undefined,
+          attachmentFacts: attachmentData.facts,
           actionState: actionState?.status === 'COLLECTING' || actionState?.status === 'AWAITING_CONFIRMATION' ? actionState : undefined,
         },
         req.user,
@@ -256,6 +298,39 @@ export class AIController {
     } catch (error: any) {
       const status = error instanceof AssistantActionError ? error.status : 500;
       return res.status(status).json({ success: false, code: error?.code || 'AI_CONFIRMATION_FAILED', error: status >= 500 ? 'No pude completar la acción. No hice cambios adicionales.' : error.message });
+    }
+  }
+
+  static async collectPreparedAction(req: Request, res: Response) {
+    try {
+      if (!req.user) return res.status(401).json({ success: false, code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
+      const conversationId = String(req.body?.conversationId || '').trim();
+      const actionKey = String(req.body?.actionKey || '').trim();
+      if (!conversationId || !actionKey) return res.status(400).json({ success: false, code: 'AI_COLLECTION_REFERENCE_REQUIRED', error: 'No se encontró el formulario operativo.' });
+      const userMessage = await assistantConversationService.addUserMessage(req.user, conversationId, {
+        content: `Completé los datos solicitados para: ${actionKey}`,
+        clientMessageId: String(req.body?.clientMessageId || crypto.randomUUID()),
+        context: req.body?.context,
+      });
+      const reply = await prepareOrExecuteAssistantAction({
+        actor: req.user,
+        conversationId,
+        messageId: userMessage.message.id,
+        actionKey,
+        args: req.body?.args || {},
+        context: req.body?.context,
+        correlationId: req.correlationId || crypto.randomUUID(),
+        origin: 'USER_COMMAND',
+      });
+      const assistantMessage = await assistantConversationService.addAssistantMessage(req.user, conversationId, {
+        content: reply.message,
+        promptVersion: 'assistant-dynamic-form-v1',
+        inReplyToMessageId: userMessage.message.id,
+      });
+      return res.json({ ...reply, conversationId, messageId: assistantMessage.id });
+    } catch (error: any) {
+      const status = error instanceof AssistantActionError || error instanceof AssistantConversationError ? error.status : 500;
+      return res.status(status).json({ success: false, code: error?.code || 'AI_COLLECTION_FAILED', error: status >= 500 ? 'No pude procesar el formulario operativo.' : error.message });
     }
   }
 

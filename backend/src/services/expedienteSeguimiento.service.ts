@@ -91,6 +91,46 @@ export const operationalDaysBetween = (from: Date, to: Date, type: Configuracion
   return count;
 };
 
+const utcDay = (value: Date) => new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
+
+export const formatRemainingBusinessDays = (startedAt: Date | null | undefined, duration: number, now = new Date()) => {
+  if (!startedAt) return { value: null, due: null, label: '—', overdue: false };
+  const normalizedDuration = Math.max(0, Math.trunc(duration));
+  const start = utcDay(startedAt);
+  const due = addOperationalDays(start, normalizedDuration, 'HABILES');
+  const today = utcDay(now);
+  const remaining = normalizedDuration - operationalDaysBetween(start, today, 'HABILES');
+  if (remaining > 0) return { value: remaining, due, label: `${remaining} ${remaining === 1 ? 'DÍA' : 'DÍAS'}`, overdue: false };
+  if (remaining === 0) return { value: 0, due, label: 'HOY', overdue: false };
+  const overdue = Math.abs(remaining);
+  return { value: remaining, due, label: `${overdue} ${overdue === 1 ? 'DÍA VENCIDO' : 'DÍAS VENCIDO'}`, overdue: true };
+};
+
+const canonicalProcessKey = (masterId: string, scope: 'EXPEDIENTE' | 'ACTO' | 'INMUEBLE', referenceId: string) =>
+  `PROCESS:${masterId}${scope === 'INMUEBLE' ? `:PROPERTY:${referenceId}` : ''}`;
+
+const topologicalOrder = <T extends { id: string; etapa_orden_snapshot: number; orden_operativo: number; created_at: Date }>(rows: T[], dependencies: Array<{ actividad_id: string; depende_actividad_id: string; bloqueante: boolean }>) => {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const incoming = new Map(rows.map((row) => [row.id, 0]));
+  const outgoing = new Map<string, string[]>();
+  dependencies.filter((dep) => dep.bloqueante && byId.has(dep.actividad_id) && byId.has(dep.depende_actividad_id)).forEach((dep) => {
+    incoming.set(dep.actividad_id, (incoming.get(dep.actividad_id) || 0) + 1);
+    outgoing.set(dep.depende_actividad_id, [...(outgoing.get(dep.depende_actividad_id) || []), dep.actividad_id]);
+  });
+  const compare = (left: T, right: T) => left.etapa_orden_snapshot - right.etapa_orden_snapshot
+    || left.orden_operativo - right.orden_operativo || left.created_at.getTime() - right.created_at.getTime() || left.id.localeCompare(right.id);
+  const queue = rows.filter((row) => incoming.get(row.id) === 0).sort(compare);
+  const ordered: T[] = [];
+  while (queue.length) {
+    const current = queue.shift()!; ordered.push(current);
+    for (const target of outgoing.get(current.id) || []) {
+      incoming.set(target, (incoming.get(target) || 0) - 1);
+      if (incoming.get(target) === 0) { queue.push(byId.get(target)!); queue.sort(compare); }
+    }
+  }
+  return ordered.length === rows.length ? ordered : [...rows].sort(compare);
+};
+
 const institutionIdsFrom = (value: unknown, path = ''): string[] => {
   if (!value || typeof value !== 'object') return [];
   if (Array.isArray(value)) return value.flatMap((item, index) => institutionIdsFrom(item, `${path}.${index}`));
@@ -115,10 +155,14 @@ export class ExpedienteSeguimientoService {
 
   async read(actor: Actor, expedienteId: string) {
     const expediente = await this.assertExpediente(this.prisma, actor, expedienteId);
-    const [activities, dependencies, acts, responsibleUsers] = await Promise.all([
+    const [activities, origins, dependencies, acts, responsibleUsers] = await Promise.all([
       this.prisma.expedienteSeguimientoActividad.findMany({
         where: { organization_id: actor.organizationId, expediente_id: expedienteId },
         orderBy: [{ etapa_orden_snapshot: 'asc' }, { created_at: 'asc' }],
+      }),
+      this.prisma.expedienteSeguimientoOrigen.findMany({
+        where: { organization_id: actor.organizationId, expediente_id: expedienteId },
+        orderBy: [{ created_at: 'asc' }, { id: 'asc' }],
       }),
       this.prisma.expedienteSeguimientoDependencia.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId } }),
       this.prisma.expedienteActo.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId }, include: { tipo_acto: { select: { nombre: true } } } }),
@@ -132,6 +176,8 @@ export class ExpedienteSeguimientoService {
     dependencies.forEach((dep) => depsByActivity.set(dep.actividad_id, [...(depsByActivity.get(dep.actividad_id) || []), dep]));
     const now = new Date();
     const users = new Map(responsibleUsers.filter((item) => item.user.activo).map((item) => [item.user.id, item.user]));
+    const originsByActivity = new Map<string, typeof origins>();
+    origins.forEach((origin) => originsByActivity.set(origin.actividad_id, [...(originsByActivity.get(origin.actividad_id) || []), origin]));
     const decorated = activities.map((item) => {
       const deps = depsByActivity.get(item.id) || [];
       const blockers = deps.filter((dep) => dep.bloqueante && !isDependencySatisfied(byId.get(dep.depende_actividad_id)?.estado))
@@ -140,12 +186,15 @@ export class ExpedienteSeguimientoService {
       const override = item.excepcion_operativa && typeof item.excepcion_operativa === 'object' && !Array.isArray(item.excepcion_operativa)
         ? item.excepcion_operativa as Record<string, any> : {};
       const effectiveDuration = Number.isInteger(override.duracion_estimada) ? override.duracion_estimada : item.duracion_estimada;
-      const effectiveDayType = ['HABILES', 'NATURALES'].includes(override.tipo_dias) ? override.tipo_dias as ConfiguracionTipoDias : item.tipo_dias;
+      const effectiveDayType: ConfiguracionTipoDias = 'HABILES';
       const effectiveMargin = Number.isInteger(override.margen_seguridad) ? override.margen_seguridad : item.margen_seguridad;
       const end = item.fecha_completada_actual || now;
       const elapsed = item.primera_fecha_inicio ? operationalDaysBetween(item.primera_fecha_inicio, end, effectiveDayType) : 0;
       const due = item.primera_fecha_inicio ? addOperationalDays(item.primera_fecha_inicio, effectiveDuration, effectiveDayType) : null;
       const marginEnd = due ? addOperationalDays(due, effectiveMargin, effectiveDayType) : null;
+      const remaining = effectiveState === 'BLOQUEADO' || terminal.has(item.estado)
+        ? { value: null, due: null, label: '—', overdue: false }
+        : formatRemainingBusinessDays(item.primera_fecha_inicio, effectiveDuration, now);
       return {
         ...item,
         estado_efectivo: effectiveState,
@@ -158,6 +207,14 @@ export class ExpedienteSeguimientoService {
           estado: byId.get(dep.depende_actividad_id)?.estado || 'NO_INICIADO',
         })),
         bloqueada_por: blockers.map((blocker) => ({ id: blocker.id, nombre: blocker.actividad_nombre_snapshot, estado: blocker.estado })),
+        actos_origen: (originsByActivity.get(item.id) || []).filter((origin) => origin.en_alcance).map((origin) => ({
+          expediente_acto_id: origin.expediente_acto_id, tipo_acto_id: origin.tipo_acto_id,
+          duracion_configurada: origin.duracion_configurada, tipo_dias_configurado: origin.tipo_dias_configurado,
+          configuracion_revision: origin.configuracion_revision,
+        })),
+        dias_restantes: remaining,
+        fecha_cumplimiento: item.fecha_completada_actual,
+        estatus_presentacion: effectiveState === 'BLOQUEADO' ? 'PENDIENTE' : item.estado === 'COMPLETADO' ? 'REALIZADO' : item.estado === 'NO_APLICA' ? 'NO_APLICA' : 'REALIZAR',
         tiempo: {
           estimado: effectiveDuration, tipo_dias: effectiveDayType, margen: effectiveMargin,
           transcurrido: elapsed, fecha_objetivo: due, limite_margen: marginEnd,
@@ -197,6 +254,7 @@ export class ExpedienteSeguimientoService {
       fecha_firma_manual: expediente.fecha_real_firma || expediente.fecha_estimada_firma,
       firma: { programada: expediente.fecha_estimada_firma, efectiva: expediente.fecha_real_firma, snapshot_canonico: expediente.estatus === 'FIRMADO' || expediente.estatus === 'POST_FIRMA' || expediente.estatus === 'LISTO_ENTREGA' || expediente.estatus === 'ENTREGADO' },
       entrega: { completada: expediente.estatus === 'ENTREGADO', fecha: expediente.fecha_entrega_cliente, alertas_operativas_activas: expediente.estatus !== 'ENTREGADO' },
+      procesos: topologicalOrder(decorated.filter((item) => item.en_alcance && item.estado !== 'NO_APLICA'), dependencies),
       actos: grouped,
       responsables: [...users.values()],
       proyeccion: {
@@ -235,12 +293,19 @@ export class ExpedienteSeguimientoService {
       const identity = `EXTRA:${randomUUID()}`;
       const item = await tx.expedienteSeguimientoActividad.create({ data: {
         organization_id: actor.organizationId, expediente_id: expedienteId, expediente_acto_id: act.id, tipo_acto_id: act.tipo_acto_id,
-        identidad_instancia: identity, etapa_nombre_snapshot: 'Extraordinarias', etapa_orden_snapshot: 999,
+        proceso_clave: identity, identidad_instancia: identity, etapa_nombre_snapshot: 'Extraordinarias', etapa_orden_snapshot: 999,
         actividad_nombre_snapshot: name, actividad_descripcion_snapshot: clean(input.descripcion, 600) || null,
         duracion_estimada: duration, tipo_dias: input.tipo_dias === 'NATURALES' ? 'NATURALES' : 'HABILES', margen_seguridad: margin,
         responsable_id: input.responsable_id || null, responsable_default_id: input.responsable_id || null,
         naturaleza_snapshot: input.naturaleza || 'INTERNA', fuente_tiempo_snapshot: 'OVERRIDE_ACTO', alcance_instancia: input.alcance_instancia || 'ACTO',
         alcance_referencia_id: input.alcance_referencia_id || act.id, extraordinaria: true, orden_operativo: Number.isInteger(input.orden_operativo) ? input.orden_operativo : 0,
+      } });
+      await tx.expedienteSeguimientoOrigen.create({ data: {
+        organization_id: actor.organizationId, expediente_id: expedienteId, actividad_id: item.id,
+        expediente_acto_id: act.id, tipo_acto_id: act.tipo_acto_id, origen_clave: `${act.id}:${identity}`,
+        alcance_instancia: item.alcance_instancia, alcance_referencia_id: item.alcance_referencia_id,
+        duracion_configurada: item.duracion_estimada, tipo_dias_configurado: item.tipo_dias,
+        margen_configurado: item.margen_seguridad, fuente_tiempo_snapshot: item.fuente_tiempo_snapshot,
       } });
       await tx.expedienteSeguimientoHistorial.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, actividad_id: item.id, actor_user_id: actor.id, estado_anterior: null, estado_nuevo: item.estado, version_nueva: item.version, razon: clean(input.razon) || 'Actividad extraordinaria creada.', detalles: json({ extraordinary: true, master_mutated: false }) } });
       await tx.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: 'EXP005_CREATE_EXTRAORDINARY_ACTIVITY', entidad: 'ExpedienteSeguimientoActividad', entidad_id: item.id, valores_nuevos: json({ name, extraordinary: true, cfg001_unchanged: true }), session_id: actor.sessionId } });
@@ -327,9 +392,6 @@ export class ExpedienteSeguimientoService {
     let created = 0; let existing = 0; let reviewRequired = 0;
     for (const act of expediente.actos) {
       const config: any = byType.get(act.tipo_acto_id); if (!config) continue;
-      const existingIdentities = new Set((await tx.expedienteSeguimientoActividad.findMany({
-        where: { organization_id: actor.organizationId, expediente_acto_id: act.id }, select: { identidad_instancia: true },
-      })).map((item) => item.identidad_instancia));
       type MaterializedInstance = { id: string; scope: 'EXPEDIENTE' | 'ACTO' | 'INMUEBLE'; referenceId: string };
       const instancesByMaster = new Map<string, MaterializedInstance[]>();
       for (const stage of config.etapas) for (const activity of stage.actividades) {
@@ -353,18 +415,19 @@ export class ExpedienteSeguimientoService {
           const initialState: SeguimientoActividadEstado = activity.aplica_por_defecto && applies ? 'NO_INICIADO' : 'NO_APLICA';
           const masterIdentity = activity.concepto_maestro_id || activity.id;
           const identity = scope.scope === 'ACTO' ? `ACT:${masterIdentity}` : `${scope.scope}:${masterIdentity}:${scope.referenceId}`;
-          const existingRow = scope.scope === 'EXPEDIENTE'
-            ? await tx.expedienteSeguimientoActividad.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expediente.id, identidad_instancia: identity } })
-            : await tx.expedienteSeguimientoActividad.findUnique({ where: { organization_id_expediente_acto_id_identidad_instancia: { organization_id: actor.organizationId, expediente_acto_id: act.id, identidad_instancia: identity } } });
+          const processKey = canonicalProcessKey(masterIdentity, scope.scope, scope.referenceId);
+          const existingRow = await tx.expedienteSeguimientoActividad.findUnique({
+            where: { organization_id_expediente_id_proceso_clave: { organization_id: actor.organizationId, expediente_id: expediente.id, proceso_clave: processKey } },
+          });
           const row = existingRow || await tx.expedienteSeguimientoActividad.create({ data: {
             organization_id: actor.organizationId, expediente_id: expediente.id, expediente_acto_id: act.id, tipo_acto_id: act.tipo_acto_id,
             configuracion_acto_id: config.id, configuracion_revision: config.revision, etapa_maestra_id: stage.id,
             actividad_maestra_id: activity.id, concepto_maestro_id: activity.concepto_maestro_id, concepto_revision: activity.concepto_revision,
-            identidad_instancia: identity, etapa_nombre_snapshot: stage.nombre, etapa_orden_snapshot: stage.orden,
+            proceso_clave: processKey, identidad_instancia: identity, etapa_nombre_snapshot: stage.nombre, etapa_orden_snapshot: stage.orden,
             actividad_nombre_snapshot: activity.nombre, actividad_descripcion_snapshot: activity.descripcion,
             naturaleza_snapshot: activity.naturaleza, fuente_tiempo_snapshot: activity.fuente_tiempo, alcance_instancia: scope.scope, alcance_referencia_id: scope.referenceId,
             grupo_paralelo_snapshot: activity.grupo_paralelo, orden_operativo: activity.orden_operativo, condicion_snapshot: activity.condicion_json,
-            duracion_estimada: resolved.duration, tipo_dias: resolved.day_type, margen_seguridad: resolved.safety_margin,
+            duracion_estimada: resolved.duration, tipo_dias: 'HABILES', margen_seguridad: resolved.safety_margin,
             responsable_rol_snapshot: activity.responsable_rol, responsable_default_id: defaultResponsible,
             responsable_id: defaultResponsible, aplica_por_defecto: activity.aplica_por_defecto,
             excepcion_maestra_id: resolved.exception?.id || null, excepciones_coincidentes: json(resolved.matching_exception_ids),
@@ -372,7 +435,30 @@ export class ExpedienteSeguimientoService {
             requiere_revision: resolved.status === 'REVIEW_REQUIRED',
             motivo_revision: resolved.status === 'REVIEW_REQUIRED' ? 'Coinciden excepciones incompatibles de CFG-001; requiere decisión humana.' : null,
           } });
-        const wasCreated = !existingIdentities.has(identity) && !existingRow;
+        if (existingRow) await tx.expedienteSeguimientoActividad.update({ where: { id: existingRow.id }, data: {
+          duracion_estimada: Math.max(existingRow.duracion_estimada, resolved.duration),
+          margen_seguridad: Math.max(existingRow.margen_seguridad, resolved.safety_margin),
+          tipo_dias: 'HABILES', en_alcance: existingRow.en_alcance || initialState !== 'NO_APLICA',
+          etapa_orden_snapshot: Math.min(existingRow.etapa_orden_snapshot, stage.orden),
+          orden_operativo: Math.min(existingRow.orden_operativo, activity.orden_operativo),
+          requiere_revision: existingRow.requiere_revision || resolved.status === 'REVIEW_REQUIRED',
+          ...(existingRow.responsable_id ? {} : { responsable_id: defaultResponsible, responsable_default_id: defaultResponsible }),
+        } });
+        const originKey = `${act.id}:${activity.id}:${scope.scope}:${scope.referenceId}`;
+        await tx.expedienteSeguimientoOrigen.upsert({
+          where: { organization_id_actividad_id_origen_clave: { organization_id: actor.organizationId, actividad_id: row.id, origen_clave: originKey } },
+          update: { en_alcance: true },
+          create: {
+            organization_id: actor.organizationId, expediente_id: expediente.id, actividad_id: row.id,
+            expediente_acto_id: act.id, tipo_acto_id: act.tipo_acto_id, origen_clave: originKey,
+            configuracion_acto_id: config.id, configuracion_revision: config.revision,
+            actividad_maestra_id: activity.id, concepto_maestro_id: activity.concepto_maestro_id,
+            alcance_instancia: scope.scope, alcance_referencia_id: scope.referenceId,
+            duracion_configurada: resolved.duration, tipo_dias_configurado: resolved.day_type,
+            margen_configurado: resolved.safety_margin, fuente_tiempo_snapshot: activity.fuente_tiempo,
+          },
+        });
+        const wasCreated = !existingRow;
         if (wasCreated) {
           created += 1;
           await tx.expedienteSeguimientoHistorial.create({ data: {
@@ -430,16 +516,27 @@ export class ExpedienteSeguimientoService {
         for (const [index, definition] of definitions.entries()) {
           if (!definition || typeof definition !== 'object' || !clean(definition.name)) continue;
           const identity = `LEGAL:${result.id}:${codeForOperationalIdentity(definition.code || index)}`;
-          await tx.expedienteSeguimientoActividad.upsert({ where: { organization_id_expediente_acto_id_identidad_instancia: { organization_id: actor.organizationId, expediente_acto_id: act.id, identidad_instancia: identity } }, update: {}, create: {
+          const legalActivity = await tx.expedienteSeguimientoActividad.upsert({ where: { organization_id_expediente_id_proceso_clave: { organization_id: actor.organizationId, expediente_id: expedienteId, proceso_clave: identity } }, update: {}, create: {
             organization_id: actor.organizationId, expediente_id: expedienteId, expediente_acto_id: act.id, tipo_acto_id: act.tipo_acto_id,
-            identidad_instancia: identity, etapa_nombre_snapshot: clean(definition.stage) || 'Cumplimiento', etapa_orden_snapshot: 800,
+            proceso_clave: identity, identidad_instancia: identity, etapa_nombre_snapshot: clean(definition.stage) || 'Cumplimiento', etapa_orden_snapshot: 800,
             actividad_nombre_snapshot: clean(definition.name), actividad_descripcion_snapshot: clean(definition.description) || null,
             duracion_estimada: Number.isInteger(definition.duration) && definition.duration >= 0 ? definition.duration : 0,
-            tipo_dias: definition.day_type === 'NATURALES' ? 'NATURALES' : 'HABILES', margen_seguridad: Number.isInteger(definition.margin) && definition.margin >= 0 ? definition.margin : 0,
+            tipo_dias: 'HABILES', margen_seguridad: Number.isInteger(definition.margin) && definition.margin >= 0 ? definition.margin : 0,
             naturaleza_snapshot: definition.nature || 'REQUISITO_PREVIO_A_HITO', fuente_tiempo_snapshot: 'REGLA_JURIDICA',
             alcance_instancia: 'ACTO', alcance_referencia_id: act.id, orden_operativo: index + 1,
             condicion_snapshot: json({ compliance_rule_result_id: result.id, rule_revision_id: result.rule_revision_id }),
           } });
+          await tx.expedienteSeguimientoOrigen.upsert({
+            where: { organization_id_actividad_id_origen_clave: { organization_id: actor.organizationId, actividad_id: legalActivity.id, origen_clave: `${act.id}:${identity}` } },
+            update: { en_alcance: true },
+            create: {
+              organization_id: actor.organizationId, expediente_id: expedienteId, actividad_id: legalActivity.id,
+              expediente_acto_id: act.id, tipo_acto_id: act.tipo_acto_id, origen_clave: `${act.id}:${identity}`,
+              alcance_instancia: 'ACTO', alcance_referencia_id: act.id,
+              duracion_configurada: legalActivity.duracion_estimada, tipo_dias_configurado: definition.day_type === 'NATURALES' ? 'NATURALES' : 'HABILES',
+              margen_configurado: legalActivity.margen_seguridad, fuente_tiempo_snapshot: 'REGLA_JURIDICA',
+            },
+          });
         }
       }
     }
@@ -467,7 +564,7 @@ export class ExpedienteSeguimientoService {
       if (input.estado && ['EN_PROCESO', 'EN_ESPERA_EXTERNA', 'COMPLETADO'].includes(input.estado) && blockers.length) throw new ExpedienteSeguimientoError(409, 'EXP005_DEPENDENCY_BLOCKED', `Completa primero: ${blockers.map((item) => item.actividad_nombre_snapshot).join(', ')}.`);
       if (current.estado === 'COMPLETADO' && input.estado && input.estado !== 'COMPLETADO') throw new ExpedienteSeguimientoError(409, 'EXP005_REOPEN_REQUIRED', 'Usa la acción Reabrir para conservar la trazabilidad.');
       const allowed: Record<string, string[]> = {
-        NO_INICIADO: ['EN_PROCESO', 'NO_APLICA'], BLOQUEADO: ['NO_APLICA'],
+        NO_INICIADO: ['EN_PROCESO', 'COMPLETADO', 'NO_APLICA'], BLOQUEADO: ['NO_APLICA'],
         EN_PROCESO: ['EN_ESPERA_EXTERNA', 'COMPLETADO', 'NO_APLICA'],
         EN_ESPERA_EXTERNA: ['EN_PROCESO', 'COMPLETADO', 'NO_APLICA'],
         NO_APLICA: [], COMPLETADO: [],
@@ -491,7 +588,8 @@ export class ExpedienteSeguimientoService {
       });
       if (updated.count !== 1) throw new ExpedienteSeguimientoError(409, 'EXP005_ACTIVITY_STALE', 'La actividad cambió. Recarga antes de guardar.');
       const next = await tx.expedienteSeguimientoActividad.findUniqueOrThrow({ where: { id: activityId } });
-      await this.recordChange(tx, actor, current, next, clean(input.razon), correlationId, input);
+      const reason = clean(input.razon) || (nextState === 'COMPLETADO' ? 'Proceso realizado desde Seguimiento.' : 'Actividad operativa actualizada.');
+      await this.recordChange(tx, actor, current, next, reason, correlationId, input);
       await this.reevaluateDependencies(tx, actor, expedienteId, correlationId);
       await this.recalculateProjections(tx, actor.organizationId, expedienteId);
       await new ExpedienteArtifactsService(this.prisma).reconcileContextChangeInTransaction(tx, actor, expedienteId, 'EXPEDIENTE_STAGE_CHANGE');
@@ -524,8 +622,18 @@ export class ExpedienteSeguimientoService {
   async reconcileActChangeInTransaction(tx: Prisma.TransactionClient, actor: Actor, expedienteId: string, oldActId: string | null, newActId: string | null) {
     if (newActId) await this.materializeInTransaction(tx, actor, expedienteId, newActId);
     if (!oldActId) return;
-    const rows = await tx.expedienteSeguimientoActividad.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, expediente_acto_id: oldActId, en_alcance: true } });
+    const oldOrigins = await tx.expedienteSeguimientoOrigen.findMany({
+      where: { organization_id: actor.organizationId, expediente_id: expedienteId, expediente_acto_id: oldActId, en_alcance: true },
+      select: { id: true, actividad_id: true },
+    });
+    if (oldOrigins.length) await tx.expedienteSeguimientoOrigen.updateMany({
+      where: { id: { in: oldOrigins.map((origin) => origin.id) }, organization_id: actor.organizationId }, data: { en_alcance: false },
+    });
+    const activityIds = [...new Set(oldOrigins.map((origin) => origin.actividad_id))];
+    const rows = activityIds.length ? await tx.expedienteSeguimientoActividad.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, id: { in: activityIds }, en_alcance: true } }) : [];
     for (const row of rows) {
+      const remainingOrigin = await tx.expedienteSeguimientoOrigen.findFirst({ where: { organization_id: actor.organizationId, actividad_id: row.id, en_alcance: true }, select: { id: true } });
+      if (remainingOrigin) continue;
       const history = await tx.expedienteSeguimientoHistorial.count({ where: { organization_id: actor.organizationId, actividad_id: row.id } });
       const protectedWork = history > 1 || started.has(row.estado) || Boolean(row.excepcion_operativa);
       await tx.expedienteSeguimientoActividad.update({ where: { id: row.id }, data: protectedWork
@@ -601,8 +709,9 @@ export class ExpedienteSeguimientoService {
       const blockers = await this.blockers(db, actor.organizationId, expedienteId, row.id);
       if (['NO_INICIADO', 'BLOQUEADO'].includes(row.estado)) {
         const target: SeguimientoActividadEstado = blockers.length ? 'BLOQUEADO' : 'NO_INICIADO';
-        if (target !== row.estado) {
-          const next = await db.expedienteSeguimientoActividad.update({ where: { id: row.id }, data: { estado: target, version: { increment: 1 } } });
+        const startsNow = !blockers.length && !row.primera_fecha_inicio;
+        if (target !== row.estado || startsNow) {
+          const next = await db.expedienteSeguimientoActividad.update({ where: { id: row.id }, data: { estado: target, ...(startsNow ? { primera_fecha_inicio: new Date() } : {}), version: { increment: 1 } } });
           await db.expedienteSeguimientoHistorial.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, actividad_id: row.id, actor_user_id: actor.id, estado_anterior: row.estado, estado_nuevo: target, version_anterior: row.version, version_nueva: next.version, razon: blockers.length ? 'Dependencia operativa pendiente.' : 'Dependencias completadas; desbloqueo automático.', correlation_id: correlationId } });
         }
       } else if (blockers.length) {
@@ -625,7 +734,7 @@ export class ExpedienteSeguimientoService {
         const start = row.primera_fecha_inicio || (dependencyEnds.length ? new Date(Math.max(...dependencyEnds.map((item) => item.getTime()))) : row.created_at);
         const override = row.excepcion_operativa && typeof row.excepcion_operativa === 'object' && !Array.isArray(row.excepcion_operativa) ? row.excepcion_operativa as Record<string, any> : {};
         const duration = Number.isInteger(override.duracion_estimada) ? override.duracion_estimada : row.duracion_estimada;
-        const dayType = ['HABILES', 'NATURALES'].includes(override.tipo_dias) ? override.tipo_dias as ConfiguracionTipoDias : row.tipo_dias;
+        const dayType: ConfiguracionTipoDias = 'HABILES';
         const end = row.fecha_completada_actual || addOperationalDays(start, duration, dayType);
         projection.set(id, { start, end }); pending.delete(id); progressed = true;
         await db.expedienteSeguimientoActividad.update({ where: { id }, data: {
@@ -639,8 +748,11 @@ export class ExpedienteSeguimientoService {
 
   private async recordChange(db: Prisma.TransactionClient, actor: Pick<Actor, 'id' | 'organizationId' | 'sessionId'>, before: any, after: any, reason: string, correlationId: string, details: unknown) {
     await db.expedienteSeguimientoHistorial.create({ data: { organization_id: actor.organizationId, expediente_id: before.expediente_id, actividad_id: before.id, actor_user_id: actor.id, estado_anterior: before.estado, estado_nuevo: after.estado, version_anterior: before.version, version_nueva: after.version, razon: reason || null, detalles: json(details), correlation_id: correlationId } });
-    await db.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: before.estado === 'COMPLETADO' && after.estado === 'NO_INICIADO' ? 'EXP005_REOPEN_ACTIVITY' : 'EXP005_UPDATE_ACTIVITY', entidad: 'ExpedienteSeguimientoActividad', entidad_id: before.id, valores_anteriores: json({ estado: before.estado, responsable_id: before.responsable_id, version: before.version }), valores_nuevos: json({ estado: after.estado, responsable_id: after.responsable_id, version: after.version }), detalles: json(details), correlation_id: correlationId, session_id: actor.sessionId } });
-    await db.expedienteActividad.create({ data: { organization_id: actor.organizationId, expediente_id: before.expediente_id, usuario_id: actor.id, tipo: 'SEGUIMIENTO', titulo: `${after.actividad_nombre_snapshot}: ${stateLabels[after.estado as SeguimientoActividadEstado]}`, descripcion: reason || 'Actividad operativa actualizada.', metadatos: json({ actividad_id: before.id, estado_anterior: before.estado, estado_nuevo: after.estado, correlation_id: correlationId }) } });
+    const action = before.estado === 'COMPLETADO' && after.estado === 'NO_INICIADO'
+      ? 'EXP005_REOPEN_ACTIVITY' : after.estado === 'COMPLETADO' && before.estado !== 'COMPLETADO'
+        ? 'EXP005_REALIZAR_PROCESO' : 'EXP005_UPDATE_ACTIVITY';
+    await db.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: action, entidad: 'ExpedienteSeguimientoActividad', entidad_id: before.id, valores_anteriores: json({ estado: before.estado, responsable_id: before.responsable_id, version: before.version }), valores_nuevos: json({ estado: after.estado, responsable_id: after.responsable_id, version: after.version, fecha_cumplimiento: after.fecha_completada_actual }), detalles: json(details), correlation_id: correlationId, session_id: actor.sessionId } });
+    await db.expedienteActividad.create({ data: { organization_id: actor.organizationId, expediente_id: before.expediente_id, usuario_id: actor.id, tipo: 'SEGUIMIENTO', titulo: after.estado === 'COMPLETADO' ? `${after.actividad_nombre_snapshot}: realizado` : `${after.actividad_nombre_snapshot}: ${stateLabels[after.estado as SeguimientoActividadEstado]}`, descripcion: reason || 'Actividad operativa actualizada.', metadatos: json({ actividad_id: before.id, proceso_clave: after.proceso_clave, estado_anterior: before.estado, estado_nuevo: after.estado, fecha_cumplimiento: after.fecha_completada_actual, correlation_id: correlationId }) } });
   }
 }
 

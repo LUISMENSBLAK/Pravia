@@ -3,7 +3,7 @@ import { PROSPECT_OPERATIONAL_STAGES, PROSPECT_SERVICES } from '../domain/prospe
 import { seedProspectCatalogs } from '../../prisma/seeds/prospect_catalogs.seed';
 
 describe('seedProspectCatalogs', () => {
-  it('materializa de forma canónica etapas, actos y los 38 servicios del bootstrap vacío', async () => {
+  it('materializa etapas y servicios sin precargar actos activos en el bootstrap vacío', async () => {
     const prospectoEtapaCatalogo = { upsert: vi.fn().mockResolvedValue({}) };
     const tipoActo = {
       upsert: vi.fn().mockImplementation(({ create }) => Promise.resolve({ id: `act-${create.codigo_catalogo}` })),
@@ -36,6 +36,10 @@ describe('seedProspectCatalogs', () => {
         label: 'Compraventa',
         tipo_acto_id: 'act-COMPRAVENTA',
       }),
+    }));
+    expect(tipoActo.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ activo: false, archived_at: new Date(0) }),
+      update: expect.objectContaining({ activo: false, archived_at: new Date(0) }),
     }));
     expect(PROSPECT_SERVICES.at(-1)?.code).toBe('ADJUDICACION_REBELDIA');
   });

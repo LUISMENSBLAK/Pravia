@@ -5,6 +5,7 @@ import { prisma } from '../config/prisma';
 import { uploadFile, deleteFile, downloadFile } from './supabase.service';
 import {
   extraerMultiplesDocumentos,
+  missingApplicableComparecienteFields,
   curpToFechaNacimiento,
   extraerFolioIneMrz,
   autoridadPorTipoDocumento,
@@ -197,12 +198,15 @@ export class ComparecienteAltaSessionService {
       'application/pdf',
       'image/jpeg',
       'image/png',
+      'image/webp',
       'image/bmp',
       'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/xml',
+      'application/zip',
     ]);
     if (!allowedMimeTypes.has(mimeType)) {
-      throw new Error('Tipo de archivo no permitido. Usa PDF, JPG/JPEG, PNG, BMP, DOC o DOCX.');
+      throw new Error('Tipo de archivo no permitido. Usa PDF, JPG/JPEG, PNG, WEBP, BMP, DOC, DOCX, XML o ZIP.');
     }
 
     const sesion = await prisma.comparecienteAltaSession.findUnique({ where: { id: sessionId } });
@@ -395,6 +399,10 @@ export class ComparecienteAltaSessionService {
 
     // ── 3. CONSOLIDAR CAMPOS CON TRAZABILIDAD ─────────────────────────────────
     const consolidacion = consolidateExtractedFields(resultadoIA.campos);
+    const faltantesAplicables = missingApplicableComparecienteFields(
+      resultadoIA,
+      (sesion.tipo_persona || resultadoIA.tipo_persona_detectado || 'FISICA') as 'FISICA' | 'MORAL',
+    );
     const camposCombinados: Record<string, any> = { ...consolidacion.values };
     const propuestaRespuesta: Record<string, any> = { ...consolidacion.proposals };
 
@@ -551,6 +559,8 @@ export class ComparecienteAltaSessionService {
       regimenes: resultadoIA.regimenes || [],
       _ia_resumen: resultadoIA.resumen_ejecutivo || `Extracción completada sobre ${documentosParaIA.length} documentos.`,
       _ia_alertas: resultadoIA.alertas || [],
+      _ia_faltantes: faltantesAplicables,
+      _ia_estructura_persona_moral: resultadoIA.estructura_persona_moral || null,
       _ia_conflictos: consolidacion.conflicts,
       _ia_propuesta: propuestaRespuesta,
       _ia_proveedor: resultadoIA.proveedor,
@@ -583,6 +593,7 @@ export class ComparecienteAltaSessionService {
       sesion_id: sessionId,
       propuesta: propuestaRespuesta,
       conflictos: consolidacion.conflicts,
+      faltantes: faltantesAplicables,
       domicilios_detectados: resultadoIA.domicilios_detectados || [],
       resultado: {
         proveedor: resultadoIA.proveedor,
@@ -590,6 +601,8 @@ export class ComparecienteAltaSessionService {
         tipo_persona_detectado: resultadoIA.tipo_persona_detectado || 'FISICA',
         resumen_ejecutivo: resultadoIA.resumen_ejecutivo || '',
         alertas: resultadoIA.alertas || [],
+        faltantes: faltantesAplicables,
+        estructura_persona_moral: resultadoIA.estructura_persona_moral,
         campos: resultadoIA.campos,
         uso: resultadoIA.uso || null,
         usos: resultadoIA.usos || (resultadoIA.uso ? [resultadoIA.uso] : []),

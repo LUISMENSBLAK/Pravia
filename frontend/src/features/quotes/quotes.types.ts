@@ -17,13 +17,14 @@ export type QuoteWorkflow = {
   stages?: Array<{ code: QuoteContractStage; label: string }>;
   actions: Array<QuoteContractAction | { code: QuoteContractAction; label: string }>;
   firstSentAt?: string | null; lastSentAt?: string | null; acceptedAdvanceAt?: string | null;
+  daysWithoutResponse?: number | null;
   suspendedAt?: string | null; cancelledAt?: string | null; convertedAt?: string | null;
   provenance?: string | null; events?: QuoteWorkflowEvent[];
 };
 
 export type QuoteConceptCategory = 'HONORARIOS' | 'IVA_HONORARIOS' | 'IMPUESTOS_DERECHOS' | 'OTROS';
 export type QuoteConcept = { categoria: QuoteConceptCategory; concepto: string; monto: number };
-export type QuoteBudgetConcept = { id?: string; categoria: QuoteConceptCategory; concepto: string; importe: number | string; orden: number; origen?: 'MANUAL' | 'IMPORTADO' };
+export type QuoteBudgetConcept = { id?: string; categoria: QuoteConceptCategory; concepto: string; importe: number | string; orden: number; origen?: 'MANUAL' | 'IMPORTADO' | 'IA_PROPUESTA' };
 export type QuoteBudget = {
   concepts: QuoteBudgetConcept[];
   totals: { honorarios: string; iva_honorarios: string; subtotal_honorarios: string; impuestos_derechos: string; total: string };
@@ -115,6 +116,19 @@ export type Quote = {
   conversion?: ConversionEligibility;
   workflow?: QuoteWorkflow;
   presupuesto?: QuoteBudget;
+  propuestasIA?: QuoteAIProposal[];
+  contexto_operacion?: string | null;
+  correo_cc?: string | null;
+  correo_asunto?: string | null;
+  actos?: Array<{ id: string; tipo_acto_id: string; orden: number; confirmed_at?: string | null; tipo_acto: { id: string; nombre: string; codigo_catalogo?: string | null } }>;
+  solicitante_formal?: { id: string; nombre_busqueda: string; tipo_persona: 'FISICA' | 'MORAL' } | null;
+};
+
+export type QuoteAIProposal = {
+  id: string; status: 'PENDIENTE' | 'APLICADA' | 'DESCARTADA' | 'SUPERADA'; created_at: string;
+  model_version: string;
+  proposal: { concepts: Array<{ categoria: QuoteConceptCategory; concepto: string; importe: number; explanation?: { layer: string; sample_size?: number; range?: { min: number; median: number; max: number }; reason: string } }>; totals: { total: string | number } };
+  evidence_packet: { layers?: { tariff?: Array<{ code: string; title: string; official_url?: string | null }>; internal_policy?: Array<{ code: string; title: string; label: string }>; validated_comparables?: { sample_quotes: number; act: string } }; taxes_notice?: string };
 };
 
 export type QuoteMetrics = { sent: number; accepted: number; totalAmount: number; conversionRate: number | null };

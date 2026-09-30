@@ -7,6 +7,37 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('message', (event) => {
   if (event.data?.type === 'SKIP_WAITING') self.skipWaiting();
+  if (event.data?.type === 'SHOW_PRAVIA_NOTIFICATION') {
+    const payload = event.data.payload || {};
+    event.waitUntil(self.registration.showNotification(payload.title || 'PRAVIA OS', {
+      body: payload.body || '',
+      icon: '/icons/pravia-192.png',
+      badge: '/icons/favicon-32.png',
+      tag: payload.tag || undefined,
+      renotify: false,
+      data: { url: payload.url || '/configuracion/notificaciones' },
+    }));
+  }
+});
+
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try { payload = event.data?.json() || {}; } catch { payload = { body: event.data?.text() || '' }; }
+  event.waitUntil(self.registration.showNotification(payload.title || 'PRAVIA OS', {
+    body: payload.body || '', icon: '/icons/pravia-192.png', badge: '/icons/favicon-32.png',
+    tag: payload.tag || undefined, renotify: false,
+    data: { url: payload.url || '/configuracion/notificaciones' },
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = new URL(event.notification.data?.url || '/configuracion/notificaciones', self.location.origin).href;
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clients) => {
+    const existing = clients.find((client) => client.url.startsWith(self.location.origin));
+    if (existing) { await existing.focus(); existing.navigate(target); return; }
+    await self.clients.openWindow(target);
+  }));
 });
 
 self.addEventListener('activate', (event) => {

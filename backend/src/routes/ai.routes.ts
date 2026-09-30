@@ -22,6 +22,12 @@ router.post('/assistant/messages', requirePermission('ai.use'), AIController.mes
 router.get('/assistant/tools', requirePermission('ai.use'), AIController.tools);
 router.post('/assistant/tools/:tool', requirePermission('ai.use'), AIController.executeTool);
 router.post('/assistant/confirmations', requirePermission('ai.use'), AIController.confirmPreparedAction);
+router.post('/assistant/actions/collect', requirePermission('ai.use'), AIController.collectPreparedAction);
 router.post('/assistant/confirmations/cancel', requirePermission('ai.use'), AIController.cancelPreparedAction);
+router.get('/assistant/memories', requirePermission('ai.use'), AIController.listMemories);
+router.post('/assistant/memories', requirePermission('ai.actions.prepare'), AIController.proposeMemory);
+router.post('/assistant/memories/:memoryId/decision', requirePermission('ai.admin.read'), AIController.decideMemory);
+router.get('/assistant/alerts', requirePermission('ai.use'), AIController.listAlerts);
+router.post('/assistant/alerts/:alertId', requirePermission('ai.use'), AIController.transitionAlert);
 router.get('/dashboard', requirePermission('ai.admin.read'), AIController.dashboard);
 export default router;

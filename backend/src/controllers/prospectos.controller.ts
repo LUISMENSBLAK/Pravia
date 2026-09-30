@@ -21,6 +21,7 @@ const prospectInclude = {
   atendido_por: { select: { nombre: true } },
   etapa_operativa: true,
   servicio_catalogo: true,
+  actos: { include: { tipo_acto: { select: { id: true, nombre: true, codigo_catalogo: true } } }, orderBy: { orden: 'asc' as const } },
   documentos: { select: { id: true } },
   cotizacion: { select: { id: true, estado: true } },
   seguimientos: { orderBy: { created_at: 'desc' as const }, take: 1 },
@@ -45,10 +46,19 @@ const closedStates = new Set<ProspectoEstado>([
   ProspectoEstado.ARCHIVADO,
 ]);
 
-export const getProspectCatalogs = async (_req: Request, res: Response) => res.json({
-  stages: PROSPECT_OPERATIONAL_STAGES,
-  services: PROSPECT_SERVICES,
-});
+export const getProspectCatalogs = async (req: Request, res: Response) => {
+  if (!req.user) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
+  const actTypes = await prisma.tipoActo.findMany({
+    where: {
+      activo: true, archived_at: null,
+      OR: [{ organization_id: null }, { organization_id: req.user.organizationId }],
+      configuracionesOperativas: { some: { organization_id: req.user.organizationId, activa: true } },
+    },
+    select: { id: true, nombre: true, codigo_catalogo: true, organization_id: true },
+    orderBy: { nombre: 'asc' },
+  });
+  return res.json({ stages: PROSPECT_OPERATIONAL_STAGES, services: PROSPECT_SERVICES, actTypes });
+};
 
 export const getProspectos = async (req: Request, res: Response) => {
   try {
@@ -181,6 +191,7 @@ export const getProspectoById = async (req: Request, res: Response) => {
         atendido_por: { select: { nombre: true, id: true } },
         etapa_operativa: true,
         servicio_catalogo: true,
+        actos: { include: { tipo_acto: { select: { id: true, nombre: true, codigo_catalogo: true } } }, orderBy: { orden: 'asc' } },
         seguimientos: { include: { usuario: { select: { nombre: true } } }, orderBy: { created_at: 'desc' } },
         cotizacion: true,
       },

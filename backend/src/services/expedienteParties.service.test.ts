@@ -6,12 +6,12 @@ const actor: any = {
   permissions: ['expedientes.read', 'expedientes.write', 'comparecientes.read', 'comparecientes.write'], scope: 'ALL_OBJECTS',
 };
 const now = new Date('2026-08-26T12:00:00.000Z');
-const act = (id = 'act-1', type = 'type-1') => ({ id, organization_id: 'org-1', expediente_id: 'exp-1', tipo_acto_id: type, estatus: 'ACTIVO', removed_at: null, tipo_acto: { id: type, nombre: 'Compraventa' } });
+const act = (id = 'act-1', type = 'type-1') => ({ id, organization_id: 'org-1', expediente_id: 'exp-1', tipo_acto_id: type, porcentaje_objeto: 100, estatus: 'ACTIVO', removed_at: null, tipo_acto: { id: type, nombre: 'Compraventa' } });
 const party = (id = 'party-1') => ({ id, organization_id: 'org-1', tipo_persona: 'FISICA', nombre_busqueda: 'PERSONA ÚNICA', personaFisica: { nombre_completo_calculado: 'Persona Única' }, personaMoral: null });
 const relation = (overrides: Record<string, unknown> = {}) => ({
   id: 'relation-1', organization_id: 'org-1', expediente_id: 'exp-1', expediente_acto_id: 'act-1', compareciente_id: 'party-1', caracter_id: 'role-1',
   forma_comparecencia: 'PROPIO_DERECHO', participacion_porcentaje: null, estatus: 'ACTIVO', archived_at: null,
-  expedienteActo: act(), compareciente: party(), caracter: { id: 'role-1', nombre: 'Comprador' }, representacionesComoRepresentante: [],
+  expedienteActo: act(), compareciente: party(), caracter: { id: 'role-1', clave: 'COMPRADOR', nombre: 'Comprador' }, representacionesComoRepresentante: [],
   ...overrides,
 });
 
@@ -44,6 +44,13 @@ function database(input: {
       findMany: vi.fn().mockResolvedValue([party()]),
     },
     tipoActoCaracterCompareciente: { findFirst: vi.fn().mockResolvedValue({ caracter: { id: 'role-1', nombre: 'Comprador' } }) },
+    caracterCompareciente: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+      create: vi.fn().mockImplementation(async ({ data }: any) => ({ id: 'tenant-role-1', ...data })),
+      update: vi.fn().mockImplementation(async ({ where, data }: any) => ({ id: where.id, organization_id: 'org-1', clave: 'CUSTOM_ROLE', nombre: 'ALBACEA', descripcion: null, ...data })),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
     caracterRepresentacion: { findFirst: vi.fn().mockResolvedValue({ id: 'rep-role-1' }), findMany: vi.fn().mockResolvedValue([]) },
     catalogoArtefacto: { findMany: vi.fn().mockImplementation(async () => input.artifacts || []) },
     expedienteCompareciente: {
@@ -107,6 +114,35 @@ describe('EXP-003 relaciones compareciente–acto', () => {
     await expect(service.preview(actor, 'exp-1', link({ participacion_porcentaje: 101 }))).rejects.toMatchObject({ code: 'EXPEDIENTE_PARTY_PARTICIPATION_INVALID' });
   });
 
+  it('expone la inconsistencia 50% transmitente vs 100% adquirente sin autocompletar', async () => {
+    const seller = relation({ id: 'seller', compareciente_id: 'seller-party', compareciente: party('seller-party'), caracter: { id: 'seller-role', clave: 'VENDEDOR', nombre: 'Vendedor' }, participacion_porcentaje: 50 });
+    const buyer = relation({ id: 'buyer', compareciente_id: 'buyer-party', compareciente: party('buyer-party'), caracter: { id: 'buyer-role', clave: 'COMPRADOR', nombre: 'Comprador' }, participacion_porcentaje: 100 });
+    const { prisma, tx } = database({ current: null });
+    tx.expedienteCompareciente.findMany.mockResolvedValue([seller, buyer]);
+    const result = await new ExpedientePartiesService(prisma).list(actor, 'exp-1');
+    expect(result.validations[0]).toMatchObject({ object_percentage: 100, transmitter_total: 50, acquirer_total: 100, consistent: false });
+    expect(result.validations[0].warnings.join(' ')).toContain('no completará porcentajes faltantes');
+    expect(seller.participacion_porcentaje).toBe(50);
+  });
+
+  it('muestra y retira la advertencia de persona moral según una representación física real', async () => {
+    const moralParty = { ...party('moral-party'), tipo_persona: 'MORAL', nombre_busqueda: 'SOCIEDAD QA', personaFisica: null, personaMoral: { razon_social: 'SOCIEDAD QA' } };
+    const moral = relation({ id: 'moral-link', compareciente_id: moralParty.id, compareciente: moralParty, caracter: { id: 'buyer-role', clave: 'COMPRADOR', nombre: 'Comprador' }, participacion_porcentaje: 100 });
+    const db = database({ current: null });
+    db.tx.expedienteCompareciente.findMany.mockResolvedValue([moral]);
+    const missing = await new ExpedientePartiesService(db.prisma).list(actor, 'exp-1');
+    expect(missing.validations[0].warnings).toContain('PERSONA MORAL SIN REPRESENTANTE VINCULADO.');
+
+    const representative = relation({
+      id: 'representative-link', compareciente_id: 'physical-representative', compareciente: party('physical-representative'),
+      caracter: { id: 'rep-role', clave: 'APODERADO_COMPRADOR', nombre: 'Apoderado del comprador' },
+      representacionesComoRepresentante: [{ representado_compareciente_id: moralParty.id, representado: moralParty }],
+    });
+    db.tx.expedienteCompareciente.findMany.mockResolvedValue([moral, representative]);
+    const linked = await new ExpedientePartiesService(db.prisma).list(actor, 'exp-1');
+    expect(linked.validations[0].warnings).not.toContain('PERSONA MORAL SIN REPRESENTANTE VINCULADO.');
+  });
+
   it('reutiliza representación existente y bloquea persona representada ajena', async () => {
     const command = link({ forma_comparecencia: 'EN_REPRESENTACION_PERSONA_MORAL', representation: { representado_compareciente_id: 'represented-1', cargo_o_caracter_descripcion: 'Apoderado general' } });
     const allowed = database({ current: null });
@@ -123,6 +159,46 @@ describe('EXP-003 relaciones compareciente–acto', () => {
       await expect(new ExpedientePartiesService(prisma).preview(actor, 'exp-1', link({ forma_comparecencia })))
         .resolves.toMatchObject({ proposed: { forma_comparecencia, representation: null } });
     }
+  });
+
+  it('crea un rol reutilizable limitado a la Notaría y lo audita', async () => {
+    const { prisma, tx } = database({ current: null });
+    const result = await new ExpedientePartiesService(prisma).createTenantRole(actor, 'exp-1', {
+      expediente_acto_id: 'act-1', nombre: 'albacea', descripcion: 'Interviene en sucesión',
+    });
+    expect(result).toMatchObject({ created: true, reusable_within_tenant: true, role: { id: 'tenant-role-1', organization_id: 'org-1', nombre: 'ALBACEA' } });
+    expect(tx.caracterCompareciente.create).toHaveBeenCalledWith({ data: expect.objectContaining({ organization_id: 'org-1', nombre: 'ALBACEA', activo: true }) });
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ accion: 'CREATE_TENANT_PARTY_ROLE', organization_id: 'org-1' }) }));
+  });
+
+  it('reutiliza idempotentemente un rol tenant existente sin update unique incompatible con el scope', async () => {
+    const { prisma, tx } = database({ current: null });
+    tx.caracterCompareciente.findFirst.mockResolvedValue({
+      id: 'tenant-role-1', organization_id: 'org-1', clave: 'CUSTOM_ROLE', nombre: 'ALBACEA', descripcion: 'Anterior', activo: true,
+    });
+    const result = await new ExpedientePartiesService(prisma).createTenantRole(actor, 'exp-1', {
+      expediente_acto_id: 'act-1', nombre: 'albacea', descripcion: 'Actualizada',
+    });
+    expect(result).toMatchObject({ created: false, role: { id: 'tenant-role-1', organization_id: 'org-1', nombre: 'ALBACEA', descripcion: 'Actualizada', activo: true } });
+    expect(tx.caracterCompareciente.updateMany).toHaveBeenCalledWith({
+      where: { id: 'tenant-role-1', organization_id: 'org-1' },
+      data: { activo: true, descripcion: 'Actualizada' },
+    });
+    expect(tx.caracterCompareciente.create).not.toHaveBeenCalled();
+  });
+
+  it('permite usar el rol propio en cualquier acto del mismo tenant y rechaza uno ajeno', async () => {
+    const allowed = database({ current: null });
+    allowed.tx.tipoActoCaracterCompareciente.findFirst.mockResolvedValue(null);
+    allowed.tx.caracterCompareciente.findFirst.mockResolvedValue({ id: 'tenant-role-1', nombre: 'Albacea' });
+    await expect(new ExpedientePartiesService(allowed.prisma).preview(actor, 'exp-1', link({ caracter_id: 'tenant-role-1' })))
+      .resolves.toMatchObject({ proposed: { caracter_id: 'tenant-role-1' } });
+
+    const denied = database({ current: null });
+    denied.tx.tipoActoCaracterCompareciente.findFirst.mockResolvedValue(null);
+    denied.tx.caracterCompareciente.findFirst.mockResolvedValue(null);
+    await expect(new ExpedientePartiesService(denied.prisma).preview(actor, 'exp-1', link({ caracter_id: 'foreign-role' })))
+      .rejects.toMatchObject({ code: 'EXPEDIENTE_PARTY_CHARACTER_NOT_ALLOWED', status: 409 });
   });
 
   it.each([

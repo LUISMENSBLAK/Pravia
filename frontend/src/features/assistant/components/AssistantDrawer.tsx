@@ -1,8 +1,14 @@
-import { ArrowUp, CheckCircle2, History, LoaderCircle, Mic, Paperclip, Plus, RotateCcw, Square, X } from 'lucide-react';
+import { ArrowUp, BellRing, CheckCircle2, Clock3, History, LoaderCircle, Mic, Paperclip, Plus, RotateCcw, Square, X } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react';
+import { useState } from 'react';
 import { useAssistant } from '../AssistantProvider';
+import { DocumentViewer } from '../../../components/documents/DocumentViewer';
+import { downloadPrivateUrl } from '../../../components/documents/documentDownload';
+import { apiRequest } from '../../../services/api/client';
+import type { AssistantSource } from '../assistant.types';
 import { useReducedMotion } from '../useReducedMotion';
 import { AssistantConfirmationCard } from './AssistantConfirmationCard';
+import { AssistantDynamicForm } from './AssistantDynamicForm';
 import { AssistantConversationPanel } from './AssistantConversationPanel';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import { AssistantOwl } from './AssistantOwl';
@@ -21,6 +27,7 @@ export function AssistantDrawer() {
   const recorderRef = useRef<MediaRecorder>();
   const recorderStreamRef = useRef<MediaStream>();
   const audioChunksRef = useRef<Blob[]>([]);
+  const [viewer, setViewer] = useState<{ source: AssistantSource; url?: string; loading?: boolean; error?: string }>();
 
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -62,9 +69,9 @@ export function AssistantDrawer() {
     : assistant.context.label;
 
   const selectFile = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files || []).slice(0, Math.max(0, 6 - assistant.pendingAttachments.length));
     event.target.value = '';
-    if (file) void assistant.uploadAttachment(file);
+    if (files.length) void files.reduce((chain, file) => chain.then(() => assistant.uploadAttachment(file)), Promise.resolve());
   };
 
   const stopRecording = () => {
@@ -100,6 +107,18 @@ export function AssistantDrawer() {
     }
   };
 
+  const openDocument = async (source: AssistantSource) => {
+    if (!source.entityId) return;
+    assistant.focusDocument({ id: source.entityId, label: source.label });
+    setViewer({ source, loading: true });
+    try {
+      const result = await apiRequest<{ url: string }>(`/documentos/${encodeURIComponent(source.entityId)}/url`);
+      setViewer({ source, url: result.url });
+    } catch {
+      setViewer({ source, error: 'No pudimos preparar la vista previa protegida.' });
+    }
+  };
+
   useEffect(() => () => {
     recorderStreamRef.current?.getTracks().forEach((track) => track.stop());
   }, []);
@@ -121,12 +140,20 @@ export function AssistantDrawer() {
           {assistant.actions.map((action) => <button type="button" key={action.id} onClick={() => assistant.openAssistant({ prefill: action.prompt })}>{action.label}</button>)}
         </section>
 
+        {(assistant.alertsLoading || assistant.alerts.length > 0) && <section className={styles.actionCenter} aria-label="Centro de acción de PRAVIA IA">
+          <header><div><BellRing size={16}/><span><strong>Centro de acción</strong><small>Alertas operativas verificables</small></span></div>{assistant.alertsLoading && <LoaderCircle className={styles.spinner} size={15}/>}</header>
+          {assistant.alerts.map((alert) => <article key={alert.id} data-severity={alert.severity}>
+            <span><strong>{alert.title}</strong>{alert.body && <small>{alert.body}</small>}</span>
+            <div>{alert.href && <a href={alert.href}>Revisar</a>}<button type="button" onClick={() => void assistant.transitionAlert(alert.id, 'ACKNOWLEDGE')}>Entendido</button><button type="button" aria-label={`Posponer ${alert.title}`} onClick={() => void assistant.transitionAlert(alert.id, 'SNOOZE')}><Clock3 size={13}/></button></div>
+          </article>)}
+        </section>}
+
         <div className={styles.conversation} role="log" aria-live="polite" aria-label="Conversación con PRAVIA IA">
           {assistant.messages.map((message) => <article key={message.id} className={message.role === 'user' ? styles.userMessage : styles.assistantMessage}>
             {message.role === 'assistant' && <span className={styles.messageAuthor}>PRAVIA IA</span>}
             {message.role === 'assistant' ? <AssistantMarkdown content={message.content} /> : <p>{message.content}</p>}
             {!!message.attachments?.length && <div className={styles.messageAttachments}>{message.attachments.map((item) => <span key={item.id}><Paperclip size={12}/>{item.original_name}</span>)}</div>}
-            <AssistantSources sources={message.sources} />
+            <AssistantSources sources={message.sources} onOpenDocument={(source) => void openDocument(source)} />
           </article>)}
 
           {assistant.status === 'thinking' && <div className={styles.activity} role="status"><AssistantOwl status="thinking" compact /><div><LoaderCircle size={15} className={styles.spinner} /><span>Revisando la información…</span></div></div>}
@@ -134,6 +161,7 @@ export function AssistantDrawer() {
           {assistant.status === 'success' && <div className={`${styles.activity} ${styles.success}`} role="status"><AssistantOwl status="success" compact /><div><CheckCircle2 size={15} /><span>Acción completada.</span></div></div>}
           {assistant.status === 'error' && <div className={styles.error} role="alert"><p>{assistant.errorMessage ?? 'No pude completar esa consulta.'}</p><button type="button" onClick={() => void assistant.retry()}><RotateCcw size={14} />Reintentar</button></div>}
           <AssistantConfirmationCard />
+          <AssistantDynamicForm />
           <div ref={endRef} />
         </div>
       </div>
@@ -141,13 +169,14 @@ export function AssistantDrawer() {
       <form className={styles.composer} onSubmit={submit}>
         <label htmlFor="pravia-assistant-message">Pregúntame algo...</label>
         {!!assistant.pendingAttachments.length && <div className={styles.pendingAttachments} aria-label="Adjuntos temporales">{assistant.pendingAttachments.map((item) => <span key={item.id}><Paperclip size={13}/><b>{item.original_name}</b><small>Temporal · no forma parte del expediente</small><button type="button" onClick={() => void assistant.removeAttachment(item.id)} aria-label={`Retirar ${item.original_name}`}><X size={13}/></button></span>)}</div>}
-        <div><div className={styles.composerTools}><input ref={fileInputRef} type="file" hidden onChange={selectFile} accept=".pdf,.jpg,.jpeg,.png,.doc,.docx,.mp3,.m4a,.wav,.ogg,.webm" />
+        <div><div className={styles.composerTools}><input ref={fileInputRef} type="file" hidden multiple onChange={selectFile} accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xml,.zip,.mp3,.m4a,.wav,.ogg,.webm" />
           <button type="button" disabled={busy} onClick={() => fileInputRef.current?.click()} aria-label="Adjuntar archivo temporal"><Paperclip size={17}/></button>
           <button type="button" disabled={busy && !assistant.recording} onClick={() => void toggleRecording()} aria-label={assistant.recording ? 'Detener grabación' : 'Grabar mensaje de voz'} className={assistant.recording ? styles.recordingButton : undefined}>{assistant.recording ? <Square size={15}/> : <Mic size={17}/>}</button></div>
           <textarea ref={composerRef} id="pravia-assistant-message" value={assistant.draft} onChange={(event) => assistant.setDraft(event.target.value)} onKeyDown={keyDown} placeholder="Pregúntame algo..." rows={1} disabled={busy} />
           <button type="submit" disabled={busy || !assistant.draft.trim()} aria-label="Enviar mensaje"><ArrowUp size={18} /></button></div>
         <small>Enter para enviar · Shift+Enter para nueva línea</small>
       </form>
+      {viewer && <DocumentViewer open name={viewer.source.label} url={viewer.url} loading={viewer.loading} error={viewer.error} onClose={() => setViewer(undefined)} onDownload={viewer.url ? () => void downloadPrivateUrl(viewer.url!, viewer.source.label) : undefined} onAsk={() => { assistant.focusDocument({ id: viewer.source.entityId!, label: viewer.source.label }); assistant.setDraft('¿Qué datos importantes ves en este documento?'); setViewer(undefined); }} />}
     </aside>
   );
 }

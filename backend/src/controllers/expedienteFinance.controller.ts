@@ -5,7 +5,7 @@ import { ExpedienteFinanceError, ExpedienteFinanceService } from '../services/ex
 import { ExpedienteFinanceValidationError } from '../domain/expedienteFinance';
 
 const service = new ExpedienteFinanceService(prisma);
-export const uploadExp008 = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 2 } });
+export const uploadExp008 = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 4 } });
 const actor = (req: Request) => req.user!;
 const fail = (res: Response, error: unknown) => {
   if (error instanceof ExpedienteFinanceError) return res.status(error.status).json({ code: error.code, error: error.message });
@@ -15,7 +15,9 @@ const fail = (res: Response, error: unknown) => {
 const file = (req: Request) => req.file as Express.Multer.File | undefined;
 
 export const getExpedienteFinance = async (req: Request, res: Response) => { try { return res.json(await service.read(actor(req), req.params.id)); } catch (error) { return fail(res, error); } };
-export const reportExpedienteIncome = async (req: Request, res: Response) => { try { if (!file(req)) throw new ExpedienteFinanceError(400, 'EXP008_FILE_REQUIRED', 'Selecciona un comprobante.'); return res.status(201).json(await service.reportIncome(actor(req), req.params.id, req.body, file(req)!)); } catch (error) { return fail(res, error); } };
+export const generateExpedienteAccountStatement = async (req: Request, res: Response) => { try { return res.status(201).json(await service.generateAccountStatement(actor(req), req.params.id, req.body || {})); } catch (error) { return fail(res, error); } };
+export const reportExpedienteIncome = async (req: Request, res: Response) => { try { const files = req.files as Record<string, Express.Multer.File[]> | undefined; const receipt = files?.file?.[0]; if (!receipt) throw new ExpedienteFinanceError(400, 'EXP008_FILE_REQUIRED', 'Selecciona un comprobante.'); return res.status(201).json(await service.reportIncome(actor(req), req.params.id, req.body, { receipt, invoicePdf: files?.invoice_pdf?.[0], invoiceXml: files?.invoice_xml?.[0] })); } catch (error) { return fail(res, error); } };
+export const completeExpedienteIncomeInvoice = async (req: Request, res: Response) => { try { const files = req.files as Record<string, Express.Multer.File[]> | undefined; return res.json(await service.completeIncomeInvoice(actor(req), req.params.id, req.params.incomeId, req.body, { invoicePdf: files?.invoice_pdf?.[0], invoiceXml: files?.invoice_xml?.[0] })); } catch (error) { return fail(res, error); } };
 export const createInternalPaymentRequest = async (req: Request, res: Response) => { try { return res.status(201).json(await service.createInternalRequest(actor(req), req.params.id, req.body)); } catch (error) { return fail(res, error); } };
 export const createExternalPaymentRequest = async (req: Request, res: Response) => { try { if (!file(req)) throw new ExpedienteFinanceError(400, 'EXP008_FILE_REQUIRED', 'Selecciona la ficha origen.'); return res.status(201).json(await service.createExternalRequest(actor(req), req.params.id, req.body, file(req)!)); } catch (error) { return fail(res, error); } };
 export const proposeExpedienteFinanceAI = async (req: Request, res: Response) => { try { return res.status(201).json(await service.proposeFromDocument(actor(req), req.params.id, req.body)); } catch (error) { return fail(res, error); } };

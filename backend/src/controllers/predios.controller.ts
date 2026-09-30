@@ -5,6 +5,7 @@ import type { Request, Response } from 'express';
 import prisma from '../config/prisma';
 import { PredioError, PrediosService } from '../services/predios.service';
 import { deleteFile, getSignedUrl, uploadFile } from '../services/supabase.service';
+import { canonicalUploadedDocumentMime } from '../services/documentUploadValidation';
 
 const service = new PrediosService(prisma);
 export const uploadPredioDocumentoMulter = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -29,11 +30,11 @@ export const getPredio = async (req: Request, res: Response) => {
   catch (error) { return respondError(res, error); }
 };
 export const createPredio = async (req: Request, res: Response) => {
-  try { return res.status(201).json({ data: await service.create(actor(req), req.body || {}) }); }
+  try { const user = actor(req); const created = await service.create(user, req.body || {}); return res.status(201).json({ data: await service.get(user, created.id) }); }
   catch (error) { return respondError(res, error); }
 };
 export const updatePredio = async (req: Request, res: Response) => {
-  try { return res.json({ data: await service.update(actor(req), req.params.id, req.body || {}, req.body?.expected_version) }); }
+  try { const user = actor(req); await service.update(user, req.params.id, req.body || {}, req.body?.expected_version); return res.json({ data: await service.get(user, req.params.id) }); }
   catch (error) { return respondError(res, error); }
 };
 
@@ -45,14 +46,15 @@ export const uploadPredioDocumento = async (req: Request, res: Response) => {
     await service.get(user, req.params.id);
     const file = req.file;
     if (!file) throw new PredioError(400, 'PREDIO_DOCUMENT_REQUIRED', 'Selecciona un documento.');
-    const accepted = ['application/pdf', 'image/jpeg', 'image/png', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
-    if (!accepted.includes(file.mimetype)) throw new PredioError(400, 'PREDIO_DOCUMENT_TYPE_INVALID', 'Carga un PDF, imagen o documento Word compatible.');
+    let canonicalMime: string;
+    try { canonicalMime = canonicalUploadedDocumentMime(file); }
+    catch (error) { throw new PredioError(400, 'PREDIO_DOCUMENT_TYPE_INVALID', error instanceof Error ? error.message : 'Carga un PDF, imagen o documento Word compatible.'); }
     const ext = path.extname(file.originalname).toLowerCase() || '.bin';
     storageKey = `organizations/${user.organizationId}/documentos/${crypto.randomUUID()}${ext}`;
-    await uploadFile(file.buffer, storageKey, file.mimetype);
+    await uploadFile(file.buffer, storageKey, canonicalMime);
     const document = await prisma.documento.create({ data: {
       organization_id: user.organizationId, nombre_original: file.originalname, nombre_interno: storageKey, storage_key: storageKey,
-      tipo: String(req.body.tipo || 'DOCUMENTO_INMUEBLE').slice(0, 120), categoria: 'OTROS', mime_type: file.mimetype, size_bytes: file.size,
+      tipo: String(req.body.tipo || 'DOCUMENTO_INMUEBLE').slice(0, 120), categoria: 'OTROS', mime_type: canonicalMime, size_bytes: file.size,
       observaciones: String(req.body.observaciones || '').trim() || null, subido_por_id: user.id,
     } });
     documentId = document.id;
@@ -98,7 +100,7 @@ export const proposePredioFromDocument = async (req: Request, res: Response) => 
   catch (error) { return respondError(res, error); }
 };
 export const applyPredioProposal = async (req: Request, res: Response) => {
-  try { return res.json({ data: await service.applyProposal(actor(req), req.params.id, req.params.extraccionId, req.body || {}) }); }
+  try { const user = actor(req); await service.applyProposal(user, req.params.id, req.params.extraccionId, req.body || {}); return res.json({ data: await service.get(user, req.params.id) }); }
   catch (error) { return respondError(res, error); }
 };
 

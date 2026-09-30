@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { ArrowDown, ArrowUp, FileUp, LoaderCircle, Plus, Save, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, CircleHelp, FileUp, LoaderCircle, Plus, Save, Sparkles, Trash2, X } from 'lucide-react';
+import { useAuth } from '../../auth/AuthProvider';
+import { AIProcessingStatus } from '../../../components/feedback/AIProcessingStatus';
 import { money, quoteCategoryLabel, quoteSubtotals } from '../quoteFormatters';
 import { quotesService } from '../quotes.service';
 import type { Quote, QuoteConcept, QuoteConceptCategory } from '../quotes.types';
@@ -22,17 +24,23 @@ export function QuoteConcepts({ quote, canWrite, onSaved, notify }: {
   const [rows, setRows] = useState<Row[]>(() => fromQuote(quote));
   const [baseline, setBaseline] = useState(() => fingerprint(fromQuote(quote)));
   const [origin, setOrigin] = useState<'MANUAL' | 'IMPORTADO'>('MANUAL');
+  const [operationContext, setOperationContext] = useState(quote.contexto_operacion ?? '');
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
   const [importNotice, setImportNotice] = useState('');
+  const [aiBusy, setAiBusy] = useState('');
+  const { user } = useAuth();
+  const proposal = quote.propuestasIA?.[0];
+  const evidenceLayers = proposal?.evidence_packet.layers;
+  const canUseAI = canWrite && Boolean(user?.permissions?.includes('ai.use'));
 
   useEffect(() => {
     const next = fromQuote(quote);
-    setRows(next); setBaseline(fingerprint(next)); setOrigin('MANUAL'); setError('');
+    setRows(next); setBaseline(fingerprint(next)); setOperationContext(quote.contexto_operacion ?? ''); setOrigin('MANUAL'); setError('');
   }, [quote.id, quote.updated_at, quote.presupuesto]);
 
-  const dirty = fingerprint(rows) !== baseline;
+  const dirty = fingerprint(rows) !== baseline || operationContext.trim() !== (quote.contexto_operacion ?? '').trim();
   const concepts = useMemo(() => rows.filter((row): row is Row & { categoria: QuoteConceptCategory } => Boolean(row.categoria)).map((row) => ({
     categoria: row.categoria, concepto: row.concepto, monto: Number(row.importe || 0),
   } satisfies QuoteConcept)), [rows]);
@@ -45,7 +53,7 @@ export function QuoteConcepts({ quote, canWrite, onSaved, notify }: {
     if (target < 0 || target >= current.length) return current;
     const next = [...current]; [next[index], next[target]] = [next[target], next[index]]; return next;
   });
-  const discard = () => { const next = fromQuote(quote); setRows(next); setBaseline(fingerprint(next)); setOrigin('MANUAL'); setError(''); setImportNotice(''); };
+  const discard = () => { const next = fromQuote(quote); setRows(next); setBaseline(fingerprint(next)); setOperationContext(quote.contexto_operacion ?? ''); setOrigin('MANUAL'); setError(''); setImportNotice(''); };
   const importFile = async (file?: File) => {
     if (!file) return;
     setImporting(true); setError(''); setImportNotice('');
@@ -71,21 +79,43 @@ export function QuoteConcepts({ quote, canWrite, onSaved, notify }: {
     try {
       await quotesService.updateBudget(quote.id, {
         concepts: rows.map((row) => ({ categoria: row.categoria as QuoteConceptCategory, concepto: row.concepto.trim(), importe: Number(row.importe) })),
-        origin, expectedUpdatedAt: quote.updated_at,
+        origin, operationContext: operationContext.trim(), expectedUpdatedAt: quote.updated_at,
       });
       notify('Cambios guardados. El estado comercial no cambió.');
       await onSaved();
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'No pudimos guardar el presupuesto.'); }
     finally { setSaving(false); }
   };
+  const generateAI = async () => {
+    setAiBusy('generate'); setError('');
+    try { await quotesService.generateAIProposal(quote.id); await onSaved(); notify('Propuesta preparada. Revisa cada concepto antes de aplicarla.'); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'No fue posible generar la propuesta.'); }
+    finally { setAiBusy(''); }
+  };
+  const decideAI = async (action: 'APLICAR' | 'DESCARTAR') => {
+    if (!proposal) return;
+    setAiBusy(action); setError('');
+    try { await quotesService.decideAIProposal(quote.id, proposal.id, action); await onSaved(); notify(action === 'APLICAR' ? 'Propuesta aplicada como presupuesto editable.' : 'Propuesta descartada sin cambiar el presupuesto.'); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'No fue posible registrar la decisión.'); }
+    finally { setAiBusy(''); }
+  };
 
   return <section className={`${styles.detailSection} ${styles.inlineBudget}`}>
     <header><div><h2>Presupuesto de la cotización</h2><p>Edición directa del presupuesto vigente. Los documentos generados se conservan como evidencia histórica.</p></div>
-      {canWrite && <label className={styles.importBudgetButton}><FileUp size={17} />{importing ? 'Analizando…' : 'Importar documento'}<input type="file" accept="application/pdf,.pdf" disabled={importing || saving} onChange={(event) => void importFile(event.target.files?.[0])} /></label>}
+      <div className={styles.inlineBudgetHeaderActions}>{canUseAI && <button type="button" className={styles.aiProposalButton} disabled={Boolean(aiBusy) || saving} onClick={() => void generateAI()}>{aiBusy === 'generate' ? <LoaderCircle className={styles.spin} size={17} /> : <Sparkles size={17} />}Generar cotización con IA</button>}{canWrite && <label className={styles.importBudgetButton}><FileUp size={17} />{importing ? 'Analizando…' : 'Cargar ejemplo'}<input type="file" accept="application/pdf,.pdf" disabled={importing || saving} onChange={(event) => void importFile(event.target.files?.[0])} /></label>}</div>
     </header>
+    {(importing || aiBusy === 'generate') && <AIProcessingStatus label={importing ? 'Extrayendo conceptos del documento' : 'Preparando cotización con IA'} detail={importing ? 'PRAVIA está leyendo el archivo. Los conceptos quedarán como borrador editable antes de guardar.' : 'Contrastando fuentes y capas de evidencia de esta organización; nada se aplicará automáticamente.'}/>}
+    {proposal && <section className={styles.aiProposalPanel} aria-label="Propuesta de cotización con IA"><header><div><span><Sparkles size={17} />Propuesta pendiente</span><p>La propuesta todavía no modifica la cotización. Los importes provienen de capas trazables de la misma organización.</p></div></header><div className={styles.aiProposalRows}>{proposal.proposal.concepts.map((item, index) => <article key={`${item.categoria}-${item.concepto}-${index}`}><div><small>{quoteCategoryLabel(item.categoria)}</small><strong>{item.concepto}</strong></div><b>{money(item.importe)}</b><details><summary aria-label={`Fundamento de ${item.concepto}`}><CircleHelp size={16} />Fundamento</summary><p>{item.explanation?.reason || 'Propuesta asistida sujeta a revisión humana.'}</p>{item.explanation?.sample_size != null && <small>Muestra validada: {item.explanation.sample_size} cotización(es).</small>}</details></article>)}</div>
+      {evidenceLayers && <section className={styles.aiEvidenceLayers} aria-label="Capas de fundamento de la propuesta"><h3>Capas de fundamento</h3><div>
+        <article><strong>Arancel / fuente oficial</strong>{evidenceLayers.tariff?.length ? <ul>{evidenceLayers.tariff.map((item) => <li key={item.code}><span>{item.code}</span>{item.title}{item.official_url && <a href={item.official_url} target="_blank" rel="noreferrer">Consultar fuente</a>}</li>)}</ul> : <p>Sin fuente arancelaria aplicable.</p>}</article>
+        <article><strong>Criterio interno</strong><em>CRITERIO INTERNO — NO ES NORMA.</em>{evidenceLayers.internal_policy?.length ? <ul>{evidenceLayers.internal_policy.map((item) => <li key={item.code}><span>{item.code}</span>{item.title}</li>)}</ul> : <p>Sin criterio interno aplicable.</p>}</article>
+        <article><strong>Histórico validado</strong><p>{evidenceLayers.validated_comparables?.sample_quotes ? `${evidenceLayers.validated_comparables.sample_quotes} cotización(es) comparables para ${evidenceLayers.validated_comparables.act}.` : 'Sin cotizaciones comparables validadas.'}</p></article>
+      </div></section>}
+      <p className={styles.aiProposalNotice}>{proposal.evidence_packet.taxes_notice}</p><footer><button type="button" className={styles.secondaryButton} disabled={Boolean(aiBusy)} onClick={() => void decideAI('DESCARTAR')}>{aiBusy === 'DESCARTAR' ? <LoaderCircle className={styles.spin} size={17} /> : <X size={17} />}Descartar</button><button type="button" className={styles.primaryButton} disabled={Boolean(aiBusy)} onClick={() => void decideAI('APLICAR')}>{aiBusy === 'APLICAR' ? <LoaderCircle className={styles.spin} size={17} /> : <Sparkles size={17} />}Aplicar propuesta</button></footer></section>}
     {importNotice && <div className={styles.importNotice} role="status">{importNotice}</div>}
     {error && <div className={styles.formError} role="alert">{error}</div>}
     <form onSubmit={submit}>
+      <label className={styles.operationContextField}><span>Contexto de la operación</span><textarea rows={3} value={operationContext} disabled={!canWrite || saving} onChange={(event) => setOperationContext(event.target.value)} placeholder="Describe los datos que deben considerarse en esta cotización." maxLength={4000} /><small>Este mismo contexto alimenta la captura manual, el ejemplo cargado y la propuesta con IA.</small></label>
       <div className={styles.inlineConceptHeader} aria-hidden="true"><span>Categoría</span><span>Concepto</span><span>Importe MXN</span><span>Orden</span><span /></div>
       <div className={styles.inlineConceptRows}>
         {rows.map((row, index) => <div className={styles.inlineConceptRow} key={index}>

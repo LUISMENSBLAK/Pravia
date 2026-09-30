@@ -43,10 +43,10 @@ describe('Plantillas y formatos EXP-006', () => {
 
   it('muestra la experiencia operativa y distingue tipo, sujeto, obligatoriedad y estado', async () => {
     render(<TemplatesFormatsTab expediente={detail} />);
-    expect(await screen.findByRole('heading', { name: 'Plantillas y formatos' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Obligaciones y formatos' })).toBeInTheDocument();
     expect(screen.getByText('Anexo 3 UIF')).toBeInTheDocument();
-    expect(screen.getByText('Juan Pérez')).toBeInTheDocument();
-    expect(screen.getByText('Obligatorio')).toBeInTheDocument();
+    expect(screen.getAllByText('Juan Pérez').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/OBLIGATORIO · v2/)).toBeInTheDocument();
     expect(screen.getByText('Solicitud registral')).toBeInTheDocument();
     expect(screen.getByText('Pendiente de revisión')).toBeInTheDocument();
     expect(screen.getByText(/Aquí no se editan reglas ni archivos maestros/)).toBeInTheDocument();
@@ -55,7 +55,7 @@ describe('Plantillas y formatos EXP-006', () => {
   it('presenta el manifiesto estricto antes de IA y nunca permite inyectar documentos', async () => {
     const user = userEvent.setup();
     render(<TemplatesFormatsTab expediente={detail} />);
-    await user.click(await screen.findByRole('button', { name: 'Generar con IA' }));
+    await user.click(await screen.findByRole('button', { name: /^Generar$/ }));
     const dialog = await screen.findByRole('dialog', { name: 'Generar con fuentes estrictas' });
     expect(within(dialog).getByText('2 documento(s) vigente(s)')).toBeInTheDocument();
     expect(within(dialog).getByText(/únicamente datos estructurados y documentos vigentes/)).toBeInTheDocument();
@@ -77,6 +77,7 @@ describe('Plantillas y formatos EXP-006', () => {
     await waitFor(() => expect(mocks.artifacts.mock.calls.length).toBeGreaterThanOrEqual(2));
     const pendingCard = screen.getByText('Anexo 3 UIF').closest('article')!;
     await user.click(within(pendingCard).getByRole('button', { name: 'Cargar externo' }));
+    expect(screen.getByLabelText('Cargar documento externo')).toHaveAttribute('accept', '.pdf,.png,.jpg,.jpeg,.bmp,.webp,.doc,.docx,.xml,.zip');
     await user.upload(screen.getByLabelText('Cargar documento externo'), new File(['docx'], 'anexo.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
     await waitFor(() => expect(mocks.uploadArtifact).toHaveBeenCalledWith('exp-1', 'pending-party', expect.any(File), 1, expect.any(String)));
   });

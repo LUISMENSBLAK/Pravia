@@ -3,28 +3,51 @@ import type { PrismaClient } from '@prisma/client';
 import prisma from '../config/prisma';
 import type { Permission } from '../auth/permissions';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
-import { comparecienteObjectWhere, prospectoObjectWhere } from './objectAccess.service';
+import { canAccessDocumento, comparecienteObjectWhere, cotizacionObjectWhere, predioObjectWhere, prospectoObjectWhere } from './objectAccess.service';
 import { calculateFinancialPosition } from '../domain/financialLedger';
 import { ReportingService } from './reporting.service';
 import { resolveAssistantTimeRange, safeAssistantTimezone } from './assistantTime';
 import { isrObjectWhere } from './isr.service';
+import { ProjectGenerationService } from './projectGeneration.service';
+import { ProjectRepository } from './projectRepository.service';
+import { actsAndTimesService } from './configurationCatalog.service';
+import { functionalDestinationService } from './functionalDestination.service';
+import { KnowledgeService } from './knowledge.service';
 
 type AuthUser = NonNullable<Request['user']>;
 export type AssistantToolName =
   | 'getProspectFollowUps'
   | 'searchExpedientes' | 'getExpedienteSummary' | 'getExpedientePendingItems' | 'getExpedientesRequiringAttention'
   | 'searchComparecientes' | 'getComparecienteSummary' | 'getExpedienteDocuments'
+  | 'searchPredios' | 'getPredioSummary' | 'getQuotation' | 'getBudget'
+  | 'getProjectContext' | 'getProjectObservations' | 'getQuestionnaires' | 'getCFG001' | 'getCFG002Resolution' | 'getDocumentMetadata'
   | 'getAgenda' | 'getUpcomingEvents' | 'getFinancialSummary' | 'getOutstandingBalances'
   | 'getReportingSummary'
   | 'getISRCalculation' | 'getComplianceSummary' | 'getCurrentUserWork' | 'globalSearch'
+  | 'searchLegalKnowledge'
   | 'navigateToEntity' | 'prepareTask' | 'prepareAppointment' | 'prepareFollowUp';
 
 export type AssistantContextInput = {
   route?: string;
   module?: string;
-  entity_type?: 'expediente' | 'compareciente' | 'cotizacion' | 'notaria' | 'isrCalculation' | 'complianceReview';
+  entity_type?: 'expediente' | 'compareciente' | 'cotizacion' | 'notaria' | 'prospecto' | 'evento' | 'predio' | 'documento' | 'proyecto' | 'cfg001Activity' | 'cfg002Artifact' | 'isrCalculation' | 'complianceReview';
   entity_id?: string;
   selected_ids?: string[];
+  expediente_id?: string;
+  expediente_acto_id?: string;
+  proceso_id?: string;
+  actividad_id?: string;
+  compareciente_id?: string;
+  predio_id?: string;
+  documento_id?: string;
+  cotizacion_id?: string;
+  presupuesto_id?: string;
+  isr_calculation_id?: string;
+  compliance_review_id?: string;
+  selected_date?: string;
+  selected_from?: string;
+  selected_to?: string;
+  active_document_id?: string;
 };
 
 type ToolInput = {
@@ -41,18 +64,36 @@ export class AssistantToolError extends Error {
 
 type ToolMode = 'READ' | 'NAVIGATE' | 'PREPARE_ONLY';
 type ToolSensitivity = 'INTERNAL' | 'PERSONAL' | 'FINANCIAL' | 'COMPLIANCE';
-type ToolDefinition = {
+export type AssistantActionLevel = 'R' | 'P' | 'E' | 'S' | 'A';
+type BaseToolDefinition = {
   capability: Permission;
   systemPermissions?: Permission[];
   anySystemPermission?: Permission[];
-  objectScope: 'EXPEDIENTE' | 'COMPARECIENTE' | 'USER' | 'DYNAMIC';
+  objectScope: 'EXPEDIENTE' | 'COMPARECIENTE' | 'PREDIO' | 'DOCUMENTO' | 'USER' | 'DYNAMIC';
   resultType: 'COLLECTION' | 'SUMMARY' | 'NAVIGATION' | 'PREPARED_ACTION';
   maxResults: number;
   sensitivity: ToolSensitivity;
   mode: ToolMode;
 };
 
-export const ASSISTANT_TOOL_REGISTRY: Record<AssistantToolName, ToolDefinition> = {
+export type AssistantToolDefinition = BaseToolDefinition & {
+  name: AssistantToolName;
+  domain: string;
+  description: string;
+  inputSchema: { type: 'object'; additionalProperties: boolean };
+  outputSchema: { type: 'object'; resultType: BaseToolDefinition['resultType'] };
+  level: AssistantActionLevel;
+  risk: 'READ_ONLY' | 'PREPARATION_ONLY';
+  requiredPermission: Permission;
+  tenantPolicy: 'CURRENT_ORGANIZATION';
+  objectAccessPolicy: BaseToolDefinition['objectScope'];
+  confirmationPolicy: 'NONE';
+  idempotencyPolicy: 'NOT_APPLICABLE';
+  canonicalService: string;
+  auditPolicy: 'READ_TRACE' | 'PREPARE_TRACE';
+};
+
+const BASE_ASSISTANT_TOOL_REGISTRY: Record<AssistantToolName, BaseToolDefinition> = {
   getProspectFollowUps: { capability: 'ai.prospectos.read', systemPermissions: ['prospectos.read'], objectScope: 'USER', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'PERSONAL', mode: 'READ' },
   searchExpedientes: { capability: 'ai.expedientes.read', systemPermissions: ['expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'INTERNAL', mode: 'READ' },
   getExpedienteSummary: { capability: 'ai.expedientes.read', systemPermissions: ['expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'INTERNAL', mode: 'READ' },
@@ -61,20 +102,65 @@ export const ASSISTANT_TOOL_REGISTRY: Record<AssistantToolName, ToolDefinition> 
   searchComparecientes: { capability: 'ai.comparecientes.read', systemPermissions: ['comparecientes.read'], objectScope: 'COMPARECIENTE', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'PERSONAL', mode: 'READ' },
   getComparecienteSummary: { capability: 'ai.comparecientes.read', systemPermissions: ['comparecientes.read'], objectScope: 'COMPARECIENTE', resultType: 'SUMMARY', maxResults: 10, sensitivity: 'PERSONAL', mode: 'READ' },
   getExpedienteDocuments: { capability: 'ai.documentos.read', systemPermissions: ['documentos.read', 'expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'PERSONAL', mode: 'READ' },
+  searchPredios: { capability: 'ai.expedientes.read', systemPermissions: ['expedientes.read'], objectScope: 'PREDIO', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'PERSONAL', mode: 'READ' },
+  getPredioSummary: { capability: 'ai.expedientes.read', systemPermissions: ['expedientes.read'], objectScope: 'PREDIO', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'PERSONAL', mode: 'READ' },
+  getQuotation: { capability: 'ai.prospectos.read', systemPermissions: ['cotizaciones.read'], objectScope: 'DYNAMIC', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'FINANCIAL', mode: 'READ' },
+  getBudget: { capability: 'ai.finanzas.read', systemPermissions: ['finanzas.read', 'expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'FINANCIAL', mode: 'READ' },
+  getProjectContext: { capability: 'ai.expedientes.read', systemPermissions: ['expedientes.read', 'expedientes.project.read'], objectScope: 'EXPEDIENTE', resultType: 'SUMMARY', maxResults: 25, sensitivity: 'PERSONAL', mode: 'READ' },
+  getProjectObservations: { capability: 'ai.expedientes.read', systemPermissions: ['expedientes.read', 'expedientes.project.read'], objectScope: 'EXPEDIENTE', resultType: 'SUMMARY', maxResults: 25, sensitivity: 'PERSONAL', mode: 'READ' },
+  getQuestionnaires: { capability: 'ai.expedientes.read', systemPermissions: ['expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'COMPLIANCE', mode: 'READ' },
+  getCFG001: { capability: 'ai.admin.read', systemPermissions: ['configuracion.catalogos.read'], objectScope: 'DYNAMIC', resultType: 'SUMMARY', maxResults: 25, sensitivity: 'INTERNAL', mode: 'READ' },
+  getCFG002Resolution: { capability: 'ai.admin.read', systemPermissions: ['configuracion.catalogos.read'], objectScope: 'DYNAMIC', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'INTERNAL', mode: 'READ' },
+  getDocumentMetadata: { capability: 'ai.documentos.read', systemPermissions: ['documentos.read'], objectScope: 'DOCUMENTO', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'PERSONAL', mode: 'READ' },
   getAgenda: { capability: 'ai.agenda.read', systemPermissions: ['agenda.read'], objectScope: 'USER', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'INTERNAL', mode: 'READ' },
   getUpcomingEvents: { capability: 'ai.agenda.read', systemPermissions: ['agenda.read'], objectScope: 'USER', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'INTERNAL', mode: 'READ' },
-  getFinancialSummary: { capability: 'ai.finanzas.read', systemPermissions: ['finanzas.read', 'expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'FINANCIAL', mode: 'READ' },
-  getOutstandingBalances: { capability: 'ai.finanzas.read', systemPermissions: ['finanzas.read', 'expedientes.read'], objectScope: 'EXPEDIENTE', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'FINANCIAL', mode: 'READ' },
+  getFinancialSummary: { capability: 'ai.finanzas.read', systemPermissions: ['finanzas.read'], objectScope: 'EXPEDIENTE', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'FINANCIAL', mode: 'READ' },
+  getOutstandingBalances: { capability: 'ai.finanzas.read', systemPermissions: ['finanzas.read'], objectScope: 'EXPEDIENTE', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'FINANCIAL', mode: 'READ' },
   getReportingSummary: { capability: 'ai.reportes.read', systemPermissions: ['reportes.read'], objectScope: 'USER', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'FINANCIAL', mode: 'READ' },
   getISRCalculation: { capability: 'ai.isr.read', systemPermissions: ['isr.read'], objectScope: 'DYNAMIC', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'FINANCIAL', mode: 'READ' },
   getComplianceSummary: { capability: 'ai.cumplimiento.read', systemPermissions: ['expedientes.read'], anySystemPermission: ['compliance.read', 'cumplimiento.read'], objectScope: 'EXPEDIENTE', resultType: 'SUMMARY', maxResults: 25, sensitivity: 'COMPLIANCE', mode: 'READ' },
   getCurrentUserWork: { capability: 'ai.work.read', systemPermissions: ['mi_dia.read'], objectScope: 'USER', resultType: 'SUMMARY', maxResults: 25, sensitivity: 'INTERNAL', mode: 'READ' },
   globalSearch: { capability: 'ai.search', anySystemPermission: ['expedientes.read', 'comparecientes.read', 'notarias.read'], objectScope: 'DYNAMIC', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'PERSONAL', mode: 'READ' },
+  searchLegalKnowledge: { capability: 'ai.search', objectScope: 'DYNAMIC', resultType: 'COLLECTION', maxResults: 20, sensitivity: 'INTERNAL', mode: 'READ' },
   navigateToEntity: { capability: 'ai.navigate', anySystemPermission: ['expedientes.read', 'comparecientes.read', 'cotizaciones.read', 'notarias.read'], objectScope: 'DYNAMIC', resultType: 'NAVIGATION', maxResults: 1, sensitivity: 'INTERNAL', mode: 'NAVIGATE' },
   prepareTask: { capability: 'ai.actions.prepare', systemPermissions: ['agenda.write'], objectScope: 'USER', resultType: 'PREPARED_ACTION', maxResults: 1, sensitivity: 'INTERNAL', mode: 'PREPARE_ONLY' },
   prepareAppointment: { capability: 'ai.actions.prepare', systemPermissions: ['agenda.write'], objectScope: 'USER', resultType: 'PREPARED_ACTION', maxResults: 1, sensitivity: 'INTERNAL', mode: 'PREPARE_ONLY' },
   prepareFollowUp: { capability: 'ai.actions.prepare', systemPermissions: ['agenda.write'], objectScope: 'USER', resultType: 'PREPARED_ACTION', maxResults: 1, sensitivity: 'INTERNAL', mode: 'PREPARE_ONLY' },
 };
+
+const toolDomain = (name: AssistantToolName) => {
+  if (/Financial|Outstanding|Budget|Reporting/.test(name)) return 'FINANZAS';
+  if (/Compliance/.test(name)) return 'CUMPLIMIENTO';
+  if (/ISR/.test(name)) return 'ISR';
+  if (/Agenda|Event|Task|Appointment|FollowUp/.test(name)) return 'AGENDA';
+  if (/Document/.test(name)) return 'DOCUMENTOS';
+  if (/Compareciente/.test(name)) return 'COMPARECIENTES';
+  if (/Predio/.test(name)) return 'PREDIOS';
+  if (/Quotation|Prospect/.test(name)) return 'COTIZACIONES';
+  if (/CFG/.test(name)) return 'CONFIGURACION';
+  if (/LegalKnowledge/.test(name)) return 'CONOCIMIENTO';
+  return 'EXPEDIENTES';
+};
+
+export const ASSISTANT_TOOL_REGISTRY = Object.fromEntries(
+  (Object.entries(BASE_ASSISTANT_TOOL_REGISTRY) as Array<[AssistantToolName, BaseToolDefinition]>).map(([name, base]) => [name, {
+    ...base,
+    name,
+    domain: toolDomain(name),
+    description: `${base.mode === 'PREPARE_ONLY' ? 'Prepara' : base.mode === 'NAVIGATE' ? 'Navega a' : 'Consulta'} ${name} mediante la fuente canónica de PRAVIA.`,
+    inputSchema: { type: 'object' as const, additionalProperties: false },
+    outputSchema: { type: 'object' as const, resultType: base.resultType },
+    level: (base.mode === 'PREPARE_ONLY' ? 'P' : 'R') as AssistantActionLevel,
+    risk: base.mode === 'PREPARE_ONLY' ? 'PREPARATION_ONLY' as const : 'READ_ONLY' as const,
+    requiredPermission: base.capability,
+    tenantPolicy: 'CURRENT_ORGANIZATION' as const,
+    objectAccessPolicy: base.objectScope,
+    confirmationPolicy: 'NONE' as const,
+    idempotencyPolicy: 'NOT_APPLICABLE' as const,
+    canonicalService: `assistantTools.${name}`,
+    auditPolicy: base.mode === 'PREPARE_ONLY' ? 'PREPARE_TRACE' as const : 'READ_TRACE' as const,
+  }]),
+) as Record<AssistantToolName, AssistantToolDefinition>;
 
 const boundedLimit = (value: unknown, fallback = 10) => Math.min(Math.max(Number(value) || fallback, 1), 25);
 const textArg = (value: unknown, max = 180) => String(value || '').trim().slice(0, max);
@@ -133,6 +219,32 @@ async function resolveExpedienteReference(db: PrismaClient, input: ToolInput) {
   return record.id;
 }
 
+async function resolveFinancialExpedienteReference(db: PrismaClient, input: ToolInput) {
+  if (input.user.rol !== 'FINANCIERO') return resolveExpedienteReference(db, input);
+  const args = input.args || {};
+  const requested = textArg(args.expediente_id, 64);
+  const contextual = input.context?.entity_type === 'expediente' ? textArg(input.context.entity_id, 64) : '';
+  if (requested && contextual && requested !== contextual) {
+    throw new AssistantToolError('El expediente solicitado no coincide con el contexto autenticado.', 'AI_CONTEXT_OBJECT_MISMATCH', 409);
+  }
+  const folio = textArg(args.folio, 80);
+  if (!requested && !contextual && !folio) {
+    throw new AssistantToolError('Falta expediente_id o folio y no hay un expediente compatible en el contexto.', 'AI_CONTEXT_OBJECT_REQUIRED');
+  }
+  const record = await db.expediente.findFirst({
+    where: {
+      organization_id: input.user.organizationId,
+      archived_at: null,
+      ...(requested || contextual
+        ? { id: requested || contextual }
+        : { numero_pravia: { equals: folio, mode: 'insensitive' } }),
+    },
+    select: { id: true },
+  });
+  if (!record) throw new AssistantToolError('El expediente no existe o está fuera de tu alcance.', 'AI_EXPEDIENTE_SCOPE_DENIED', 403);
+  return record.id;
+}
+
 function financialBudget(exp: any) {
   if (exp.presupuesto) return {
     totalCliente: Number(exp.presupuesto.total ?? 0),
@@ -162,20 +274,33 @@ const readAgenda: ToolExecutor = async (db, input) => {
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from || to.getTime() - from.getTime() > 93 * 86_400_000) throw new AssistantToolError('El rango de agenda no es válido o supera 93 días.', 'AI_AGENDA_RANGE_INVALID');
   const expId = args.expediente_id ? textArg(args.expediente_id, 64) : input.context?.entity_type === 'expediente' ? input.context.entity_id : undefined;
   if (expId) await findScopedExpediente(db, input.user, expId);
-  const data = await db.eventoAgenda.findMany({ where: { estatus: 'ACTIVO', fecha_inicio: { gte: from, lt: to }, ...(!['DIRECCION', 'ADMINISTRACION'].includes(input.user.rol) ? { user_id: input.user.id } : {}), ...(expId ? { expediente_id: expId } : {}) }, select: { id: true, titulo: true, tipo: true, fecha_inicio: true, fecha_fin: true, todo_el_dia: true, expediente: { select: { id: true, numero_pravia: true } }, usuario: { select: { id: true, nombre: true, apellido: true } } }, orderBy: { fecha_inicio: 'asc' }, take: limit });
+  const data = await db.eventoAgenda.findMany({ where: { organization_id: input.user.organizationId, estatus: 'ACTIVO', fecha_inicio: { gte: from, lt: to }, ...(!['DIRECCION', 'ADMINISTRACION'].includes(input.user.rol) ? { user_id: input.user.id } : {}), ...(expId ? { expediente_id: expId } : {}) }, select: { id: true, titulo: true, tipo: true, fecha_inicio: true, fecha_fin: true, todo_el_dia: true, expediente: { select: { id: true, numero_pravia: true } }, usuario: { select: { id: true, nombre: true, apellido: true } } }, orderBy: { fecha_inicio: 'asc' }, take: limit });
   return { data: { periodo: { key: period.period, timezone, from, to }, eventos: data }, provenance: data.map((event) => source('EventoAgenda', event.id, event.titulo, '/agenda')), truncated: data.length === limit };
 };
 
 const readFinancial: ToolExecutor = async (db, input) => {
-  const args = input.args || {}; const limit = boundedLimit(args.limit); const expScope = expedienteAccessWhere(input.user);
-  const id = input.tool === 'getFinancialSummary' ? await resolveExpedienteReference(db, input) : '';
+  const args = input.args || {}; const limit = boundedLimit(args.limit);
+  const expScope = input.user.rol === 'FINANCIERO' ? { organization_id: input.user.organizationId } : expedienteAccessWhere(input.user);
+  const id = input.tool === 'getFinancialSummary' ? await resolveFinancialExpedienteReference(db, input) : '';
   const records = await db.expediente.findMany({ where: { archived_at: null, ...expScope, ...(id ? { id } : {}) }, include: { presupuesto: { include: { distribucion: true } }, cotizacion: true, movimientosFinancieros: { where: { estatus: { in: ['APLICADO', 'VALIDADO', 'RECIBIDO'] } } } }, orderBy: { updated_at: 'desc' }, take: id ? 1 : 100 });
   if (id && !records.length) throw new AssistantToolError('El expediente no existe o está fuera de tu alcance.', 'AI_EXPEDIENTE_SCOPE_DENIED', 403);
   const positions = records.map((exp) => { const budget = financialBudget(exp); const position = calculateFinancialPosition({ ...budget, movements: exp.movimientosFinancieros.map((movement) => ({ ...movement, monto: Number(movement.monto) })) }); return { expediente_id: exp.id, folio: exp.numero_pravia, presupuesto_cliente: budget.totalCliente, honorarios_pravia: budget.participacionPravia, recibido_cliente_neto: position.recibido_cliente_neto, saldo_cliente: position.saldo_cliente, fondos_retenidos: position.fondos_retenidos }; }).filter((item) => input.tool !== 'getOutstandingBalances' || item.saldo_cliente > 0).slice(0, limit);
-  return { data: id ? positions[0] : positions, provenance: positions.map((item) => source('MovimientoFinanciero', item.expediente_id, item.folio, `/expedientes/${item.expediente_id}`)), truncated: !id && positions.length === limit };
+  return { data: id ? positions[0] : positions, provenance: positions.map((item) => source('MovimientoFinanciero', item.expediente_id, item.folio, input.user.rol === 'FINANCIERO' ? '/finanzas' : `/expedientes/${item.expediente_id}`)), truncated: !id && positions.length === limit };
 };
 
 const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
+  searchLegalKnowledge: async (db, input) => {
+    const args = input.args || {};
+    const packet = await new KnowledgeService(db).retrieve(input.user, {
+      query: textArg(args.query, 500), jurisdiction: textArg(args.jurisdiction, 80), category: textArg(args.category, 120),
+      legal_date: textArg(args.legal_date, 10), limit: boundedLimit(args.limit, 8),
+    });
+    return {
+      data: packet,
+      provenance: packet.evidence.map((item) => source('KnowledgeSource', item.source_id, `${item.inventory_code} · ${item.title} · ${item.label}`, '/configuracion/biblioteca-conocimiento')),
+      truncated: packet.evidence.length >= boundedLimit(args.limit, 8),
+    };
+  },
   getISRCalculation: async (db, input) => {
     const id = resolveContextId(input.args || {}, input.context, 'calculo_id', 'isrCalculation');
     const record = await db.calculoISR.findFirst({ where: { id, archived_at: null, ...isrObjectWhere(input.user) }, select: { id: true, folio: true, tipo_operacion: true, estado: true, ejercicio: true, input_data: true, datos_modificados: true, ultima_version: true, expediente: { select: { id: true, numero_pravia: true } }, versiones: { orderBy: { version: 'desc' }, take: 1, select: { version: true, calculated_at: true, result: true, breakdown: true, ruleset_snapshot: true } }, propuestas: { where: { status: { in: ['PENDIENTE', 'CONFLICTO', 'ACEPTADA'] } }, select: { field_path: true, proposed_value: true, status: true, source_document_name: true, source_page: true } }, documentos: { where: { estatus: 'ACTIVO' }, select: { documento: { select: { id: true, nombre_original: true } } } } } });
@@ -287,9 +412,115 @@ const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
   },
   getExpedienteSummary: async (db, input) => { const args = input.args || {}; const id = resolveContextId(args, input.context, 'expediente_id', 'expediente'); const exp = await findScopedExpediente(db, input.user, id, { actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: true }, orderBy: { created_at: 'asc' } }, abogado: { select: { nombre: true, apellido: true } }, gestor: { select: { nombre: true, apellido: true } }, notaria: { select: { nombre: true } } }); const data = { id: exp.id, folio: exp.numero_pravia, cliente: exp.cliente_alias, estado: exp.estatus, etapa: exp.etapa_actual_nombre, actos: exp.actos.map((item: any) => ({ id: item.id, tipo: item.tipo_acto.nombre, origen: item.origen })), abogado: exp.abogado ? `${exp.abogado.nombre} ${exp.abogado.apellido}`.trim() : null, gestor: exp.gestor ? `${exp.gestor.nombre} ${exp.gestor.apellido}`.trim() : null, notaria: exp.notaria?.nombre, fechas: { apertura: exp.fecha_apertura, firma_estimada: exp.fecha_estimada_firma, firma_real: exp.fecha_real_firma, entrega: exp.fecha_entrega_cliente }, avance: { general: exp.avance_general, documental: exp.avance_documental, operativo: exp.avance_operativo, ...(input.user.permissions.includes('finanzas.read') ? { financiero: exp.avance_financiero } : {}) } }; return { data, provenance: [source('Expediente', exp.id, exp.numero_pravia, `/expedientes/${exp.id}`)], truncated: false }; },
   getExpedientePendingItems: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const id = await resolveExpedienteReference(db, input); const exp = await findScopedExpediente(db, input.user, id, { requisitos_docs: { where: { obligatorio: true, estatus: { in: ['PENDIENTE', 'EN_REVISION', 'RECHAZADO', 'VENCIDO'] } }, select: { id: true, nombre: true, categoria: true, estatus: true, fecha_vencimiento: true } }, tareas: { where: { estatus: { in: ['PENDIENTE', 'EN_PROCESO'] } }, select: { id: true, titulo: true, prioridad: true, estatus: true, fecha_limite: true } }, tareas_externas: { where: { estatus: { not: 'COMPLETADA' } }, select: { id: true, tipo: true, descripcion: true, institucion: true, estatus: true, fecha_limite: true } } }); const data = { expediente_id: exp.id, folio: exp.numero_pravia, requisitos_documentales: exp.requisitos_docs.slice(0, limit), tareas: exp.tareas.slice(0, limit), gestiones_externas: exp.tareas_externas.slice(0, limit), total_pendientes: exp.requisitos_docs.length + exp.tareas.length + exp.tareas_externas.length }; return { data, provenance: [source('Expediente', exp.id, exp.numero_pravia, `/expedientes/${exp.id}`)], truncated: [exp.requisitos_docs, exp.tareas, exp.tareas_externas].some((items) => items.length > limit) }; },
-  searchComparecientes: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const query = textArg(args.query, 120); const data = await db.compareciente.findMany({ where: { archived_at: null, ...comparecienteObjectWhere(input.user), ...(query ? { OR: [{ nombre_busqueda: { contains: query, mode: 'insensitive' } }, { personaFisica: { is: { OR: [{ curp: { contains: query, mode: 'insensitive' } }, { rfc: { contains: query, mode: 'insensitive' } }] } } }, { personaMoral: { is: { rfc: { contains: query, mode: 'insensitive' } } } }] } : {}) }, select: { id: true, tipo_persona: true, nombre_busqueda: true, estatus: true, personaFisica: { select: { nombre_completo_calculado: true, rfc: true, curp: true } }, personaMoral: { select: { razon_social: true, rfc: true } } }, orderBy: { updated_at: 'desc' }, take: limit }); const serialized = data.map((item) => ({ id: item.id, tipo: item.tipo_persona, nombre: item.personaFisica?.nombre_completo_calculado || item.personaMoral?.razon_social || item.nombre_busqueda, rfc: item.personaFisica?.rfc || item.personaMoral?.rfc || null, curp: item.personaFisica?.curp || null, estatus: item.estatus })); return { data: serialized, provenance: serialized.map((item) => source('Compareciente', item.id, item.nombre, `/comparecientes/${item.id}`)), truncated: data.length === limit }; },
-  getComparecienteSummary: async (db, input) => { const args = input.args || {}; const id = resolveContextId(args, input.context, 'compareciente_id', 'compareciente'); const item = await db.compareciente.findFirst({ where: { id, archived_at: null, ...comparecienteObjectWhere(input.user) }, include: { personaFisica: true, personaMoral: true, documentos: { where: { estatus: 'ACTIVO' }, select: { id: true } }, expedientes: { where: { expediente: { archived_at: null, ...expedienteAccessWhere(input.user) } }, select: { expediente: { select: { id: true, numero_pravia: true, estatus: true } } }, take: 10 } } }); if (!item) throw new AssistantToolError('El compareciente no existe o está fuera de tu alcance.', 'AI_COMPARECIENTE_SCOPE_DENIED', 403); const name = item.personaFisica?.nombre_completo_calculado || item.personaMoral?.razon_social || item.nombre_busqueda; const data = { id: item.id, tipo: item.tipo_persona, nombre: name, rfc: item.personaFisica?.rfc || item.personaMoral?.rfc, curp: item.personaFisica?.curp, estado: item.estatus, documentos_activos: item.documentos.length, expedientes: item.expedientes.map((link) => link.expediente) }; return { data, provenance: [source('Compareciente', item.id, name, `/comparecientes/${item.id}`)], truncated: item.expedientes.length === 10 }; },
+  searchComparecientes: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const query = textArg(args.query, 120); const data = await db.compareciente.findMany({ where: { organization_id: input.user.organizationId, archived_at: null, ...comparecienteObjectWhere(input.user), ...(query ? { OR: [{ nombre_busqueda: { contains: query, mode: 'insensitive' } }, { personaFisica: { is: { OR: [{ curp: { contains: query, mode: 'insensitive' } }, { rfc: { contains: query, mode: 'insensitive' } }] } } }, { personaMoral: { is: { rfc: { contains: query, mode: 'insensitive' } } } }] } : {}) }, select: { id: true, tipo_persona: true, nombre_busqueda: true, estatus: true, personaFisica: { select: { nombre_completo_calculado: true, rfc: true, curp: true } }, personaMoral: { select: { razon_social: true, rfc: true } } }, orderBy: { updated_at: 'desc' }, take: limit }); const serialized = data.map((item) => ({ id: item.id, tipo: item.tipo_persona, nombre: item.personaFisica?.nombre_completo_calculado || item.personaMoral?.razon_social || item.nombre_busqueda, rfc: item.personaFisica?.rfc || item.personaMoral?.rfc || null, curp: item.personaFisica?.curp || null, estatus: item.estatus })); return { data: serialized, provenance: serialized.map((item) => source('Compareciente', item.id, item.nombre, `/comparecientes/${item.id}`)), truncated: data.length === limit }; },
+  getComparecienteSummary: async (db, input) => { const args = input.args || {}; const id = resolveContextId(args, input.context, 'compareciente_id', 'compareciente'); const item = await db.compareciente.findFirst({ where: { id, organization_id: input.user.organizationId, archived_at: null, ...comparecienteObjectWhere(input.user) }, include: { personaFisica: true, personaMoral: true, documentos: { where: { estatus: 'ACTIVO' }, select: { id: true } }, expedientes: { where: { expediente: { archived_at: null, ...expedienteAccessWhere(input.user) } }, select: { expediente: { select: { id: true, numero_pravia: true, estatus: true } } }, take: 10 } } }); if (!item) throw new AssistantToolError('El compareciente no existe o está fuera de tu alcance.', 'AI_COMPARECIENTE_SCOPE_DENIED', 403); const name = item.personaFisica?.nombre_completo_calculado || item.personaMoral?.razon_social || item.nombre_busqueda; const data = { id: item.id, tipo: item.tipo_persona, nombre: name, rfc: item.personaFisica?.rfc || item.personaMoral?.rfc, curp: item.personaFisica?.curp, estado: item.estatus, documentos_activos: item.documentos.length, expedientes: item.expedientes.map((link) => link.expediente) }; return { data, provenance: [source('Compareciente', item.id, name, `/comparecientes/${item.id}`)], truncated: item.expedientes.length === 10 }; },
   getExpedienteDocuments: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const id = resolveContextId(args, input.context, 'expediente_id', 'expediente'); const exp = await findScopedExpediente(db, input.user, id, { expedienteDocumentos: { where: { estatus: 'ACTIVO' }, include: { documento: { select: { id: true, nombre_original: true, tipo: true, categoria: true, estatus: true, fecha_vigencia: true } } }, orderBy: { fecha_vinculo: 'desc' } } }); const data = exp.expedienteDocumentos.slice(0, limit).map((link: any) => ({ ...link.documento, tipo_vinculo: link.tipo_vinculo, fecha_vinculo: link.fecha_vinculo })); return { data, provenance: data.map((doc: any) => source('Documento', doc.id, doc.nombre_original, `/expedientes/${exp.id}`)), truncated: exp.expedienteDocumentos.length > limit }; },
+  searchPredios: async (db, input) => {
+    const query = textArg(input.args?.query, 160); const limit = boundedLimit(input.args?.limit);
+    const data = await db.predio.findMany({
+      where: {
+        organization_id: input.user.organizationId, archived_at: null, ...predioObjectWhere(input.user),
+        ...(query ? { OR: [
+          { apodo: { contains: query, mode: 'insensitive' } }, { clave_catastral: { contains: query, mode: 'insensitive' } },
+          { cuenta_predial: { contains: query, mode: 'insensitive' } }, { folio_real: { contains: query, mode: 'insensitive' } },
+          { ubicacion_texto: { contains: query, mode: 'insensitive' } },
+        ] } : {}),
+      },
+      select: { id: true, apodo: true, clave_catastral: true, cuenta_predial: true, folio_real: true, ubicacion_texto: true, municipio: true, estado: true, updated_at: true },
+      orderBy: { updated_at: 'desc' }, take: limit,
+    });
+    return { data, provenance: data.map((item) => source('Predio', item.id, item.apodo || item.clave_catastral || item.ubicacion_texto || 'Predio', `/predios/${item.id}`)), truncated: data.length === limit };
+  },
+  getPredioSummary: async (db, input) => {
+    const id = resolveContextId(input.args || {}, input.context, 'predio_id', 'predio');
+    const item = await db.predio.findFirst({
+      where: { id, organization_id: input.user.organizationId, archived_at: null, ...predioObjectWhere(input.user) },
+      include: {
+        colindancias: { orderBy: { orden: 'asc' } },
+        documentos: { where: { estatus: 'ACTIVO' }, select: { tipo_vinculo: true, vigencia: true, documento: { select: { id: true, nombre_original: true, mime_type: true, checksum_sha256: true } } } },
+        expedientes: { where: { estatus: 'ACTIVO', expediente: { archived_at: null, ...expedienteAccessWhere(input.user) } }, select: { expediente: { select: { id: true, numero_pravia: true, estatus: true } } } },
+      },
+    });
+    if (!item) throw new AssistantToolError('El predio no existe o está fuera de tu alcance.', 'AI_PREDIO_SCOPE_DENIED', 403);
+    return { data: item, provenance: [source('Predio', item.id, item.apodo || item.clave_catastral || item.ubicacion_texto || 'Predio', `/predios/${item.id}`), ...item.documentos.map((link) => source('Documento', link.documento.id, link.documento.nombre_original, `/predios/${item.id}`))], truncated: false };
+  },
+  getQuotation: async (db, input) => {
+    const id = resolveContextId(input.args || {}, input.context, 'quote_id', 'cotizacion');
+    const item = await db.cotizacion.findFirst({
+      where: { id, ...cotizacionObjectWhere(input.user) },
+      include: {
+        prospecto: { select: { id: true, folio: true, nombre: true, telefono: true, email: true } },
+        creada_por: { select: { id: true, nombre: true, apellido: true } },
+        conceptos: { orderBy: { orden: 'asc' } },
+        versiones: { orderBy: { version: 'desc' }, take: 1, include: { conceptos: { orderBy: { orden: 'asc' } } } },
+        expediente: { select: { id: true, numero_pravia: true } },
+      },
+    });
+    if (!item) throw new AssistantToolError('La cotización no existe o está fuera de tu alcance.', 'AI_QUOTATION_SCOPE_DENIED', 403);
+    return { data: item, provenance: [source('Cotizacion', item.id, item.numero_cotizacion || 'Cotización', `/cotizaciones/${item.id}`)], truncated: false };
+  },
+  getBudget: async (db, input) => {
+    const id = await resolveExpedienteReference(db, input);
+    const exp = await findScopedExpediente(db, input.user, id, { presupuesto: { include: { conceptos: { orderBy: { orden: 'asc' } }, distribucion: true, documentos: { include: { documento: { select: { id: true, nombre_original: true, mime_type: true, checksum_sha256: true } } } } } } });
+    return { data: { expediente_id: exp.id, folio: exp.numero_pravia, presupuesto: exp.presupuesto || null }, provenance: [source('Expediente', exp.id, exp.numero_pravia, `/expedientes/${exp.id}#presupuesto`), ...((exp.presupuesto?.documentos || []).map((link: any) => source('Documento', link.documento.id, link.documento.nombre_original, `/expedientes/${exp.id}#presupuesto`)))], truncated: false };
+  },
+  getProjectContext: async (db, input) => {
+    const id = await resolveExpedienteReference(db, input);
+    await findScopedExpediente(db, input.user, id);
+    const data = await new ProjectGenerationService().workspace(input.user, id);
+    return { data, provenance: [source('Expediente', id, 'Contexto de proyecto', `/expedientes/${id}#proyecto`), ...data.sources.documents.map((link: any) => source('Documento', link.documento.id, link.documento.nombre_original, `/expedientes/${id}#proyecto`))], truncated: false };
+  },
+  getProjectObservations: async (db, input) => {
+    const id = await resolveExpedienteReference(db, input);
+    const exp = await findScopedExpediente(db, input.user, id);
+    const repository = new ProjectRepository(db);
+    const [versions, report] = await Promise.all([repository.listVersions(id), repository.latestReport(id)]);
+    const current = versions.find((version) => version.es_vigente) || versions[0] || null;
+    const observations = {
+      generacion: current?.generation_observations || [],
+      revision_ia: report?.record.observaciones || [],
+      documentos_no_leidos: report?.record.documentos_no_leidos || [],
+    };
+    return {
+      data: {
+        expediente_id: id,
+        folio: exp.numero_pravia,
+        proyecto: current,
+        reporte: report?.record || null,
+        observaciones: observations,
+        puede_aplicar_automaticamente: false,
+        limitacion: 'Las observaciones son propuestas de revisión. PRAVIA no modifica el proyecto automáticamente sin una función canónica de aplicación y confirmación humana.',
+      },
+      provenance: [source('Expediente', id, exp.numero_pravia, `/expedientes/${id}#proyecto`), ...(current ? [source('Documento', current.id, current.nombre_original, `/expedientes/${id}#proyecto`)] : []), ...(report ? [source('Documento', report.record.id, report.record.nombre_reporte, `/expedientes/${id}#proyecto`)] : [])],
+      truncated: observations.generacion.length + observations.revision_ia.length > 25,
+    };
+  },
+  getQuestionnaires: async (db, input) => {
+    const id = await resolveExpedienteReference(db, input); const limit = boundedLimit(input.args?.limit);
+    const exp = await findScopedExpediente(db, input.user, id);
+    const data = await db.expedienteCuestionarioRespuesta.findMany({ where: { organization_id: input.user.organizationId, expediente_id: id }, select: { id: true, scope: true, subject_key: true, revision: true, estado: true, completeness_json: true, finalized_at: true, created_at: true, artefactoVersion: { select: { id: true, version: true, artefacto: { select: { id: true, nombre: true, tipo: true } } } } }, orderBy: [{ created_at: 'desc' }, { revision: 'desc' }], take: limit });
+    return { data: { expediente_id: id, folio: exp.numero_pravia, respuestas: data }, provenance: [source('Expediente', id, exp.numero_pravia, `/expedientes/${id}#cuestionarios`)], truncated: data.length === limit };
+  },
+  getCFG001: async (_db, input) => {
+    const actId = textArg(input.args?.tipo_acto_id, 64);
+    const data = actId ? await actsAndTimesService.get(input.user, actId) : await actsAndTimesService.list(input.user, textArg(input.args?.query, 120));
+    const id = actId || 'catalogo';
+    return { data, provenance: [source('CFG001', id, 'Actos y tiempos', '/configuracion/actos-tiempos')], truncated: !actId && Array.isArray((data as any).data) && (data as any).data.length >= boundedLimit(input.args?.limit, 25) };
+  },
+  getCFG002Resolution: async (_db, input) => {
+    const destination = textArg(input.args?.destination, 80);
+    if (!destination) throw new AssistantToolError('Falta el destino funcional que quieres resolver.', 'AI_CFG002_DESTINATION_REQUIRED');
+    const resolved = await functionalDestinationService.resolve(input.user, destination, { tipoActoId: textArg(input.args?.tipo_acto_id, 64) || null });
+    const data = { destination: resolved.destination, artifact: { id: resolved.artifact.id, nombre: resolved.artifact.nombre, tipo: resolved.artifact.tipo }, version: { id: resolved.version.id, version: resolved.version.version, nombre_original: resolved.version.nombre_original, checksum_sha256: resolved.version.checksum_sha256 }, rules: resolved.rules, data_mapping: resolved.data_mapping, provenance: resolved.provenance };
+    return { data, provenance: [source('CatalogoArtefacto', resolved.artifact.id, resolved.artifact.nombre, '/configuracion/plantillas-formatos')], truncated: false };
+  },
+  getDocumentMetadata: async (db, input) => {
+    const id = resolveContextId(input.args || {}, input.context, 'document_id', 'documento');
+    if (!await canAccessDocumento(input.user, id)) throw new AssistantToolError('El documento no existe o está fuera de tu alcance.', 'AI_DOCUMENT_SCOPE_DENIED', 403);
+    const item = await db.documento.findFirst({ where: { id, organization_id: input.user.organizationId }, select: { id: true, nombre_original: true, tipo: true, categoria: true, mime_type: true, size_bytes: true, checksum_sha256: true, fecha_carga: true, fecha_emision: true, fecha_vigencia: true, estatus: true, observaciones: true } });
+    if (!item) throw new AssistantToolError('El documento no existe o está fuera de tu alcance.', 'AI_DOCUMENT_SCOPE_DENIED', 403);
+    return { data: { ...item, preview_reference: `/documentos/${item.id}/preview`, download_reference: `/documentos/${item.id}/download`, permanent_public_url: false }, provenance: [source('Documento', item.id, item.nombre_original, input.context?.route || '/documentos')], truncated: false };
+  },
   getAgenda: readAgenda,
   getUpcomingEvents: readAgenda,
   getFinancialSummary: readFinancial,
@@ -318,7 +549,7 @@ const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
     const [pendingTasks, completedTasks, events] = await Promise.all([
       db.tarea.findMany({
         where: {
-          asignado_a_id: input.user.id,
+          organization_id: input.user.organizationId, asignado_a_id: input.user.id,
           estatus: { in: ['PENDIENTE', 'EN_PROCESO'] },
           OR: [
             { fecha_limite: { gte: range.from, lt: range.to } },
@@ -332,7 +563,7 @@ const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
       }),
       db.tarea.findMany({
         where: {
-          asignado_a_id: input.user.id,
+          organization_id: input.user.organizationId, asignado_a_id: input.user.id,
           estatus: 'COMPLETADA',
           fecha_completada: { gte: range.from, lt: range.to },
         },
@@ -341,7 +572,7 @@ const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
         take: limit,
       }),
       db.eventoAgenda.findMany({
-        where: { user_id: input.user.id, estatus: 'ACTIVO', fecha_inicio: { gte: range.from, lt: range.to } },
+        where: { organization_id: input.user.organizationId, user_id: input.user.id, estatus: 'ACTIVO', fecha_inicio: { gte: range.from, lt: range.to } },
         select: { id: true, titulo: true, tipo: true, fecha_inicio: true, fecha_fin: true, expediente: { select: { id: true, numero_pravia: true } } },
         orderBy: { fecha_inicio: 'asc' },
         take: limit,
@@ -363,7 +594,7 @@ const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
       truncated: pendingTasks.length === limit || completedTasks.length === limit || events.length === limit,
     };
   },
-  globalSearch: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const query = textArg(args.query, 120); if (query.length < 2) throw new AssistantToolError('Escribe al menos dos caracteres para buscar.', 'AI_SEARCH_QUERY_TOO_SHORT'); const expScope = expedienteAccessWhere(input.user); const [expedientes, comparecientes, notarias] = await Promise.all([input.user.permissions.includes('expedientes.read') ? db.expediente.findMany({ where: { archived_at: null, ...expScope, OR: [{ numero_pravia: { contains: query, mode: 'insensitive' } }, { cliente_alias: { contains: query, mode: 'insensitive' } }] }, select: { id: true, numero_pravia: true, cliente_alias: true }, take: limit }) : [], input.user.permissions.includes('comparecientes.read') ? db.compareciente.findMany({ where: { archived_at: null, ...comparecienteObjectWhere(input.user), nombre_busqueda: { contains: query, mode: 'insensitive' } }, select: { id: true, nombre_busqueda: true }, take: limit }) : [], input.user.permissions.includes('notarias.read') ? db.notaria.findMany({ where: { activa: true, OR: [{ nombre: { contains: query, mode: 'insensitive' } }, { numero_notaria: { contains: query, mode: 'insensitive' } }] }, select: { id: true, nombre: true, numero_notaria: true }, take: limit }) : []]); const data = { expedientes, comparecientes, notarias }; return { data, provenance: [...expedientes.map((item) => source('Expediente', item.id, item.numero_pravia, `/expedientes/${item.id}`)), ...comparecientes.map((item) => source('Compareciente', item.id, item.nombre_busqueda, `/comparecientes/${item.id}`)), ...notarias.map((item) => source('Notaria', item.id, item.nombre, '/notarias'))], truncated: [expedientes, comparecientes, notarias].some((items) => items.length === limit) }; },
+  globalSearch: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const query = textArg(args.query, 120); if (query.length < 2) throw new AssistantToolError('Escribe al menos dos caracteres para buscar.', 'AI_SEARCH_QUERY_TOO_SHORT'); const expScope = expedienteAccessWhere(input.user); const [expedientes, comparecientes, notarias] = await Promise.all([input.user.permissions.includes('expedientes.read') ? db.expediente.findMany({ where: { archived_at: null, ...expScope, OR: [{ numero_pravia: { contains: query, mode: 'insensitive' } }, { cliente_alias: { contains: query, mode: 'insensitive' } }] }, select: { id: true, numero_pravia: true, cliente_alias: true }, take: limit }) : [], input.user.permissions.includes('comparecientes.read') ? db.compareciente.findMany({ where: { organization_id: input.user.organizationId, archived_at: null, ...comparecienteObjectWhere(input.user), nombre_busqueda: { contains: query, mode: 'insensitive' } }, select: { id: true, nombre_busqueda: true }, take: limit }) : [], input.user.permissions.includes('notarias.read') ? db.notaria.findMany({ where: { organization_id: input.user.organizationId, archived_at: null, activa: true, OR: [{ nombre: { contains: query, mode: 'insensitive' } }, { numero_notaria: { contains: query, mode: 'insensitive' } }] }, select: { id: true, nombre: true, numero_notaria: true }, take: limit }) : []]); const data = { expedientes, comparecientes, notarias }; return { data, provenance: [...expedientes.map((item) => source('Expediente', item.id, item.numero_pravia, `/expedientes/${item.id}`)), ...comparecientes.map((item) => source('Compareciente', item.id, item.nombre_busqueda, `/comparecientes/${item.id}`)), ...notarias.map((item) => source('Notaria', item.id, item.nombre, '/notarias'))], truncated: [expedientes, comparecientes, notarias].some((items) => items.length === limit) }; },
 };
 
 async function executePreparedTool(db: PrismaClient, input: ToolInput) {
@@ -388,7 +619,7 @@ async function executePreparedTool(db: PrismaClient, input: ToolInput) {
   if (expedienteId) await findScopedExpediente(db, input.user, expedienteId);
   const responsibleId = textArg(args.responsable_id, 64) || input.user.id;
   if (!['DIRECCION', 'ADMINISTRACION'].includes(input.user.rol) && responsibleId !== input.user.id) throw new AssistantToolError('Solo puedes preparar una asignación para ti mismo.', 'AI_PREPARE_ASSIGNMENT_DENIED', 403);
-  const responsible = await db.user.findFirst({ where: { id: responsibleId, activo: true }, select: { id: true, nombre: true, apellido: true } });
+  const responsible = await db.user.findFirst({ where: { id: responsibleId, activo: true, organizationMemberships: { some: { organization_id: input.user.organizationId, status: 'ACTIVE' } } }, select: { id: true, nombre: true, apellido: true } });
   if (!responsible) throw new AssistantToolError('El responsable propuesto no está activo.', 'AI_PREPARE_RESPONSIBLE_INVALID');
   const due = args.fecha || args.fecha_limite || args.fecha_inicio;
   const date = due ? new Date(String(due)) : null;
@@ -403,6 +634,7 @@ async function executePreparedTool(db: PrismaClient, input: ToolInput) {
 
 async function writeToolAudit(db: PrismaClient, input: ToolInput, action: string, details: Record<string, unknown>) {
   await db.auditLog.create({ data: {
+    organization_id: input.user.organizationId,
     user_id: input.user.id,
     accion: action,
     entidad: 'User',
@@ -451,9 +683,21 @@ export const assistantToolCatalog = (user: AuthUser) => Object.entries(ASSISTANT
   .filter(([name]) => canUseAssistantTool(user, name as AssistantToolName))
   .map(([name, definition]) => ({
     name,
+    domain: definition.domain,
+    description: definition.description,
     mode: definition.mode,
+    level: definition.level,
+    risk: definition.risk,
     object_scope: definition.objectScope,
     result_type: definition.resultType,
     max_results: definition.maxResults,
     sensitivity: definition.sensitivity,
+    input_schema: definition.inputSchema,
+    output_schema: definition.outputSchema,
+    tenant_policy: definition.tenantPolicy,
+    object_access_policy: definition.objectAccessPolicy,
+    confirmation_policy: definition.confirmationPolicy,
+    idempotency_policy: definition.idempotencyPolicy,
+    canonical_service: definition.canonicalService,
+    audit_policy: definition.auditPolicy,
   }));

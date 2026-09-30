@@ -1,6 +1,11 @@
 import '@testing-library/jest-dom/vitest';
 import { afterEach, vi } from 'vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
+
+// La aplicación carga sus módulos de ruta de forma diferida. En la regresión
+// completa, la transformación inicial de esos chunks puede superar el segundo
+// que Testing Library usa por defecto aunque la UI responda correctamente.
+configure({ asyncUtilTimeout: 10_000 });
 
 class MemoryStorage implements Storage {
   private data = new Map<string, string>();

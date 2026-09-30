@@ -1,4 +1,4 @@
-import { AlertTriangle, Plus, RefreshCw, ShieldX } from 'lucide-react';
+import { AlertTriangle, Plus, RefreshCw, Search, ShieldX } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { PageContainer } from '../../components/layout/PageContainer';
@@ -7,6 +7,7 @@ import { AccountForm } from './components/AccountForm';
 import { AccountsView } from './components/AccountsView';
 import { FinancePeriodFilter } from './components/FinancePeriodFilter';
 import { FinanceSummaryView } from './components/FinanceSummaryView';
+import { FinanceProjectionView } from './components/FinanceProjectionView';
 import { InvoicesView } from './components/InvoicesView';
 import { MovementDetail } from './components/MovementDetail';
 import { MovementsView } from './components/MovementsView';
@@ -25,17 +26,19 @@ import type {
   Paginated,
   Receivable,
   ReconciliationData,
+  RecurringExpense,
 } from './finance.types';
 
 const views: Array<{ key: FinanceView; label: string }> = [
   { key: 'resumen', label: 'Resumen' },
+  { key: 'proyeccion', label: 'Proyección' },
   { key: 'movimientos', label: 'Movimientos' },
   { key: 'cuentas', label: 'Cuentas' },
   { key: 'conciliacion', label: 'Conciliación' },
   { key: 'facturacion', label: 'Facturación' },
   { key: 'cartera', label: 'Cartera' },
 ];
-const periodViews = new Set<FinanceView>(['resumen', 'movimientos', 'conciliacion', 'cartera']);
+const periodViews = new Set<FinanceView>(['resumen', 'proyeccion', 'movimientos', 'conciliacion', 'cartera']);
 const emptyPage = <T,>(): Paginated<T> => ({ items: [], meta: { page: 1, pageSize: 20, total: 0, totalPages: 1 } });
 const localDate = (date: Date) => {
   const offset = date.getTimezoneOffset() * 60_000;
@@ -46,7 +49,7 @@ export function FinancePage() {
   const { user } = useAuth();
   const [params, setParams] = useSearchParams();
   const current = (views.some((item) => item.key === params.get('view')) ? params.get('view') : 'resumen') as FinanceView;
-  const period = (params.get('periodo') || 'ESTE_MES') as FinancePeriodKey;
+  const period = (params.get('periodo') || '30_DIAS') as FinancePeriodKey;
   const periodFrom = params.get('fecha_desde') || '';
   const periodTo = params.get('fecha_hasta') || '';
   const page = Math.max(1, Number(params.get('page') || 1));
@@ -59,10 +62,14 @@ export function FinancePage() {
   const [accounts, setAccounts] = useState<FinanceAccount[]>([]);
   const [receivables, setReceivables] = useState<Paginated<Receivable>>(emptyPage);
   const [reconciliation, setReconciliation] = useState<ReconciliationData | null>(null);
+  const [recurringExpenses, setRecurringExpenses] = useState<RecurringExpense[]>([]);
   const [selected, setSelected] = useState<FinanceMovement | null>(null);
   const [newOpen, setNewOpen] = useState(params.get('new') === '1');
   const [accountOpen, setAccountOpen] = useState(false);
   const [toast, setToast] = useState('');
+  const [analysisQuery, setAnalysisQuery] = useState('');
+  const [analysisBusy, setAnalysisBusy] = useState(false);
+  const [analysisPlan, setAnalysisPlan] = useState<{metric:string;groupBy:string;period:FinancePeriodKey;chart:string}|null>(null);
   const canRead = Boolean(user?.permissions?.includes('finanzas.read'));
   const filters = useMemo(() => ({
     search: params.get('search') || '',
@@ -83,6 +90,7 @@ export function FinancePage() {
       const cat = await financeService.catalogs(signal);
       setCatalogs(cat);
       if (current === 'resumen') setSummary(await financeService.summary(periodQuery, signal));
+      if (current === 'proyeccion') { const [nextSummary,nextExpenses]=await Promise.all([financeService.summary(periodQuery,signal),financeService.recurringExpenses(signal)]);setSummary(nextSummary);setRecurringExpenses(nextExpenses); }
       if (current === 'movimientos') setMovements(await financeService.movements({ ...periodQuery, ...filters, page, pageSize: 20 }, signal));
       if (current === 'cuentas') setAccounts(await financeService.accounts(signal));
       if (current === 'cartera') setReceivables(await financeService.receivables({ ...periodQuery, page, pageSize: 20 }, signal));
@@ -154,10 +162,18 @@ export function FinancePage() {
       <nav className={styles.subnav} aria-label="Secciones de Finanzas">
         {views.map((item) => <button type="button" key={item.key} ref={(node) => { tabRefs.current[item.key] = node; }} data-active={current === item.key} aria-current={current === item.key ? 'page' : undefined} onClick={() => navigate(item.key)}>{item.label}</button>)}
       </nav>
+      {(current === 'resumen' || current === 'proyeccion') && <form className={styles.financeQuery} onSubmit={async (event) => {
+        event.preventDefault(); if (analysisQuery.trim().length < 3 || analysisBusy) return;
+        setAnalysisBusy(true);
+        try { const result = await financeService.analyze(analysisQuery.trim()); setAnalysisPlan(result.plan); changePeriod(result.plan.period); }
+        catch { setToast('No pudimos interpretar la consulta financiera.'); }
+        finally { setAnalysisBusy(false); }
+      }}><Search size={17}/><label htmlFor="finance-natural-query">Analizar con datos reales</label><input id="finance-natural-query" value={analysisQuery} onChange={(event)=>setAnalysisQuery(event.target.value)} placeholder="Ej. Honorarios cobrados por abogado en 3 meses"/><button type="submit" disabled={analysisBusy||analysisQuery.trim().length<3}>{analysisBusy?'Analizando…':'Analizar'}</button>{analysisPlan&&<small>Consulta tipada · {analysisPlan.metric} por {analysisPlan.groupBy} · {analysisPlan.period.replaceAll('_',' ').toLocaleLowerCase('es-MX')} · sin SQL libre</small>}</form>}
       {status === 'loading' && <FinanceLoading view={current} />}
       {status === 'error' && <section className={styles.errorState} role="alert"><span><AlertTriangle /></span><h2>No pudimos cargar Finanzas.</h2><p>La información financiera no está disponible en este momento.</p><button type="button" className={styles.secondaryButton} onClick={() => load()}><RefreshCw size={16} />Reintentar</button></section>}
       {status === 'ready' && catalogs && <>
         {current === 'resumen' && summary && <FinanceSummaryView summary={summary} onOpen={navigate} />}
+        {current === 'proyeccion' && summary && <FinanceProjectionView summary={summary} expenses={recurringExpenses} canWrite={catalogs.permisos.escribir} onChanged={()=>void load()}/>}
         {current === 'movimientos' && <MovementsView result={movements} catalogs={catalogs} filters={filters} onFilter={change} onPage={(value) => change('page', String(value))} onSelect={setSelected} onNew={() => setNewOpen(true)} />}
         {current === 'cuentas' && <AccountsView accounts={accounts} canWrite={catalogs.permisos.escribir} onNew={() => setAccountOpen(true)} />}
         {current === 'conciliacion' && reconciliation && <ReconciliationView data={reconciliation} canReconcile={catalogs.permisos.conciliar} onReconcile={async (movementId, bankId) => { await financeService.reconcile(movementId, bankId); saved('Conciliación registrada correctamente.'); }} />}

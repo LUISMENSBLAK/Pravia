@@ -5,7 +5,7 @@ import styles from './AssistantDrawer.module.css';
 export function AssistantConfirmationCard() {
   const { confirmation, confirmAction, editConfirmation, cancelConfirmation, closeAssistant, status } = useAssistant();
   if (!confirmation) return null;
-  const projectGeneration = confirmation.confirmLabel === 'Generar proyecto';
+  const projectGeneration = confirmation.confirmLabel === 'Generar proyecto' && confirmation.title.includes('EXP-010');
   const openProjectOptions = (target: 'sources' | 'template') => {
     cancelConfirmation();
     closeAssistant();

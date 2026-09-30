@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const db = vi.hoisted(() => ({
   prospecto: { create: vi.fn(), update: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), count: vi.fn(), groupBy: vi.fn() },
+  prospectoServicioCatalogo: { findUnique: vi.fn() },
+  prospectoActo: { deleteMany: vi.fn(), createMany: vi.fn(), updateMany: vi.fn() },
+  tipoActo: { findMany: vi.fn() },
   prospectoTransicion: { create: vi.fn() }, $transaction: vi.fn(), $executeRaw: vi.fn(), $queryRaw: vi.fn(),
   auditLog: { create: vi.fn() },
 }));
@@ -20,24 +23,32 @@ describe('Prospectos endpoints de catálogo y escritura', () => {
     db.$transaction.mockImplementation((fn) => fn(db));
     db.$executeRaw.mockResolvedValue(1); db.$queryRaw.mockResolvedValue([]);
     db.prospectoTransicion.create.mockImplementation(async ({data}) => ({id:'event-1',...data}));
+    db.prospectoServicioCatalogo.findUnique.mockResolvedValue({ tipo_acto_id: '10000000-0000-4000-8000-000000000001' });
+    db.tipoActo.findMany.mockImplementation(async ({ where }: any) => where?.id?.in
+      ? where.id.in.map((id: string) => ({ id, nombre: 'Compraventa' }))
+      : []);
+    db.prospectoActo.deleteMany.mockResolvedValue({ count: 0 });
+    db.prospectoActo.createMany.mockResolvedValue({ count: 1 });
+    db.prospectoActo.updateMany.mockResolvedValue({ count: 1 });
     db.prospecto.findFirst.mockImplementation(async ({where}) => where.creation_key ? null : ({id:'prospect-1',user_id:user.id,organization_id:user.organizationId,version_operativa:0,etapa_contractual:null}));
   });
 
   it('expone una sola lectura con 3 etapas y 38 servicios', async () => {
     const res = response();
-    await getProspectCatalogs({} as any, res);
+    await getProspectCatalogs({ user } as any, res);
     const payload = res.json.mock.calls[0][0];
     expect(payload.stages).toHaveLength(3);
     expect(payload.services).toHaveLength(38);
+    expect(payload.actTypes).toEqual([]);
   });
 
   it('crea con nombre uppercase, etapa inicial y servicio canónico', async () => {
     db.prospecto.create.mockImplementation(async ({ data }: any) => ({ id: 'prospect-1', etapa_contractual:null, version_operativa:0, ...data }));
-    const req: any = { user, get: () => 'test-create-key', body: { nombre: '  josé   ñuñez ', servicio_catalogo_codigo: 'COMPRAVENTA', prioridad: 'ALTA', tiene_predial: false, tiene_antecedente: true } };
+    const req: any = { user, get: () => 'test-create-key', body: { nombre: '  josé   ñuñez ', email: 'Jose.Nunez+QA@Example.test', necesidad: 'compraventa con crédito', contexto_operacion: 'inmueble urbano', servicio_catalogo_codigo: 'COMPRAVENTA', prioridad: 'ALTA', tiene_predial: false, tiene_antecedente: true } };
     const res = response();
     await createProspecto(req, res);
     expect(db.prospecto.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
-      nombre: 'JOSÉ ÑUÑEZ', tipo_acto: 'Compraventa', servicio_catalogo_codigo: 'COMPRAVENTA', estado: 'NUEVO', tiene_predial: false, tiene_antecedente: true,
+      nombre: 'JOSÉ ÑUÑEZ', email: 'Jose.Nunez+QA@Example.test', necesidad: 'COMPRAVENTA CON CRÉDITO', contexto_operacion: 'INMUEBLE URBANO', tipo_acto: 'Compraventa', servicio_catalogo_codigo: 'COMPRAVENTA', estado: 'NUEVO', tiene_predial: false, tiene_antecedente: true,
     }) }));
     expect(res.status).toHaveBeenCalledWith(201);
     expect(db.prospectoTransicion.create).toHaveBeenCalledWith(expect.objectContaining({data:expect.objectContaining({etapa_nueva:'NUEVO',accion:'CREAR'})}));

@@ -13,7 +13,8 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
-if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+const serviceWorkerAllowed = import.meta.env.PROD || ['localhost', '127.0.0.1'].includes(window.location.hostname);
+if (serviceWorkerAllowed && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     void navigator.serviceWorker.register('/sw.js').then((registration) => {
       const announce = (worker: ServiceWorker | null) => {

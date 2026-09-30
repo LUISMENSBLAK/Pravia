@@ -21,6 +21,7 @@ export async function recognizeAcceptedQuote(tx: Tx, input: { cotizacionId: stri
   return tx.honorarioGenerado.upsert({
     where: { cotizacion_id: quote.id },
     create: {
+      organization_id: quote.organization_id,
       clave_origen: `COTIZACION:${quote.id}`,
       cotizacion_id: quote.id,
       cotizacion_version_id: version.id,

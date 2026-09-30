@@ -39,6 +39,8 @@ const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.Inp
 const isRepresentation = (value: FormaComparecencia) => value === FormaComparecencia.EN_REPRESENTACION_PERSONA_MORAL
   || value === FormaComparecencia.EN_REPRESENTACION_PERSONA_FISICA
   || value === FormaComparecencia.POR_PROPIO_DERECHO_Y_REPRESENTACION;
+const transmitterRoles = new Set(['TRANSMITENTE', 'VENDEDOR', 'PARTE_VENDEDORA', 'DONANTE', 'CEDENTE', 'FIDEICOMITENTE']);
+const acquirerRoles = new Set(['ADQUIRENTE', 'COMPRADOR', 'PARTE_COMPRADORA', 'DONATARIO', 'CESIONARIO', 'FIDEICOMISARIO']);
 const relationInclude = {
   expedienteActo: { include: { tipo_acto: { select: { id: true, nombre: true } } } },
   caracter: { select: { id: true, clave: true, nombre: true } },
@@ -162,12 +164,60 @@ export class ExpedientePartiesService {
 
   async list(actor: Actor, expedienteId: string) {
     await this.assertExpediente(this.prisma, actor, expedienteId);
-    const data = await this.prisma.expedienteCompareciente.findMany({
-      where: { organization_id: actor.organizationId, expediente_id: expedienteId, archived_at: null, estatus: 'ACTIVO' },
-      include: relationInclude,
-      orderBy: [{ orden_comparecencia: 'asc' }, { created_at: 'asc' }],
+    const [data, acts] = await Promise.all([
+      this.prisma.expedienteCompareciente.findMany({
+        where: { organization_id: actor.organizationId, expediente_id: expedienteId, archived_at: null, estatus: 'ACTIVO' },
+        include: relationInclude,
+        orderBy: [{ orden_comparecencia: 'asc' }, { created_at: 'asc' }],
+      }),
+      this.prisma.expedienteActo.findMany({
+        where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', removed_at: null },
+        include: { tipo_acto: { select: { id: true, nombre: true } } }, orderBy: { created_at: 'asc' },
+      }),
+    ]);
+    const validations = acts.map((act) => {
+      const relations = data.filter((item) => item.expediente_acto_id === act.id);
+      const transmitters = relations.filter((item) => transmitterRoles.has(String(item.caracter.clave || '').toUpperCase()));
+      const acquirers = relations.filter((item) => acquirerRoles.has(String(item.caracter.clave || '').toUpperCase()));
+      const sum = (items: typeof relations) => items.reduce((total, item) => total + (item.participacion_porcentaje == null ? 0 : Number(item.participacion_porcentaje)), 0);
+      const target = Number(act.porcentaje_objeto);
+      const transmitterTotal = sum(transmitters);
+      const acquirerTotal = sum(acquirers);
+      const representedMoralIds = new Set(relations.flatMap((item) => (item.representacionesComoRepresentante || [])
+        .filter((representation) => representation.representado.tipo_persona === TipoPersona.MORAL)
+        .map((representation) => representation.representado_compareciente_id)));
+      const moralWithoutRepresentative = relations
+        .filter((item) => item.compareciente.tipo_persona === TipoPersona.MORAL && !representedMoralIds.has(item.compareciente_id))
+        .map((item) => ({ id: item.compareciente_id, name: item.compareciente.personaMoral?.razon_social || item.compareciente.nombre_busqueda }));
+      const warnings: string[] = [];
+      if (transmitters.length && (transmitters.some((item) => item.participacion_porcentaje == null) || Math.abs(transmitterTotal - target) > 0.000001)) {
+        warnings.push(`Transmitentes: ${transmitterTotal}% de ${target}%. Falta uno o varios transmitentes o el porcentaje objeto está mal capturado.`);
+      }
+      if (acquirers.length && (acquirers.some((item) => item.participacion_porcentaje == null) || Math.abs(acquirerTotal - target) > 0.000001)) {
+        warnings.push(`Adquirentes: ${acquirerTotal}% de ${target}%. Revisa las participaciones capturadas.`);
+      }
+      if (transmitters.length && acquirers.length && Math.abs(transmitterTotal - acquirerTotal) > 0.000001) {
+        warnings.push('Las participaciones de transmitentes y adquirentes son inconsistentes. PRAVIA no completará porcentajes faltantes.');
+      }
+      if (String(act.tipo_acto.nombre).toUpperCase().includes('COMPRAVENTA')) {
+        if (!transmitters.length) warnings.push('Falta al menos un transmitente para la compraventa.');
+        if (!acquirers.length) warnings.push('Falta al menos un adquirente para la compraventa.');
+      }
+      if (moralWithoutRepresentative.length) warnings.push('PERSONA MORAL SIN REPRESENTANTE VINCULADO.');
+      return {
+        expediente_acto_id: act.id,
+        act_name: act.tipo_acto.nombre,
+        object_percentage: target,
+        transmitter_total: transmitterTotal,
+        acquirer_total: acquirerTotal,
+        transmitter_count: transmitters.length,
+        acquirer_count: acquirers.length,
+        moral_without_representative: moralWithoutRepresentative,
+        warnings,
+        consistent: warnings.length === 0,
+      };
     });
-    return { data, canonical_source: 'ExpedienteCompareciente', legacy_pending_act_assignment: data.filter((item) => !item.expediente_acto_id).length };
+    return { data, validations, canonical_source: 'ExpedienteCompareciente', legacy_pending_act_assignment: data.filter((item) => !item.expediente_acto_id).length };
   }
 
   async search(actor: Actor, expedienteId: string, term: string) {
@@ -203,15 +253,84 @@ export class ExpedientePartiesService {
 
   async catalogs(actor: Actor, expedienteId: string) {
     await this.assertExpediente(this.prisma, actor, expedienteId);
-    const [acts, representationCharacters] = await Promise.all([
+    const [acts, representationCharacters, tenantCharacters] = await Promise.all([
       this.prisma.expedienteActo.findMany({
         where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', removed_at: null },
-        include: { tipo_acto: { select: { id: true, nombre: true, tipoActoCaracteresCompareciente: { where: { caracter: { activo: true } }, include: { caracter: true }, orderBy: [{ sugerido: 'desc' }, { orden: 'asc' }] } } } },
+        include: { tipo_acto: { select: { id: true, nombre: true, tipoActoCaracteresCompareciente: { where: { caracter: { is: { activo: true, organization_id: null } } }, include: { caracter: true }, orderBy: [{ sugerido: 'desc' }, { orden: 'asc' }] } } } },
         orderBy: { created_at: 'asc' },
       }),
       this.prisma.caracterRepresentacion.findMany({ where: { activo: true }, select: { id: true, clave: true, nombre: true }, orderBy: { nombre: 'asc' } }),
+      this.prisma.caracterCompareciente.findMany({
+        where: { organization_id: actor.organizationId, activo: true },
+        select: { id: true, clave: true, nombre: true },
+        orderBy: { nombre: 'asc' },
+      }),
     ]);
-    return { data: { acts, representationCharacters, appearanceForms: Object.values(FormaComparecencia) } };
+    const tenantEntries = tenantCharacters.map((caracter) => ({ caracter_id: caracter.id, sugerido: false, orden: 10_000, caracter }));
+    const scopedActs = acts.map((act) => ({
+      ...act,
+      tipo_acto: {
+        ...act.tipo_acto,
+        tipoActoCaracteresCompareciente: [...act.tipo_acto.tipoActoCaracteresCompareciente, ...tenantEntries],
+      },
+    }));
+    return { data: { acts: scopedActs, representationCharacters, appearanceForms: Object.values(FormaComparecencia) } };
+  }
+
+  async createTenantRole(actor: Actor, expedienteId: string, input: { expediente_acto_id?: string; nombre?: string; descripcion?: string | null }) {
+    if (!actor.organizationId || !actor.permissions.includes('expedientes.write') || !actor.permissions.includes('comparecientes.write')) {
+      throw new ExpedientePartyError(403, 'EXPEDIENTE_PARTY_ROLE_PERMISSION_DENIED', 'No tienes permiso para crear roles de comparecencia.');
+    }
+    const expedienteActoId = clean(input.expediente_acto_id, 64);
+    const nombre = clean(input.nombre, 150).toLocaleUpperCase('es-MX');
+    const descripcion = clean(input.descripcion, 500) || null;
+    if (!expedienteActoId || nombre.length < 2) {
+      throw new ExpedientePartyError(400, 'EXPEDIENTE_PARTY_ROLE_REQUIRED_FIELDS', 'Selecciona un acto e indica un nombre de rol válido.');
+    }
+    const roleKey = `CUSTOM_${createHash('sha256').update(`${actor.organizationId}:${nombre}`).digest('hex').slice(0, 40).toUpperCase()}`;
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:party-role:${actor.organizationId}:${nombre}`}))`);
+      await this.assertExpediente(tx, actor, expedienteId);
+      const act = await tx.expedienteActo.findFirst({
+        where: { id: expedienteActoId, organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', removed_at: null },
+        select: { id: true },
+      });
+      if (!act) throw new ExpedientePartyError(403, 'EXPEDIENTE_PARTY_ACT_ACCESS_DENIED', 'El acto no pertenece a este expediente o ya no está activo.');
+      const existing = await tx.caracterCompareciente.findFirst({
+        where: { organization_id: actor.organizationId, nombre: { equals: nombre, mode: 'insensitive' } },
+        select: { id: true, organization_id: true, clave: true, nombre: true, descripcion: true, activo: true },
+      });
+      let role;
+      if (existing) {
+        await tx.caracterCompareciente.updateMany({
+          where: { id: existing.id, organization_id: actor.organizationId },
+          data: { activo: true, descripcion: descripcion ?? existing.descripcion },
+        });
+        role = { ...existing, activo: true, descripcion: descripcion ?? existing.descripcion };
+      } else {
+        role = await tx.caracterCompareciente.create({ data: { organization_id: actor.organizationId, clave: roleKey, nombre, descripcion, activo: true } });
+      }
+      const created = !existing;
+      if (created || existing?.activo !== true || (descripcion && descripcion !== existing?.descripcion)) {
+        const correlationId = randomUUID();
+        const summary = { role_id: role.id, nombre: role.nombre, descripcion: role.descripcion, organization_id: actor.organizationId, expediente_acto_id: expedienteActoId, reusable_within_tenant: true };
+        await tx.auditLog.create({ data: {
+          organization_id: actor.organizationId, user_id: actor.id, accion: created ? 'CREATE_TENANT_PARTY_ROLE' : 'REACTIVATE_TENANT_PARTY_ROLE',
+          entidad: 'CaracterCompareciente', entidad_id: role.id, valores_anteriores: existing ? json(existing) : undefined,
+          valores_nuevos: json(summary), correlation_id: correlationId, session_id: actor.sessionId,
+        } });
+        await tx.expedienteActividad.create({ data: {
+          organization_id: actor.organizationId, expediente_id: expedienteId, usuario_id: actor.id, tipo: 'AUDITORIA',
+          titulo: created ? 'Nuevo rol de comparecencia creado' : 'Rol de comparecencia reactivado',
+          descripcion: role.nombre, metadatos: json(summary),
+        } });
+        await tx.domainEventOutbox.create({ data: {
+          organization_id: actor.organizationId, event_type: 'TenantPartyRoleAvailable', aggregate_type: 'CaracterCompareciente',
+          aggregate_id: role.id, actor_user_id: actor.id, correlation_id: correlationId, payload: json(summary),
+        } });
+      }
+      return { role, created, reusable_within_tenant: true, applied_to_expediente_acto_id: expedienteActoId };
+    });
   }
 
   async preview(actor: Actor, expedienteId: string, command: ExpedientePartyCommand) {
@@ -368,14 +487,16 @@ export class ExpedientePartiesService {
     if (!Object.values(FormaComparecencia).includes(forma)) throw new ExpedientePartyError(400, 'EXPEDIENTE_PARTY_APPEARANCE_INVALID', 'Selecciona una forma de comparecencia válida.');
     const participation = command.participacion_porcentaje === undefined ? current?.participacion_porcentaje == null ? null : Number(current.participacion_porcentaje) : command.participacion_porcentaje;
     if (participation !== null && (!Number.isFinite(Number(participation)) || Number(participation) <= 0 || Number(participation) > 100)) throw new ExpedientePartyError(400, 'EXPEDIENTE_PARTY_PARTICIPATION_INVALID', 'La participación debe ser mayor que 0 y no superar 100%.');
-    const [act, party, allowedCharacter] = await Promise.all([
+    const [act, party, mappedCharacter, tenantCharacter] = await Promise.all([
       db.expedienteActo.findFirst({ where: { id: expedienteActoId, organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: { select: { id: true, nombre: true } } } }),
       db.compareciente.findFirst({ where: { id: comparecienteId, organization_id: actor.organizationId, archived_at: null, estatus: 'ACTIVO', ...comparecienteObjectWhere(actor) }, select: { id: true, tipo_persona: true } }),
-      db.tipoActoCaracterCompareciente.findFirst({ where: { caracter_id: caracterId, tipo_acto: { expedienteActos: { some: { id: expedienteActoId, organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', removed_at: null } } } }, include: { caracter: { select: { id: true, nombre: true } } } }),
+      db.tipoActoCaracterCompareciente.findFirst({ where: { caracter_id: caracterId, caracter: { is: { organization_id: null, activo: true } }, tipo_acto: { expedienteActos: { some: { id: expedienteActoId, organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', removed_at: null } } } }, include: { caracter: { select: { id: true, nombre: true } } } }),
+      db.caracterCompareciente.findFirst({ where: { id: caracterId, organization_id: actor.organizationId, activo: true }, select: { id: true, nombre: true } }),
     ]);
     if (!act) throw new ExpedientePartyError(403, 'EXPEDIENTE_PARTY_ACT_ACCESS_DENIED', 'El acto no pertenece a este expediente o ya no está activo.');
     if (!party) throw new ExpedientePartyError(403, 'EXPEDIENTE_PARTY_MASTER_ACCESS_DENIED', 'No tienes acceso al compareciente seleccionado.');
-    if (!allowedCharacter) throw new ExpedientePartyError(409, 'EXPEDIENTE_PARTY_CHARACTER_NOT_ALLOWED', 'El carácter no está configurado para el acto seleccionado.');
+    const allowedCharacter = mappedCharacter?.caracter || tenantCharacter;
+    if (!allowedCharacter) throw new ExpedientePartyError(409, 'EXPEDIENTE_PARTY_CHARACTER_NOT_ALLOWED', 'El carácter no está configurado para el acto seleccionado o pertenece a otra Notaría.');
     const duplicate = await db.expedienteCompareciente.findFirst({ where: {
       organization_id: actor.organizationId, expediente_id: expedienteId, expediente_acto_id: expedienteActoId,
       compareciente_id: comparecienteId, caracter_id: caracterId, forma_comparecencia: forma,
@@ -401,7 +522,7 @@ export class ExpedientePartiesService {
       }
       representation = { ...input, cargo_o_caracter_descripcion: clean(input.cargo_o_caracter_descripcion, 150), facultades_aplicables: clean(input.facultades_aplicables, 1000) || null };
     }
-    return { expediente_acto_id: expedienteActoId, compareciente_id: comparecienteId, caracter_id: caracterId, forma_comparecencia: forma, participacion_porcentaje: participation, representation, act, party, role: allowedCharacter.caracter };
+    return { expediente_acto_id: expedienteActoId, compareciente_id: comparecienteId, caracter_id: caracterId, forma_comparecencia: forma, participacion_porcentaje: participation, representation, act, party, role: allowedCharacter };
   }
 
   private async buildPreview(db: Db, actor: Actor, expedienteId: string, command: ExpedientePartyCommand) {

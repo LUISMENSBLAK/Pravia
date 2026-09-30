@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
 import { ComparecienteService } from '../services/compareciente.service';
 import prisma from '../config/prisma';
-import { comparecienteObjectWhere } from '../services/objectAccess.service';
+import { canAccessCompareciente, comparecienteObjectWhere } from '../services/objectAccess.service';
+import { canonicalUploadedDocumentMime } from '../services/documentUploadValidation';
 
 const comparecienteService = new ComparecienteService(prisma);
 
@@ -171,13 +172,14 @@ export class ComparecienteController {
         return res.status(400).json({ success: false, error: 'No se recibió archivo' });
       }
       if (!actor) return res.status(401).json({ success: false, error: 'Usuario autenticado requerido' });
+      const canonicalMime = canonicalUploadedDocumentMime(file);
 
       const result = await comparecienteService.agregarDocumentoMaster({
         comparecienteId: id,
         userId: actor.id,
         buffer: file.buffer,
         fileName: file.originalname,
-        mimeType: file.mimetype,
+        mimeType: canonicalMime,
         categoria,
         fechaEmision: req.body.fecha_emision,
         fechaVencimiento: req.body.fecha_vencimiento,
@@ -218,7 +220,10 @@ export class ComparecienteController {
     try {
       const actor = authenticatedActor(req);
       if (!actor) return res.status(401).json({ success: false, error: 'Tu sesión no es válida.' });
-      const data = await comparecienteService.extraerDocumentosExistentesConIA(req.params.id, actor.id);
+      if (!req.user || !await canAccessCompareciente(req.user, req.params.id)) {
+        return res.status(404).json({ success: false, error: 'El compareciente no existe o está fuera de tu alcance.' });
+      }
+      const data = await comparecienteService.extraerDocumentosExistentesConIA(req.params.id, actor.id, req.user.organizationId);
       return res.status(200).json({ success: true, data });
     } catch (err: any) {
       return res.status(400).json({ success: false, error: err.message || 'No pudimos extraer la información de los documentos.' });

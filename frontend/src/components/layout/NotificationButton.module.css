@@ -10,5 +10,11 @@
 .items button:hover { background: var(--color-surface-subtle); }
 .items button.unread { box-shadow: inset 3px 0 var(--color-gold-500); background: #fffcf5; }
 .items small { color: var(--color-text-secondary); line-height: 1.35; }
+.itemTop { width: 100%; display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); }
+.itemTop i { flex: 0 0 auto; padding: 2px 6px; border-radius: 99px; color: var(--color-text-secondary); background: var(--color-surface-subtle); font-size: 9px; font-style: normal; font-weight: 750; text-transform: uppercase; }
+.itemTop i[data-priority="URGENT"] { color: var(--color-danger-700); background: var(--color-danger-50); }
+.itemTop i[data-priority="IMPORTANT"] { color: var(--color-gold-800); background: var(--color-gold-100); }
+.permission { width: 100%; min-height: 42px; display: flex; align-items: center; justify-content: center; gap: 7px; margin-bottom: 8px; border: 1px solid var(--color-gold-300); border-radius: 8px; color: var(--color-gold-800); background: var(--color-gold-100); font-size: var(--text-xs); font-weight: 700; cursor: pointer; }
+.permissionDenied { padding: 7px 9px; border-radius: 8px; background: var(--color-surface-subtle); }
 .all { width: 100%; margin-top: 10px; padding: 9px; border: 1px solid var(--color-border); border-radius: 8px; color: var(--color-gold-700); background: #fff; font-weight: 680; cursor: pointer; }
 @media (max-width: 480px) { .popover { position: fixed; top: var(--topbar-height); right: var(--space-3); width: calc(100vw - 24px); } }

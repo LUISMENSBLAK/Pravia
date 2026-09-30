@@ -43,6 +43,7 @@ export const activityFieldLabel = (value: string) => activityFieldLabels[value.t
   || value.split('_').join(' ').replace(/^./, (letter) => letter.toLocaleUpperCase('es-MX'));
 export const macroLabels: Record<ExpedienteMacrophase, string> = { INTEGRACION: 'Integración', PROYECTO: 'Proyecto', FIRMA: 'Firma', POSTFIRMA: 'Postfirma', ENTREGADO: 'Entregado', OTROS: 'Atención' };
 export const dateTime = (value?: string | null) => value ? new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : 'Sin fecha';
+export const dateOnly = (value?: string | null) => value ? new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' }).format(new Date(value)) : '—';
 export const shortDateTime = (value?: string | null) => {
   if (!value) return 'Sin fecha'; const date = new Date(value); const today = new Date(); const same = date.toDateString() === today.toDateString();
   return same ? `Hoy · ${new Intl.DateTimeFormat('es-MX', { hour: '2-digit', minute: '2-digit' }).format(date)}` : new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(date);

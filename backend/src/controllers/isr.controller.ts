@@ -5,6 +5,7 @@ import prisma from '../config/prisma';
 import { deleteFile, downloadFile, uploadFile } from '../services/supabase.service';
 import { isrService } from '../services/isr.service';
 import { ISRValidationError } from '../domain/isrTaxEngine';
+import { canonicalUploadedDocumentMime } from '../services/documentUploadValidation';
 
 const actor = (req: Request) => req.user!;
 const sendError = (res: Response, error: unknown) => {
@@ -14,6 +15,8 @@ const sendError = (res: Response, error: unknown) => {
 };
 
 export const listISR = async (req: Request, res: Response) => { try { return res.json(await isrService.list(actor(req), req.query)); } catch (error) { return sendError(res, error); } };
+export const getISRResources = async (req: Request, res: Response) => { try { return res.json({ data: await isrService.resources(actor(req), String(req.query.legal_date || '')) }); } catch (error) { return sendError(res, error); } };
+export const searchISRPostalCodes = async (req: Request, res: Response) => { try { return res.json(await isrService.searchPostalCodes(String(req.query.q || ''))); } catch (error) { return sendError(res, error); } };
 export const getISR = async (req: Request, res: Response) => { try { return res.json({ data: await isrService.get(actor(req), req.params.id) }); } catch (error) { return sendError(res, error); } };
 export const createISR = async (req: Request, res: Response) => { try { return res.status(201).json({ data: await isrService.create(actor(req), req.body || {}) }); } catch (error) { return sendError(res, error); } };
 export const updateISR = async (req: Request, res: Response) => { try { return res.json({ data: await isrService.update(actor(req), req.params.id, req.body || {}) }); } catch (error) { return sendError(res, error); } };
@@ -23,6 +26,11 @@ export const calculateISRRecord = async (req: Request, res: Response) => { try {
 export const generateISRPDF = async (req: Request, res: Response) => { try { const result = await isrService.generatePdf(actor(req), req.params.id, { expectedVersion: req.body?.expected_version === undefined ? undefined : Number(req.body.expected_version), idempotencyKey: String(req.get('Idempotency-Key') || req.body?.idempotency_key || '') }); return res.status(result.idempotent ? 200 : 201).json(result); } catch (error) { return sendError(res, error); } };
 export const extractISR = async (req: Request, res: Response) => { try { return res.json({ data: await isrService.extract(actor(req), req.params.id, { requestKey: String(req.get('Idempotency-Key') || req.body?.request_key || '') }) }); } catch (error) { return sendError(res, error); } };
 export const reviewISRProposal = async (req: Request, res: Response) => { try { const action = req.body?.action; if (!['ACEPTADA', 'RECHAZADA'].includes(action)) throw new ISRValidationError('INVALID_REVIEW_ACTION', 'Selecciona aceptar o rechazar la propuesta.'); return res.json({ data: await isrService.reviewProposal(actor(req), req.params.id, req.params.proposalId, action) }); } catch (error) { return sendError(res, error); } };
+export const calculateISRReferredValue = async (req: Request, res: Response) => { try { return res.json({ data: await isrService.referredValue(actor(req), req.body || {}) }); } catch (error) { return sendError(res, error); } };
+export const calculateISRSurcharges = async (req: Request, res: Response) => { try { return res.json({ data: await isrService.surcharges(actor(req), req.body || {}) }); } catch (error) { return sendError(res, error); } };
+export const calculateISRAdditionalTax = async (req: Request, res: Response) => { try { return res.json({ data: await isrService.additionalTax(actor(req), req.body || {}) }); } catch (error) { return sendError(res, error); } };
+export const validateISRExport = async (req: Request, res: Response) => { try { return res.json({ data: await isrService.validateExport(actor(req), req.params.id, String(req.body?.profile_id || '')) }); } catch (error) { return sendError(res, error); } };
+export const prepareISRExport = async (req: Request, res: Response) => { try { return res.json({ data: await isrService.exportData(actor(req), req.params.id, String(req.body?.profile_id || '')) }); } catch (error) { return sendError(res, error); } };
 export const auditISRExport = async (req: Request, res: Response) => { try { const current = await isrService.get(actor(req), req.params.id); await prisma.auditLog.create({ data: { organization_id: actor(req).organizationId, user_id: actor(req).id, accion: 'EXPORTAR_RESUMEN_ISR', entidad: 'CalculoISR', entidad_id: current.id, detalles: { version: current.ultima_version, formato: 'IMPRESION' } } }); return res.json({ success: true }); } catch (error) { return sendError(res, error); } };
 
 export const uploadISRDocument = async (req: Request, res: Response) => {
@@ -30,13 +38,14 @@ export const uploadISRDocument = async (req: Request, res: Response) => {
   try {
     const current = await isrService.get(actor(req), req.params.id);
     if (!req.file) throw new ISRValidationError('DOCUMENT_REQUIRED', 'Selecciona un documento para cargar.');
-    const allowed = ['application/pdf', 'image/png', 'image/jpeg', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/msword'];
-    if (!allowed.includes(req.file.mimetype)) throw new ISRValidationError('DOCUMENT_TYPE_NOT_ALLOWED', 'Este formato no está permitido. Usa PDF, imagen, DOC o DOCX.');
+    let canonicalMime: string;
+    try { canonicalMime = canonicalUploadedDocumentMime(req.file); }
+    catch (error) { throw new ISRValidationError('DOCUMENT_TYPE_NOT_ALLOWED', error instanceof Error ? error.message : 'Este formato no está permitido.'); }
     const extension = path.extname(req.file.originalname).toLowerCase() || '.bin';
     storageKey = `organizations/${req.user!.organizationId}/isr/${current.id}/${crypto.randomUUID()}${extension}`;
-    await uploadFile(req.file.buffer, storageKey, req.file.mimetype);
+    await uploadFile(req.file.buffer, storageKey, canonicalMime);
     const document = await prisma.$transaction(async (tx) => {
-      const created = await tx.documento.create({ data: { organization_id: actor(req).organizationId, nombre_original: req.file!.originalname, nombre_interno: path.basename(storageKey), tipo: 'ISR_SOPORTE', categoria: 'SAT', storage_key: storageKey, mime_type: req.file!.mimetype, size_bytes: req.file!.size, subido_por_id: actor(req).id, expediente_id: current.expediente_id || null } });
+      const created = await tx.documento.create({ data: { organization_id: actor(req).organizationId, nombre_original: req.file!.originalname, nombre_interno: path.basename(storageKey), tipo: 'ISR_SOPORTE', categoria: 'SAT', storage_key: storageKey, mime_type: canonicalMime, size_bytes: req.file!.size, subido_por_id: actor(req).id, expediente_id: current.expediente_id || null } });
       await tx.calculoISRDocumento.create({ data: { organization_id: actor(req).organizationId, calculo_id: current.id, documento_id: created.id, creado_por_id: actor(req).id } });
       if (current.expediente_id) await tx.expedienteDocumento.create({ data: { organization_id: actor(req).organizationId, expediente_id: current.expediente_id, documento_id: created.id, tipo_vinculo: 'ISR_SOPORTE', creado_por_id: actor(req).id, origen: 'EXPEDIENTE', source_entity_type: 'CalculoISR', source_entity_id: current.id, source_context: 'DEDUCCION_EXENCION_ISR', source_key: `EXPEDIENTE:CalculoISR:${current.id}:${created.id}:ISR_SOPORTE`, provenance: { source: 'ISR-001', calculo_isr_id: current.id, uploaded_for: 'DEDUCCION_EXENCION' } } });
       await tx.auditLog.create({ data: { organization_id: actor(req).organizationId, user_id: actor(req).id, accion: 'CARGAR_DOCUMENTO_ISR', entidad: 'CalculoISR', entidad_id: current.id, detalles: { documento_id: created.id, nombre: created.nombre_original, expediente_id: current.expediente_id || null } } });

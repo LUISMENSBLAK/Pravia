@@ -8,7 +8,7 @@ const evidenceDir = resolve(process.cwd(), 'artifacts/document-viewer-final');
 async function login(page: Page) {
   await page.goto('/login', { waitUntil: 'domcontentloaded' });
   await page.getByRole('textbox', { name: 'Correo electrónico' }).fill('qa.correcciones@pravia.test');
-  await page.getByRole('textbox', { name: 'Contraseña', exact: true }).fill('Pravia!QA-Release-2026');
+  await page.getByRole('textbox', { name: 'Contraseña', exact: true }).fill((process.env.PRAVIA_E2E_PASSWORD ?? ''));
   await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
   await page.waitForURL('**/mi-dia');
 }
@@ -110,11 +110,10 @@ test('visor canónico carga documentos completos y permanece dentro del viewport
   expect(consoleErrors.filter((message) => !message.includes('favicon'))).toEqual([]);
 });
 
-test('cotización sin acto exige selección canónica y envía el acto elegido', async ({ page }) => {
+test('cotización canónica sin actos estructurados bloquea la conversión', async ({ page }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1366, height: 900 });
   await login(page);
-  let conversionPayload: Record<string, unknown> | null = null;
   const quote = {
     id: 'quote-act-missing', numero_solicitud: 'SOL-QA-ACTO', numero_cotizacion: 'COT-QA-ACTO', version_actual: 1,
     prospecto_id: 'prospect-qa', user_id: 'user-qa', notaria_id: null, estado: 'ACEPTADA',
@@ -130,10 +129,6 @@ test('cotización sin acto exige selección canónica y envía el acto elegido',
   };
   await page.route('**/api/cotizaciones/quote-act-missing/seguimientos', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/cotizaciones/quote-act-missing/documentos', (route) => route.fulfill({ json: [] }));
-  await page.route('**/api/cotizaciones/quote-act-missing/convertir', async (route) => {
-    conversionPayload = route.request().postDataJSON() as Record<string, unknown>;
-    await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ id: 'exp-qa', numero_pravia: 'EXP-QA-2026', idempotent: false }) });
-  });
   await page.route('**/api/cotizaciones/quote-act-missing', (route) => route.fulfill({ json: quote }));
   await page.route('**/api/expedientes/tipos-acto', (route) => route.fulfill({ json: [{ id: 'act-compraventa', nombre: 'Compraventa' }, { id: 'act-donacion', nombre: 'Donación' }] }));
 
@@ -143,14 +138,8 @@ test('cotización sin acto exige selección canónica y envía el acto elegido',
   const dialog = page.getByRole('dialog', { name: 'Convertir a expediente' });
   const select = dialog.getByLabel('Tipo de acto del expediente');
   const submit = dialog.getByRole('button', { name: 'Convertir en expediente' });
-  await expect(select).toBeEnabled();
+  await expect(select).toBeDisabled();
   await expect(submit).toBeDisabled();
   await expect(dialog.getByText('Sin especificar')).toBeVisible();
-  await select.selectOption('act-donacion');
-  await expect(dialog.getByRole('definition').filter({ hasText: 'Donación' })).toBeVisible();
-  await expect(submit).toBeEnabled();
-  await submit.click();
-  await expect.poll(() => conversionPayload).not.toBeNull();
-  expect(conversionPayload).toMatchObject({ expectedVersion: 3, confirm: true, tipo_acto_id: 'act-donacion' });
-  await expect(page).toHaveURL(/\/expedientes\/exp-qa$/);
+  await expect(dialog.getByRole('alert')).toContainText('no tiene actos estructurados aceptados');
 });

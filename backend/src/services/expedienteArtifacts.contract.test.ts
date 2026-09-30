@@ -48,7 +48,7 @@ const checks: Array<[string, () => void]> = [
   ['25 trabajo protegido', () => expect(service).toContain('el trabajo se conserva para decisión humana')],
   ['26 stale preview', () => expect(service).toContain('EXP006_STALE_PREVIEW')],
   ['27 abrir no genera documento', () => { expect(service.slice(service.indexOf('async read'), service.indexOf('async materialize'))).not.toContain('generateOperationalArtifactWithOpenAI'); expect(ui).toContain('no genera documentos ni llama a IA'); }],
-  ['28 acción IA', () => expect(ui).toContain('Generar con IA')],
+  ['28 acción IA presentada como Generar por Corrección 015', () => { expect(ui).toContain('previewGeneration(pending)'); expect(ui).toContain('/>Generar</button>'); expect(ui).not.toContain('Generar con IA'); }],
   ['29 upload externo', () => { expect(ui).toContain('Cargar externo'); expect(routes).toContain('uploadExpedienteArtifact'); }],
   ['30 sin allowAI', () => expect(service).not.toContain('allowAI')],
   ['31 sin allowExternal', () => expect(service).not.toContain('allowExternal')],

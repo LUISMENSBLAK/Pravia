@@ -1,3 +1,5 @@
+import { normalizeOperationalText } from '../utils/operationalText';
+
 export type ProspectOperationalStage = {
   code: string;
   label: string;
@@ -80,10 +82,7 @@ export const prospectStageByCode = (code: unknown) =>
 export const prospectServiceByCode = (code: unknown) =>
   typeof code === 'string' ? PROSPECT_SERVICES.find((item) => item.code === code && item.active) : undefined;
 
-export const normalizeProspectName = (value: unknown) => String(value ?? '')
-  .trim()
-  .replace(/\s+/gu, ' ')
-  .toLocaleUpperCase('es-MX');
+export const normalizeProspectName = (value: unknown) => normalizeOperationalText(value, 300);
 
 export const prospectDocumentFlagsForType = (value: unknown) => {
   const type = String(value ?? '').trim().toLocaleUpperCase('es-MX');

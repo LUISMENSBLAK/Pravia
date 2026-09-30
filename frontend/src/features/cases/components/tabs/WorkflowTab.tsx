@@ -2,7 +2,7 @@ import { AlertTriangle, CalendarClock, Check, Circle, Clock3, Download, FileCog,
 import { useCallback, useEffect, useState } from 'react';
 import { expedientesService } from '../../expedientes.service';
 import type { ExpedienteDetail, ExpedienteSeguimiento, ExpedienteTransition, SeguimientoActivity, SeguimientoEstado } from '../../expedientes.types';
-import { dateTime, macroLabels } from '../../expedienteFormatters';
+import { dateOnly, dateTime, macroLabels } from '../../expedienteFormatters';
 import styles from '../../Expedientes.module.css';
 import { complianceService } from '../../../compliance/compliance.service';
 
@@ -26,7 +26,7 @@ export function WorkflowTab({ expediente, onChanged }: { expediente: ExpedienteD
   const downloadPackage = async () => { setSaving(true); setError(''); try { const { blob } = await complianceService.h6SignaturePackage(expediente.id); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `paquete-firma-${expediente.numero_pravia}.${blob.type === 'application/pdf' ? 'pdf' : 'zip'}`; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (cause) { setError(cause instanceof Error ? cause.message : 'No fue posible preparar el paquete de firma.'); } finally { setSaving(false); } };
   return <div className={styles.tabStack}>
     <DeedDateEditor expediente={expediente} onChanged={onChanged} />
-    <OperationalFollowup expediente={expediente} />
+    <CanonicalOperationalFollowup expediente={expediente} />
     <section className={styles.sectionCard}><header><div><h2>Hitos contractuales</h2><p>Transición canónica del expediente y snapshot documental de EXP-004. Versión {expediente.flujoVersion?.version ?? '—'} congelada.</p></div><div className={styles.complianceDocumentHeaderActions}>{transition?.status === 'FIRMADO' && expediente.capabilities.canWrite && <button type="button" disabled={saving} onClick={() => void generatePending()}><FileCog />Generar formatos pendientes</button>}<button type="button" disabled={saving} onClick={() => void downloadPackage()}><Download />Descargar paquete</button>{actionable && <button type="button" className={styles.primaryButton} disabled={saving} onClick={startTransition}>{saving ? <LoaderCircle className={styles.spin} size={16} /> : <Play size={16} />}{transition.label}</button>}</div></header>{error && <div className={styles.inlineError} role="status">{error}</div>}<div className={styles.workflowSummary}><span>{macroLabels[expediente.macrofase]}</span><strong>{expediente.etapaActual?.nombre_snapshot || expediente.etapa_actual_nombre || 'Sin etapa'}</strong><small>{expediente.workflow.current_status_label}</small></div>{stages.length ? <ol className={styles.timeline}>{stages.map((stage: any) => { const instance: any = completed.get(stage.clave); const current = stage.clave === expediente.etapaActual?.clave_snapshot; const done = Boolean(instance?.completada); return <li key={stage.clave} className={current ? styles.timelineCurrent : done ? styles.timelineDone : ''}><span>{done ? <Check size={14} /> : <Circle size={12} />}</span><div><strong>{stage.nombre}</strong><small>{stage.estado_general_relacionado?.replaceAll('_', ' ').toLocaleLowerCase('es-MX')}{stage.obligatoria ? ' · Obligatoria' : ' · Opcional'}</small></div><time>{instance?.fecha_fin ? dateTime(instance.fecha_fin) : current ? 'En curso' : 'Próxima'}</time></li>; })}</ol> : <p className={styles.sectionEmpty}>Este expediente no tiene hitos macro configurados.</p>}{dialog && transition && <TransitionDateDialog mode={dialog} preflight={signaturePreflight} onClose={() => { setDialog(null); setSignaturePreflight(null); }} onGoToCompliance={() => { window.location.hash = 'cumplimiento'; }} onSave={(data) => void advance(transition, data)} saving={saving} />}</section>
   </div>;
 }
@@ -48,6 +48,70 @@ function DeedDateEditor({ expediente, onChanged }: { expediente: ExpedienteDetai
     } finally { setSaving(false); }
   };
   return <section className={styles.sectionCard} aria-labelledby="deed-date-title"><header><div><h2 id="deed-date-title">Datos de escrituración</h2><p>Fecha estructurada independiente de la firma y de la actualización del expediente.</p></div></header><div className={styles.inlineFields}><label>Fecha de escritura<input type="date" value={value} disabled={!expediente.capabilities.canWrite} onChange={(event) => { setValue(event.target.value); setMessage(''); }} /></label>{expediente.capabilities.canWrite && <button type="button" className={styles.primaryButton} disabled={saving || value === persisted} onClick={() => void save()}>{saving && <LoaderCircle className={styles.spin} size={15} />}Guardar fecha</button>}</div>{message && <p role="status" className={message.startsWith('No ') ? styles.inlineError : styles.inlineSuccess}>{message}</p>}</section>;
+}
+
+function CanonicalOperationalFollowup({ expediente }: { expediente: ExpedienteDetail }) {
+  const [data, setData] = useState<ExpedienteSeguimiento | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState('');
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    try { setData(await expedientesService.seguimiento(expediente.id)); }
+    catch { setError('No pudimos cargar los procesos del expediente.'); }
+    finally { setLoading(false); }
+  }, [expediente.id]);
+  useEffect(() => { void load(); }, [load]);
+  const complete = async (activity: SeguimientoActivity) => {
+    setSaving(activity.id); setError('');
+    try {
+      await expedientesService.updateSeguimientoActivity(expediente.id, activity.id, {
+        expected_version: activity.version,
+        estado: 'COMPLETADO',
+        razon: 'Proceso realizado desde Seguimiento.',
+      });
+      await load();
+    } catch { setError('El proceso cambió o todavía depende de otro pendiente. Recarga e inténtalo de nuevo.'); }
+    finally { setSaving(''); }
+  };
+  const assign = async (activity: SeguimientoActivity, responsibleId: string) => {
+    setSaving(activity.id); setError('');
+    try {
+      await expedientesService.updateSeguimientoActivity(expediente.id, activity.id, {
+        expected_version: activity.version,
+        responsable_id: responsibleId || null,
+        razon: 'Responsable operativo actualizado.',
+      });
+      await load();
+    } catch { setError('No pudimos actualizar el responsable.'); }
+    finally { setSaving(''); }
+  };
+  const materialize = async () => {
+    setSaving('materialize'); setError('');
+    try { await expedientesService.materializeSeguimiento(expediente.id); await load(); }
+    catch { setError('No pudimos preparar los procesos desde la configuración vigente.'); }
+    finally { setSaving(''); }
+  };
+  if (loading) return <section className={styles.sectionCard}><div className={styles.inlineState} role="status"><LoaderCircle className={styles.spin} />Cargando procesos…</div></section>;
+  const processes = data?.procesos || [];
+  return <section className={styles.sectionCard} aria-labelledby="operational-followup-title">
+    <header><div><h2 id="operational-followup-title">Seguimiento operativo</h2><p>Procesos configurados para el expediente, consolidados por proceso y orden de dependencia.</p></div>{expediente.capabilities.canWrite && processes.length === 0 && <button type="button" className={styles.primaryButton} disabled={saving === 'materialize'} onClick={() => void materialize()}>{saving === 'materialize' && <LoaderCircle className={styles.spin} size={15} />}Preparar procesos</button>}</header>
+    {error && <div className={styles.inlineError} role="alert">{error}</div>}
+    {processes.length ? <div className={styles.trackingProcessList} role="table" aria-label="Procesos del expediente">
+      <div className={styles.trackingProcessHeader} role="row"><span role="columnheader">Proceso</span><span role="columnheader">Días restantes</span><span role="columnheader">Fecha de cumplimiento</span><span role="columnheader">Responsable</span><span role="columnheader">Estatus</span></div>
+      {processes.map((activity) => {
+        const blocked = activity.estado_efectivo === 'BLOQUEADO';
+        const completed = activity.estado_operativo === 'COMPLETADO';
+        return <div key={activity.id} className={styles.trackingProcessRow} role="row" data-state={blocked ? 'PENDIENTE' : completed ? 'REALIZADO' : 'REALIZAR'}>
+          <div role="cell" data-label="Proceso"><strong>{activity.actividad_nombre_snapshot}</strong></div>
+          <div role="cell" data-label="Días restantes"><span>{activity.dias_restantes?.label || '—'}</span></div>
+          <div role="cell" data-label="Fecha de cumplimiento"><span>{dateOnly(activity.fecha_cumplimiento)}</span></div>
+          <div role="cell" data-label="Responsable"><select aria-label={`Responsable de ${activity.actividad_nombre_snapshot}`} value={activity.responsable_id || ''} disabled={!expediente.capabilities.canWrite || saving === activity.id || completed} onChange={(event) => void assign(activity, event.target.value)}><option value="">Sin asignar</option>{data?.responsables.map((person) => <option key={person.id} value={person.id}>{person.nombre} {person.apellido || ''}</option>)}</select></div>
+          <div role="cell" data-label="Estatus">{saving === activity.id ? <span className={styles.trackingProcessStatus}><LoaderCircle className={styles.spin} size={15} />Guardando</span> : completed ? <span className={`${styles.trackingProcessStatus} ${styles.trackingProcessDone}`}><Check size={15} />Realizado</span> : blocked ? <button type="button" className={styles.trackingProcessPending} disabled>Pendiente</button> : expediente.capabilities.canWrite ? <button type="button" className={styles.trackingProcessAction} onClick={() => void complete(activity)}>Realizar</button> : <span className={styles.trackingProcessStatus}>Por realizar</span>}</div>
+        </div>;
+      })}
+    </div> : <div className={styles.sectionEmpty}>No hay procesos materializados para este expediente.</div>}
+  </section>;
 }
 
 function OperationalFollowup({ expediente }: { expediente: ExpedienteDetail }) {

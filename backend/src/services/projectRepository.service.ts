@@ -25,6 +25,7 @@ export interface ProjectVersionRecord {
   generation_origin?: string;
   instructions?: string | null;
   instructions_consumed?: boolean;
+  fact_snapshot?: { facts: unknown[]; conflicts: unknown[]; created_at: string } | null;
 }
 
 export interface ProjectReportRecord {
@@ -36,6 +37,7 @@ export interface ProjectReportRecord {
   documentos_analizados_count: number;
   documentos_totales_count: number;
   documentos_no_leidos: string[];
+  areas_revision: unknown[];
   observaciones: unknown[];
   solicitado_por: string;
   created_at: string;
@@ -71,6 +73,11 @@ export function mapProjectVersion(document: any): ProjectVersionRecord {
     generation_origin: typeof meta.generation_origin === 'string' ? meta.generation_origin : undefined,
     instructions: typeof meta.instructions === 'string' ? meta.instructions : null,
     instructions_consumed: Boolean(meta.instructions_consumed),
+    fact_snapshot: document.fact_snapshot ? {
+      facts: Array.isArray(document.fact_snapshot.facts) ? document.fact_snapshot.facts : [],
+      conflicts: Array.isArray(document.fact_snapshot.conflicts) ? document.fact_snapshot.conflicts : [],
+      created_at: new Date(document.fact_snapshot.created_at).toISOString(),
+    } : null,
   };
 }
 
@@ -85,6 +92,7 @@ export function mapProjectReport(document: any): ProjectReportRecord {
     documentos_analizados_count: Number(meta.documentos_analizados_count || 0),
     documentos_totales_count: Number(meta.documentos_totales_count || 0),
     documentos_no_leidos: Array.isArray(meta.documentos_no_leidos) ? meta.documentos_no_leidos : [],
+    areas_revision: Array.isArray(meta.areas_revision) ? meta.areas_revision : [],
     observaciones: Array.isArray(meta.observaciones) ? meta.observaciones : [],
     solicitado_por: String(meta.solicitado_por || 'Usuario PRAVIA'),
     created_at: new Date(document.fecha_carga).toISOString(),
@@ -103,6 +111,11 @@ export class ProjectRepository {
       },
       orderBy: { fecha_carga: 'desc' },
     });
+    const snapshots = documents.length ? await this.db.projectFactSnapshot.findMany({
+      where: { expediente_id: expedienteId, project_document_id: { in: documents.map((document) => document.id) } },
+    }) : [];
+    const byDocument = new Map(snapshots.map((snapshot) => [snapshot.project_document_id, snapshot]));
+    documents.forEach((document: any) => { document.fact_snapshot = byDocument.get(document.id) || null; });
     return documents.map(mapProjectVersion).sort((a, b) => b.version_numero - a.version_numero);
   }
 
@@ -113,6 +126,9 @@ export class ProjectRepository {
         subido_por: { select: { nombre: true, apellido: true } },
         expedienteVinculos: { where: { expediente_id: expedienteId, tipo_vinculo: 'PROYECTO_ESCRITURA' }, orderBy: { fecha_vinculo: 'desc' } },
       },
+    });
+    if (document) (document as any).fact_snapshot = await this.db.projectFactSnapshot.findFirst({
+      where: { expediente_id: expedienteId, project_document_id: versionId },
     });
     return document ? { record: mapProjectVersion(document), storageKey: document.storage_key } : null;
   }

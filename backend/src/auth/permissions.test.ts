@@ -9,6 +9,15 @@ describe('RBAC de PRAVIA', () => {
     expect(roleHasPermission('RECEPCION', 'finanzas.read')).toBe(false);
   });
 
+  it('permite a Administración operar todos los dominios del tenant sin convertirlo en super admin', () => {
+    expect(roleHasPermission('ADMINISTRACION', 'cumplimiento.write')).toBe(true);
+    expect(roleHasPermission('ADMINISTRACION', 'cumplimiento.confirm')).toBe(true);
+    expect(roleHasPermission('ADMINISTRACION', 'compliance.review')).toBe(true);
+    expect(roleHasPermission('ADMINISTRACION', 'compliance.notice.confirm')).toBe(true);
+    expect(roleHasPermission('ADMINISTRACION', 'compliance.rules.manage')).toBe(false);
+    expect(roleHasPermission('ADMINISTRACION', 'usuarios.manage')).toBe(false);
+  });
+
   it('da a gestoría acceso operativo acotado', () => {
     expect(roleHasPermission('GESTORIA', 'expedientes.read')).toBe(true);
     expect(roleHasPermission('GESTORIA', 'expedientes.write')).toBe(false);
@@ -32,6 +41,19 @@ describe('RBAC de PRAVIA', () => {
 
   it('mantiene Consulta en solo lectura', () => {
     expect(permissionsForRole('CONSULTA').some((item) => item.endsWith('.write') || item.endsWith('.manage'))).toBe(false);
+  });
+
+  it('limita Contadora al área financiera y reportes sin privilegios jurídicos o administrativos', () => {
+    expect(roleHasPermission('FINANCIERO', 'finanzas.read')).toBe(true);
+    expect(roleHasPermission('FINANCIERO', 'finanzas.write')).toBe(true);
+    expect(roleHasPermission('FINANCIERO', 'finanzas.validate')).toBe(true);
+    expect(roleHasPermission('FINANCIERO', 'reportes.financial.read')).toBe(true);
+    expect(roleHasPermission('FINANCIERO', 'ai.finanzas.read')).toBe(true);
+    expect(roleHasPermission('FINANCIERO', 'expedientes.read')).toBe(false);
+    expect(roleHasPermission('FINANCIERO', 'expedientes.write')).toBe(false);
+    expect(roleHasPermission('FINANCIERO', 'configuracion.manage')).toBe(false);
+    expect(roleHasPermission('FINANCIERO', 'usuarios.manage')).toBe(false);
+    expect(roleHasPermission('FINANCIERO', 'compliance.write')).toBe(false);
   });
 });
 

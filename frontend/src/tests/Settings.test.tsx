@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
   overview: vi.fn(), profile: vi.fn(), updateProfile: vi.fn(), preferences: vi.fn(), updatePreferences: vi.fn(), sessions: vi.fn(), revokeSession: vi.fn(), revokeOtherSessions: vi.fn(), changePassword: vi.fn(),
-  users: vi.fn(), user: vi.fn(), userImpact: vi.fn(), updateUser: vi.fn(), invitations: vi.fn(), invite: vi.fn(), revokeInvitation: vi.fn(), roles: vi.fn(), audit: vi.fn(), aiDashboard: vi.fn(), notifications: vi.fn(), readNotification: vi.fn(), readAllNotifications: vi.fn(), search: vi.fn(),
+  users: vi.fn(), user: vi.fn(), userImpact: vi.fn(), updateUser: vi.fn(), invitations: vi.fn(), invite: vi.fn(), revokeInvitation: vi.fn(), roles: vi.fn(), audit: vi.fn(), aiDashboard: vi.fn(), notifications: vi.fn(), readNotification: vi.fn(), readAllNotifications: vi.fn(), dismissNotification: vi.fn(), markNotificationNotApplicable: vi.fn(), search: vi.fn(),
+  knowledgeSources: vi.fn(), knowledgeCriteria: vi.fn(), retrieveKnowledge: vi.fn(),
 }));
 const auth = vi.hoisted(() => ({ user: { id: 'u1', name: 'María López', email: 'maria@pravia.mx', role: 'DIRECCION', permissions: ['usuarios.read', 'usuarios.manage', 'configuracion.manage', 'ai.admin.read'] } }));
 vi.mock('../features/settings/settings.service', () => ({ settingsService: api }));
@@ -19,6 +20,7 @@ const renderSettings = (path = '/configuracion') => render(<MemoryRouter initial
 describe('Configuración, usuarios y accesos', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    auth.user.permissions = ['usuarios.read', 'usuarios.manage', 'configuracion.manage', 'configuracion.catalogos.read', 'ai.admin.read'];
     api.overview.mockResolvedValue({ profile: { nombre: 'María', apellido: 'López', email: 'maria@pravia.mx', rol: 'DIRECCION' }, metrics: { active_sessions: 2, unread_notifications: 3, active_users: 8 }, organization: { primary_notary: { nombre: 'Notaría 45', ciudad: 'Tepic', entidad_federativa: 'Nayarit' }, scope: 'GLOBAL' }, access: { permissions: ['usuarios.manage'] } });
     api.profile.mockResolvedValue({ user: { nombre: 'María', apellido: 'López', email: 'maria@pravia.mx', telefono: '311 100 2000', rol: 'DIRECCION', last_login_at: '2026-08-13T12:00:00Z' }, scope: 'GLOBAL' });
     api.sessions.mockResolvedValue({ sessions: [{ id: 's1', device: 'Safari en macOS', ip_approximate: '192.168.1.…', current: true, created_at: '2026-08-12T12:00:00Z', last_used_at: '2026-08-13T12:00:00Z', expires_at: '2026-09-13T12:00:00Z' }] });
@@ -26,6 +28,8 @@ describe('Configuración, usuarios y accesos', () => {
     api.invitations.mockResolvedValue({ invitations: [{ id: 'i1', nombre: 'Lucía', apellido: 'Pérez', email: 'lucia@pravia.mx', rol: 'ABOGADO', status: 'PENDIENTE', created_at: '2026-08-13T12:00:00Z', expires_at: '2026-08-16T12:00:00Z' }] });
     api.roles.mockResolvedValue({ roles: [{ role: 'DIRECCION', permissions: ['expedientes.read', 'usuarios.manage', 'configuracion.manage', 'ai.admin.read'] }, { role: 'ABOGADO', permissions: ['expedientes.read'] }] });
     api.notifications.mockResolvedValue({ notifications: [], unread: 0 });
+    api.knowledgeSources.mockResolvedValue({ data: [], pagination: { total: 85, page: 1, pages: 1 } });
+    api.knowledgeCriteria.mockResolvedValue({ data: [{ id: 'criterion-1', code: 'INT-QA-001', title: 'Revisión reforzada', content: 'Solicitar validación humana adicional.', scope: { act: 'COMPRAVENTA' }, active: true, created_at: '2026-09-26T12:00:00Z', updated_at: '2026-09-26T12:00:00Z' }], distinction: 'CRITERIO INTERNO — NO ES NORMA.' });
   });
 
   it('presenta un resumen conectado con sesiones, notificaciones y organización', async () => {
@@ -40,6 +44,12 @@ describe('Configuración, usuarios y accesos', () => {
     expect(screen.getByRole('link', { name: /Mi perfil/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Seguridad y sesiones/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Preferencias/ })).toBeInTheDocument();
+  });
+
+  it('expone Actos y tiempos como única configuración operativa y retira la pantalla paralela', async () => {
+    renderSettings(); await screen.findByText('Centro de configuración');
+    expect(screen.getByRole('link', { name: /Actos y tiempos/ })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Políticas de tiempo/ })).not.toBeInTheDocument();
   });
 
   it('el perfil muestra rol y ámbito como datos no editables', async () => {
@@ -90,6 +100,22 @@ describe('Configuración, usuarios y accesos', () => {
   it('ofrece un estado vacío real en notificaciones', async () => {
     renderSettings('/configuracion/notificaciones');
     expect(await screen.findByText('No hay información para mostrar')).toBeInTheDocument();
+    expect(api.notifications).toHaveBeenCalledWith(true);
+  });
+
+  it('muestra prioridad, historial y decisiones persistentes sin depender del búho', async () => {
+    api.notifications.mockResolvedValue({ unread: 1, notifications: [{
+      id: 'n1', type: 'SIGNATURE_UPCOMING', priority: 'URGENT', title: 'Firma próxima: EXP-0010-2026', body: 'Cliente QA',
+      source_module: 'EXPEDIENTES', entity_type: 'Expediente', entity_id: 'e1', href: '/expedientes/e1', status: 'ACTIVE',
+      read_at: null, last_reminder_at: '2026-09-29T12:00:00Z', created_at: '2026-09-29T12:00:00Z',
+    }] });
+    api.dismissNotification.mockResolvedValue({ success: true });
+    const user = userEvent.setup(); renderSettings('/configuracion/notificaciones');
+    expect(await screen.findByText('Firma próxima: EXP-0010-2026')).toBeInTheDocument();
+    expect(screen.getByText('Urgente')).toBeInTheDocument();
+    expect(screen.getByText('Activa')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Descartar' }));
+    expect(api.dismissNotification).toHaveBeenCalledWith('n1');
   });
 
   it('detalle de usuario muestra impacto antes de suspender', async () => {
@@ -98,5 +124,14 @@ describe('Configuración, usuarios y accesos', () => {
     renderSettings('/configuracion/usuarios/u2');
     expect(await screen.findByText('Expedientes activos')).toBeInTheDocument(); expect(screen.getByText('Tareas pendientes')).toBeInTheDocument();
     expect(screen.getByText('2')).toBeInTheDocument(); expect(screen.getByText('3')).toBeInTheDocument();
+  });
+
+  it('presenta criterios internos como colección separada y nunca como norma', async () => {
+    const user = userEvent.setup(); renderSettings('/configuracion/biblioteca-conocimiento');
+    await user.click(await screen.findByRole('button', { name: /CRITERIOS INTERNOS/ }));
+    expect(await screen.findAllByText('Revisión reforzada')).toHaveLength(2);
+    expect(screen.getByText('CRITERIO INTERNO — NO ES NORMA.')).toBeInTheDocument();
+    expect(screen.getByText(/nunca sustituye una fuente jurídica oficial/i)).toBeInTheDocument();
+    expect(api.knowledgeCriteria).toHaveBeenCalledTimes(1);
   });
 });

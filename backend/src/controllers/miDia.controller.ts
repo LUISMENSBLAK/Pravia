@@ -3,6 +3,7 @@ import prisma from '../config/prisma';
 import { calculateFinancialPosition } from '../domain/financialLedger';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { MidBaseSourceError, MidBaseSourceService } from '../services/midBaseSource.service';
+import { intelligentNotificationService } from '../services/intelligentNotification.service';
 
 const midBaseSourceService = new MidBaseSourceService(prisma);
 
@@ -133,15 +134,19 @@ export class MiDiaController {
         };
       }).filter((quote) => new Date(quote.fecha_seguimiento) <= nextWeek || quote.dias_sin_actualizacion >= 3);
 
-      const alerts = [
-        ...overdueTasks.map((task) => ({ id: `task-${task.id}`, severidad: 'ALTA', tipo: 'TAREA_VENCIDA', titulo: task.titulo, detalle: task.expediente?.numero_pravia || 'Tarea personal', fecha: task.fecha_limite, ruta: task.expediente_id ? `/expedientes/${task.expediente_id}` : '/agenda' })),
-        ...upcomingSignatures.map((exp) => ({ id: `signature-${exp.id}`, severidad: 'ALTA', tipo: 'FIRMA_PROXIMA', titulo: `Firma próxima: ${exp.numero_pravia}`, detalle: exp.cliente_alias || 'Cliente sin identificar', fecha: exp.fecha_estimada_firma, ruta: `/expedientes/${exp.id}` })),
-        ...blocked.map((exp) => ({ id: `blocked-${exp.id}`, severidad: 'ALTA', tipo: 'EXPEDIENTE_BLOQUEADO', titulo: `Expediente bloqueado: ${exp.numero_pravia}`, detalle: exp.tareas_externas[0]?.descripcion || 'Expediente suspendido', fecha: exp.updated_at, ruta: `/expedientes/${exp.id}` })),
-        ...missingDocs.slice(0, 15).map((exp) => ({ id: `docs-${exp.id}`, severidad: 'MEDIA', tipo: 'DOCUMENTOS_FALTANTES', titulo: `${exp.requisitos_docs.length} documento(s) pendiente(s)`, detalle: `${exp.numero_pravia} · ${exp.requisitos_docs[0]?.nombre}`, fecha: exp.requisitos_docs[0]?.fecha_vencimiento || exp.updated_at, ruta: `/expedientes/${exp.id}` })),
-        ...collection.slice(0, 15).map((item) => ({ id: `collection-${item.expediente_id}`, severidad: 'MEDIA', tipo: 'COBRO_PENDIENTE', titulo: `Cobro pendiente: ${item.folio}`, detalle: `$${item.saldo.toLocaleString('es-MX', { minimumFractionDigits: 2 })} MXN`, fecha: null, ruta: `/expedientes/${item.expediente_id}` })),
-        ...pendingExp008Income.map((item) => ({ id: `exp008-income-${item.id}`, severidad: 'MEDIA', tipo: 'INGRESO_PENDIENTE_APLICACION', titulo: `Ingreso pendiente: ${item.expediente.numero_pravia}`, detalle: 'Revisar comprobante y aplicar si corresponde.', fecha: item.created_at, ruta: `/expedientes/${item.expediente.id}#finanzas` })),
-        ...pendingExp008Requests.map((item) => ({ id: `exp008-request-${item.id}`, severidad: 'MEDIA', tipo: 'SOLICITUD_PAGO_PENDIENTE', titulo: `Solicitud pendiente: ${item.expediente.numero_pravia}`, detalle: 'Revisar y procesar solicitud de pago.', fecha: item.fecha_limite || item.created_at, ruta: `/expedientes/${item.expediente.id}#finanzas` })),
-      ].sort((a, b) => (a.severidad === b.severidad ? 0 : a.severidad === 'ALTA' ? -1 : 1)).slice(0, 40);
+      const notifications = await intelligentNotificationService.refreshAndList(req.user, { limit: 40 });
+      const alerts = notifications.map((item) => ({
+        id: item.id,
+        severidad: item.priority === 'URGENT' ? 'ALTA' : item.priority === 'IMPORTANT' ? 'MEDIA' : 'BAJA',
+        tipo: item.type,
+        titulo: item.title,
+        detalle: item.body,
+        fecha: item.last_reminder_at || item.created_at,
+        ruta: item.href,
+        prioridad: item.priority,
+        entidad: item.entity_type,
+        entidad_id: item.entity_id,
+      }));
 
       return res.json({
         success: true,

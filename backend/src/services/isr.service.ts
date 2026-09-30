@@ -6,14 +6,17 @@ import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { deleteFile, downloadFile, uploadFile } from './supabase.service';
 import { extraerMultiplesDocumentos, getOpenAIModelName, type DocumentoParaExtraccion } from './openaiDocument.service';
 import { calculateISR, ISRCalculationInput, ISRRateBracket, ISRRuleSetSnapshot, ISRValidationError } from '../domain/isrTaxEngine';
+import { buildISRV3RuleSnapshot, calculateISRV3, type ISRV3Input, type ISRV3Result } from '../domain/isrV3Engine';
 import { comparecienteObjectWhere } from './objectAccess.service';
 import { recordAIUsageInDb } from './aiUsage.service';
 import { FunctionalDocumentRenderError, renderConfiguredFunctionalDocument } from './functionalDocumentRenderer.service';
+import { buildFiscalExportPayload, calculateAdditionalTax, calculateReferredValue, calculateSurcharges, validateFiscalExportProfile, type FiscalReferenceSnapshot } from '../domain/isrFiscalUtilities';
 
 type AuthUser = NonNullable<Request['user']>;
 type Db = typeof prisma;
 
 const elevated = (user: AuthUser) => ['DIRECCION', 'ADMINISTRACION', 'CONSULTA'].includes(user.rol);
+const canAuthorizeManualTariff = (user: AuthUser) => ['DIRECCION', 'ADMINISTRACION'].includes(user.rol);
 export const isrObjectWhere = (user: AuthUser) => elevated(user) ? {} : {
   OR: [
     { creado_por_id: user.id },
@@ -23,6 +26,14 @@ export const isrObjectWhere = (user: AuthUser) => elevated(user) ? {} : {
 
 const json = (value: unknown) => value as Prisma.InputJsonValue;
 const moneyString = (value: unknown) => value == null ? '' : typeof (value as any)?.toFixed === 'function' ? (value as any).toFixed(2) : String(value);
+const textValue = (value: unknown) => typeof value === 'string' ? value.trim() : '';
+const isV3Input = (value: unknown): value is ISRV3Input => Boolean(value && typeof value === 'object' && (value as Record<string, unknown>).schemaVersion === 3);
+const dateValue = (value: unknown) => value instanceof Date && !Number.isNaN(value.getTime()) ? value.toISOString().slice(0, 10) : textValue(value).slice(0, 10);
+const stableValue = (value: unknown): unknown => Array.isArray(value)
+  ? value.map(stableValue)
+  : value && typeof value === 'object'
+    ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, stableValue(entry)]))
+    : value;
 const safeInput = (value: unknown): ISRCalculationInput => {
   const raw = (value || {}) as Partial<ISRCalculationInput>;
   const exercise = Number(raw.taxYear) || new Date().getFullYear();
@@ -32,6 +43,11 @@ const safeInput = (value: unknown): ISRCalculationInput => {
     ...base, ...raw,
     taxpayer: { ...base.taxpayer, ...(raw.taxpayer || {}) },
     property: { ...base.property, ...(raw.property || {}) },
+    operation: raw.operation ? {
+      ...base.operation!, ...raw.operation,
+      notary: { ...base.operation!.notary, ...(raw.operation.notary || {}) },
+      reportingMetadata: { ...base.operation!.reportingMetadata, ...(raw.operation.reportingMetadata || {}) },
+    } : base.operation,
     sourceContext: raw.sourceContext ? {
       capturedAt: raw.sourceContext.capturedAt || new Date().toISOString(),
       expediente: raw.sourceContext.expediente,
@@ -49,6 +65,7 @@ const defaultInput = (exercise: number, operationType: ISRCalculationInput['oper
   operationType, taxYear: exercise,
   taxpayer: { fullName: '', rfc: '', curp: '', personType: 'FISICA', fiscalResidence: 'NO_CONFIRMADA', confirmed: false },
   property: { description: '', landAndConstructionSameAcquisitionDate: true },
+  operation: { operationDate: '', operationTypeCode: '', instrumentTypeCode: '', deedNumber: '', notary: { number: '', name: '', state: '' }, propertyTypeCode: '', transmissionTypeCode: '', reportingMetadata: {}, source: 'MANUAL_CONFIRMED', confirmed: false },
   sourceContext: { capturedAt: new Date().toISOString(), acts: [], properties: [], parties: [] },
   iva: { applies: false, suggestedFromProperty: false, reviewNote: '' },
   acquisitionDate: '', saleDate: '', yearsElapsed: 1, salePrice: '', deductions: [],
@@ -56,6 +73,7 @@ const defaultInput = (exercise: number, operationType: ISRCalculationInput['oper
 });
 
 const statusFrom = (input: ISRCalculationInput, hadVersion: boolean) => {
+  if (isV3Input(input)) return hadVersion ? 'CALCULADO' as const : 'LISTO_PARA_CALCULAR' as const;
   if (input.operationType !== 'ENAJENACION_INMUEBLE' || input.specialCases.length || input.exemptionTreatment === 'SOLICITADA' || input.iva?.applies) return 'REQUIERE_REVISION' as const;
   const complete = Boolean(input.taxpayer.fullName && input.taxpayer.rfc && input.taxpayer.confirmed && input.taxpayer.fiscalResidence === 'MEXICO' && input.property.description && input.acquisitionDate && input.saleDate && input.salePrice && input.ordinaryCaseConfirmed && input.exemptionTreatment === 'NO_APLICA_CONFIRMADO' && input.deductions.every((item) => !item.included || item.confirmed));
   if (hadVersion) return 'CALCULADO' as const;
@@ -74,6 +92,12 @@ const mapRuleSet = (record: any): ISRRuleSetSnapshot => ({
   })),
 });
 
+const mapReferenceRevision = (record: any): NonNullable<ISRRuleSetSnapshot['referenceTables']>[number] => ({
+  id: record.id, type: record.reference_type, code: record.code, version: record.version,
+  effectiveFrom: record.effective_from.toISOString().slice(0, 10), effectiveTo: record.effective_to?.toISOString().slice(0, 10) || null,
+  value: record.value, sourceTitle: record.source_title, sourceUrl: record.source_url,
+});
+
 const inputSummary = (input: ISRCalculationInput) => ({
   contribuyente_nombre: input.taxpayer.fullName.trim() || null,
   contribuyente_rfc: input.taxpayer.rfc.trim().toUpperCase() || null,
@@ -83,13 +107,191 @@ const inputSummary = (input: ISRCalculationInput) => ({
 export class ISRService {
   constructor(private readonly db: Db = prisma) {}
 
+  async resources(user: AuthUser, legalDate?: string) {
+    const parsedDate = legalDate ? new Date(`${legalDate}T12:00:00Z`) : new Date();
+    if (Number.isNaN(parsedDate.getTime())) throw new ISRValidationError('FISCAL_RESOURCE_DATE_INVALID', 'La fecha de consulta fiscal no es válida.', 'legal_date');
+    const [references, exportProfiles, ruleSets, acts] = await Promise.all([
+      this.db.fiscalReferenceRevision.findMany({
+        where: {
+          organization_id: user.organizationId,
+          verification_status: 'VERIFICADA',
+          effective_from: { lte: parsedDate },
+          OR: [{ effective_to: null }, { effective_to: { gte: parsedDate } }],
+        },
+        orderBy: [{ reference_type: 'asc' }, { code: 'asc' }, { version: 'desc' }],
+      }),
+      this.db.fiscalExportProfile.findMany({
+        where: {
+          organization_id: user.organizationId,
+          active: true,
+          verification_status: 'VERIFICADA',
+          valid_from: { lte: parsedDate },
+          OR: [{ valid_to: null }, { valid_to: { gte: parsedDate } }],
+        },
+        orderBy: [{ target: 'asc' }, { code: 'asc' }, { version: 'desc' }],
+      }),
+      this.db.fiscalRuleSet.findMany({
+        where: { activo: true, vigencia_desde: { lte: parsedDate }, OR: [{ vigencia_hasta: null }, { vigencia_hasta: { gte: parsedDate } }] },
+        orderBy: [{ ejercicio: 'desc' }, { clave: 'asc' }, { version: 'desc' }],
+        select: { id: true, clave: true, version: true, ejercicio: true, tipo_operacion: true, jurisdiccion: true, vigencia_desde: true, vigencia_hasta: true, fuente_normativa: true, fuente_url: true },
+      }),
+      this.db.tipoActo.findMany({
+        where: { activo: true, archived_at: null, OR: [{ organization_id: user.organizationId }, { organization_id: null }] },
+        select: { id: true, nombre: true, descripcion: true, codigo_catalogo: true },
+        orderBy: { nombre: 'asc' },
+      }),
+    ]);
+    const catalogs = exportProfiles.reduce<Record<string, Array<{ code: string; label: string }>>>((result, profile) => {
+      const definition = profile.definition as Record<string, unknown>;
+      const configured = definition.catalogs && typeof definition.catalogs === 'object' ? definition.catalogs as Record<string, unknown> : {};
+      for (const [name, entries] of Object.entries(configured)) {
+        if (!Array.isArray(entries)) continue;
+        const current = result[name] || [];
+        for (const entry of entries) {
+          if (!entry || typeof entry !== 'object') continue;
+          const code = String((entry as Record<string, unknown>).code || '').trim();
+          const label = String((entry as Record<string, unknown>).label || code).trim();
+          if (code && !current.some((item) => item.code === code)) current.push({ code, label });
+        }
+        result[name] = current;
+      }
+      return result;
+    }, {});
+    return {
+      legal_date: parsedDate.toISOString().slice(0, 10),
+      references: references.map((record) => this.fiscalReference(record)),
+      export_profiles: exportProfiles.map((profile) => ({
+        id: profile.id, code: profile.code, name: profile.name, target: profile.target,
+        version: profile.version, definition: profile.definition, authority: profile.authority,
+        validFrom: profile.valid_from?.toISOString().slice(0, 10) || null,
+        validTo: profile.valid_to?.toISOString().slice(0, 10) || null,
+        serialization: profile.serialization, validationRules: profile.validation_rules,
+        sourceTitle: profile.source_title, sourceUrl: profile.source_url,
+      })),
+      rule_sets: ruleSets.map((rule) => ({
+        id: rule.id, key: rule.clave, version: rule.version, taxYear: rule.ejercicio,
+        operationType: rule.tipo_operacion, jurisdiction: rule.jurisdiccion,
+        validFrom: rule.vigencia_desde.toISOString().slice(0, 10), validTo: rule.vigencia_hasta?.toISOString().slice(0, 10) || null,
+        normativeSource: rule.fuente_normativa, sourceUrl: rule.fuente_url,
+      })),
+      acts: acts.map((act) => ({ id: act.id, name: act.nombre, description: act.descripcion, catalogCode: act.codigo_catalogo })),
+      catalogs,
+    };
+  }
+
+  async searchPostalCodes(query: string) {
+    const term = query.trim();
+    if (term.length < 2) return { source: null, data: [] };
+    const latest = await this.db.postalCodeCatalog.findFirst({
+      orderBy: [{ source_updated_at: 'desc' }, { imported_at: 'desc' }],
+      select: { source_version: true, source_updated_at: true, source_url: true },
+    });
+    if (!latest) return { source: null, data: [] };
+    const data = await this.db.postalCodeCatalog.findMany({
+      where: {
+        source_version: latest.source_version,
+        OR: [
+          { postal_code: { startsWith: term } },
+          { settlement: { contains: term, mode: 'insensitive' } },
+          { municipality: { contains: term, mode: 'insensitive' } },
+          { state: { contains: term, mode: 'insensitive' } },
+        ],
+      },
+      orderBy: [{ postal_code: 'asc' }, { settlement: 'asc' }],
+      take: 30,
+    });
+    return {
+      source: { version: latest.source_version, updated_at: latest.source_updated_at.toISOString().slice(0, 10), url: latest.source_url },
+      data: data.map((item) => ({
+        id: item.id, postal_code: item.postal_code, settlement: item.settlement,
+        settlement_type: item.settlement_type, municipality: item.municipality,
+        state: item.state, city: item.city, zone: item.zone,
+      })),
+    };
+  }
+
+  private fiscalReference(record: any): FiscalReferenceSnapshot {
+    return {
+      id: record.id, type: record.reference_type, code: record.code, version: record.version,
+      effectiveFrom: record.effective_from.toISOString().slice(0, 10), effectiveTo: record.effective_to?.toISOString().slice(0, 10) || null,
+      value: record.value as Record<string, unknown>, sourceTitle: record.source_title, sourceUrl: record.source_url,
+    };
+  }
+
+  async referredValue(user: AuthUser, body: Record<string, unknown>) {
+    const reference = await this.db.fiscalReferenceRevision.findFirst({ where: { id: String(body.reference_id || ''), organization_id: user.organizationId, verification_status: 'VERIFICADA' } });
+    if (!reference) throw new ISRValidationError('FISCAL_REFERENCE_NOT_VERIFIED', 'La referencia fiscal no existe o no está verificada.', 'reference_id');
+    const result = calculateReferredValue({ amount: String(body.amount || ''), factor: String(body.factor || (reference.value as any)?.factor || ''), valuationDate: String(body.valuation_date || ''), targetDate: String(body.target_date || ''), reference: this.fiscalReference(reference) });
+    await this.db.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'CALCULAR_VALOR_REFERIDO_ISR', entidad: 'FiscalReferenceRevision', entidad_id: reference.id, detalles: json({ reference_id: reference.id, result }) } });
+    return result;
+  }
+
+  async surcharges(user: AuthUser, body: Record<string, unknown>) {
+    const dueDate = String(body.due_date || ''); const paymentDate = String(body.payment_date || '');
+    const due = new Date(`${dueDate}T00:00:00Z`); const paid = new Date(`${paymentDate}T00:00:00Z`);
+    if (Number.isNaN(due.getTime()) || Number.isNaN(paid.getTime())) throw new ISRValidationError('SURCHARGE_DATE_INVALID', 'Confirma vencimiento y fecha de pago.', 'payment_date');
+    const references = await this.db.fiscalReferenceRevision.findMany({ where: { organization_id: user.organizationId, reference_type: 'RECARGO', verification_status: 'VERIFICADA', effective_from: { lte: paid }, OR: [{ effective_to: null }, { effective_to: { gte: due } }] } });
+    const result = calculateSurcharges({ principal: String(body.principal || ''), originDate: String(body.origin_date || ''), dueDate, paymentDate, monthlyRates: references.map((record) => this.fiscalReference(record)) });
+    await this.db.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'CALCULAR_RECARGOS_ISR', entidad: 'FiscalReferenceRevision', entidad_id: references[0]?.id || crypto.randomUUID(), detalles: json({ reference_ids: references.map((item) => item.id), result }) } });
+    return result;
+  }
+
+  async additionalTax(user: AuthUser, body: Record<string, unknown>) {
+    const reference = await this.db.fiscalReferenceRevision.findFirst({ where: { id: String(body.reference_id || ''), organization_id: user.organizationId, verification_status: 'VERIFICADA', reference_type: { in: ['ADQUISICION', 'IVA'] } } });
+    if (!reference) throw new ISRValidationError('ADDITIONAL_TAX_REFERENCE_REQUIRED', 'La regla fiscal no existe o no está verificada.', 'reference_id');
+    const result = calculateAdditionalTax({ taxableBase: String(body.taxable_base || ''), reference: this.fiscalReference(reference) });
+    await this.db.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'CALCULAR_IMPUESTO_ADICIONAL_ISR', entidad: 'FiscalReferenceRevision', entidad_id: reference.id, detalles: json({ reference_id: reference.id, result }) } });
+    return result;
+  }
+
+  async validateExport(user: AuthUser, id: string, profileId: string) {
+    const current = await this.get(user, id); const latest = current.versiones[0];
+    if (!latest) throw new ISRValidationError('ISR_CALCULATION_REQUIRED', 'Calcula una versión antes de validar la exportación.', undefined, 409);
+    const input = safeInput(latest.input_snapshot);
+    const legalDate = new Date(`${input.saleDate}T12:00:00Z`);
+    const profile = await this.db.fiscalExportProfile.findFirst({ where: {
+      id: profileId, organization_id: user.organizationId, active: true, verification_status: 'VERIFICADA',
+      valid_from: { lte: legalDate }, OR: [{ valid_to: null }, { valid_to: { gte: legalDate } }],
+    } });
+    if (!profile) throw new ISRValidationError('EXPORT_PROFILE_NOT_FOUND', 'El perfil de salida no existe o no está activo.', undefined, 404);
+    const definition = profile.definition as Record<string, unknown>;
+    const validation = validateFiscalExportProfile({ calculation: latest.result, input: latest.input_snapshot }, { code: profile.code, version: profile.version, target: profile.target, fields: Array.isArray(definition.fields) ? definition.fields as any : [], catalogs: definition.catalogs && typeof definition.catalogs === 'object' ? definition.catalogs as any : {} });
+    const metadata = { authority: profile.authority, validFrom: profile.valid_from?.toISOString().slice(0, 10) || null, validTo: profile.valid_to?.toISOString().slice(0, 10) || null, sourceTitle: profile.source_title, sourceUrl: profile.source_url, serialization: profile.serialization };
+    await this.db.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'VALIDAR_EXPORTACION_FISCAL', entidad: 'CalculoISR', entidad_id: id, detalles: json({ profile_id: profile.id, calculation_version: latest.version, validation, metadata }) } });
+    return { ...validation, metadata };
+  }
+
+  async exportData(user: AuthUser, id: string, profileId: string) {
+    const current = await this.get(user, id); const latest = current.versiones[0];
+    if (!latest) throw new ISRValidationError('ISR_CALCULATION_REQUIRED', 'Calcula una versión antes de preparar la exportación.', undefined, 409);
+    const input = safeInput(latest.input_snapshot);
+    const legalDate = new Date(`${input.saleDate}T12:00:00Z`);
+    const profile = await this.db.fiscalExportProfile.findFirst({ where: {
+      id: profileId, organization_id: user.organizationId, active: true, verification_status: 'VERIFICADA',
+      valid_from: { lte: legalDate }, OR: [{ valid_to: null }, { valid_to: { gte: legalDate } }],
+    } });
+    if (!profile) throw new ISRValidationError('EXPORT_PROFILE_NOT_FOUND', 'No existe un perfil verificado y vigente para la fecha de la operación.', undefined, 404);
+    const definition = profile.definition as Record<string, unknown>;
+    const payload = buildFiscalExportPayload({ calculation: latest.result, input: latest.input_snapshot }, { code: profile.code, version: profile.version, target: profile.target, fields: Array.isArray(definition.fields) ? definition.fields as any : [], catalogs: definition.catalogs && typeof definition.catalogs === 'object' ? definition.catalogs as any : {} });
+    const reproducible = stableValue({
+      calculation: { id: current.id, folio: current.folio, version: latest.version },
+      ...payload,
+      profile: { id: profile.id, code: profile.code, version: profile.version, target: profile.target, authority: profile.authority, validFrom: profile.valid_from?.toISOString().slice(0, 10) || null, validTo: profile.valid_to?.toISOString().slice(0, 10) || null, sourceTitle: profile.source_title, sourceUrl: profile.source_url, serialization: profile.serialization },
+    });
+    const serialized = JSON.stringify(reproducible);
+    const checksum = crypto.createHash('sha256').update(serialized).digest('hex');
+    await this.db.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'PREPARAR_EXPORTACION_FISCAL', entidad: 'CalculoISR', entidad_id: id, detalles: json({ profile_id: profile.id, calculation_version: latest.version, checksum_sha256: checksum }) } });
+    return { payload: reproducible, checksum_sha256: checksum, mime_type: 'application/json', file_name: `${current.folio}_${profile.target}_${profile.code}_V${profile.version}.json` };
+  }
+
   private async expedienteInput(db: any, user: AuthUser, expedienteId: string) {
     const expediente = await db.expediente.findFirst({
       where: { id: expedienteId, organization_id: user.organizationId, archived_at: null, ...expedienteAccessWhere(user) },
       include: {
-        actos: { where: { estatus: 'ACTIVO' }, include: { tipo_acto: { select: { id: true, nombre: true } } }, orderBy: { created_at: 'asc' } },
-        predios: { where: { estatus: 'ACTIVO' }, include: { predio: true, actos: { where: { estatus: 'ACTIVO' }, select: { expediente_acto_id: true } } }, orderBy: { created_at: 'asc' } },
+        actos: { where: { estatus: 'ACTIVO' }, include: { tipo_acto: { select: { id: true, codigo_catalogo: true, nombre: true } } }, orderBy: { created_at: 'asc' } },
+        predios: { where: { estatus: 'ACTIVO' }, include: { predio: { include: { colindancias: { orderBy: { orden: 'asc' } } } }, actos: { where: { estatus: 'ACTIVO' }, select: { expediente_acto_id: true } } }, orderBy: { created_at: 'asc' } },
         comparecientes: { where: { estatus: 'ACTIVO', archived_at: null }, include: { caracter: { select: { nombre: true } }, expedienteActo: { select: { id: true } }, compareciente: { include: { personaFisica: true, personaMoral: true } } }, orderBy: [{ orden_comparecencia: 'asc' }, { created_at: 'asc' }] },
+        notaria: { select: { id: true, nombre: true, numero_notaria: true, entidad_federativa: true } },
       },
     });
     if (!expediente) throw new ISRValidationError('EXPEDIENT_ACCESS_DENIED', 'No tienes acceso al expediente seleccionado.', undefined, 403);
@@ -98,6 +300,11 @@ export class ISRService {
       relationId: link.id, predioId: link.predio_id, actIds: link.actos.map((item: any) => item.expediente_acto_id),
       version: link.predio.version, label: link.predio.apodo || link.predio.ubicacion_texto || link.predio.clave_catastral || 'Inmueble',
       description: link.predio.descripcion || link.predio.ubicacion_texto || '',
+      addressText: link.predio.ubicacion_texto || [link.predio.calle, link.predio.numero_exterior, link.predio.numero_interior, link.predio.colonia, link.predio.localidad, link.predio.municipio, link.predio.estado, link.predio.codigo_postal].filter(Boolean).join(', '),
+      cadastralKey: link.predio.clave_catastral || '', propertyTaxAccount: link.predio.cuenta_predial || '', realEstateFolio: link.predio.folio_real || '',
+      registryData: link.predio.datos_registrales && typeof link.predio.datos_registrales === 'object' && !Array.isArray(link.predio.datos_registrales) ? link.predio.datos_registrales : undefined,
+      countryCode: link.predio.pais || '',
+      boundaries: link.predio.colindancias.map((boundary: any) => ({ order: boundary.orden, reference: boundary.referencia || '', measurement: moneyString(boundary.medida), unit: boundary.unidad || '', neighbor: boundary.colindante || '', description: boundary.descripcion || '' })),
       landSurfaceM2: moneyString(link.predio.superficie_terreno_m2), constructionSurfaceM2: moneyString(link.predio.superficie_construccion_m2),
       commercialConstructionSurfaceM2: moneyString(link.predio.superficie_construccion_comercial_m2),
       cadastralValue: moneyString(link.predio.valor_catastral), appraisalValue: moneyString(link.predio.valor_avaluo),
@@ -120,8 +327,22 @@ export class ISRService {
       capturedAt, expediente: { id: expediente.id, number: expediente.numero_pravia, version: expediente.version },
       acts: expediente.actos.map((item: any) => ({ id: item.id, typeId: item.tipo_acto_id, name: item.tipo_acto.nombre })), properties, parties,
     };
+    const operationData = expediente.datos_operacion && typeof expediente.datos_operacion === 'object' && !Array.isArray(expediente.datos_operacion) ? expediente.datos_operacion as Record<string, unknown> : {};
+    input.operation = {
+      operationDate: dateValue(expediente.fecha_escritura),
+      operationTypeCode: expediente.actos[0]?.tipo_acto.codigo_catalogo || '',
+      instrumentTypeCode: textValue(operationData.tipo_instrumento || operationData.instrumento_tipo || operationData.instrumentTypeCode),
+      deedNumber: expediente.numero_escritura || '',
+      notary: { id: expediente.notaria?.id, number: expediente.notaria?.numero_notaria || expediente.numero_notaria || '', name: expediente.notaria?.nombre || '', state: expediente.notaria?.entidad_federativa || '' },
+      propertyTypeCode: textValue(operationData.tipo_inmueble || operationData.propertyTypeCode),
+      transmissionTypeCode: textValue(operationData.tipo_transmision || operationData.transmissionTypeCode),
+      reportingMetadata: { operationReference: textValue(operationData.referencia_operacion || operationData.operationReference), noticeReference: textValue(operationData.referencia_aviso || operationData.noticeReference) },
+      source: 'EXPEDIENTE_SNAPSHOT', confirmed: false,
+    };
     input.property = {
       ...input.property, sourcePredioId: firstProperty?.predioId, description: firstProperty?.description || String((expediente.datos_operacion as any)?.inmueble || ''),
+      addressText: firstProperty?.addressText, cadastralKey: firstProperty?.cadastralKey, propertyTaxAccount: firstProperty?.propertyTaxAccount,
+      realEstateFolio: firstProperty?.realEstateFolio, registryData: firstProperty?.registryData, countryCode: firstProperty?.countryCode, boundaries: firstProperty?.boundaries,
       landSurfaceM2: firstProperty?.landSurfaceM2, constructionSurfaceM2: firstProperty?.constructionSurfaceM2,
       commercialConstructionSurfaceM2: firstProperty?.commercialConstructionSurfaceM2, cadastralValue: firstProperty?.cadastralValue,
       appraisalValue: firstProperty?.appraisalValue, operationValue: firstProperty?.operationValue,
@@ -280,16 +501,48 @@ export class ISRService {
         if (prior) return prior;
       }
       if (options.expectedVersion !== undefined && options.expectedVersion !== current.ultima_version) throw new ISRValidationError('ISR_STALE_VERSION', 'El cálculo cambió en otra sesión. Recarga antes de recalcular.', undefined, 409);
-      const input = safeInput(current.input_data);
+      const storedInput = current.input_data as unknown;
+      const v3Input = isV3Input(storedInput) ? storedInput : null;
+      const legacyInput = v3Input ? null : safeInput(storedInput);
+      if (legacyInput?.criteria?.tariffSelection === 'MANUAL_AUTHORIZED') {
+        if (!canAuthorizeManualTariff(user)) throw new ISRValidationError('MANUAL_TARIFF_PERMISSION_DENIED', 'Sólo Dirección o Administración pueden autorizar una tarifa manual.', 'criteria.tariffSelection', 403);
+        if (!legacyInput.criteria.tariffRuleSetId || !legacyInput.criteria.reason?.trim()) throw new ISRValidationError('MANUAL_TARIFF_AUTHORIZATION_REQUIRED', 'La tarifa manual requiere ruleset y motivo trazables.', 'criteria.tariffSelection');
+        legacyInput.criteria.authorizedBy = user.id;
+        legacyInput.criteria.authorizedAt = new Date().toISOString();
+      }
       const linkedDocumentIds = new Set(current.documentos.map((item) => item.documento_id));
-      const missingSupport = input.deductions.find((item) => item.included && (!item.supportDocumentId || !linkedDocumentIds.has(item.supportDocumentId)));
+      const missingSupport = legacyInput?.deductions.find((item) => item.included && (!item.supportDocumentId || !linkedDocumentIds.has(item.supportDocumentId)));
       if (missingSupport) throw new ISRValidationError('ISR_SUPPORT_DOCUMENT_INVALID', `El soporte de “${missingSupport.concept || 'la deducción'}” no está vinculado a este cálculo.`, `deductions.${missingSupport.id}`);
-      const ruleRecord = await tx.fiscalRuleSet.findFirst({ where: { ejercicio: current.ejercicio, tipo_operacion: current.tipo_operacion, activo: true, vigencia_desde: { lte: new Date(`${input.saleDate}T00:00:00Z`) }, OR: [{ vigencia_hasta: null }, { vigencia_hasta: { gte: new Date(`${input.saleDate}T00:00:00Z`) } }] }, include: { rate_tables: { include: { brackets: { orderBy: { orden: 'asc' } } } } } });
+      const legalDate = v3Input ? v3Input.operationDate : legacyInput!.saleDate;
+      const ruleRecord = await tx.fiscalRuleSet.findFirst({ where: { ...(legacyInput?.criteria?.tariffSelection === 'MANUAL_AUTHORIZED' ? { id: legacyInput.criteria.tariffRuleSetId } : {}), ejercicio: current.ejercicio, tipo_operacion: current.tipo_operacion, activo: true, vigencia_desde: { lte: new Date(`${legalDate}T00:00:00Z`) }, OR: [{ vigencia_hasta: null }, { vigencia_hasta: { gte: new Date(`${legalDate}T00:00:00Z`) } }] }, include: { rate_tables: { include: { brackets: { orderBy: { orden: 'asc' } } } } } });
       if (!ruleRecord?.rate_tables[0]) throw new ISRValidationError('RULESET_NOT_FOUND', `No existe una tarifa confirmada para el ejercicio ${current.ejercicio}.`);
-      const rules = mapRuleSet(ruleRecord); const result = calculateISR(input, rules); const version = current.ultima_version + 1;
-      const created = await tx.calculoISRVersion.create({ data: { organization_id: user.organizationId, calculo_id: id, version, request_key: requestKey || null, rule_set_id: ruleRecord.id, input_snapshot: json(input), ruleset_snapshot: json(rules), breakdown: json(result.breakdown), result: json(result), calculado_por_id: user.id } });
+      const referenceRecords = await tx.fiscalReferenceRevision.findMany({
+        where: {
+          organization_id: user.organizationId, verification_status: 'VERIFICADA',
+          effective_from: { lte: new Date(`${legalDate}T00:00:00Z`) },
+          OR: [{ effective_to: null }, { effective_to: { gte: new Date(`${legalDate}T00:00:00Z`) } }],
+        },
+        orderBy: [{ reference_type: 'asc' }, { code: 'asc' }, { version: 'desc' }],
+      });
+      const rules = { ...mapRuleSet(ruleRecord), referenceTables: referenceRecords.map(mapReferenceRevision) };
+      if (legacyInput && (legacyInput.criteria || legacyInput.components?.length)) {
+        const criteriaReference = rules.referenceTables.find((item) => item.type === 'CALCULATION_CRITERIA' && item.code === legacyInput.criteria?.referenceCode && String(item.version) === legacyInput.criteria?.version && item.effectiveFrom === legacyInput.criteria?.effectiveFrom && item.sourceUrl === legacyInput.criteria?.source);
+        if (!criteriaReference) throw new ISRValidationError('CALCULATION_CRITERIA_NOT_VERIFIED', 'El criterio de cálculo no coincide con una revisión fiscal verificada y vigente.', 'criteria');
+        const policy = criteriaReference.value as Record<string, unknown>;
+        if (policy.adjustmentMethod !== legacyInput.criteria?.adjustmentMethod || policy.resolvedAdjustmentMethod !== legacyInput.criteria?.resolvedAdjustmentMethod || policy.tariffSelection !== legacyInput.criteria?.tariffSelection || policy.landLossOffsetsConstructionGain !== legacyInput.criteria?.landLossOffsetsConstructionGain) {
+          throw new ISRValidationError('CALCULATION_CRITERIA_POLICY_MISMATCH', 'La política capturada no coincide con el contenido de la revisión fiscal verificada.', 'criteria');
+        }
+      }
+      const requiredReferences = new Set((legacyInput?.components || []).flatMap((component) => component.acquisitions.filter((item) => item.adjustmentMethod !== 'MANUAL_CONFIRMED').map((item) => item.referenceCode || '')));
+      for (const code of requiredReferences) {
+        if (!code || !rules.referenceTables.some((item) => item.code === code)) throw new ISRValidationError('FISCAL_REFERENCE_NOT_VERIFIED', `La referencia fiscal ${code || 'solicitada'} no está verificada para la fecha de la operación.`, 'components');
+      }
+      const result = v3Input ? calculateISRV3(v3Input, buildISRV3RuleSnapshot(rules, legalDate)) : calculateISR(legacyInput!, rules); const version = current.ultima_version + 1;
+      const effectiveInput = v3Input || legacyInput!;
+      const created = await tx.calculoISRVersion.create({ data: { organization_id: user.organizationId, calculo_id: id, version, request_key: requestKey || null, rule_set_id: ruleRecord.id, input_snapshot: json(effectiveInput), ruleset_snapshot: json(v3Input ? buildISRV3RuleSnapshot(rules, legalDate) : rules), breakdown: json(result.breakdown), result: json(result), calculado_por_id: user.id } });
       await tx.calculoISR.update({ where: { id }, data: { estado: 'CALCULADO', ultima_version: version, datos_modificados: false, actualizado_por_id: user.id } });
-      await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: version === 1 ? 'GENERAR_CALCULO_ISR' : 'RECALCULAR_ISR', entidad: 'CalculoISR', entidad_id: id, detalles: json({ version, request_key: requestKey || null, ruleset: rules.version, scope: result.scope, provisionalFederalISR: result.provisionalFederalISR }) } });
+      const legacyResult = v3Input ? null : result as ReturnType<typeof calculateISR>;
+      await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: version === 1 ? 'GENERAR_CALCULO_ISR' : 'RECALCULAR_ISR', entidad: 'CalculoISR', entidad_id: id, detalles: json({ version, request_key: requestKey || null, ruleset: rules.version, engine: v3Input ? 'ISR-V3.0' : 'ISR-LEGACY', scope: v3Input ? 'ISR_ENAJENACION_ADQUISICION_IVA' : legacyResult!.scope, provisionalFederalISR: legacyResult?.provisionalFederalISR || null, criteria_reference: legacyInput?.criteria?.referenceCode || null, criteria_version: legacyInput?.criteria?.version || null, adjustment_method: legacyInput?.criteria?.resolvedAdjustmentMethod || null, tariff_selection: legacyInput?.criteria?.tariffSelection || 'AUTO', tariff_authorized_by: legacyInput?.criteria?.authorizedBy || null }) } });
       return created;
     });
   }
@@ -320,8 +573,12 @@ export class ISRService {
     if (!format) throw new ISRValidationError('ISR_PDF_FORMAT_REQUIRED', 'El formato ISR configurado no tiene una versión activa.', undefined, 409);
     const formatSource = `CFG002:CALCULO_ISR_MEMORIA:${artifact.id}:V${format.version}`;
     const generatedAt = new Date();
-    const input = safeInput(latest.input_snapshot);
-    const result = latest.result as unknown as ReturnType<typeof calculateISR>;
+    const rawInput = latest.input_snapshot as unknown;
+    const v3Input = isV3Input(rawInput) ? rawInput : null;
+    const input = v3Input ? null : safeInput(rawInput);
+    const result = latest.result as unknown as ReturnType<typeof calculateISR> | ISRV3Result;
+    const v3Result = v3Input && (result as ISRV3Result).schemaVersion === 3 ? result as ISRV3Result : null;
+    const sumAmounts = (items: ISRV3Result['saleISR']) => items.reduce((sum, item) => item.amount === null ? sum : sum.plus(item.amount), new Prisma.Decimal(0)).toDecimalPlaces(2).toFixed(2);
     let rendered: Awaited<ReturnType<typeof renderConfiguredFunctionalDocument>>;
     try {
       rendered = await renderConfiguredFunctionalDocument(format, {
@@ -330,11 +587,17 @@ export class ISRService {
         'isr.fecha_generacion': generatedAt.toISOString().slice(0, 10),
         'isr.ejercicio': current.ejercicio,
         'isr.tipo_operacion': current.tipo_operacion,
-        'isr.valor_enajenacion': moneyString(input.salePrice),
-        'isr.costo_comprobado': moneyString(input.deductions.find((item) => item.treatment === 'COSTO_ADQUISICION_ACTUALIZADO')?.updatedAmount || ''),
-        'isr.resultado': moneyString((result as any).provisionalFederalISR ?? (result as any).taxDue ?? ''),
-        'isr.reglas_version': (result as any).ruleSet?.version || (result as any).ruleSetVersion || '',
-        'isr.datos_entrada': input,
+        'isr.valor_enajenacion': moneyString(v3Input?.values.operation ?? input?.salePrice),
+        'isr.costo_comprobado': moneyString(v3Input
+          ? v3Input.parties.filter((party) => party.role === 'ENAJENANTE').flatMap((party) => party.acquisitionLayers || []).reduce((sum, layer) => sum.plus(layer.adjustedLandCost || 0).plus(layer.adjustedConstructionCost || 0), new Prisma.Decimal(0)).toFixed(2)
+          : input?.deductions.find((item) => item.treatment === 'COSTO_ADQUISICION_ACTUALIZADO')?.updatedAmount || ''),
+        'isr.resultado': moneyString(v3Result ? sumAmounts(v3Result.saleISR) : (result as any).provisionalFederalISR ?? (result as any).taxDue ?? ''),
+        'isr.isr_enajenacion': v3Result ? sumAmounts(v3Result.saleISR) : moneyString((result as any).provisionalFederalISR ?? ''),
+        'isr.isr_adquisicion': v3Result ? sumAmounts(v3Result.acquisitionISR) : '',
+        'isr.iva': v3Result ? moneyString(v3Result.iva.amount) : '',
+        'isr.motor_version': v3Result?.engineVersion || 'ISR-LEGACY',
+        'isr.reglas_version': v3Result?.ruleVersion || (result as any).ruleSet?.version || (result as any).ruleSetVersion || '',
+        'isr.datos_entrada': v3Input || input,
         'isr.desglose': (result as any).breakdown || result,
         'formato.fuente': formatSource,
       }, selected.mapeo_datos_json);

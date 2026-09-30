@@ -1,9 +1,10 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import { App } from '../app/App';
 import { normalizeMyDay } from '../features/my-day/myDay.service';
+import { formatOperationalStatus } from '../features/my-day/formatters';
 
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -24,6 +25,12 @@ const baseDashboard = {
 };
 
 describe('Mi Día', () => {
+  it('presenta estados operativos humanos sin modificar el valor canónico', () => {
+    expect(formatOperationalStatus('EN_PROCESO')).toBe('En proceso');
+    expect(formatOperationalStatus('PENDIENTE_CLIENTE')).toBe('Pendiente del cliente');
+    expect(formatOperationalStatus('ESTADO_HISTORICO')).toBe('Estado historico');
+  });
+
   it('normaliza un payload parcial sin inventar colecciones ni permisos', () => {
     const normalized = normalizeMyDay({ data: { permissions: {}, agenda: null } });
     expect(normalized.permissions.canViewFinance).toBe(false);
@@ -56,6 +63,24 @@ describe('Mi Día', () => {
     expect(await screen.findByText('No pudimos cargar tus eventos.')).toBeInTheDocument();
     expect(screen.getByText('Sin firmas pendientes.')).toBeInTheDocument();
     expect(screen.getByText('Todo bajo control por ahora.')).toBeInTheDocument();
+  });
+
+  it('actualiza los datos reales al recibir un cambio sin recargar la página', async () => {
+    let myDayCalls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/auth/me')) return response(session);
+      if (url.endsWith('/mi-dia')) {
+        myDayCalls += 1;
+        return response({ data: { ...baseDashboard, kpis: { ...baseDashboard.kpis, activeFiles: { value: myDayCalls === 1 ? 2 : 5, label: 'Expedientes activos' } } } });
+      }
+      return response({}, 204);
+    }));
+    render(<MemoryRouter initialEntries={['/mi-dia']}><App /></MemoryRouter>);
+    expect(await screen.findByText('2')).toBeInTheDocument();
+    act(() => window.dispatchEvent(new CustomEvent('pravia:data-changed', { detail: { path: '/agenda', method: 'POST' } })));
+    await waitFor(() => expect(screen.getByText('5')).toBeInTheDocument());
+    expect(myDayCalls).toBeGreaterThanOrEqual(2);
   });
 
   it('muestra skeletons por widget mientras el dashboard está cargando', async () => {

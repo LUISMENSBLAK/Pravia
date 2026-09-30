@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import PizZip from 'pizzip';
-import { quoteTemplateData, renderQuoteTemplate } from './quoteDocument.service';
+import { quoteStructuredBudget, quoteTemplateData, renderQuoteTemplate } from './quoteDocument.service';
 
 const minimalDoubleBraceTemplate = () => {
   const zip = new PizZip();
@@ -65,5 +65,39 @@ describe('Corrección 002 · datos canónicos de la cotización generada', () =>
     expect(data['inmueble.referencia|[PENDIENTE/NO APLICA]']).toBe('Pendiente / no aplica');
     expect(data['cotizacion.terceros_detalle']).toBe('No identificado en el presupuesto estructurado');
     expect(data['notaria.datos_bancarios']).toBe('Pendiente de configuración');
+  });
+
+  it('materializa físicamente categorías, conceptos, subtotales, IVA dentro de Honorarios y total general', () => {
+    const concepts = [
+      { concepto: 'Avalúo', categoria: 'IMPUESTOS_DERECHOS' as const, importeCents: 1_000_000n },
+      { concepto: 'Registro Público', categoria: 'IMPUESTOS_DERECHOS' as const, importeCents: 1_500_000n },
+      { concepto: 'Honorarios', categoria: 'HONORARIOS' as const, importeCents: 2_000_000n },
+      { concepto: 'Misceláneos', categoria: 'HONORARIOS' as const, importeCents: 200_000n },
+      { concepto: 'IVA', categoria: 'IVA_HONORARIOS' as const, importeCents: 400_000n },
+    ];
+    expect(quoteStructuredBudget(concepts)).toMatchObject({
+      groups: [
+        { label: 'IMPUESTOS Y DERECHOS', subtotalCents: 2_500_000n },
+        { label: 'HONORARIOS', subtotalCents: 2_600_000n },
+      ],
+      totalCents: 5_100_000n,
+    });
+
+    const rendered = renderQuoteTemplate(minimalDoubleBraceTemplate(), {
+      'cotizacion.folio': 'COT-0042-2026',
+      'cliente.nombre': 'CLIENTE QA',
+    }, concepts);
+    const documentXml = new PizZip(rendered).file('word/document.xml')?.asText() ?? '';
+    const visibleText = documentXml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+    expect(visibleText).toContain('PRESUPUESTO DE LA COTIZACIÓN');
+    expect(visibleText).toContain('IMPUESTOS Y DERECHOS');
+    expect(visibleText).toContain('Avalúo');
+    expect(visibleText).toContain('TOTAL IMPUESTOS Y DERECHOS');
+    expect(visibleText).toContain('HONORARIOS');
+    expect(visibleText).toContain('IVA');
+    expect(visibleText).toContain('TOTAL HONORARIOS');
+    expect(visibleText).toContain('TOTAL GENERAL $51,000.00');
+    expect(visibleText.indexOf('IVA')).toBeGreaterThan(visibleText.indexOf('HONORARIOS'));
+    expect((documentXml.match(/PRAVIA_STRUCTURED_QUOTE_BUDGET/g) ?? [])).toHaveLength(1);
   });
 });

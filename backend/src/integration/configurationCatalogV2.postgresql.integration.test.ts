@@ -72,21 +72,25 @@ describe.runIf(process.env.CFG001_RUN_ISOLATED === '1')('CFG-001 v2 · PostgreSQ
     expect(second.idempotent).toBe(true); expect(third.idempotent).toBe(true);
     expect((await db.configuracionConceptoActividad.findUniqueOrThrow({ where: { id: revision.id } })).duracion_estimada).toBe(4);
     expect(await db.configuracionConceptoActividad.count({ where: { organization_id: primary.organizationId, codigo: 'REVISION_INICIAL' } })).toBe(1);
-    expect(await db.tipoActo.count({ where: { organization_id: primary.organizationId, nombre: { in: requiredActs } } })).toBe(requiredActs.length);
+    const accessibleActs = await db.tipoActo.findMany({
+      where: { OR: [{ organization_id: null }, { organization_id: primary.organizationId }], nombre: { in: requiredActs } },
+      select: { nombre: true },
+    });
+    expect(new Set(accessibleActs.map((item) => item.nombre)).size).toBe(requiredActs.length);
   }, 30_000);
 
   it('crea un acto tenant-owned con código único y sus cinco etapas iniciales', async () => {
     const name = `Acto QA ${randomUUID()}`;
     const created = await run(primary, () => actsAndTimesService.create(primary, { nombre: name, descripcion: 'UAT local', clasificacion: 'NO TRASLATIVOS', familia: 'Actos QA' }));
-    expect(created).toMatchObject({ organization_id: primary.organizationId, nombre: name, activo: true, configuration: { clasificacion: 'NO TRASLATIVOS', familia: 'Actos QA' } });
+    expect(created).toMatchObject({ organization_id: primary.organizationId, nombre: name.toLocaleUpperCase('es-MX'), activo: true, configuration: { clasificacion: 'NO TRASLATIVOS', familia: 'ACTOS QA' } });
     expect(created.codigo_catalogo).toMatch(/^ACTO_QA_[A-F0-9_-]+$/);
     expect(created.configuration.etapas.map((stage: any) => stage.nombre)).toEqual(['Prefirma', 'Firma', 'Postfirma', 'Registro', 'Cierre']);
     expect((await run(primary, () => actsAndTimesService.get(primary, created.id))).effective_stages.map((stage: any) => stage.nombre)).toEqual(['Prefirma', 'Firma', 'Postfirma', 'Registro', 'Cierre']);
     await run(primary, () => actsAndTimesService.update(primary, created.id, { descripcion: 'Descripción editada' }));
-    expect((await run(primary, () => actsAndTimesService.get(primary, created.id))).descripcion).toBe('Descripción editada');
+    expect((await run(primary, () => actsAndTimesService.get(primary, created.id))).descripcion).toBe('DESCRIPCIÓN EDITADA');
     const copied = await run(primary, () => configurationCatalogV2Service.duplicateAct(primary, created.id, { nombre: `${name} copia` }));
     expect((await run(primary, () => actsAndTimesService.get(primary, copied.id))).effective_stages.map((stage: any) => stage.nombre)).toEqual(['Prefirma', 'Firma', 'Postfirma', 'Registro', 'Cierre']);
-    expect(await db.tipoActo.count({ where: { organization_id: primary.organizationId, nombre: name } })).toBe(1);
+    expect(await db.tipoActo.count({ where: { organization_id: primary.organizationId, nombre: name.toLocaleUpperCase('es-MX') } })).toBe(1);
     await expect(run(foreign, () => actsAndTimesService.get(foreign, created.id))).rejects.toMatchObject({ status: 404 });
     await expect(db.auditLog.findFirstOrThrow({ where: { organization_id: primary.organizationId, accion: 'CFG_ACT_CREATED', entidad_id: created.id } })).resolves.toMatchObject({ user_id: primary.id });
   });
@@ -212,5 +216,30 @@ describe.runIf(process.env.CFG001_RUN_ISOLATED === '1')('CFG-001 v2 · PostgreSQ
     await run(primary, () => actsAndTimesService.setDependencies(primary, b.id, { dependency_ids: [a.id] }));
     await run(primary, () => actsAndTimesService.setDependencies(primary, c.id, { dependency_ids: [b.id] }));
     await expect(run(primary, () => actsAndTimesService.setDependencies(primary, a.id, { dependency_ids: [c.id] }))).rejects.toMatchObject({ status: 409, code: 'DEPENDENCY_CYCLE' });
+  });
+
+  it('modela CLG y avalúo en paralelo, bloquea Proyecto por ambas ramas y vincula el proceso complementario sin duplicarlo', async () => {
+    const purchase = (await run(primary, () => actsAndTimesService.list(primary))).data.find((item) => item.nombre === 'Compraventa')!;
+    const detail = await run(primary, () => actsAndTimesService.get(primary, purchase.id));
+    const byCode = new Map(detail.effective_activities.map((item: any) => [item.concepto_maestro?.codigo, item]));
+    const integration = byCode.get('REVISION_INICIAL') as any;
+    const requestClg = byCode.get('SOLICITUD_CLG') as any;
+    const requestValuation = byCode.get('SOLICITUD_AVALUO') as any;
+    const receiveClg = byCode.get('ENTREGA_CLG') as any;
+    const receiveValuation = byCode.get('OBTENCION_AVALUO') as any;
+    const project = byCode.get('PROYECCION_INSTRUMENTO') as any;
+    expect(requestClg.dependencias.map((item: any) => item.depende_actividad_id)).toContain(integration.id);
+    expect(requestValuation.dependencias.map((item: any) => item.depende_actividad_id)).toContain(integration.id);
+    expect(requestClg.dependencias.map((item: any) => item.depende_actividad_id)).not.toContain(requestValuation.id);
+    expect(requestValuation.dependencias.map((item: any) => item.depende_actividad_id)).not.toContain(requestClg.id);
+    expect(project.dependencias.map((item: any) => item.depende_actividad_id)).toEqual(expect.arrayContaining([receiveClg.id, receiveValuation.id]));
+
+    const [solicitud, recepcion] = await Promise.all([
+      db.configuracionConceptoActividad.findUniqueOrThrow({ where: { organization_id_codigo: { organization_id: primary.organizationId, codigo: 'SOLICITUD_CLG' } } }),
+      db.configuracionConceptoActividad.findUniqueOrThrow({ where: { organization_id_codigo: { organization_id: primary.organizationId, codigo: 'OBTENCION_CLG' } } }),
+    ]);
+    expect(solicitud.proceso_complementario_id).toBe(recepcion.id);
+    expect(recepcion.proceso_complementario_id).toBe(solicitud.id);
+    expect(await db.configuracionConceptoActividad.count({ where: { organization_id: primary.organizationId, codigo: { in: ['SOLICITUD_CLG', 'OBTENCION_CLG'] } } })).toBe(2);
   });
 });

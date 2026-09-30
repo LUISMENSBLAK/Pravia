@@ -31,6 +31,7 @@ import { ExpedienteDocumentAppendixError } from '../services/expedienteDocumentA
 import { ExpedienteArtifactsService } from '../services/expedienteArtifacts.service';
 import { ComplianceH6Service } from '../services/complianceH6.service';
 import { ExpedienteActoError, ExpedienteActosService, type ExpedienteActoCommand } from '../services/expedienteActos.service';
+import { canonicalUploadedDocumentMime } from '../services/documentUploadValidation';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
 const expedienteReadService = new ExpedienteReadService(prisma);
@@ -1170,12 +1171,13 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
     if (!fileBuffer) {
       return res.status(400).json({ error: 'No se pudo procesar el contenido del archivo subido.' });
     }
+    const canonicalMime = canonicalUploadedDocumentMime({ ...file, buffer: fileBuffer });
 
     const uniqueSuffix = Date.now() + '_' + Math.random().toString(36).substring(2, 9);
     uploadedStorageKey = `organizations/${req.user!.organizationId}/documentos/expedientes/${id}/${uniqueSuffix}_${file.originalname.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
 
     try {
-      await uploadFile(fileBuffer, uploadedStorageKey, file.mimetype);
+      await uploadFile(fileBuffer, uploadedStorageKey, canonicalMime);
     } catch (storageErr: any) {
       return res.status(400).json({
         error: 'Error al subir archivo al almacenamiento.',
@@ -1199,7 +1201,7 @@ export const addExpedienteDocumento = async (req: Request, res: Response) => {
             storage_key: storageKeyFinal,
             tipo: categoriaTarget,
             categoria: categoriaTarget as DocCategoria,
-            mime_type: file.mimetype,
+            mime_type: canonicalMime,
             size_bytes: file.size,
             checksum_sha256: createHash('sha256').update(fileBuffer).digest('hex'),
             subido_por_id: userId,

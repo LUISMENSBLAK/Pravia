@@ -14,7 +14,10 @@ router.get('/cuentas', FinanceLedgerController.accounts);
 router.get('/conciliacion', FinanceLedgerController.reconciliation);
 router.get('/cartera', FinanceLedgerController.receivables);
 router.get('/facturacion/estado', FinanceLedgerController.invoiceStatus);
+router.get('/facturacion/expedientes', FinanceLedgerController.expedienteInvoices);
 router.get('/catalogos', FinanceLedgerController.catalogs);
+router.get('/gastos-recurrentes', FinanceLedgerController.recurringExpenses);
+router.post('/analisis', requirePermission('ai.finanzas.read'), FinanceLedgerController.analyze);
 
 // Mutaciones separadas por capacidad; finanzas.read nunca autoriza escritura.
 router.post('/movimientos', requirePermission('finanzas.write'), FinanceLedgerController.createMovement);
@@ -25,6 +28,8 @@ router.delete('/movimientos/:id/comprobantes/:documentId', requirePermission('fi
 router.post('/movimientos/:id/cancelar', requirePermission('finanzas.validate'), FinanceLedgerController.cancelMovement);
 router.post('/movimientos/:id/revertir', requirePermission('finanzas.validate'), FinanceLedgerController.reverseMovement);
 router.post('/cuentas', requirePermission('finanzas.write'), FinanceLedgerController.createAccount);
+router.post('/gastos-recurrentes', requirePermission('finanzas.write'), FinanceLedgerController.createRecurringExpense);
+router.patch('/gastos-recurrentes/:id', requirePermission('finanzas.write'), FinanceLedgerController.updateRecurringExpense);
 router.post('/conciliacion/transacciones', requirePermission('finanzas.write'), FinanceLedgerController.registerBankTransaction);
 router.post('/conciliacion', requirePermission('finanzas.validate'), FinanceLedgerController.reconcile);
 

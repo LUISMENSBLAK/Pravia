@@ -17,7 +17,7 @@ const ui = read('frontend/src/features/cases/components/tabs/PartiesTab.tsx');
 
 const checks: Array<[string, () => boolean]> = [
   ['EXP-003-01 · vínculo a persona existente', () => service.includes('db.compareciente.findFirst') && service.includes('tx.expedienteCompareciente.create')],
-  ['EXP-003-02 · no duplica persona', () => !service.includes('tx.compareciente.create') && !ui.includes('nombre:')],
+  ['EXP-003-02 · no duplica persona', () => !service.includes('tx.compareciente.create') && !ui.includes('tipo_persona:') && ui.includes('Abrir la ficha maestra completa')],
   ['EXP-003-03 · persona vinculada a Acto 1', () => service.includes('expediente_acto_id: preview.proposed.expediente_acto_id')],
   ['EXP-003-04 · misma persona puede participar en Acto 2', () => !migration.includes('UNIQUE ("organization_id", "expediente_id", "compareciente_id")')],
   ['EXP-003-05 · identidad maestra única', () => /compareciente\s+Compareciente\s+@relation\(fields: \[compareciente_id\]/.test(schema)],

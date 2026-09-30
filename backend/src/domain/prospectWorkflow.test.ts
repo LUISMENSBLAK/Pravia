@@ -28,6 +28,8 @@ describe('Corrección 001 · workflow operativo Prospecto → Cotización', () =
     expect(allowedProspectActions(Stage.NUEVO, false)).toEqual(['COMENZAR_INTEGRACION', 'SUSPENDER', 'CANCELAR']);
     expect(allowedProspectActions(Stage.EN_INTEGRACION, false)).toEqual(['MARCAR_LISTO_PARA_COTIZAR', 'SUSPENDER', 'CANCELAR']);
     expect(allowedProspectActions(Stage.LISTO_PARA_COTIZAR, false)).toEqual(['CONVERTIR', 'SUSPENDER', 'CANCELAR']);
+    expect(allowedProspectActions(Stage.SUSPENDIDO, false)).toEqual(['REACTIVAR']);
+    expect(allowedProspectActions(Stage.CANCELADO, false)).toEqual(['REACTIVAR']);
     expect(allowedProspectActions(Stage.CONVERTIDO_EN_COTIZACION, true)).toEqual([]);
   });
 
@@ -35,6 +37,8 @@ describe('Corrección 001 · workflow operativo Prospecto → Cotización', () =
     expect(nextProspectStage(Stage.NUEVO, 'COMENZAR_INTEGRACION')).toBe(Stage.EN_INTEGRACION);
     expect(nextProspectStage(Stage.EN_INTEGRACION, 'MARCAR_LISTO_PARA_COTIZAR')).toBe(Stage.LISTO_PARA_COTIZAR);
     expect(nextProspectStage(Stage.LISTO_PARA_COTIZAR, 'CONVERTIR')).toBe(Stage.CONVERTIDO_EN_COTIZACION);
+    expect(nextProspectStage(Stage.SUSPENDIDO, 'REACTIVAR', false, Stage.EN_INTEGRACION)).toBe(Stage.EN_INTEGRACION);
+    expect(() => nextProspectStage(Stage.SUSPENDIDO, 'REACTIVAR', false, Stage.EN_ESPERA_COTIZACION)).toThrow();
     expect(() => nextProspectStage(Stage.NUEVO, 'CONVERTIR')).toThrow();
     expect(allowedProspectActions(Stage.EN_ESPERA_COTIZACION, false)).toEqual([]);
   });

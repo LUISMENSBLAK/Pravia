@@ -32,7 +32,9 @@ model Organization {
   expedienteActividades             ExpedienteActividad[]
   prospectoTransiciones             ProspectoTransicion[]
   prospectoFuentes                  ProspectoFuenteNotarial[]
+  prospectoActos                    ProspectoActo[]
   cotizacionTransiciones            CotizacionTransicion[]
+  cotizacionActos                   CotizacionActo[]
   complianceLegalRules              ComplianceLegalRule[]
   complianceRuleRevisions           ComplianceLegalRuleRevision[]
   expedienteComplianceStates        ExpedienteComplianceState[]
@@ -71,6 +73,22 @@ model Organization {
   catalogoCuestionarioFormatos      CatalogoCuestionarioFormato[]
   expedienteCuestionarios           ExpedienteCuestionarioRespuesta[]
   catalogoArtefactoDestinos         CatalogoArtefactoDestino[]
+  knowledgeSources                  KnowledgeSource[]
+  knowledgeCriteria                 KnowledgeCriterion[]
+  knowledgeArticles                 KnowledgeArticle[]
+  quoteAIProposals                  CotizacionIAProposal[]
+  projectFactSnapshots              ProjectFactSnapshot[]
+  projectInstructionApplications    ProjectInstructionApplication[]
+  projectTemplateAssignments        ProjectTemplateAssignment[]
+  fiscalReferenceRevisions          FiscalReferenceRevision[]
+  fiscalExportProfiles              FiscalExportProfile[]
+  caracteresCompareciente           CaracterCompareciente[]
+  assistantAlerts                   AssistantAlert[]
+  assistantMemories                 MemoriaDespacho[]
+  knowledgeRadarRuns                KnowledgeRadarRun[]
+  knowledgeImpacts                  KnowledgeImpact[]
+  recurringFinancialExpenses        GastoRecurrenteFinanciero[]
+  financialQueries                  ConsultaFinancieraGuardada[]
 
   @@index([status])
   @@map("organizations")
@@ -181,12 +199,35 @@ model User {
   complianceOfficialRevisionsVerified    ComplianceOfficialDefinitionRevision[] @relation("H6OfficialRevisionVerifier")
   comprobantesAnulados                   ComprobanteFinanciero[]                @relation("ComprobanteAnulador")
   comprobantesRegistrados                ComprobanteFinanciero[]                @relation("ComprobanteRegistrador")
+  facturasExp008Completadas              ExpedienteIngresoReportado[]           @relation("Exp008FacturaCompletadaPor")
   comunicacionVinculosCreados            ComunicacionDocumento[]                @relation("ComunicacionDocCreador")
   comunicaciones                         Comunicacion[]
   conciliacionesRegistradas              ConciliacionFinanciera[]               @relation("ConciliacionActor")
   cotizacionVinculosCreados              CotizacionDocumento[]                  @relation("CotizacionDocCreador")
   seguimientosCotizaciones               CotizacionSeguimiento[]
   cotizaciones                           Cotizacion[]
+  knowledgeSourcesCreated                KnowledgeSource[]                      @relation("KnowledgeSourceCreator")
+  knowledgeVersionsCreated               KnowledgeSourceVersion[]               @relation("KnowledgeVersionCreator")
+  knowledgeVersionsVerified              KnowledgeSourceVersion[]               @relation("KnowledgeVersionVerifier")
+  assistantAlerts                        AssistantAlert[]                       @relation("AssistantAlertOwner")
+  assistantMemoriesOwned                 MemoriaDespacho[]                      @relation("AssistantMemoryOwner")
+  assistantMemoriesCreated               MemoriaDespacho[]                      @relation("AssistantMemoryCreator")
+  assistantMemoriesApproved              MemoriaDespacho[]                      @relation("AssistantMemoryApprover")
+  knowledgeRadarRunsCreated              KnowledgeRadarRun[]                    @relation("KnowledgeRadarRunCreator")
+  knowledgeImpactsReviewed               KnowledgeImpact[]                      @relation("KnowledgeImpactReviewer")
+  recurringFinancialExpensesCreated      GastoRecurrenteFinanciero[]            @relation("RecurringExpenseCreator")
+  recurringFinancialExpensesUpdated      GastoRecurrenteFinanciero[]            @relation("RecurringExpenseUpdater")
+  financialQueries                       ConsultaFinancieraGuardada[]           @relation("FinancialQueryOwner")
+  knowledgeCriteriaCreated               KnowledgeCriterion[]                   @relation("KnowledgeCriterionCreator")
+  quoteAIProposalsCreated                CotizacionIAProposal[]                 @relation("QuoteAIProposalCreator")
+  quoteAIProposalsDecided                CotizacionIAProposal[]                 @relation("QuoteAIProposalDecider")
+  projectFactSnapshotsCreated            ProjectFactSnapshot[]                  @relation("ProjectFactSnapshotCreator")
+  projectInstructionApplicationsCreated  ProjectInstructionApplication[]        @relation("ProjectInstructionApplicationCreator")
+  projectTemplateAssignmentsCreated      ProjectTemplateAssignment[]            @relation("ProjectTemplateAssignmentCreator")
+  projectTemplateAssignmentsUpdated      ProjectTemplateAssignment[]            @relation("ProjectTemplateAssignmentUpdater")
+  fiscalReferenceRevisionsCreated        FiscalReferenceRevision[]              @relation("FiscalReferenceRevisionCreator")
+  fiscalReferenceRevisionsVerified       FiscalReferenceRevision[]              @relation("FiscalReferenceRevisionVerifier")
+  fiscalExportProfilesCreated            FiscalExportProfile[]                  @relation("FiscalExportProfileCreator")
   cuentasFinancierasCreadas              CuentaFinanciera[]                     @relation("CuentaFinancieraCreador")
   documentosSubidos                      Documento[]
   catalogoDestinosCreados                CatalogoArtefactoDestino[]             @relation("CatalogoDestinoCreator")
@@ -358,22 +399,59 @@ model UserInvitation {
 }
 
 model Notification {
-  id              String    @id @default(uuid()) @db.Uuid
-  organization_id String?   @db.Uuid
-  recipient_id    String    @db.Uuid
-  created_by_id   String?   @db.Uuid
-  type            String
-  title           String
-  body            String
-  href            String?
-  read_at         DateTime?
-  created_at      DateTime  @default(now())
-  created_by      User?     @relation("NotificationCreator", fields: [created_by_id], references: [id])
-  recipient       User      @relation("NotificationRecipient", fields: [recipient_id], references: [id], onDelete: Cascade)
+  id                String                 @id @default(uuid()) @db.Uuid
+  organization_id   String?                @db.Uuid
+  recipient_id      String                 @db.Uuid
+  created_by_id     String?                @db.Uuid
+  deterministic_key String                 @default(dbgenerated("('legacy:'::text || gen_random_uuid()::text)")) @db.VarChar(220)
+  target_scope      String                 @default("USER") @db.VarChar(24)
+  target_role       Role?
+  type              String
+  subtype           String?
+  priority          String                 @default("NORMAL") @db.VarChar(20)
+  title             String
+  body              String
+  source_module     String?
+  entity_type       String?
+  entity_id         String?                @db.Uuid
+  href              String?
+  status            String                 @default("ACTIVE") @db.VarChar(24)
+  read_at           DateTime?
+  last_reminder_at  DateTime?
+  snoozed_until     DateTime?
+  resolved_at       DateTime?
+  dismissed_at      DateTime?
+  not_applicable_at DateTime?
+  metadata          Json                   @default("{}")
+  created_at        DateTime               @default(now())
+  updated_at        DateTime               @default(now()) @updatedAt
+  created_by        User?                  @relation("NotificationCreator", fields: [created_by_id], references: [id])
+  recipient         User                   @relation("NotificationRecipient", fields: [recipient_id], references: [id], onDelete: Cascade)
+  reminders         NotificationReminder[]
 
-  @@index([recipient_id, read_at, created_at])
+  @@unique([id, organization_id], map: "uq_notifications_id_org")
+  @@unique([organization_id, recipient_id, deterministic_key], map: "uq_notifications_tenant_recipient_dedup")
+  @@index([recipient_id, status, read_at, created_at], map: "idx_notifications_recipient_inbox")
+  @@index([organization_id, source_module, entity_type, entity_id], map: "idx_notifications_source_object")
   @@index([created_by_id], map: "idx_notifications_created_by_fk")
   @@map("notifications")
+}
+
+/// Historial diario de recordatorios emitidos por el motor determinista.
+model NotificationReminder {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  notification_id String       @db.Uuid
+  reminder_key    String       @db.VarChar(16)
+  channel         String       @default("INTERNAL") @db.VarChar(24)
+  metadata        Json         @default("{}")
+  created_at      DateTime     @default(now())
+  notification    Notification @relation(fields: [notification_id, organization_id], references: [id, organization_id], onDelete: Cascade, map: "notification_reminders_notification_tenant_fkey")
+
+  @@unique([notification_id, reminder_key, channel], map: "uq_notification_reminder_daily_channel")
+  @@index([notification_id, organization_id], map: "idx_notification_reminders_notification_org")
+  @@index([organization_id, created_at], map: "idx_notification_reminders_tenant_created")
+  @@map("notification_reminders")
 }
 
 model Prospecto {
@@ -384,6 +462,7 @@ model Prospecto {
   email                        String?
   tipo_acto                    String?
   necesidad                    String?
+  contexto_operacion           String?
   documentos_disponibles       String?
   tiene_antecedente            Boolean?
   tiene_predial                Boolean?
@@ -419,12 +498,14 @@ model Prospecto {
   documentos                   Documento[]
   prospectoDocumentos          ProspectoDocumento[]
   seguimientos                 ProspectoSeguimiento[]
+  actos                        ProspectoActo[]
   archived_by_user             User?                      @relation("ProspectoArchivedBy", fields: [archived_by], references: [id])
   atendido_por                 User                       @relation(fields: [user_id], references: [id])
   etapa_operativa              ProspectoEtapaCatalogo?    @relation(fields: [etapa_operativa_codigo], references: [codigo])
   servicio_catalogo            ProspectoServicioCatalogo? @relation(fields: [servicio_catalogo_codigo], references: [codigo])
 
   @@unique([organization_id, creation_key], map: "uq_prospecto_creation_key")
+  @@unique([id, organization_id], map: "uq_prospectos_id_org")
   @@index([archived_by], map: "idx_prospectos_archivado_por_fk")
   @@index([user_id], map: "idx_prospectos_user_fk")
   @@index([etapa_operativa_codigo], map: "idx_prospectos_etapa_operativa_fk")
@@ -433,6 +514,29 @@ model Prospecto {
   @@index([transicion_actual_id], map: "idx_prospecto_current_transition")
   @@index([organization_id, etapa_contractual], map: "idx_prospecto_contract_stage")
   @@map("prospectos")
+}
+
+/// Actos preliminares seleccionados en Recepción. `tipo_acto` se conserva
+/// únicamente como proyección legacy legible; esta relación es la autoridad.
+model ProspectoActo {
+  id              String           @id @default(uuid()) @db.Uuid
+  organization_id String           @db.Uuid
+  prospecto_id    String           @db.Uuid
+  tipo_acto_id    String           @db.Uuid
+  orden           Int              @default(0)
+  created_by_id   String           @db.Uuid
+  created_at      DateTime         @default(now())
+  organization    Organization     @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "prospecto_actos_organization_id_fkey")
+  prospecto       Prospecto        @relation(fields: [prospecto_id, organization_id], references: [id, organization_id], onDelete: Cascade, map: "prospecto_actos_prospecto_tenant_fkey")
+  tipo_acto       TipoActo         @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict, map: "prospecto_actos_tipo_acto_id_fkey")
+  cotizacionActos CotizacionActo[]
+
+  @@unique([organization_id, prospecto_id, tipo_acto_id], map: "uq_prospecto_actos_org_prospecto_tipo")
+  @@unique([id, organization_id], map: "uq_prospecto_actos_id_org")
+  @@index([organization_id, prospecto_id, orden], map: "idx_prospecto_actos_org_prospecto")
+  @@index([tipo_acto_id], map: "idx_prospecto_actos_tipo_acto")
+  @@index([organization_id, created_by_id], map: "idx_prospecto_actos_actor_tenant")
+  @@map("prospecto_actos")
 }
 
 enum ProspectoEtapaContractual {
@@ -638,6 +742,9 @@ model Cotizacion {
   created_at                     DateTime                    @default(now())
   updated_at                     DateTime                    @default(now()) @updatedAt
   cuerpo_correo_cliente          String?
+  correo_cc                      String?
+  correo_asunto                  String?
+  contexto_operacion             String?
   cuerpo_correo_notaria          String?
   fecha_aceptacion_cliente       DateTime?
   fecha_enviada_cliente          DateTime?
@@ -649,6 +756,7 @@ model Cotizacion {
   numero_cotizacion              String?                     @unique
   numero_solicitud               String?                     @unique
   fuente_notarial_id             String?                     @db.Uuid
+  solicitante_formal_id          String?                     @db.Uuid
   fuente_notarial                ProspectoFuenteNotarial?    @relation(fields: [fuente_notarial_id], references: [id], onDelete: Restrict)
   total_cliente                  Decimal?                    @db.Decimal(14, 2)
   total_notaria                  Decimal?                    @db.Decimal(14, 2)
@@ -673,6 +781,9 @@ model Cotizacion {
   transicion_actual              CotizacionTransicion?       @relation("CotizacionCurrentTransition", fields: [transicion_actual_id], references: [id], onDelete: Restrict)
   transiciones                   CotizacionTransicion[]      @relation("CotizacionTransitions")
   conceptos                      CotizacionConcepto[]
+  propuestasIA                   CotizacionIAProposal[]
+  actos                          CotizacionActo[]
+  solicitante_formal             Compareciente?              @relation("CotizacionSolicitanteFormal", fields: [solicitante_formal_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "cotizaciones_solicitante_tenant_fkey")
 
   @@unique([id, organization_id], map: "uq_cotizaciones_id_org")
   @@index([notaria_id], map: "idx_cotizaciones_notaria_fk")
@@ -680,7 +791,33 @@ model Cotizacion {
   @@index([fuente_notarial_id, organization_id], map: "idx_cotizaciones_source_org")
   @@index([transicion_actual_id], map: "idx_cotizacion_current_transition")
   @@index([organization_id, etapa_contractual], map: "idx_cotizacion_contract_stage")
+  @@index([organization_id, solicitante_formal_id], map: "idx_cotizaciones_solicitante_formal")
   @@map("cotizaciones")
+}
+
+/// Actos heredados del Prospecto y confirmados al aceptar la Cotización.
+model CotizacionActo {
+  id                       String         @id @default(uuid()) @db.Uuid
+  organization_id          String         @db.Uuid
+  cotizacion_id            String         @db.Uuid
+  tipo_acto_id             String         @db.Uuid
+  prospecto_acto_origen_id String?        @db.Uuid
+  orden                    Int            @default(0)
+  confirmed_at             DateTime?
+  confirmed_by_id          String?        @db.Uuid
+  created_at               DateTime       @default(now())
+  organization             Organization   @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "cotizacion_actos_organization_id_fkey")
+  cotizacion               Cotizacion     @relation(fields: [cotizacion_id, organization_id], references: [id, organization_id], onDelete: Cascade, map: "cotizacion_actos_cotizacion_tenant_fkey")
+  tipo_acto                TipoActo       @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict, map: "cotizacion_actos_tipo_acto_id_fkey")
+  prospecto_acto_origen    ProspectoActo? @relation(fields: [prospecto_acto_origen_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "cotizacion_actos_prospecto_acto_tenant_fkey")
+
+  @@unique([organization_id, cotizacion_id, tipo_acto_id], map: "uq_cotizacion_actos_org_cotizacion_tipo")
+  @@unique([id, organization_id], map: "uq_cotizacion_actos_id_org")
+  @@index([organization_id, cotizacion_id, orden], map: "idx_cotizacion_actos_org_cotizacion")
+  @@index([tipo_acto_id], map: "idx_cotizacion_actos_tipo_acto")
+  @@index([organization_id, prospecto_acto_origen_id], map: "idx_cotizacion_actos_origen")
+  @@index([organization_id, confirmed_by_id], map: "idx_cotizacion_actos_confirmer_tenant")
+  @@map("cotizacion_actos")
 }
 
 enum CotizacionEtapaContractual {
@@ -841,7 +978,10 @@ model TipoActo {
   formularioVersiones             FormularioVersion[]
   plantillaDocVersiones           PlantillaDocumentalVersion[]
   serviciosProspecto              ProspectoServicioCatalogo[]
+  prospectoActos                  ProspectoActo[]
+  cotizacionActos                 CotizacionActo[]
   tipoActoCaracteresCompareciente TipoActoCaracterCompareciente[]
+  projectTemplateAssignments      ProjectTemplateAssignment[]
 
   @@map("tipos_acto")
 }
@@ -1123,35 +1263,43 @@ model CatalogoInstitucion {
 
 /// Fuente semántica única para actividades/hitos compartidos entre actos.
 model ConfiguracionConceptoActividad {
-  id                     String                           @id @default(uuid()) @db.Uuid
-  organization_id        String                           @db.Uuid
-  codigo                 String
-  nombre                 String
-  descripcion            String?
-  naturaleza             ConfiguracionActividadNaturaleza @default(INTERNA)
-  duracion_estimada      Int                              @default(0)
-  unidad_tiempo          ConfiguracionUnidadTiempo        @default(DIAS)
-  tipo_dias              ConfiguracionTipoDias            @default(HABILES)
-  margen_seguridad       Int                              @default(0)
-  responsable_rol        Role?
-  responsable_usuario_id String?                          @db.Uuid
-  aplica_por_defecto     Boolean                          @default(true)
-  fuente_tiempo          ConfiguracionFuenteTiempo        @default(GENERAL)
-  condicion_json         Json?
-  activa                 Boolean                          @default(true)
-  revision               Int                              @default(1)
-  requiere_revision      Boolean                          @default(false)
-  created_at             DateTime                         @default(now())
-  updated_at             DateTime                         @updatedAt
-  organization           Organization                     @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "configuracion_conceptos_org_fkey")
-  responsable_usuario    OrganizationMembership?          @relation("CfgConceptResponsibleMembership", fields: [organization_id, responsable_usuario_id], references: [organization_id, user_id], onDelete: Restrict, map: "configuracion_conceptos_responsable_fkey")
-  aplicaciones           ConfiguracionActividad[]
-  seguimientoSnapshots   ExpedienteSeguimientoActividad[]
+  id                        String                           @id @default(uuid()) @db.Uuid
+  organization_id           String                           @db.Uuid
+  codigo                    String
+  nombre                    String
+  descripcion               String?
+  /// Clasificación funcional contractual del catálogo general de procesos.
+  tipo_proceso              ConfiguracionProcesoTipo         @default(ACTIVIDAD)
+  /// Par operativo reutilizable (p. ej. solicitar CLG ↔ recibir CLG). No implica dependencia.
+  proceso_complementario_id String?                          @db.Uuid
+  es_base_pravia            Boolean                          @default(false)
+  naturaleza                ConfiguracionActividadNaturaleza @default(INTERNA)
+  duracion_estimada         Int                              @default(0)
+  unidad_tiempo             ConfiguracionUnidadTiempo        @default(DIAS)
+  tipo_dias                 ConfiguracionTipoDias            @default(HABILES)
+  margen_seguridad          Int                              @default(0)
+  responsable_rol           Role?
+  responsable_usuario_id    String?                          @db.Uuid
+  aplica_por_defecto        Boolean                          @default(true)
+  fuente_tiempo             ConfiguracionFuenteTiempo        @default(GENERAL)
+  condicion_json            Json?
+  activa                    Boolean                          @default(true)
+  revision                  Int                              @default(1)
+  requiere_revision         Boolean                          @default(false)
+  created_at                DateTime                         @default(now())
+  updated_at                DateTime                         @updatedAt
+  organization              Organization                     @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "configuracion_conceptos_org_fkey")
+  responsable_usuario       OrganizationMembership?          @relation("CfgConceptResponsibleMembership", fields: [organization_id, responsable_usuario_id], references: [organization_id, user_id], onDelete: Restrict, map: "configuracion_conceptos_responsable_fkey")
+  proceso_complementario    ConfiguracionConceptoActividad?  @relation("CfgProcesoComplementario", fields: [proceso_complementario_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "configuracion_conceptos_complementario_fkey")
+  complementado_por         ConfiguracionConceptoActividad[] @relation("CfgProcesoComplementario")
+  aplicaciones              ConfiguracionActividad[]
+  seguimientoSnapshots      ExpedienteSeguimientoActividad[]
 
   @@unique([organization_id, codigo], map: "uq_cfg_concepto_org_codigo")
   @@unique([id, organization_id], map: "uq_cfg_concepto_id_org")
   @@index([organization_id, activa, nombre], map: "idx_cfg_concepto_org_activo")
   @@index([organization_id, responsable_usuario_id], map: "idx_cfg_concepto_responsable")
+  @@index([organization_id, proceso_complementario_id], map: "idx_cfg_concepto_complementario")
   @@map("configuracion_conceptos_actividad")
 }
 
@@ -1203,33 +1351,34 @@ model CatalogoCarpeta {
 }
 
 model CatalogoArtefacto {
-  id                   String                         @id @default(uuid()) @db.Uuid
-  organization_id      String                         @db.Uuid
-  tipo                 CatalogoArtefactoTipo
-  propietario_tipo     CatalogoPropietarioTipo
-  notaria_id           String?                        @db.Uuid
-  institucion_id       String?                        @db.Uuid
-  carpeta_id           String?                        @db.Uuid
-  nombre               String
-  descripcion          String?
-  codigo_biblioteca    String?                        @db.VarChar(120)
-  ruta_biblioteca      String?                        @db.VarChar(700)
-  revision             Int                            @default(1)
-  purpose              CatalogoArtefactoPurpose?
-  activo               Boolean                        @default(true)
-  creado_por_id        String                         @db.Uuid
-  actualizado_por_id   String                         @db.Uuid
-  created_at           DateTime                       @default(now())
-  updated_at           DateTime                       @updatedAt
-  carpeta              CatalogoCarpeta?               @relation(fields: [carpeta_id], references: [id], onDelete: Restrict)
-  versiones            CatalogoArtefactoVersion[]
-  actos                CatalogoArtefactoActo[]
-  reglas               CatalogoArtefactoRegla[]
-  revisionesNormativas CatalogoNormativaRevision[]
-  pendientesExp006     ExpedienteArtefactoPendiente[] @relation("Exp006PendingArtifact")
-  cuestionarioFormatos CatalogoCuestionarioFormato[]  @relation("QuestionnaireDefinition")
-  formatoCuestionarios CatalogoCuestionarioFormato[]  @relation("QuestionnaireFormat")
-  destinosFuncionales  CatalogoArtefactoDestino[]
+  id                         String                         @id @default(uuid()) @db.Uuid
+  organization_id            String                         @db.Uuid
+  tipo                       CatalogoArtefactoTipo
+  propietario_tipo           CatalogoPropietarioTipo
+  notaria_id                 String?                        @db.Uuid
+  institucion_id             String?                        @db.Uuid
+  carpeta_id                 String?                        @db.Uuid
+  nombre                     String
+  descripcion                String?
+  codigo_biblioteca          String?                        @db.VarChar(120)
+  ruta_biblioteca            String?                        @db.VarChar(700)
+  revision                   Int                            @default(1)
+  purpose                    CatalogoArtefactoPurpose?
+  activo                     Boolean                        @default(true)
+  creado_por_id              String                         @db.Uuid
+  actualizado_por_id         String                         @db.Uuid
+  created_at                 DateTime                       @default(now())
+  updated_at                 DateTime                       @updatedAt
+  carpeta                    CatalogoCarpeta?               @relation(fields: [carpeta_id], references: [id], onDelete: Restrict)
+  versiones                  CatalogoArtefactoVersion[]
+  actos                      CatalogoArtefactoActo[]
+  reglas                     CatalogoArtefactoRegla[]
+  revisionesNormativas       CatalogoNormativaRevision[]
+  pendientesExp006           ExpedienteArtefactoPendiente[] @relation("Exp006PendingArtifact")
+  cuestionarioFormatos       CatalogoCuestionarioFormato[]  @relation("QuestionnaireDefinition")
+  formatoCuestionarios       CatalogoCuestionarioFormato[]  @relation("QuestionnaireFormat")
+  destinosFuncionales        CatalogoArtefactoDestino[]
+  projectTemplateAssignments ProjectTemplateAssignment[]
 
   @@unique([organization_id, codigo_biblioteca], map: "uq_catalogo_artefactos_biblioteca")
   @@unique([id, organization_id], map: "uq_catalogo_artefactos_id_org")
@@ -1264,32 +1413,33 @@ model CatalogoArtefactoDestino {
 }
 
 model CatalogoArtefactoVersion {
-  id                       String                                      @id @default(uuid()) @db.Uuid
-  organization_id          String                                      @db.Uuid
-  artefacto_id             String                                      @db.Uuid
-  version                  Int
-  nombre_original          String?
-  storage_key              String?
-  mime_type                String?
-  size_bytes               Int?
-  checksum_sha256          String?
-  origen                   String
-  version_biblioteca       String?                                     @db.VarChar(80)
-  content_kind             CatalogoArtefactoContentKind                @default(FILE)
-  definition_json          Json?
-  definition_checksum      String?                                     @db.VarChar(64)
-  schema_version           Int?
-  activa                   Boolean                                     @default(true)
-  creado_por_id            String                                      @db.Uuid
-  created_at               DateTime                                    @default(now())
-  artefacto                CatalogoArtefacto                           @relation(fields: [artefacto_id], references: [id], onDelete: Cascade)
-  pendientesExp006         ExpedienteArtefactoPendiente[]              @relation("Exp006PendingMasterVersion")
-  presupuestoDocumentos    ExpedientePresupuestoDocumento[]
-  solicitudesPagoExp008    ExpedienteSolicitudPago[]
-  questionnaireAssessments ComplianceQuestionnaireAssessment[]         @relation("QuestionnairePinnedDefinition")
-  questionnaireRevisions   ComplianceQuestionnaireAssessmentRevision[] @relation("QuestionnaireRevisionDefinition")
-  methodologyRevisions     ComplianceRiskMethodologyRevision[]         @relation("MethodologyDefinitionCompatibility")
-  expedienteCuestionarios  ExpedienteCuestionarioRespuesta[]
+  id                         String                                      @id @default(uuid()) @db.Uuid
+  organization_id            String                                      @db.Uuid
+  artefacto_id               String                                      @db.Uuid
+  version                    Int
+  nombre_original            String?
+  storage_key                String?
+  mime_type                  String?
+  size_bytes                 Int?
+  checksum_sha256            String?
+  origen                     String
+  version_biblioteca         String?                                     @db.VarChar(80)
+  content_kind               CatalogoArtefactoContentKind                @default(FILE)
+  definition_json            Json?
+  definition_checksum        String?                                     @db.VarChar(64)
+  schema_version             Int?
+  activa                     Boolean                                     @default(true)
+  creado_por_id              String                                      @db.Uuid
+  created_at                 DateTime                                    @default(now())
+  artefacto                  CatalogoArtefacto                           @relation(fields: [artefacto_id], references: [id], onDelete: Cascade)
+  pendientesExp006           ExpedienteArtefactoPendiente[]              @relation("Exp006PendingMasterVersion")
+  presupuestoDocumentos      ExpedientePresupuestoDocumento[]
+  solicitudesPagoExp008      ExpedienteSolicitudPago[]
+  questionnaireAssessments   ComplianceQuestionnaireAssessment[]         @relation("QuestionnairePinnedDefinition")
+  questionnaireRevisions     ComplianceQuestionnaireAssessmentRevision[] @relation("QuestionnaireRevisionDefinition")
+  methodologyRevisions       ComplianceRiskMethodologyRevision[]         @relation("MethodologyDefinitionCompatibility")
+  expedienteCuestionarios    ExpedienteCuestionarioRespuesta[]
+  projectTemplateAssignments ProjectTemplateAssignment[]
 
   @@unique([artefacto_id, version], map: "uq_catalogo_artefacto_version")
   @@unique([organization_id, storage_key], map: "uq_catalogo_storage_key_org")
@@ -1535,6 +1685,8 @@ model Expediente {
   operationPayments          ComplianceOperationPayment[]
   complianceAssistedReviews  ComplianceAssistedReview[]
   cuestionarios              ExpedienteCuestionarioRespuesta[]
+  projectFactSnapshots       ProjectFactSnapshot[]
+  projectInstructionApps     ProjectInstructionApplication[]
 
   @@unique([id, organization_id], map: "uq_expedientes_id_org")
   @@index([abogado_id], map: "idx_expedientes_abogado_fk")
@@ -1661,6 +1813,7 @@ model ExpedienteActo {
   organization_id         String                          @db.Uuid
   expediente_id           String                          @db.Uuid
   tipo_acto_id            String                          @db.Uuid
+  porcentaje_objeto       Decimal                         @default(100) @db.Decimal(9, 6)
   origen                  ExpedienteActoOrigen
   estatus                 ExpedienteActoEstatus           @default(ACTIVO)
   source_cotizacion_id    String?                         @db.Uuid
@@ -1712,6 +1865,7 @@ model ExpedienteSeguimientoActividad {
   actividad_maestra_id           String?                          @db.Uuid
   concepto_maestro_id            String?                          @db.Uuid
   concepto_revision              Int?
+  proceso_clave                  String                           @db.VarChar(220)
   identidad_instancia            String
   etapa_nombre_snapshot          String
   etapa_orden_snapshot           Int
@@ -1753,7 +1907,10 @@ model ExpedienteSeguimientoActividad {
   updated_at                     DateTime                         @default(now()) @updatedAt
   concepto_maestro               ConfiguracionConceptoActividad?  @relation(fields: [concepto_maestro_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "exp_seguimiento_concepto_maestro_fkey")
   completada_por                 OrganizationMembership?          @relation("SeguimientoCompletedByMembership", fields: [organization_id, completada_por_id], references: [organization_id, user_id], onDelete: Restrict, map: "exp_seguimiento_completada_por_fkey")
+  origenes                       ExpedienteSeguimientoOrigen[]
 
+  @@unique([id, organization_id], map: "uq_exp_seguimiento_id_org")
+  @@unique([organization_id, expediente_id, proceso_clave], map: "uq_exp_seguimiento_proceso")
   @@unique([organization_id, expediente_acto_id, identidad_instancia], map: "uq_exp_seguimiento_identidad")
   @@index([organization_id, expediente_id, en_alcance], map: "idx_exp_seguimiento_tenant_expediente")
   @@index([organization_id, responsable_id, estado], map: "idx_exp_seguimiento_responsable_estado")
@@ -1762,6 +1919,38 @@ model ExpedienteSeguimientoActividad {
   @@index([organization_id, concepto_maestro_id], map: "idx_exp_seguimiento_concepto")
   @@index([organization_id, completada_por_id], map: "idx_exp_seguimiento_completada_por")
   @@map("expediente_seguimiento_actividades")
+}
+
+/// Procedencia inmutable de un Proceso operativo consolidado. Un mismo Proceso
+/// puede provenir de varios Actos; cada origen conserva su duración configurada
+/// mientras la actividad canónica utiliza MAX(duraciones) y la unión de dependencias.
+model ExpedienteSeguimientoOrigen {
+  id                     String                         @id @default(uuid()) @db.Uuid
+  organization_id        String                         @db.Uuid
+  expediente_id          String                         @db.Uuid
+  actividad_id           String                         @db.Uuid
+  expediente_acto_id     String                         @db.Uuid
+  tipo_acto_id           String                         @db.Uuid
+  origen_clave           String                         @db.VarChar(320)
+  configuracion_acto_id  String?                        @db.Uuid
+  configuracion_revision Int?
+  actividad_maestra_id   String?                        @db.Uuid
+  concepto_maestro_id    String?                        @db.Uuid
+  alcance_instancia      ConfiguracionAlcanceInstancia
+  alcance_referencia_id  String?                        @db.Uuid
+  duracion_configurada   Int
+  tipo_dias_configurado  ConfiguracionTipoDias
+  margen_configurado     Int                            @default(0)
+  fuente_tiempo_snapshot ConfiguracionFuenteTiempo
+  en_alcance             Boolean                        @default(true)
+  created_at             DateTime                       @default(now())
+  updated_at             DateTime                       @default(now()) @updatedAt
+  actividad              ExpedienteSeguimientoActividad @relation(fields: [actividad_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "exp_seguimiento_origen_actividad_fkey")
+
+  @@unique([organization_id, actividad_id, origen_clave], map: "uq_exp_seguimiento_origen")
+  @@index([organization_id, expediente_id, expediente_acto_id], map: "idx_exp_seguimiento_origen_acto")
+  @@index([organization_id, concepto_maestro_id], map: "idx_exp_seguimiento_origen_concepto")
+  @@map("expediente_seguimiento_origenes")
 }
 
 /// Revisión append-only de respuestas a un cuestionario versionado. `subject_key`
@@ -2358,11 +2547,13 @@ model CotizacionDocumento {
   inactivado_por_id   String?        @db.Uuid
   motivo_inactivacion String?
   observaciones       String?
+  idempotency_key     String?        @db.VarChar(160)
   cotizacion          Cotizacion     @relation(fields: [cotizacion_id], references: [id])
   creado_por          User           @relation("CotizacionDocCreador", fields: [creado_por_id], references: [id])
   documento           Documento      @relation(fields: [documento_id], references: [id])
 
   @@unique([cotizacion_id, documento_id, tipo_vinculo])
+  @@unique([organization_id, cotizacion_id, idempotency_key], map: "uq_cot_documentos_idempotency")
   @@index([creado_por_id], map: "idx_cot_documentos_creador_fk")
   @@index([documento_id], map: "idx_cot_documentos_documento_fk")
   @@map("cotizacion_documentos")
@@ -2493,6 +2684,7 @@ model Compareciente {
   questionnaireAssessments          ComplianceQuestionnaireAssessment[] @relation("QuestionnaireTargetCompareciente")
   operationPaymentParties           ComplianceOperationPaymentParty[]
   h5RuleResults                     ComplianceRuleResult[]              @relation("H5RuleResultSubject")
+  cotizacionesSolicitanteFormal     Cotizacion[]                        @relation("CotizacionSolicitanteFormal")
 
   @@unique([id, organization_id], map: "h2_comparecientes_id_tenant_key")
   @@index([creado_por_id], map: "idx_comparecientes_creado_por_fk")
@@ -2799,14 +2991,17 @@ model CaracterRepresentacion {
 
 model CaracterCompareciente {
   id                 String                          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id    String?                         @db.Uuid
   clave              String                          @unique @db.VarChar(100)
   nombre             String                          @db.VarChar(150)
   descripcion        String?
   activo             Boolean?                        @default(true)
   created_at         DateTime?                       @default(now()) @db.Timestamptz(6)
+  organization       Organization?                   @relation(fields: [organization_id], references: [id], onDelete: Restrict)
   expedienteVinculos ExpedienteCompareciente[]
   tipoActoCaracteres TipoActoCaracterCompareciente[]
 
+  @@index([organization_id, activo], map: "idx_caracteres_compareciente_tenant_active")
   @@map("caracteres_compareciente")
 }
 
@@ -2860,6 +3055,7 @@ model ExpedienteCompareciente {
   provider_migration_status         String?                           @db.VarChar(40)
   provider_migrated_relation_id     String?                           @db.Uuid
   operationPaymentParties           ComplianceOperationPaymentParty[]
+  ingresosFacturadosExp008          ExpedienteIngresoReportado[]      @relation("Exp008IngresoFacturarAVinculo")
 
   @@unique([organization_id, expediente_id, idempotency_key], map: "uq_exp_comparecientes_idempotency")
   @@unique([organization_id, expediente_id, unlink_idempotency_key], map: "uq_exp_comparecientes_unlink_idempotency")
@@ -3050,7 +3246,7 @@ model CuentaFinanciera {
   ingresosReportadosExp008 ExpedienteIngresoReportado[]
   solicitudesPagoExp008    ExpedienteSolicitudPago[]
 
-  @@unique([institucion, alias])
+  @@unique([organization_id, institucion, alias], map: "uq_cuentas_financieras_org_institucion_alias")
   @@index([activa, predeterminada])
   @@index([creada_por_id], map: "idx_cuentas_financieras_creada_por_fk")
   @@map("cuentas_financieras")
@@ -3180,7 +3376,13 @@ model ExpedienteIngresoReportado {
   impuestos_derechos_aplicados Decimal?                         @db.Decimal(14, 2)
   fecha_ingreso                DateTime?
   forma_pago                   String?
+  forma_pago_detalle           String?
   referencia                   String?
+  factura_estado               ExpedienteFacturaEstado?
+  facturar_a_vinculo_id        String?                          @db.Uuid
+  facturar_a_compareciente_id  String?                          @db.Uuid
+  factura_completada_por_id    String?                          @db.Uuid
+  factura_completada_at        DateTime?
   cuenta_id                    String?                          @db.Uuid
   movimiento_id                String?                          @unique @db.Uuid
   reportado_por_id             String                           @db.Uuid
@@ -3199,6 +3401,8 @@ model ExpedienteIngresoReportado {
   reportadoPor                 User                             @relation("Exp008IngresoReportador", fields: [reportado_por_id], references: [id], onDelete: Restrict)
   aplicadoPor                  User?                            @relation("Exp008IngresoAplicador", fields: [aplicado_por_id], references: [id], onDelete: Restrict)
   anuladoPor                   User?                            @relation("Exp008IngresoAnulador", fields: [anulado_por_id], references: [id], onDelete: Restrict)
+  facturaCompletadaPor         User?                            @relation("Exp008FacturaCompletadaPor", fields: [factura_completada_por_id], references: [id], onDelete: Restrict)
+  facturarAVinculo             ExpedienteCompareciente?         @relation("Exp008IngresoFacturarAVinculo", fields: [facturar_a_vinculo_id, organization_id, expediente_id, facturar_a_compareciente_id], references: [id, organization_id, expediente_id, compareciente_id], onDelete: Restrict, onUpdate: NoAction)
   documentos                   ExpedienteFinanzaDocumento[]
   propuestasIA                 ExpedienteFinanzaPropuestaIA[]
 
@@ -3208,6 +3412,9 @@ model ExpedienteIngresoReportado {
   @@index([reportado_por_id], map: "idx_exp008_ingreso_reportador_fk")
   @@index([aplicado_por_id], map: "idx_exp008_ingreso_aplicador_fk")
   @@index([anulado_por_id], map: "idx_exp008_ingreso_anulador_fk")
+  @@index([organization_id, factura_estado, created_at], map: "idx_exp008_ingreso_factura_estado")
+  @@index([facturar_a_vinculo_id, organization_id, expediente_id, facturar_a_compareciente_id], map: "idx_exp008_ingreso_facturar_a_fk")
+  @@index([factura_completada_por_id], map: "idx_exp008_ingreso_factura_completador_fk")
   @@map("expediente_ingresos_reportados")
 }
 
@@ -3677,6 +3884,343 @@ model FiscalRateBracket {
   @@map("fiscal_rate_brackets")
 }
 
+/// Fuente jurídica o técnica inventariada. El registro no equivale a una
+/// validación jurídica: esa condición pertenece a cada versión verificable.
+model KnowledgeSource {
+  id               String                   @id @default(uuid()) @db.Uuid
+  organization_id  String                   @db.Uuid
+  inventory_code   String                   @db.VarChar(80)
+  title            String                   @db.VarChar(500)
+  jurisdiction     String                   @db.VarChar(80)
+  authority        String?                  @db.VarChar(240)
+  category         String                   @db.VarChar(120)
+  source_url       String?
+  applicability    String?
+  priority         String?                  @db.VarChar(12)
+  ingestion_status String                   @default("INVENTARIADA") @db.VarChar(40)
+  active           Boolean                  @default(true)
+  created_by_id    String                   @db.Uuid
+  created_at       DateTime                 @default(now())
+  updated_at       DateTime                 @default(now()) @updatedAt
+  organization     Organization             @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "knowledge_sources_organization_fkey")
+  createdBy        User                     @relation("KnowledgeSourceCreator", fields: [created_by_id], references: [id], onDelete: Restrict, map: "knowledge_sources_creator_fkey")
+  versions         KnowledgeSourceVersion[]
+
+  @@unique([organization_id, inventory_code], map: "uq_knowledge_source_org_code")
+  @@unique([id, organization_id], map: "uq_knowledge_source_id_org")
+  @@index([organization_id, jurisdiction, category, active], map: "idx_knowledge_source_filters")
+  @@map("knowledge_sources")
+}
+
+/// Texto versionado y su estado de verificación. Solamente VERIFICADA puede
+/// fundar una respuesta o cálculo; PENDIENTE conserva el inventario sin fingir vigencia.
+model KnowledgeSourceVersion {
+  id                    String              @id @default(uuid()) @db.Uuid
+  organization_id       String              @db.Uuid
+  source_id             String              @db.Uuid
+  version               Int
+  label                 String              @db.VarChar(160)
+  effective_from        DateTime?           @db.Date
+  effective_to          DateTime?           @db.Date
+  verification_status   String              @default("PENDIENTE") @db.VarChar(40)
+  legal_status          String              @default("PENDIENTE_VERIFICAR") @db.VarChar(40)
+  detected_at           DateTime?
+  official_published_at DateTime?
+  activated_at          DateTime?
+  review_required       Boolean             @default(true)
+  content_text          String?
+  checksum_sha256       String?             @db.VarChar(64)
+  provenance            Json
+  created_by_id         String              @db.Uuid
+  verified_by_id        String?             @db.Uuid
+  created_at            DateTime            @default(now())
+  verified_at           DateTime?
+  source                KnowledgeSource     @relation(fields: [source_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "knowledge_versions_source_tenant_fkey")
+  createdBy             User                @relation("KnowledgeVersionCreator", fields: [created_by_id], references: [id], onDelete: Restrict, map: "knowledge_versions_creator_fkey")
+  verifiedBy            User?               @relation("KnowledgeVersionVerifier", fields: [verified_by_id], references: [id], onDelete: Restrict, map: "knowledge_versions_verifier_fkey")
+  articles              KnowledgeArticle[]
+  radarRuns             KnowledgeRadarRun[]
+  impacts               KnowledgeImpact[]
+
+  @@unique([source_id, version], map: "uq_knowledge_source_version")
+  @@unique([id, organization_id], map: "uq_knowledge_version_id_org")
+  @@index([organization_id, verification_status, effective_from], map: "idx_knowledge_version_verified")
+  @@map("knowledge_source_versions")
+}
+
+/// Ejecución persistida del radar normativo. Detectar nunca activa una versión.
+model KnowledgeRadarRun {
+  id                String                 @id @default(uuid()) @db.Uuid
+  organization_id   String                 @db.Uuid
+  source_version_id String                 @db.Uuid
+  status            String                 @default("DETECTED") @db.VarChar(32)
+  source_url        String?
+  previous_checksum String?                @db.VarChar(64)
+  detected_checksum String                 @db.VarChar(64)
+  diff_summary      Json
+  detected_at       DateTime               @default(now())
+  created_by_id     String                 @db.Uuid
+  created_at        DateTime               @default(now())
+  organization      Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  sourceVersion     KnowledgeSourceVersion @relation(fields: [source_version_id, organization_id], references: [id, organization_id], onDelete: Restrict)
+  createdBy         User                   @relation("KnowledgeRadarRunCreator", fields: [created_by_id], references: [id], onDelete: Restrict)
+  impacts           KnowledgeImpact[]
+
+  @@unique([id, organization_id], map: "uq_knowledge_radar_run_id_org")
+  @@unique([organization_id, source_version_id, detected_checksum], map: "uq_knowledge_radar_detection")
+  @@index([organization_id, status, detected_at], map: "idx_knowledge_radar_status")
+  @@map("knowledge_radar_runs")
+}
+
+/// Impacto sugerido para revisión humana. Nunca reescribe históricos.
+model KnowledgeImpact {
+  id                String                 @id @default(uuid()) @db.Uuid
+  organization_id   String                 @db.Uuid
+  radar_run_id      String                 @db.Uuid
+  source_version_id String                 @db.Uuid
+  entity_type       String                 @db.VarChar(80)
+  entity_id         String?                @db.Uuid
+  impact_type       String                 @db.VarChar(80)
+  summary           String
+  status            String                 @default("PENDING_REVIEW") @db.VarChar(32)
+  reviewed_by_id    String?                @db.Uuid
+  reviewed_at       DateTime?
+  created_at        DateTime               @default(now())
+  organization      Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  radarRun          KnowledgeRadarRun      @relation(fields: [radar_run_id, organization_id], references: [id, organization_id], onDelete: Restrict)
+  sourceVersion     KnowledgeSourceVersion @relation(fields: [source_version_id, organization_id], references: [id, organization_id], onDelete: Restrict)
+  reviewedBy        User?                  @relation("KnowledgeImpactReviewer", fields: [reviewed_by_id], references: [id], onDelete: Restrict)
+
+  @@index([organization_id, status, entity_type], map: "idx_knowledge_impact_review")
+  @@map("knowledge_impacts")
+}
+
+/// Unidad recuperable por artículo/fracción derivada del texto oficial.
+model KnowledgeArticle {
+  id              String                 @id @default(uuid()) @db.Uuid
+  organization_id String                 @db.Uuid
+  version_id      String                 @db.Uuid
+  article_key     String                 @db.VarChar(160)
+  heading         String                 @db.VarChar(500)
+  body            String
+  ordinal         Int
+  metadata        Json
+  created_at      DateTime               @default(now())
+  organization    Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "knowledge_articles_organization_fkey")
+  version         KnowledgeSourceVersion @relation(fields: [version_id, organization_id], references: [id, organization_id], onDelete: Cascade, map: "knowledge_articles_version_tenant_fkey")
+
+  @@unique([version_id, article_key], map: "uq_knowledge_article_version_key")
+  @@index([organization_id, version_id, ordinal], map: "idx_knowledge_article_version_order")
+  @@map("knowledge_articles")
+}
+
+/// Criterios internos privados. Se mantienen separados del Derecho positivo
+/// para que nunca se presenten como ley ni contaminen la evidencia oficial.
+model KnowledgeCriterion {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  code            String       @db.VarChar(80)
+  title           String       @db.VarChar(300)
+  content         String
+  scope           Json
+  active          Boolean      @default(true)
+  created_by_id   String       @db.Uuid
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @default(now()) @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "knowledge_criteria_organization_fkey")
+  createdBy       User         @relation("KnowledgeCriterionCreator", fields: [created_by_id], references: [id], onDelete: Restrict, map: "knowledge_criteria_creator_fkey")
+
+  @@unique([organization_id, code], map: "uq_knowledge_criterion_org_code")
+  @@index([organization_id, active], map: "idx_knowledge_criterion_active")
+  @@map("knowledge_criteria")
+}
+
+/// Propuesta económica asistida. Nunca modifica el presupuesto hasta que una
+/// persona aplica explícitamente una versión pendiente.
+model CotizacionIAProposal {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  cotizacion_id   String       @db.Uuid
+  status          String       @default("PENDIENTE") @db.VarChar(30)
+  proposal        Json
+  evidence_packet Json
+  model_version   String       @db.VarChar(120)
+  idempotency_key String       @db.VarChar(160)
+  created_by_id   String       @db.Uuid
+  decided_by_id   String?      @db.Uuid
+  created_at      DateTime     @default(now())
+  decided_at      DateTime?
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "quote_ai_proposals_organization_fkey")
+  cotizacion      Cotizacion   @relation(fields: [cotizacion_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "quote_ai_proposals_quote_tenant_fkey")
+  createdBy       User         @relation("QuoteAIProposalCreator", fields: [created_by_id], references: [id], onDelete: Restrict, map: "quote_ai_proposals_creator_fkey")
+  decidedBy       User?        @relation("QuoteAIProposalDecider", fields: [decided_by_id], references: [id], onDelete: Restrict, map: "quote_ai_proposals_decider_fkey")
+
+  @@unique([organization_id, cotizacion_id, idempotency_key], map: "uq_quote_ai_proposal_idempotency")
+  @@index([organization_id, cotizacion_id, status, created_at], map: "idx_quote_ai_proposal_quote")
+  @@map("cotizacion_ia_proposals")
+}
+
+/// Ficha de hechos congelada por versión del proyecto, incluyendo procedencia,
+/// condición fija/variable, pendientes y contradicciones detectadas.
+model ProjectFactSnapshot {
+  id                  String       @id @default(uuid()) @db.Uuid
+  organization_id     String       @db.Uuid
+  expediente_id       String       @db.Uuid
+  project_document_id String       @db.Uuid
+  project_version     Int
+  facts               Json
+  conflicts           Json
+  created_by_id       String       @db.Uuid
+  created_at          DateTime     @default(now())
+  organization        Organization @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "project_fact_snapshots_organization_fkey")
+  expediente          Expediente   @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "project_fact_snapshots_case_tenant_fkey")
+  createdBy           User         @relation("ProjectFactSnapshotCreator", fields: [created_by_id], references: [id], onDelete: Restrict, map: "project_fact_snapshots_creator_fkey")
+
+  @@unique([organization_id, expediente_id, project_document_id], map: "uq_project_fact_snapshot_document")
+  @@index([organization_id, expediente_id, project_version], map: "idx_project_fact_snapshot_version")
+  @@map("project_fact_snapshots")
+}
+
+/// Aplicación dirigida sobre la versión vigente. Conserva instrucciones,
+/// parches, diff y linaje; nunca reescribe una versión histórica.
+model ProjectInstructionApplication {
+  id                         String       @id @default(uuid()) @db.Uuid
+  organization_id            String       @db.Uuid
+  expediente_id              String       @db.Uuid
+  source_project_document_id String       @db.Uuid
+  result_project_document_id String       @db.Uuid
+  instructions               String
+  patches                    Json
+  diff                       Json
+  idempotency_key            String       @db.VarChar(160)
+  created_by_id              String       @db.Uuid
+  created_at                 DateTime     @default(now())
+  organization               Organization @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "project_instruction_apps_organization_fkey")
+  expediente                 Expediente   @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "project_instruction_apps_case_tenant_fkey")
+  createdBy                  User         @relation("ProjectInstructionApplicationCreator", fields: [created_by_id], references: [id], onDelete: Restrict, map: "project_instruction_apps_creator_fkey")
+
+  @@unique([organization_id, expediente_id, idempotency_key], map: "uq_project_instruction_app_idempotency")
+  @@index([organization_id, expediente_id, created_at], map: "idx_project_instruction_app_history")
+  @@map("project_instruction_applications")
+}
+
+/// Asignación estructurada y exclusiva del machote de Proyecto. El nombre del
+/// archivo nunca participa en la resolución: la identidad es tenant + Acto.
+model ProjectTemplateAssignment {
+  id              String                   @id @default(uuid()) @db.Uuid
+  organization_id String                   @db.Uuid
+  tipo_acto_id    String                   @db.Uuid
+  artefacto_id    String                   @db.Uuid
+  version_id      String                   @db.Uuid
+  active          Boolean                  @default(true)
+  created_by_id   String                   @db.Uuid
+  updated_by_id   String                   @db.Uuid
+  created_at      DateTime                 @default(now())
+  updated_at      DateTime                 @default(now()) @updatedAt
+  organization    Organization             @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "project_template_assignments_organization_fkey")
+  tipoActo        TipoActo                 @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict, map: "project_template_assignments_act_fkey")
+  artefacto       CatalogoArtefacto        @relation(fields: [artefacto_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "project_template_assignments_artifact_tenant_fkey")
+  version         CatalogoArtefactoVersion @relation(fields: [version_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "project_template_assignments_version_tenant_fkey")
+  createdBy       User                     @relation("ProjectTemplateAssignmentCreator", fields: [created_by_id], references: [id], onDelete: Restrict)
+  updatedBy       User                     @relation("ProjectTemplateAssignmentUpdater", fields: [updated_by_id], references: [id], onDelete: Restrict)
+
+  @@unique([organization_id, tipo_acto_id], map: "uq_project_template_assignment_org_act")
+  @@index([organization_id, active], map: "idx_project_template_assignment_active")
+  @@index([artefacto_id, version_id], map: "idx_project_template_assignment_artifact_version")
+  @@index([artefacto_id, organization_id], map: "idx_project_template_assignment_artifact_tenant")
+  @@index([version_id, organization_id], map: "idx_project_template_assignment_version_tenant")
+  @@index([created_by_id], map: "idx_project_template_assignment_created_by")
+  @@index([updated_by_id], map: "idx_project_template_assignment_updated_by")
+  @@map("project_template_assignments")
+}
+
+/// Valores y tablas auxiliares versionados (INPC, UDI, factores, recargos u
+/// otros). No existen defaults legales implícitos: toda fila exige fuente.
+model FiscalReferenceRevision {
+  id                  String       @id @default(uuid()) @db.Uuid
+  organization_id     String       @db.Uuid
+  reference_type      String       @db.VarChar(80)
+  code                String       @db.VarChar(120)
+  version             Int
+  effective_from      DateTime     @db.Date
+  effective_to        DateTime?    @db.Date
+  value               Json
+  source_title        String       @db.VarChar(500)
+  source_url          String
+  verification_status String       @default("PENDIENTE") @db.VarChar(40)
+  created_by_id       String       @db.Uuid
+  verified_by_id      String?      @db.Uuid
+  created_at          DateTime     @default(now())
+  verified_at         DateTime?
+  organization        Organization @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "fiscal_reference_revisions_organization_fkey")
+  createdBy           User         @relation("FiscalReferenceRevisionCreator", fields: [created_by_id], references: [id], onDelete: Restrict, map: "fiscal_reference_revisions_creator_fkey")
+  verifiedBy          User?        @relation("FiscalReferenceRevisionVerifier", fields: [verified_by_id], references: [id], onDelete: Restrict, map: "fiscal_reference_revisions_verifier_fkey")
+
+  @@unique([organization_id, reference_type, code, version], map: "uq_fiscal_reference_revision")
+  @@index([organization_id, reference_type, code, effective_from], map: "idx_fiscal_reference_effective")
+  @@map("fiscal_reference_revisions")
+}
+
+/// Perfil de salida estructurado para integraciones SAT/UIF. No inventa campos:
+/// la definición sólo mapea datos expresamente disponibles en el snapshot.
+model FiscalExportProfile {
+  id                  String       @id @default(uuid()) @db.Uuid
+  organization_id     String       @db.Uuid
+  code                String       @db.VarChar(80)
+  name                String       @db.VarChar(240)
+  target              String       @db.VarChar(80)
+  version             Int
+  definition          Json
+  authority           String?      @db.VarChar(240)
+  valid_from          DateTime?    @db.Date
+  valid_to            DateTime?    @db.Date
+  serialization       Json?
+  validation_rules    Json?
+  source_title        String?      @db.VarChar(500)
+  source_url          String?
+  verification_status String       @default("PENDIENTE") @db.VarChar(40)
+  active              Boolean      @default(false)
+  created_by_id       String       @db.Uuid
+  created_at          DateTime     @default(now())
+  organization        Organization @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "fiscal_export_profiles_organization_fkey")
+  createdBy           User         @relation("FiscalExportProfileCreator", fields: [created_by_id], references: [id], onDelete: Restrict, map: "fiscal_export_profiles_creator_fkey")
+
+  @@unique([organization_id, code, version], map: "uq_fiscal_export_profile_version")
+  @@index([organization_id, target, active], map: "idx_fiscal_export_profile_active")
+  @@index([organization_id, target, valid_from, valid_to], map: "idx_fiscal_export_profile_effective")
+  @@map("fiscal_export_profiles")
+}
+
+/// Catálogo nacional de códigos postales publicado por SEPOMEX.
+/// Es global y de sólo lectura operativa: las revisiones se reemplazan mediante
+/// el importador controlado, nunca desde la captura ordinaria de ISR.
+model PostalCodeCatalog {
+  id                   String   @id @default(uuid()) @db.Uuid
+  postal_code          String   @db.VarChar(5)
+  settlement           String   @db.VarChar(240)
+  settlement_type      String?  @db.VarChar(120)
+  municipality         String   @db.VarChar(240)
+  state                String   @db.VarChar(160)
+  city                 String?  @db.VarChar(240)
+  state_code           String   @db.VarChar(10)
+  office_code          String?  @db.VarChar(20)
+  administration_cp    String?  @db.VarChar(10)
+  settlement_type_code String?  @db.VarChar(20)
+  municipality_code    String   @db.VarChar(20)
+  settlement_code      String   @db.VarChar(20)
+  city_code            String?  @db.VarChar(20)
+  zone                 String?  @db.VarChar(80)
+  source_version       String   @db.VarChar(80)
+  source_updated_at    DateTime @db.Date
+  source_url           String
+  imported_at          DateTime @default(now())
+
+  @@unique([postal_code, state_code, municipality_code, settlement_code, source_version], map: "uq_postal_code_catalog_revision")
+  @@index([postal_code, source_version], map: "idx_postal_code_catalog_code")
+  @@index([state, municipality, settlement], map: "idx_postal_code_catalog_location")
+  @@map("postal_code_catalog")
+}
+
 model DomainEventOutbox {
   id              String                     @id @default(uuid()) @db.Uuid
   organization_id String?                    @db.Uuid
@@ -3872,16 +4416,110 @@ model Nota {
 }
 
 model MemoriaDespacho {
-  id              String   @id @default(uuid()) @db.Uuid
-  organization_id String?  @db.Uuid
-  categoria       String
-  contenido       String
-  tipo_acto       String?
-  institucion     String?
-  tags            String[] @default([])
-  created_at      DateTime @default(now())
+  id                String        @id @default(uuid()) @db.Uuid
+  organization_id   String?       @db.Uuid
+  user_id           String?       @db.Uuid
+  categoria         String
+  contenido         String
+  tipo_acto         String?
+  institucion       String?
+  tags              String[]      @default([])
+  scope_type        String        @default("ORGANIZATION") @db.VarChar(32)
+  scope_id          String?       @db.Uuid
+  source_type       String        @default("USER_CONFIRMED") @db.VarChar(40)
+  source_reference  String?
+  approval_status   String        @default("APPROVED") @db.VarChar(32)
+  approved_by_id    String?       @db.Uuid
+  approved_at       DateTime?
+  last_confirmed_at DateTime?
+  confidence        Decimal?      @db.Decimal(5, 4)
+  version           Int           @default(1)
+  use_count         Int           @default(0)
+  active            Boolean       @default(true)
+  created_by_id     String?       @db.Uuid
+  created_at        DateTime      @default(now())
+  updated_at        DateTime      @updatedAt
+  organization      Organization? @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  user              User?         @relation("AssistantMemoryOwner", fields: [user_id], references: [id], onDelete: Restrict)
+  createdBy         User?         @relation("AssistantMemoryCreator", fields: [created_by_id], references: [id], onDelete: Restrict)
+  approvedBy        User?         @relation("AssistantMemoryApprover", fields: [approved_by_id], references: [id], onDelete: Restrict)
 
+  @@index([organization_id, scope_type, scope_id, active], map: "idx_assistant_memory_scope")
+  @@index([organization_id, categoria, active], map: "idx_assistant_memory_category")
   @@map("memoria_despacho")
+}
+
+/// Centro de acciones del Búho: alertas deterministas, deduplicadas y auditables.
+model AssistantAlert {
+  id                String       @id @default(uuid()) @db.Uuid
+  organization_id   String       @db.Uuid
+  user_id           String?      @db.Uuid
+  deterministic_key String       @db.VarChar(180)
+  source_type       String       @db.VarChar(64)
+  source_id         String?      @db.Uuid
+  entity_type       String?      @db.VarChar(64)
+  entity_id         String?      @db.Uuid
+  severity          String       @db.VarChar(20)
+  title             String
+  body              String?
+  href              String?
+  actions           Json
+  state             String       @default("OPEN") @db.VarChar(20)
+  due_at            DateTime?
+  snoozed_until     DateTime?
+  acknowledged_at   DateTime?
+  resolved_at       DateTime?
+  metadata          Json
+  created_at        DateTime     @default(now())
+  updated_at        DateTime     @updatedAt
+  organization      Organization @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  user              User?        @relation("AssistantAlertOwner", fields: [user_id], references: [id], onDelete: Restrict)
+
+  @@unique([organization_id, deterministic_key], map: "uq_assistant_alert_dedup")
+  @@index([organization_id, user_id, state, severity], map: "idx_assistant_alert_inbox")
+  @@map("assistant_alerts")
+}
+
+/// Gasto fijo/recurrente usado sólo por la proyección financiera canónica.
+model GastoRecurrenteFinanciero {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  concepto        String
+  monto           Decimal      @db.Decimal(14, 2)
+  periodicidad    String       @default("MENSUAL") @db.VarChar(24)
+  fecha_inicio    DateTime     @db.Date
+  fecha_fin       DateTime?    @db.Date
+  activo          Boolean      @default(true)
+  created_by_id   String       @db.Uuid
+  updated_by_id   String       @db.Uuid
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  createdBy       User         @relation("RecurringExpenseCreator", fields: [created_by_id], references: [id], onDelete: Restrict)
+  updatedBy       User         @relation("RecurringExpenseUpdater", fields: [updated_by_id], references: [id], onDelete: Restrict)
+
+  @@index([organization_id, activo, fecha_inicio, fecha_fin], map: "idx_recurring_expense_projection")
+  @@map("gastos_recurrentes_financieros")
+}
+
+/// Consulta financiera tipada. El texto nunca se convierte en SQL libre.
+model ConsultaFinancieraGuardada {
+  id              String       @id @default(uuid()) @db.Uuid
+  organization_id String       @db.Uuid
+  user_id         String       @db.Uuid
+  title           String
+  query_text      String
+  typed_plan      Json
+  saved           Boolean      @default(false)
+  use_count       Int          @default(1)
+  last_used_at    DateTime     @default(now())
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+  organization    Organization @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  user            User         @relation("FinancialQueryOwner", fields: [user_id], references: [id], onDelete: Restrict)
+
+  @@index([organization_id, user_id, saved, last_used_at], map: "idx_financial_query_owner")
+  @@map("consultas_financieras_guardadas")
 }
 
 model ComparecienteAltaSession {
@@ -5939,6 +6577,7 @@ enum Role {
   DIRECCION
   ADMINISTRACION
   ABOGADO
+  FINANCIERO
   RECEPCION
   GESTORIA
   CONSULTA
@@ -6219,6 +6858,11 @@ enum ExpedienteIngresoReportadoEstado {
   ANULADO
 }
 
+enum ExpedienteFacturaEstado {
+  PENDIENTE
+  CARGADA
+}
+
 enum ExpedienteSolicitudPagoVia {
   INTERNA
   DOCUMENTO_EXTERNO
@@ -6479,6 +7123,12 @@ enum ConfiguracionActividadNaturaleza {
   REQUISITO_PREVIO_A_HITO
 }
 
+enum ConfiguracionProcesoTipo {
+  HITO
+  ACTIVIDAD
+  SOLICITUD_ESPERA
+}
+
 enum ConfiguracionUnidadTiempo {
   DIAS
   HORAS
@@ -6587,6 +7237,7 @@ enum PresupuestoConceptoCategoria {
 enum CotizacionConceptoOrigen {
   MANUAL
   IMPORTADO
+  IA_PROPUESTA
 }
 
 enum CuestionarioRespuestaEstado {
