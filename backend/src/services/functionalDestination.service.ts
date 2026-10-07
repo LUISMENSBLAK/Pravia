@@ -19,6 +19,7 @@ export const FUNCTIONAL_DESTINATIONS = [
   { value: CatalogoDestinoFuncional.FINANZAS_SOLICITUD_PAGO, label: 'Solicitud de pago', artifactTypes: ['PLANTILLA', 'FORMATO'] },
   { value: CatalogoDestinoFuncional.PROYECTO_MACHOTE, label: 'Machote para proyecto', artifactTypes: ['PLANTILLA'] },
   { value: CatalogoDestinoFuncional.EXPEDIENTE_DOCUMENTO_GENERICO, label: 'Documento genérico del expediente', artifactTypes: ['PLANTILLA', 'FORMATO'] },
+  { value: CatalogoDestinoFuncional.ARCHIVO_NOTA, label: 'Archivo: formatos y notas', artifactTypes: ['PLANTILLA', 'FORMATO'] },
   { value: CatalogoDestinoFuncional.CUMPLIMIENTO_PLD_UIF, label: 'Cumplimiento PLD / UIF', artifactTypes: ['PLANTILLA', 'FORMATO'] },
 ] as const;
 

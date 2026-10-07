@@ -79,10 +79,16 @@ import {
   downloadExpedienteAppendixZip,
   getExpedienteAppendixSignedUrl,
   getExpedienteDocumentAppendix,
+  getExpedienteDocumentFolderDestinations,
+  importExpedienteDocumentBatch,
   importExpedienteDocuments,
+  linkExpedienteDocumentFolder,
   moveExpedienteDocumentItems,
   renameExpedienteDocumentFolder,
+  removeExpedienteHistoricalDocument,
   syncExpedienteDocumentAppendix,
+  syncExpedienteLinkedDocumentFolders,
+  uploadDocumentBatchMulter,
 } from '../controllers/expedienteDocuments.controller';
 import {
   generateExpedienteArtifact,
@@ -104,12 +110,13 @@ import {
 import {
   applyExpedienteIncome, completeExpedienteIncomeInvoice, createExternalPaymentRequest, createInternalPaymentRequest,
   generateExpedientePraviaReceipt, generateExpedienteAccountStatement, getExpedienteFinance, getExpedienteFinanceDocumentUrl,
-  payExpedienteRequest, proposeExpedienteFinanceAI, reportExpedienteIncome,
+  payExpedienteRequest, previewExpedienteIncomeAI, proposeExpedienteFinanceAI, reportExpedienteIncome,
   retireExpedienteFinanceDocument, uploadExp008, validateExpedienteFinanceAI,
   verifyExpedientePraviaReceipt, voidExpedienteIncome, voidExpedientePaymentRequest,
 } from '../controllers/expedienteFinance.controller';
 import { addExpedienteActivityNote, listExpedienteActivity } from '../controllers/expedienteActivity.controller';
 import { ensureExpedienteQuestionnaires, listExpedienteQuestionnaireAnswers, listExpedienteQuestionnaires, saveExpedienteQuestionnaireAnswers } from '../controllers/expedienteQuestionnaires.controller';
+import { assignArchivo, downloadArchivoAppendix, generateArchivoNote, getExpedienteArchivo, uploadArchivoAppendix } from '../controllers/archivo.controller';
 
 const router = express.Router();
 router.param('id', requireExpedienteAccess);
@@ -119,6 +126,11 @@ router.get('/cotizaciones-elegibles', requirePermission('expedientes.write'), ge
 router.get('/comprobantes-pravia/verificar/:token', requirePermission('expedientes.read'), verifyExpedientePraviaReceipt);
 router.get('/', getExpedientes);
 router.get('/:id', getExpedienteById);
+router.get('/:id/archivo', requirePermission('expedientes.read'), getExpedienteArchivo);
+router.post('/:id/archivo/apendice', requirePermission('documentos.write'), uploadDocumentoMulter.single('file'), uploadArchivoAppendix);
+router.get('/:id/archivo/apendice/:itemId/descargar', requirePermission('documentos.read'), downloadArchivoAppendix);
+router.post('/:id/archivo/formatos/generar', requirePermission('documentos.write'), generateArchivoNote);
+router.post('/:id/archivo', requirePermission('expedientes.write'), assignArchivo);
 router.get('/:id/actividad', requirePermission('expedientes.read'), listExpedienteActivity);
 router.post('/:id/actividad/notas', requirePermission('expedientes.write'), addExpedienteActivityNote);
 router.get('/:id/cuestionarios', requirePermission('expedientes.read'), requirePermission('compliance.read'), requirePermission('compliance.sensitive.read'), listExpedienteQuestionnaires);
@@ -161,13 +173,14 @@ router.delete('/:id/presupuesto/documentos/:historyId', requirePermission('docum
 router.get('/:id/finanzas-operativas', requirePermission('expedientes.read'), getExpedienteFinance);
 router.post('/:id/finanzas-operativas/estado-cuenta', requirePermission('expedientes.read'), requirePermission('documentos.write'), generateExpedienteAccountStatement);
 router.post('/:id/finanzas-operativas/ingresos', requirePermission('expedientes.write'), requirePermission('documentos.write'), uploadExp008.fields([{ name: 'file', maxCount: 1 }, { name: 'invoice_pdf', maxCount: 1 }, { name: 'invoice_xml', maxCount: 1 }]), reportExpedienteIncome);
+router.post('/:id/finanzas-operativas/ingresos/ia/vista-previa', requirePermission('expedientes.write'), requirePermission('documentos.write'), requirePermission('ia.execute'), uploadExp008.single('file'), previewExpedienteIncomeAI);
 router.post('/:id/finanzas-operativas/solicitudes/interna', requirePermission('expedientes.write'), requirePermission('documentos.write'), createInternalPaymentRequest);
 router.post('/:id/finanzas-operativas/solicitudes/externa', requirePermission('expedientes.write'), requirePermission('documentos.write'), uploadExp008.single('file'), createExternalPaymentRequest);
 router.post('/:id/finanzas-operativas/ia/proponer', requirePermission('ia.execute'), proposeExpedienteFinanceAI);
 router.post('/:id/finanzas-operativas/ia/propuestas/:proposalId/validar', requirePermission('finanzas.validate'), validateExpedienteFinanceAI);
 router.post('/:id/finanzas-operativas/ingresos/:incomeId/aplicar', requirePermission('finanzas.validate'), applyExpedienteIncome);
 router.post('/:id/finanzas-operativas/ingresos/:incomeId/factura', requirePermission('finanzas.validate'), requirePermission('documentos.write'), uploadExp008.fields([{ name: 'invoice_pdf', maxCount: 1 }, { name: 'invoice_xml', maxCount: 1 }]), completeExpedienteIncomeInvoice);
-router.post('/:id/finanzas-operativas/solicitudes/:requestId/pagar', requirePermission('finanzas.validate'), uploadExp008.fields([{ name: 'payment_proof', maxCount: 1 }, { name: 'fiscal_document', maxCount: 1 }]), payExpedienteRequest);
+router.post('/:id/finanzas-operativas/solicitudes/:requestId/pagar', requirePermission('finanzas.validate'), uploadExp008.fields([{ name: 'payment_proof', maxCount: 1 }, { name: 'fiscal_document', maxCount: 1 }, { name: 'fiscal_document_pdf', maxCount: 1 }, { name: 'fiscal_document_xml', maxCount: 1 }]), payExpedienteRequest);
 router.post('/:id/finanzas-operativas/movimientos/:movementId/comprobante-pravia', requirePermission('finanzas.validate'), requirePermission('documentos.write'), generateExpedientePraviaReceipt);
 router.get('/:id/finanzas-operativas/documentos/:linkId/url', requirePermission('documentos.read'), getExpedienteFinanceDocumentUrl);
 router.delete('/:id/finanzas-operativas/documentos/:linkId', requirePermission('documentos.unlink'), retireExpedienteFinanceDocument);
@@ -195,13 +208,18 @@ router.post('/:id/archivar', requirePermission('expedientes.archive'), archiveEx
 router.get('/:id/documentos/descargar-zip', downloadCarpetaZip);
 router.get('/:id/carpetas/:carpeta/zip', downloadCarpetaZip);
 router.get('/:id/documentos/apendice', requirePermission('documentos.read'), getExpedienteDocumentAppendix);
+router.post('/:id/documentos/carga-lote', requirePermission('documentos.write'), uploadDocumentBatchMulter.fields([{ name: 'archive', maxCount: 1 }, { name: 'files', maxCount: 300 }]), importExpedienteDocumentBatch);
 router.post('/:id/documentos/sincronizar', requirePermission('documentos.write'), syncExpedienteDocumentAppendix);
 router.post('/:id/documentos/importar/:origin(compareciente|predio)', requirePermission('documentos.write'), importExpedienteDocuments);
 router.post('/:id/documentos/carpetas', requirePermission('documentos.write'), createExpedienteDocumentFolder);
+router.get('/:id/documentos/carpetas/destinos', requirePermission('documentos.read'), getExpedienteDocumentFolderDestinations);
+router.patch('/:id/documentos/carpetas/:folderId/destino', requirePermission('documentos.write'), linkExpedienteDocumentFolder);
+router.post('/:id/documentos/carpetas/sincronizar-destinos', requirePermission('documentos.write'), syncExpedienteLinkedDocumentFolders);
 router.patch('/:id/documentos/carpetas/:folderId', requirePermission('documentos.write'), renameExpedienteDocumentFolder);
 router.delete('/:id/documentos/carpetas/:folderId', requirePermission('documentos.unlink'), archiveExpedienteDocumentFolder);
 router.post('/:id/documentos/mover', requirePermission('documentos.write'), moveExpedienteDocumentItems);
 router.get('/:id/documentos/apendice/:itemId/descargar', requirePermission('documentos.read'), downloadExpedienteAppendixFile);
+router.delete('/:id/documentos/apendice/historial/:itemId', requirePermission('documentos.unlink'), removeExpedienteHistoricalDocument);
 router.post('/:id/documentos/apendice/descargar-zip', requirePermission('documentos.read'), downloadExpedienteAppendixZip);
 router.get('/:id/documentos/apendice/:itemId/url', requirePermission('documentos.read'), getExpedienteAppendixSignedUrl);
 router.post('/:id/documentos', requirePermission('documentos.write'), uploadDocumentoMulter.single('file'), addExpedienteDocumento);

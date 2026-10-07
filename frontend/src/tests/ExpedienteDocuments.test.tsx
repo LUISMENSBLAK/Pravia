@@ -6,6 +6,7 @@ import { WorkflowTab } from '../features/cases/components/tabs/WorkflowTab';
 
 const api = vi.hoisted(() => ({
   documentAppendix: vi.fn(),
+  documentFolderDestinations: vi.fn(),
   syncDocumentAppendix: vi.fn(),
   importDocumentSource: vi.fn(),
   createDocumentFolder: vi.fn(),
@@ -65,6 +66,7 @@ describe('EXP-004 apéndice documental', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     api.documentAppendix.mockResolvedValue(live);
+    api.documentFolderDestinations.mockResolvedValue({ comparecientes: [], predios: [] });
     api.syncDocumentAppendix.mockResolvedValue(live);
     api.importDocumentSource.mockResolvedValue({ ...live, import: { origin: 'COMPARECIENTE', new: 1, updated: 0, unchanged: 0, duplicates_created: 0, historical_imported: 0, blob_copies: 0 } });
     api.downloadAppendixFile.mockResolvedValue(undefined);

@@ -4,7 +4,7 @@ import type { Request } from 'express';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { hashVerificationToken, moneyDecimal, validateIncomeAllocation } from '../domain/expedienteFinance';
 import { deleteFile, downloadFile, getSignedUrl, uploadFile } from '../storage/storage.service';
-import { extraerFinanzasDesdeDocumento, getOpenAIModelName } from './openaiDocument.service';
+import { extraerFinanzasDesdeDocumento, getOpenAIModelName, type AIUsageMetrics } from './openaiDocument.service';
 import { recordAIFailure, recordAIUsage } from './aiUsage.service';
 import { FinancialMovementService } from './financialMovement.service';
 import { centsToMoney, moneyToCents } from '../domain/expedienteBudget';
@@ -19,6 +19,7 @@ import {
 } from './timingPolicy.service';
 import { FunctionalDocumentRenderError, renderConfiguredFunctionalDocument } from './functionalDocumentRenderer.service';
 import { canonicalUploadedDocumentMime } from './documentUploadValidation';
+import { extractDocxText } from './docxText';
 
 export type ExpedienteFinanceActor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -30,6 +31,87 @@ const checksum = (value: Buffer) => createHash('sha256').update(value).digest('h
 export const EXP008_PAYMENT_METHODS = ['CHEQUE', 'EFECTIVO', 'TRANSFERENCIA', 'OTRO'] as const;
 export type Exp008PaymentMethod = typeof EXP008_PAYMENT_METHODS[number];
 const invoiceMime = { PDF: 'application/pdf', XML: 'application/xml' } as const;
+const incomePrefillMime = new Set(['application/pdf', 'image/png', 'image/jpeg', DOCX_MIME_TYPE]);
+
+function normalizeIncomeProposalAmount(value: string): string | null {
+  const normalized = value.trim().replace(/^(?:(?:MXN|M\.?N\.?|PESOS MEXICANOS|\$)\s*)+/i, '')
+    .replace(/\s*(?:MXN|M\.?N\.?|PESOS MEXICANOS)\s*$/i, '').trim();
+  try { return moneyDecimal(normalized, 'Monto reportado').toFixed(2); } catch { return null; }
+}
+
+export function nativeIncomeAmountValues(text: string): string[] {
+  const values = [...text.matchAll(/(?:\$\s*|\bMXN\s+)(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/gi)]
+    .map((match) => normalizeIncomeProposalAmount(match[1]))
+    .filter((value): value is string => Boolean(value));
+  return [...new Set(values)];
+}
+
+async function nativeIncomeDocumentText(buffer: Buffer, mimeType: string): Promise<string> {
+  try {
+    if (mimeType === DOCX_MIME_TYPE) return (await extractDocxText(buffer)).trim();
+    if (mimeType !== 'application/pdf') return '';
+    const { PDFParse } = require('pdf-parse');
+    const parser = new PDFParse({ data: buffer });
+    try {
+      await parser.load();
+      return String((await parser.getText())?.text || '').trim();
+    } finally { await parser.destroy(); }
+  } catch { return ''; }
+}
+
+function combineAIUsage(first: AIUsageMetrics, second: AIUsageMetrics): AIUsageMetrics {
+  return {
+    ...first,
+    input_tokens: first.input_tokens + second.input_tokens,
+    cached_input_tokens: first.cached_input_tokens + second.cached_input_tokens,
+    output_tokens: first.output_tokens + second.output_tokens,
+    reasoning_tokens: first.reasoning_tokens + second.reasoning_tokens,
+    total_tokens: first.total_tokens + second.total_tokens,
+    duracion_ms: first.duracion_ms + second.duracion_ms,
+    documentos_enviados: first.documentos_enviados + second.documentos_enviados,
+    costo_estimado_usd: first.costo_estimado_usd + second.costo_estimado_usd,
+  };
+}
+
+function incomeProposalOutcomeReason(extraction: { campos: Array<{ campo: string; valor: string; confianza: string }>; conflictos: Array<{ campo: string }> }): string {
+  if (extraction.conflictos.some((item) => item.campo === 'monto' || item.campo === 'moneda')) return 'PROVIDER_DECLARED_CONFLICT';
+  if (extraction.campos.some((item) => item.campo === 'moneda' && !/^(MXN|PESOS? MEXICANOS?|MONEDA NACIONAL)$/i.test(item.valor.trim()))) return 'CURRENCY_REQUIRES_REVIEW';
+  const amounts = extraction.campos.filter((item) => item.campo === 'monto');
+  if (!amounts.length) return 'PROVIDER_OMITTED_AMOUNT';
+  const normalized = amounts.map((item) => normalizeIncomeProposalAmount(item.valor));
+  if (new Set(normalized.filter(Boolean)).size > 1) return 'MULTIPLE_DISTINCT_AMOUNTS';
+  if (!amounts.some((item) => item.confianza === 'LECTURA_CLARA')) return 'LOW_CONFIDENCE';
+  if (normalized.some((item) => !item)) return 'UNPARSEABLE_AMOUNT';
+  return 'AMOUNT_NOT_SUGGESTED';
+}
+
+export function incomePrefillSuggestions(extraction: {
+  campos: Array<{ campo: string; valor: string; confianza: string; pagina?: number | null; fragmento?: string | null }>;
+  conflictos: Array<{ campo: string }>;
+}) {
+  const candidates = (field: 'monto' | 'concepto') => extraction.campos.filter((item) =>
+    item.campo === field && item.confianza === 'LECTURA_CLARA' &&
+    !extraction.conflictos.some((conflict) => conflict.campo === field));
+  const amountCandidates = candidates('monto');
+  const explicitCurrencies = extraction.campos.filter((item) => item.campo === 'moneda').map((item) => clean(item.valor, 80).toUpperCase());
+  const foreignOrAmbiguousCurrency = extraction.conflictos.some((item) => item.campo === 'moneda') || explicitCurrencies.some((value) =>
+    !/^(MXN|PESOS? MEXICANOS?|MONEDA NACIONAL)$/.test(value));
+  const normalizedAmounts = amountCandidates.map((item) => normalizeIncomeProposalAmount(item.valor));
+  const allReadableAmounts = extraction.campos.filter((item) => item.campo === 'monto')
+    .map((item) => normalizeIncomeProposalAmount(item.valor)).filter((item): item is string => Boolean(item));
+  const conflictingReadings = new Set(allReadableAmounts).size > 1;
+  const amount = !foreignOrAmbiguousCurrency && !conflictingReadings && normalizedAmounts.length > 0 && normalizedAmounts.every((item) => item && item === normalizedAmounts[0])
+    ? normalizedAmounts[0] : null;
+  const conceptCandidates = candidates('concepto').map((item) => clean(item.valor, 500)).filter(Boolean);
+  const concept = conceptCandidates.length > 0 && conceptCandidates.every((item) => item === conceptCandidates[0])
+    ? conceptCandidates[0] : null;
+  return {
+    monto_reportado: amount,
+    concepto_contexto: concept,
+    evidencia: [...(amount !== null ? amountCandidates : []), ...(concept !== null ? candidates('concepto') : [])]
+      .map((item) => ({ campo: item.campo, pagina: item.pagina ?? null, fragmento: item.fragmento ?? null })),
+  };
+}
 
 export function normalizeExp008PaymentMethod(value: unknown, detail?: unknown): { method: Exp008PaymentMethod; detail: string | null } {
   const method = clean(value, 40).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/ /g, '_') as Exp008PaymentMethod;
@@ -361,6 +443,54 @@ export class ExpedienteFinanceService {
     }
   }
 
+  async previewIncomeAI(actor: ExpedienteFinanceActor, expedienteId: string, file: Upload) {
+    this.requireOperationalWrite(actor);
+    if (!actor.permissions.includes('ia.execute')) throw new ExpedienteFinanceError(403, 'EXP008_AI_DENIED', 'No tienes permiso para usar la asistencia de IA.');
+    await this.assertExpediente(this.prisma, actor, expedienteId);
+    if (!file?.buffer?.length) throw new ExpedienteFinanceError(400, 'EXP008_FILE_REQUIRED', 'Selecciona un comprobante.');
+    if (file.size > 25 * 1024 * 1024) throw new ExpedienteFinanceError(413, 'EXP008_FILE_TOO_LARGE', 'El archivo supera 25 MB.');
+    let mimeType: string;
+    try { mimeType = canonicalUploadedDocumentMime(file); }
+    catch (error) { throw new ExpedienteFinanceError(400, 'EXP008_FILE_TYPE_INVALID', error instanceof Error ? error.message : 'El archivo no es compatible.'); }
+    if (!incomePrefillMime.has(mimeType)) throw new ExpedienteFinanceError(415, 'EXP008_AI_FILE_UNSUPPORTED', 'La IA sólo puede leer PDF, JPG, PNG o DOCX. Puedes registrar este comprobante manualmente.');
+    const operationId = randomUUID();
+    const started = Date.now();
+    const documentHash = checksum(file.buffer);
+    try {
+      const document = { buffer: file.buffer, mimeType, tipoDocumento: 'COMPROBANTE_INGRESO', documentoId: documentHash, nombreOriginal: file.originalname };
+      const extraction = await extraerFinanzasDesdeDocumento(document);
+      let suggestion = incomePrefillSuggestions(extraction);
+      const nativeAmounts = nativeIncomeAmountValues(await nativeIncomeDocumentText(file.buffer, mimeType));
+      const sourceAmountConflict = nativeAmounts.length > 1 || Boolean(suggestion.monto_reportado && nativeAmounts.length === 1 && nativeAmounts[0] !== suggestion.monto_reportado);
+      if (sourceAmountConflict) suggestion = { ...suggestion, monto_reportado: null, evidencia: suggestion.evidencia.filter((item) => item.campo !== 'monto') };
+      let usage = extraction.uso;
+      let attempts = 1;
+      let recovery = 'NOT_REQUIRED';
+      const firstPassReason = sourceAmountConflict ? 'SOURCE_AMOUNT_CONFLICT' : suggestion.monto_reportado ? 'SUGGESTED' : incomeProposalOutcomeReason(extraction);
+      let retryReason: string | null = null;
+      const amountConflict = sourceAmountConflict || extraction.conflictos.some((item) => item.campo === 'monto' || item.campo === 'moneda');
+      const currencyConflict = extraction.campos.some((item) => item.campo === 'moneda' && !/^(MXN|PESOS? MEXICANOS?|MONEDA NACIONAL)$/i.test(item.valor.trim()));
+      if (!suggestion.monto_reportado && !amountConflict && !currencyConflict && firstPassReason !== 'MULTIPLE_DISTINCT_AMOUNTS') {
+        attempts = 2;
+        const focused = await extraerFinanzasDesdeDocumento(document, 'EXP008', 'AMOUNT');
+        usage = combineAIUsage(extraction.uso, focused.uso);
+        const focusedSuggestion = incomePrefillSuggestions(focused);
+        retryReason = focusedSuggestion.monto_reportado ? 'SUGGESTED' : incomeProposalOutcomeReason(focused);
+        const initialReadableAmounts = extraction.campos.filter((item) => item.campo === 'monto').map((item) => normalizeIncomeProposalAmount(item.valor)).filter((item): item is string => Boolean(item));
+        if (focusedSuggestion.monto_reportado && nativeAmounts.length <= 1 && (!nativeAmounts.length || nativeAmounts[0] === focusedSuggestion.monto_reportado) && initialReadableAmounts.every((value) => value === focusedSuggestion.monto_reportado)) {
+          suggestion = { ...suggestion, monto_reportado: focusedSuggestion.monto_reportado, evidencia: [...suggestion.evidencia, ...focusedSuggestion.evidencia.filter((item) => item.campo === 'monto')] };
+          recovery = 'RECOVERED';
+        } else recovery = 'MANUAL_REVIEW';
+      }
+      const outcome = suggestion.monto_reportado ? 'SUGGESTED' : amountConflict || currencyConflict ? 'CONFLICT_OR_CURRENCY' : 'MANUAL_REVIEW';
+      await recordAIUsage(usage, { organizationId: actor.organizationId, usuarioId: actor.id, expedienteId, operacion: 'EXP008_INCOME_PREFILL', operationId, metadata: { source_sha256: documentHash, suggested_fields: Object.entries(suggestion).filter(([name, value]) => name !== 'evidencia' && value !== null).map(([name]) => name), attempts, recovery, outcome, first_pass_reason: firstPassReason, retry_reason: retryReason, native_amounts_distinct: nativeAmounts.length, first_pass_amount_fields: extraction.campos.filter((item) => item.campo === 'monto').length, first_pass_amount_conflicts: extraction.conflictos.filter((item) => item.campo === 'monto').length, persisted_finance: false } });
+      return suggestion;
+    } catch {
+      await recordAIFailure({ organizationId: actor.organizationId, usuarioId: actor.id, expedienteId, operacion: 'EXP008_INCOME_PREFILL', operationId, modelo: getOpenAIModelName(), durationMs: Date.now() - started, errorCode: 'EXP008_AI_PREFILL_FAILED', metadata: { source_sha256: documentHash } }).catch(() => undefined);
+      throw new ExpedienteFinanceError(502, 'EXP008_AI_PREFILL_FAILED', 'No pudimos leer el comprobante con IA. Puedes completar el ingreso manualmente.');
+    }
+  }
+
   async validateProposal(actor: ExpedienteFinanceActor, expedienteId: string, proposalId: string, input: any) {
     if (!this.canApply(actor)) throw new ExpedienteFinanceError(403, 'EXP008_ADMIN_REVIEW_DENIED', 'No tienes permiso para validar propuestas financieras.');
     const decision = input.decision === 'ACCEPT' ? 'ACCEPT' : input.decision === 'REJECT' ? 'REJECT' : null;
@@ -408,18 +538,23 @@ export class ExpedienteFinanceService {
     }, { timeout: 20_000 });
   }
 
-  async payRequest(actor: ExpedienteFinanceActor, expedienteId: string, requestId: string, input: any, files: { payment?: Upload; fiscal?: Upload }) {
+  async payRequest(actor: ExpedienteFinanceActor, expedienteId: string, requestId: string, input: any, files: { payment?: Upload; fiscal?: Upload; fiscalPdf?: Upload; fiscalXml?: Upload }) {
     if (!this.canApply(actor)) throw new ExpedienteFinanceError(403, 'EXP008_PAY_DENIED', 'Sólo Administración autorizada puede registrar el pago.');
     const key = this.idempotency(input.idempotency_key);
     await this.assertExpediente(this.prisma, actor, expedienteId);
     const existing = await this.prisma.expedienteSolicitudPago.findFirst({ where: { id: requestId, organization_id: actor.organizationId, expediente_id: expedienteId } });
     if (!existing) throw new ExpedienteFinanceError(404, 'EXP008_REQUEST_NOT_FOUND', 'La solicitud no está disponible.');
     if (existing.estado === 'PAGADA' && existing.movimiento_id) return { item: existing, idempotent: true };
+    if (files.fiscal && (files.fiscalPdf || files.fiscalXml)) throw new ExpedienteFinanceError(400, 'EXP008_FISCAL_UPLOAD_AMBIGUOUS', 'Adjunta el documento fiscal en los campos PDF y XML o usa la carga anterior, no ambos.');
+    assertExp008InvoiceFile(files.fiscalPdf, 'PDF');
+    assertExp008InvoiceFile(files.fiscalXml, 'XML');
     const payment = normalizeExp008PaymentMethod(input.forma_pago, input.forma_pago_detalle);
-    const uploads: Array<{ stored: Awaited<ReturnType<ExpedienteFinanceService['storeUpload']>>; type: 'COMPROBANTE_PAGO' | 'COMPROBANTE_FISCAL' }> = [];
-    if (files.payment) uploads.push({ stored: await this.storeUpload(actor, expedienteId, files.payment, 'comprobantes-pago'), type: 'COMPROBANTE_PAGO' });
-    if (files.fiscal) uploads.push({ stored: await this.storeUpload(actor, expedienteId, files.fiscal, 'comprobantes-fiscales'), type: 'COMPROBANTE_FISCAL' });
+    const uploads: Array<{ stored: Awaited<ReturnType<ExpedienteFinanceService['storeUpload']>>; type: 'COMPROBANTE_PAGO' | 'COMPROBANTE_FISCAL'; suffix: string; fiscalComponent?: 'PDF' | 'XML' }> = [];
     try {
+      if (files.payment) uploads.push({ stored: await this.storeUpload(actor, expedienteId, files.payment, 'comprobantes-pago'), type: 'COMPROBANTE_PAGO', suffix: 'payment' });
+      if (files.fiscal) uploads.push({ stored: await this.storeUpload(actor, expedienteId, files.fiscal, 'comprobantes-fiscales'), type: 'COMPROBANTE_FISCAL', suffix: 'fiscal-legacy' });
+      if (files.fiscalPdf) uploads.push({ stored: await this.storeUpload(actor, expedienteId, files.fiscalPdf, 'comprobantes-fiscales'), type: 'COMPROBANTE_FISCAL', suffix: 'fiscal-pdf', fiscalComponent: 'PDF' });
+      if (files.fiscalXml) uploads.push({ stored: await this.storeUpload(actor, expedienteId, files.fiscalXml, 'comprobantes-fiscales'), type: 'COMPROBANTE_FISCAL', suffix: 'fiscal-xml', fiscalComponent: 'XML' });
       const result = await this.prisma.$transaction(async (tx) => {
         await this.lock(tx, `request-pay:${actor.organizationId}:${requestId}`);
         await this.assertExpediente(tx, actor, expedienteId);
@@ -431,14 +566,14 @@ export class ExpedienteFinanceService {
         if (!category) throw new ExpedienteFinanceError(409, 'EXP008_CATEGORY_INVALID', 'Selecciona una categoría de egreso válida.');
         const movement = await this.ledger.applyOperationalMovementInTransaction(tx, { organizationId: actor.organizationId, expedienteId, actorId: actor.id, correlationId: randomUUID(), nature: 'EGRESO', amount: request.importe, concept: request.concepto, accountId: clean(input.cuenta_id, 36), paymentMethod: payment.method, reference: clean(input.referencia, 180) || request.referencia, idempotencyKey: `EXP008:EGRESO:${requestId}:${key}`, allocations: [{ categoryId: category.id, amount: request.importe, note: 'Solicitud de pago EXP-008' }] });
         for (const upload of uploads) {
-          const document = await this.createDocument(tx, actor, expedienteId, upload.stored, `EXP008_${upload.type}`, { source: 'EXP-008', role: upload.type, request_id: request.id });
-          await this.linkDocument(tx, actor, expedienteId, document.id, upload.type, `${key}:${upload.type}`, { solicitud_pago_id: request.id, movimiento_id: movement.movement.id });
+          const document = await this.createDocument(tx, actor, expedienteId, upload.stored, `EXP008_${upload.type}`, { source: 'EXP-008', role: upload.type, request_id: request.id, ...(upload.fiscalComponent ? { fiscal_component: upload.fiscalComponent } : {}) });
+          await this.linkDocument(tx, actor, expedienteId, document.id, upload.type, `${key}:${upload.suffix}`, { solicitud_pago_id: request.id, movimiento_id: movement.movement.id });
           if (upload.type === 'COMPROBANTE_PAGO') await tx.movimientoDocumento.create({ data: { organization_id: actor.organizationId, movimiento_id: movement.movement.id, documento_id: document.id, tipo_vinculo: 'COMPROBANTE_PAGO', creado_por_id: actor.id } });
         }
         const paidAt = new Date();
         const updated = await tx.expedienteSolicitudPago.update({ where: { id: request.id }, data: { estado: 'PAGADA', categoria_id: category.id, cuenta_id: input.cuenta_id, movimiento_id: movement.movement.id, pagado_por_id: actor.id, pagado_at: paidAt, version: { increment: 1 } } });
         await closePaymentRequestTiming(tx, actor.organizationId, request.id, paidAt);
-        await this.record(tx, actor, expedienteId, 'EXP008_PAY_REQUEST', request.id, 'Solicitud pagada', `Se registró el egreso por ${request.importe.toFixed(2)} MXN.`, { movimiento_id: movement.movement.id, comprobante_pago: Boolean(files.payment), comprobante_fiscal: Boolean(files.fiscal), reconciled: false });
+        await this.record(tx, actor, expedienteId, 'EXP008_PAY_REQUEST', request.id, 'Solicitud pagada', `Se registró el egreso por ${request.importe.toFixed(2)} MXN.`, { movimiento_id: movement.movement.id, comprobante_pago: Boolean(files.payment), comprobante_fiscal: Boolean(files.fiscal || files.fiscalPdf || files.fiscalXml), fiscal_pdf: Boolean(files.fiscalPdf), fiscal_xml: Boolean(files.fiscalXml), reconciled: false });
         return { item: updated, movement: movement.movement, idempotent: false };
       }, { timeout: 20_000 });
       if (result.idempotent) await Promise.all(uploads.map((item) => deleteFile(item.stored.storageKey).catch(() => undefined)));
@@ -551,7 +686,7 @@ export class ExpedienteFinanceService {
     });
   }
 
-  private capabilities(actor: ExpedienteFinanceActor) { return { canRead: actor.permissions.includes('expedientes.read'), canReport: actor.permissions.includes('expedientes.write') && actor.permissions.includes('documentos.write'), canCreateRequest: actor.permissions.includes('expedientes.write') && actor.permissions.includes('documentos.write'), canApply: this.canApply(actor), canCompleteInvoice: this.canApply(actor) && actor.permissions.includes('documentos.write'), canUseAI: this.canApply(actor) && actor.permissions.includes('ia.execute'), canReadDocuments: actor.permissions.includes('documentos.read'), canRetireDocuments: actor.permissions.includes('documentos.unlink') }; }
+  private capabilities(actor: ExpedienteFinanceActor) { return { canRead: actor.permissions.includes('expedientes.read'), canReport: actor.permissions.includes('expedientes.write') && actor.permissions.includes('documentos.write'), canCreateRequest: actor.permissions.includes('expedientes.write') && actor.permissions.includes('documentos.write'), canApply: this.canApply(actor), canCompleteInvoice: this.canApply(actor) && actor.permissions.includes('documentos.write'), canUseAI: this.canApply(actor) && actor.permissions.includes('ia.execute'), canPrefillAI: actor.permissions.includes('expedientes.write') && actor.permissions.includes('documentos.write') && actor.permissions.includes('ia.execute'), canReadDocuments: actor.permissions.includes('documentos.read'), canRetireDocuments: actor.permissions.includes('documentos.unlink') }; }
   private canApply(actor: ExpedienteFinanceActor) { return actor.permissions.includes('finanzas.write') && actor.permissions.includes('finanzas.validate'); }
   private requireOperationalWrite(actor: ExpedienteFinanceActor) { if (!actor.permissions.includes('expedientes.write') || !actor.permissions.includes('documentos.write')) throw new ExpedienteFinanceError(403, 'EXP008_OPERATION_DENIED', 'No tienes permiso para registrar operaciones financieras del expediente.'); }
   private idempotency(value: unknown) { const key = clean(value, 160); if (!key) throw new ExpedienteFinanceError(400, 'EXP008_IDEMPOTENCY_REQUIRED', 'No fue posible identificar de forma segura la operación.'); return key; }

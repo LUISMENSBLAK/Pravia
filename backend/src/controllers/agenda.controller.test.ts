@@ -30,11 +30,11 @@ const event = {
 describe('Agenda endpoints', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('limita la agenda de un abogado a su usuario y a expedientes visibles', async () => {
+  it('permite eventos compartidos y privados propios sin abrir expedientes ajenos', async () => {
     db.eventoAgenda.findMany.mockResolvedValue([event]);
     const req: any = { query: { desde: '2026-08-18T06:00:00.000Z', hasta: '2026-08-25T05:59:59.999Z', estatus: 'TODOS' }, user: baseUser };
     const res = response(); await AgendaController.list(req, res);
-    expect(db.eventoAgenda.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ user_id: 'user-1', AND: expect.any(Array) }) }));
+    expect(db.eventoAgenda.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ organization_id: baseUser.organizationId, AND: [expect.objectContaining({ OR: expect.arrayContaining([{ visibilidad: 'ORGANIZATION' }, { user_id: 'user-1' }]) }), expect.objectContaining({ OR: expect.arrayContaining([{ expediente_id: null }]) })] }) }));
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ eventos: [expect.objectContaining({ id: 'event-1', notaria: expect.objectContaining({ id: 'notaria-1' }), firma: expect.objectContaining({ efectiva: null }) })], meta: expect.objectContaining({ timezone: 'America/Mexico_City' }) }));
   });
 
@@ -50,7 +50,7 @@ describe('Agenda endpoints', () => {
     db.user.findMany.mockResolvedValue([{ id: 'user-1', nombre: 'Ana', apellido: 'Ruiz', organizationMemberships: [{ rol: 'ABOGADO' }] }]);
     db.expediente.findMany.mockResolvedValue([]); db.compareciente.findMany.mockResolvedValue([]);
     const req: any = { query: {}, user: baseUser }; const res = response(); await AgendaController.catalogs(req, res);
-    expect(db.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ activo: true, id: 'user-1', organizationMemberships: { some: expect.objectContaining({ organization_id: baseUser.organizationId }) } }) }));
+    expect(db.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ activo: true, organizationMemberships: { some: expect.objectContaining({ organization_id: baseUser.organizationId }) } }) }));
     expect(db.compareciente.findMany.mock.calls[0][0].where.OR).toBeDefined();
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ catalogos: expect.objectContaining({ timezone: 'America/Mexico_City', permisos: { gestionar_equipo: false, escribir: true } }) }));
   });

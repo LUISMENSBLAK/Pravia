@@ -53,6 +53,7 @@ export function EventDrawer({ id, canWrite, timezone, onClose, onEdit, onChanged
         </section>
         <dl className={styles.eventFacts}>
           <div><dt><UserRound />Responsable</dt><dd>{event.responsable_nombre}</dd></div>
+          <div><dt><UserRound />Visibilidad</dt><dd>{event.visibilidad === 'ORGANIZATION' ? 'Todos en la Notaría' : 'Solo yo y participantes'}</dd></div>
           <div><dt><FileText />Expediente</dt><dd>{event.expediente?.numero_pravia || 'Sin expediente relacionado'}{event.expediente?.tipo_acto && <small>{event.expediente.tipo_acto.nombre}</small>}</dd></div>
           <div><dt><MapPin />Notaría</dt><dd>{event.notaria?.nombre || 'Sin notaría derivada'}{event.notaria && <small>{event.notaria.ciudad || event.notaria.municipio}, {event.notaria.entidad_federativa}</small>}</dd></div>
           <div><dt><UserRound />Compareciente</dt><dd>{event.compareciente_nombre || 'Sin compareciente relacionado'}</dd></div>
@@ -67,7 +68,7 @@ export function EventDrawer({ id, canWrite, timezone, onClose, onEdit, onChanged
         {event.motivo_cancelacion && <p className={styles.cancelledNote}><XCircle />Motivo de cancelación: {event.motivo_cancelacion}</p>}
         {cancelling && <section className={styles.cancelBox}><label>Motivo de cancelación<textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={3} /></label>{message && <p role="alert">{message}</p>}<div><button type="button" className={styles.secondaryButton} onClick={() => setCancelling(false)}>Volver</button><button type="button" className={styles.dangerButton} disabled={busy} onClick={() => void cancel()}>{busy ? 'Cancelando…' : 'Confirmar cancelación'}</button></div></section>}
       </div>}
-      {status === 'ready' && event && canWrite && event.estatus !== 'CANCELADO' && !cancelling && <footer>
+      {status === 'ready' && event && canWrite && event.can_edit && event.estatus !== 'CANCELADO' && !cancelling && <footer>
         <button type="button" className={styles.secondaryButton} onClick={() => onEdit(event)}><Pencil size={15} />Editar</button>
         <button type="button" className={styles.secondaryButton} onClick={() => onEdit(event)}><RotateCcw size={15} />Reprogramar</button><span />
         <button type="button" className={styles.cancelButton} onClick={() => setCancelling(true)}>Cancelar evento</button>

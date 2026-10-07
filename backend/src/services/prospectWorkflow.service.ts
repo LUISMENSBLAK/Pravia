@@ -10,6 +10,7 @@ import { initializeQuoteContractInTransaction } from './cotizacionWorkflow.servi
 import { applyProspectTimingTransition } from './timingPolicy.service';
 import { getQuotationTemplate } from './quotationTemplate.service';
 import { optionalOperationalText, preserveFormatText } from '../utils/operationalText';
+import { roleHasPermission } from '../auth/permissions';
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -19,6 +20,7 @@ const detailInclude = {
   actos: { include: { tipo_acto: { select: { id: true, nombre: true, codigo_catalogo: true, organization_id: true } } }, orderBy: { orden: 'asc' as const } },
   notaria: { select: { id: true, nombre: true, correo_general: true } },
   cotizacion: { select: { id: true, estado: true, numero_cotizacion: true } },
+  cotizacion_responsable: { select: { user: { select: { id: true, nombre: true, apellido: true } } } },
   transicion_actual: true,
 } as const;
 const trim = (value: unknown, max = 2000) => typeof value === 'string' ? value.trim().slice(0, max) : '';
@@ -28,7 +30,7 @@ const permission = (actor: Actor, name: string) => {
 };
 const newDataFields = ['nombre', 'telefono', 'email', 'necesidad', 'contexto_operacion', 'prioridad', 'servicio_catalogo_codigo', 'tipo_acto_ids', 'tiene_predial', 'tiene_antecedente'];
 const updateDataFields = [...newDataFields, 'honorarios_estimados', 'impuestos_derechos_estimados', 'total_estimado'];
-const actionFields = ['action', 'expectedVersion', 'idempotencyKey', 'confirm', 'reason'];
+const actionFields = ['action', 'expectedVersion', 'idempotencyKey', 'confirm', 'reason', 'quoteAssigneeId'];
 
 /** Single PRO-001 authority. Notes, uploads and technical audit never implicitly advance stages. */
 export class ProspectWorkflowService {
@@ -216,7 +218,7 @@ export class ProspectWorkflowService {
       this.prisma.prospectoTransicion.findMany({ where: { organization_id: actor.organizationId, prospecto_id: id }, orderBy: { version: 'asc' }, include: { actor: { select: { user: { select: { nombre: true, apellido: true } } } } } }),
       canDocs ? this.prisma.prospectoFuenteNotarial.findMany({ where: { organization_id: actor.organizationId, prospecto_id: id }, orderBy: { version: 'desc' }, include: { documento: { select: docSelect }, notaria: { select: { id: true, nombre: true } } } }) : [],
       Promise.resolve([]),
-      ['DIRECCION','ADMINISTRACION'].includes(actor.rol) ? this.prisma.organizationMembership.findMany({ where: { organization_id: actor.organizationId, status: 'ACTIVE', user: { activo: true } }, select: { user: { select: { id: true, nombre: true, apellido: true } } } }) : [],
+      actor.permissions.includes('prospectos.write') ? this.prisma.organizationMembership.findMany({ where: { organization_id: actor.organizationId, status: 'ACTIVE', user: { activo: true } }, select: { rol: true, user: { select: { id: true, nombre: true, apellido: true } } } }) : [],
     ]);
     const actions = actor.permissions.includes('prospectos.write') ? allowedProspectActions(p.etapa_contractual, Boolean(p.cotizacion)).filter((a) => a !== 'CONVERTIR' || actor.permissions.includes('cotizaciones.write')) : [];
     return { stage: p.etapa_contractual, stageLabel: stageLabel(p.etapa_contractual), stageEnteredAt: p.transicion_actual?.effective_at ?? null,
@@ -225,6 +227,8 @@ export class ProspectWorkflowService {
       actions: actions.map((code) => ({ code, label: PROSPECT_ACTIONS[code] })),
       notaria: p.etapa_contractual && !PROSPECT_CONTRACT_STAGES.some((stage) => stage.code === p.etapa_contractual) ? p.notaria : null,
       notaries, responsibles: responsibles.map((m) => m.user),
+      quoteAssignees: responsibles.filter((m) => roleHasPermission(m.rol, 'cotizaciones.write')).map((m) => m.user),
+      quoteAssignee: p.cotizacion_responsable?.user ?? null,
       source: sources[0] ?? null, sourceHistory: sources, canReadSource: canDocs, quote: p.cotizacion,
       events: events.map((e) => ({ id: e.id, previous: e.etapa_anterior, next: e.etapa_nueva, via: e.hito_intermedio,
         previousLabel: stageLabel(e.etapa_anterior), nextLabel: stageLabel(e.etapa_nueva), viaLabel: e.hito_intermedio ? stageLabel(e.hito_intermedio) : null,
@@ -268,21 +272,47 @@ export class ProspectWorkflowService {
       if (action === 'MARCAR_LISTO_PARA_COTIZAR' && !p.actos.length) {
         return failProspect(409, 'PRO001_ACT_REQUIRED', 'Selecciona al menos un acto preliminar antes de marcar el prospecto como listo para cotizar.');
       }
+      if (action === 'CONVERTIR' && p.cotizacion_responsable_id && raw.quoteAssigneeId
+        && raw.quoteAssigneeId !== p.cotizacion_responsable_id) {
+        return failProspect(409, 'PRO001_QUOTE_ASSIGNEE_MISMATCH', 'La cotización conservará a la persona ya asignada. Revisa el prospecto antes de convertirlo.');
+      }
+      let quoteAssignee: { user_id: string; rol: Parameters<typeof roleHasPermission>[0]; user: { nombre: string } } | null = null;
+      if (action === 'MARCAR_LISTO_PARA_COTIZAR' || (action === 'CONVERTIR' && !p.cotizacion_responsable_id)) {
+        const requestedId = typeof raw.quoteAssigneeId === 'string' ? raw.quoteAssigneeId.trim() : '';
+        if (!requestedId) return failProspect(400, 'PRO001_QUOTE_ASSIGNEE_REQUIRED', 'Selecciona quién continuará con la cotización.');
+        quoteAssignee = await tx.organizationMembership.findFirst({
+          where: { organization_id: actor.organizationId, user_id: requestedId, status: 'ACTIVE', user: { activo: true } },
+          select: { user_id: true, rol: true, user: { select: { nombre: true } } },
+        });
+        if (!quoteAssignee || !roleHasPermission(quoteAssignee.rol, 'cotizaciones.write')) {
+          return failProspect(400, 'PRO001_QUOTE_ASSIGNEE_INVALID', 'Selecciona una persona activa y autorizada para cotizar en esta organización.');
+        }
+        await tx.prospecto.update({ where: { id, organization_id: actor.organizationId }, data: { cotizacion_responsable_id: requestedId } });
+      }
       const recordedAt = new Date();
       const effectiveAt = prospectEffectiveAt(undefined, recordedAt, p.transicion_actual?.effective_at ?? null);
       let evidence: Record<string, unknown> = {
         reason: reason || (action === 'REACTIVAR' ? null : 'Confirmación explícita del actor'),
         ...(action === 'REACTIVAR' ? { restoredStage: resumeStage } : {}),
+        ...(quoteAssignee ? { quoteAssigneeId: quoteAssignee.user_id } : {}),
       };
       let quoteId: string | null = null;
       if (action === 'CONVERTIR') {
         if (p.etapa_contractual !== Stage.LISTO_PARA_COTIZAR) return failProspect(409, 'PRO001_NOT_READY_TO_QUOTE', 'Marca el prospecto como listo para cotizar antes de convertirlo.');
         if (!p.actos.length) return failProspect(409, 'PRO001_ACT_REQUIRED', 'Selecciona al menos un acto preliminar antes de solicitar la cotización.');
+        const assignedId = p.cotizacion_responsable_id || quoteAssignee?.user_id;
+        if (!assignedId) return failProspect(409, 'PRO001_QUOTE_ASSIGNEE_REQUIRED', 'Selecciona quién continuará con la cotización.');
+        const currentAssignee = await tx.organizationMembership.findFirst({ where: {
+          organization_id: actor.organizationId, user_id: assignedId, status: 'ACTIVE', user: { activo: true },
+        }, select: { rol: true } });
+        if (!currentAssignee || !roleHasPermission(currentAssignee.rol, 'cotizaciones.write')) {
+          return failProspect(409, 'PRO001_QUOTE_ASSIGNEE_INACTIVE', 'La persona asignada ya no puede cotizar. Revisa la asignación antes de convertir.');
+        }
         const quoteFolio = await this.folio(tx, 'COT', recordedAt);
         const actLabel = p.actos.map((item) => item.tipo_acto.nombre).join(', ');
         const template = getQuotationTemplate({
           folio: quoteFolio, cliente: p.nombre, acto: actLabel,
-          descripcion: p.necesidad || 'Sin descripción adicional', responsable: p.atendido_por.nombre,
+          descripcion: p.necesidad || 'Sin descripción adicional', responsable: quoteAssignee?.user.nombre || p.cotizacion_responsable?.user.nombre || p.atendido_por.nombre,
           fecha: recordedAt, honorarios: p.honorarios_estimados?.toString() ?? null,
           impuestos_derechos: p.impuestos_derechos_estimados?.toString() ?? null,
           total: p.total_estimado?.toString() ?? null,
@@ -293,7 +323,7 @@ export class ProspectWorkflowService {
             { concepto: 'Impuestos y derechos', categoria: 'IMPUESTOS_DERECHOS' as const, importe: p.impuestos_derechos_estimados, orden: 1 },
           ]
           : [];
-        const quote = await tx.cotizacion.create({ data: { organization_id: actor.organizationId, prospecto_id: id, user_id: p.user_id,
+        const quote = await tx.cotizacion.create({ data: { organization_id: actor.organizationId, prospecto_id: id, user_id: assignedId,
           numero_cotizacion: quoteFolio, estado: 'BORRADOR', cuerpo_correo_cliente: template.body,
           contexto_operacion: p.contexto_operacion || p.necesidad,
           honorarios_pravia: null, total_notaria: p.total_estimado, total_cliente: p.total_estimado,
@@ -319,17 +349,17 @@ export class ProspectWorkflowService {
           prospectId: id,
         });
         await tx.notification.create({ data: {
-          organization_id: actor.organizationId, recipient_id: p.user_id, created_by_id: actor.id,
+          organization_id: actor.organizationId, recipient_id: assignedId, created_by_id: actor.id,
           type: 'COTIZACION_SOLICITADA', title: `Cotización ${quoteFolio} asignada`,
           body: `${p.folio || 'Prospecto'} · ${p.nombre} · ${actLabel}`, href: `/cotizaciones/${quote.id}`,
         } });
         await tx.tarea.create({ data: {
-          organization_id: actor.organizationId, asignado_a_id: p.user_id, creador_id: actor.id,
+          organization_id: actor.organizationId, asignado_a_id: assignedId, creador_id: actor.id,
           titulo: `ELABORAR COTIZACIÓN ${quoteFolio}`,
           descripcion: `${p.folio || 'Prospecto'} · ${p.nombre} · ${actLabel}`,
           prioridad: 'ALTA', etapa_relacionada: 'COTIZACION', idempotency_key: `PRO001:COTIZACION:${id}`,
         } });
-        quoteId = quote.id; evidence = { quoteId, origin: 'PROSPECT_DIRECT', template: template.id };
+        quoteId = quote.id; evidence = { quoteId, quoteAssigneeId: assignedId, origin: 'PROSPECT_DIRECT', template: template.id };
       }
       const event = await this.event(tx, actor, p, { action, next, effectiveAt, recordedAt, key, hash, evidence });
       return { idempotent: false, eventId: event.id, quoteId };

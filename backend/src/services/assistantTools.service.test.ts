@@ -6,7 +6,7 @@ import type { Role } from '@prisma/client';
 
 const user = (permissions: string[] = ['ai.use', 'ai.expedientes.read', 'expedientes.read']) => ({
   id: '11111111-1111-4111-8111-111111111111', email: 'user@example.test', nombre: 'Ana', apellido: 'Prueba',
-  rol: 'ABOGADO', sessionId: 'session-1', permissions, requiresPasswordChange: false,
+  rol: 'ABOGADO', sessionId: 'session-1', permissions, requiresPasswordChange: false, organizationId: '00000000-0000-4000-8000-000000000010',
 } as any);
 
 const db = (expediente: any = null) => ({
@@ -125,7 +125,8 @@ describe('assistant backend tools', () => {
     const result = await executeAssistantTool({ tool: 'getAgenda', args: { period: 'TODAY' }, user: currentUser, correlationId: 'corr-agenda' }, client);
     expect(client.eventoAgenda.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
-        user_id: currentUser.id,
+        organization_id: currentUser.organizationId,
+        AND: expect.arrayContaining([expect.objectContaining({ OR: expect.arrayContaining([{ visibilidad: 'ORGANIZATION' }, { user_id: currentUser.id }]) })]),
         fecha_inicio: { gte: expect.any(Date), lt: expect.any(Date) },
       }),
     }));

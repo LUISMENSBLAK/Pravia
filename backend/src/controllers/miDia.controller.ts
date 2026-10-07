@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma';
+import { agendaReadableWhere } from '../services/agendaVisibility.service';
 import { calculateFinancialPosition } from '../domain/financialLedger';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { MidBaseSourceError, MidBaseSourceService } from '../services/midBaseSource.service';
@@ -62,7 +63,7 @@ export class MiDiaController {
           take: 100,
         }),
         prisma.eventoAgenda.findMany({
-          where: { estatus: 'ACTIVO', fecha_inicio: { gte: todayStart, lte: nextWeek }, ...(userId ? { user_id: userId } : {}) },
+          where: { ...agendaReadableWhere(req.user), estatus: 'ACTIVO', fecha_inicio: { gte: todayStart, lte: nextWeek }, ...(userId ? { user_id: userId } : {}) },
           include: { expediente: { select: { id: true, numero_pravia: true, cliente_alias: true } } },
           orderBy: { fecha_inicio: 'asc' },
           take: 100,

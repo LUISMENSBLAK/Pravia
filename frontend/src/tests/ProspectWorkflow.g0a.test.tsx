@@ -14,8 +14,8 @@ const stages = [
 const workflow = (stage = 'NUEVO', action?: ProspectWorkflowAction, overrides: Partial<ProspectWorkflow> = {}): ProspectWorkflow => ({
   stage, stageLabel: stages.find((item) => item.code === stage)?.label ?? 'Etapa histórica', stageEnteredAt: '2026-09-06T10:00:00Z',
   knowledge: 'KNOWN', version: 1, folio: 'PRO-0001-2026', wait: { type: null, knowledge: 'NOT_APPLICABLE', label: 'Sin espera' }, stages,
-  actions: action ? [{ code: action, label: ({ COMENZAR_INTEGRACION: 'Comenzar integración', MARCAR_LISTO_PARA_COTIZAR: 'Marcar listo para cotizar', CONVERTIR: 'Solicitar cotización', SUSPENDER: 'Suspender prospecto', CANCELAR: 'Cancelar prospecto', REACTIVAR: 'Reactivar prospecto' } as const)[action] }] : [],
-  notaria: null, notaries: [], responsibles: [], source: null, sourceHistory: [], canReadSource: true, quote: null, events: [], ...overrides,
+  actions: action ? [{ code: action, label: ({ COMENZAR_INTEGRACION: 'Comenzar integración', MARCAR_LISTO_PARA_COTIZAR: 'Marcar listo para cotizar', CONVERTIR: 'Convertir en cotización', SUSPENDER: 'Suspender prospecto', CANCELAR: 'Cancelar prospecto', REACTIVAR: 'Reactivar prospecto' } as const)[action] }] : [],
+  notaria: null, notaries: [], responsibles: [], quoteAssignees: [{ id: 'u1', nombre: 'Responsable', apellido: 'QA' }], quoteAssignee: null, source: null, sourceHistory: [], canReadSource: true, quote: null, events: [], ...overrides,
 });
 const changed = vi.fn().mockResolvedValue(undefined);
 const show = (value: ProspectWorkflow, canWrite = true) => render(<MemoryRouter><ProspectWorkflowPanel prospect={prospect} workflow={value} canWrite={canWrite} onChanged={changed} /></MemoryRouter>);
@@ -33,7 +33,7 @@ describe('Corrección 001 · flujo Prospecto a Cotización', () => {
   it.each([
     ['NUEVO', 'COMENZAR_INTEGRACION', 'Comenzar integración'],
     ['EN_INTEGRACION', 'MARCAR_LISTO_PARA_COTIZAR', 'Marcar listo para cotizar'],
-    ['LISTO_PARA_COTIZAR', 'CONVERTIR', 'Solicitar cotización'],
+    ['LISTO_PARA_COTIZAR', 'CONVERTIR', 'Convertir en cotización'],
   ] as const)('presenta una sola acción principal contextual en %s', (stage, action, label) => {
     show(workflow(stage, action));
     expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
@@ -43,16 +43,17 @@ describe('Corrección 001 · flujo Prospecto a Cotización', () => {
   it('registra la acción con versión, confirmación e idempotencia', async () => {
     show(workflow('EN_INTEGRACION', 'MARCAR_LISTO_PARA_COTIZAR'));
     await userEvent.click(screen.getByRole('button', { name: 'Marcar listo para cotizar' }));
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /quién continuará/i }), 'u1');
     await userEvent.click(screen.getByRole('button', { name: 'Confirmar' }));
-    await waitFor(() => expect(prospectsService.act).toHaveBeenCalledWith('p1', expect.objectContaining({ action: 'MARCAR_LISTO_PARA_COTIZAR', expectedVersion: 1, confirm: true, idempotencyKey: expect.any(String) })));
+    await waitFor(() => expect(prospectsService.act).toHaveBeenCalledWith('p1', expect.objectContaining({ action: 'MARCAR_LISTO_PARA_COTIZAR', quoteAssigneeId: 'u1', expectedVersion: 1, confirm: true, idempotencyKey: expect.any(String) })));
     expect(changed).toHaveBeenCalledTimes(1);
   });
 
   it('protege el doble click en conversión desde la UI', async () => {
     let resolve!: () => void;
     vi.mocked(prospectsService.act).mockImplementation(() => new Promise((done) => { resolve = () => done({ idempotent: false, quoteId: 'q1' }); }));
-    show(workflow('LISTO_PARA_COTIZAR', 'CONVERTIR'));
-    await userEvent.click(screen.getByRole('button', { name: 'Solicitar cotización' }));
+    show(workflow('LISTO_PARA_COTIZAR', 'CONVERTIR', { quoteAssignee: { id: 'u1', nombre: 'Responsable', apellido: 'QA' } }));
+    await userEvent.click(screen.getByRole('button', { name: 'Convertir en cotización' }));
     const confirm = screen.getByRole('button', { name: 'Confirmar' });
     await userEvent.click(confirm);
     await userEvent.click(confirm);
@@ -65,7 +66,7 @@ describe('Corrección 001 · flujo Prospecto a Cotización', () => {
   it('después de convertir sólo ofrece Ir a cotización', () => {
     show(workflow('CONVERTIDO_EN_COTIZACION', undefined, { quote: { id: 'q1', estado: 'BORRADOR', numero_cotizacion: 'COT-0001-2026' } }));
     expect(screen.getByRole('link', { name: 'Ir a cotización' })).toHaveAttribute('href', '/cotizaciones/q1');
-    expect(screen.queryByRole('button', { name: 'Solicitar cotización' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Convertir en cotización' })).not.toBeInTheDocument();
   });
 
   it('mantiene registros legacy sin transición nueva ni operación', () => {

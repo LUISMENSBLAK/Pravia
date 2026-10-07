@@ -950,6 +950,9 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
       honorarios_pravia,
       version: expectedVersion,
     } = req.body;
+    if ([numero_escritura, fecha_firma, fecha_escritura, folio_desde, folio_hasta].some((value) => value !== undefined)) {
+      throw new ExpedienteUpdateError('La escritura, fecha de firma y folios se modifican exclusivamente desde Archivo.', 'ARCHIVO_SUMMARY_READ_ONLY', 409);
+    }
     const cleanAlias = cliente_alias === undefined ? undefined : String(cliente_alias).trim();
     const cleanAbogadoId = abogado_id === undefined ? undefined : String(abogado_id).trim();
     // Compatibilidad de dominio: la notaría ya no forma parte de la cabecera visual,

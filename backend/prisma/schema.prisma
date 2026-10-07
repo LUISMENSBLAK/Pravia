@@ -31,6 +31,7 @@ model Organization {
   presupuestoDocumentos             ExpedientePresupuestoDocumento[]
   expedienteActividades             ExpedienteActividad[]
   prospectoTransiciones             ProspectoTransicion[]
+  prospectoRevisionesDocumentales    ProspectoRevisionDocumental[]
   prospectoFuentes                  ProspectoFuenteNotarial[]
   prospectoActos                    ProspectoActo[]
   cotizacionTransiciones            CotizacionTransicion[]
@@ -89,6 +90,14 @@ model Organization {
   knowledgeImpacts                  KnowledgeImpact[]
   recurringFinancialExpenses        GastoRecurrenteFinanciero[]
   financialQueries                  ConsultaFinancieraGuardada[]
+  archivoRegistros                  ArchivoRegistro[]
+  entidadesFiscalesCfdi             EntidadFiscalCfdi[]
+  proveedoresFiscales               ProveedorFiscal[]
+  documentosCfdi                    DocumentoCfdi[]
+  cuentasPorCobrarCfdi              CuentaPorCobrarCfdi[]
+  cuentasPorPagarCfdi               CuentaPorPagarCfdi[]
+  aplicacionesPagoCfdi              AplicacionPagoCfdi[]
+  transferenciasInternas            TransferenciaInterna[]
 
   @@index([status])
   @@map("organizations")
@@ -106,6 +115,7 @@ model OrganizationMembership {
   user                                    User                                        @relation(fields: [user_id], references: [id], onDelete: Restrict)
   sessions                                AuthSession[]
   prospectoTransiciones                   ProspectoTransicion[]
+  prospectoRevisionesDocumentales         ProspectoRevisionDocumental[]
   prospectoFuentes                        ProspectoFuenteNotarial[]
   cotizacionTransiciones                  CotizacionTransicion[]
   complianceLegalRulesCreated             ComplianceLegalRule[]                       @relation("ComplianceLegalRuleCreatorMembership")
@@ -149,6 +159,15 @@ model OrganizationMembership {
   complianceAssistedReviewsExecuted       ComplianceAssistedReview[]                  @relation("H9AssistedReviewActor")
   configuracionConceptosResponsable       ConfiguracionConceptoActividad[]            @relation("CfgConceptResponsibleMembership")
   seguimientoActividadesCompletadas       ExpedienteSeguimientoActividad[]            @relation("SeguimientoCompletedByMembership")
+  agendaParticipations                    EventoAgendaParticipante[]                  @relation("EventoAgendaParticipanteMembership")
+  prospectosCotizacionAsignada            Prospecto[]                                 @relation("ProspectQuoteAssigneeMembership")
+  entidadesFiscalesCfdiCreadas           EntidadFiscalCfdi[]                         @relation("EntidadFiscalCfdiCreadorMembership")
+  proveedoresFiscalesCreados             ProveedorFiscal[]                           @relation("ProveedorFiscalCreadorMembership")
+  documentosCfdiCreados                  DocumentoCfdi[]                             @relation("DocumentoCfdiCreadorMembership")
+  cuentasPorCobrarCfdiCreadas            CuentaPorCobrarCfdi[]                       @relation("CuentaPorCobrarCfdiCreadorMembership")
+  cuentasPorPagarCfdiCreadas             CuentaPorPagarCfdi[]                        @relation("CuentaPorPagarCfdiCreadorMembership")
+  aplicacionesPagoCfdiCreadas            AplicacionPagoCfdi[]                        @relation("AplicacionPagoCfdiCreadorMembership")
+  transferenciasInternasCreadas          TransferenciaInterna[]                      @relation("TransferenciaInternaCreadorMembership")
 
   @@unique([organization_id, user_id])
   @@index([user_id, status])
@@ -235,6 +254,7 @@ model User {
   outboxEventosDisparados                DomainEventOutbox[]                    @relation("OutboxActor")
   eventosCancelados                      EventoAgenda[]                         @relation("EventoCanceladoPor")
   eventos                                EventoAgenda[]                         @relation("EventoResponsable")
+  eventosAgendaCreados                   EventoAgenda[]                         @relation("EventoAgendaCreadoPor")
   expedienteActividades                  ExpedienteActividad[]
   expedienteComparecientesCreados        ExpedienteCompareciente[]              @relation("ExpedienteComparecienteCreador")
   expedienteComparecientesValidados      ExpedienteCompareciente[]              @relation("ExpedienteComparecienteValidador")
@@ -473,6 +493,7 @@ model Prospecto {
   tiempo_estimado              String?
   estado                       ProspectoEstado            @default(NUEVO)
   user_id                      String                     @db.Uuid
+  cotizacion_responsable_id    String?                    @db.Uuid
   created_at                   DateTime                   @default(now())
   updated_at                   DateTime                   @updatedAt
   archived_at                  DateTime?
@@ -494,6 +515,7 @@ model Prospecto {
   transicion_actual            ProspectoTransicion?       @relation("ProspectoCurrentTransition", fields: [transicion_actual_id], references: [id], onDelete: Restrict)
   transiciones                 ProspectoTransicion[]      @relation("ProspectoTransitions")
   fuentes_notariales           ProspectoFuenteNotarial[]
+  revisiones_documentales       ProspectoRevisionDocumental[]
   cotizacion                   Cotizacion?
   documentos                   Documento[]
   prospectoDocumentos          ProspectoDocumento[]
@@ -501,6 +523,7 @@ model Prospecto {
   actos                        ProspectoActo[]
   archived_by_user             User?                      @relation("ProspectoArchivedBy", fields: [archived_by], references: [id])
   atendido_por                 User                       @relation(fields: [user_id], references: [id])
+  cotizacion_responsable       OrganizationMembership?    @relation("ProspectQuoteAssigneeMembership", fields: [organization_id, cotizacion_responsable_id], references: [organization_id, user_id], onDelete: Restrict, map: "prospecto_quote_assignee_membership_fkey")
   etapa_operativa              ProspectoEtapaCatalogo?    @relation(fields: [etapa_operativa_codigo], references: [codigo])
   servicio_catalogo            ProspectoServicioCatalogo? @relation(fields: [servicio_catalogo_codigo], references: [codigo])
 
@@ -508,6 +531,7 @@ model Prospecto {
   @@unique([id, organization_id], map: "uq_prospectos_id_org")
   @@index([archived_by], map: "idx_prospectos_archivado_por_fk")
   @@index([user_id], map: "idx_prospectos_user_fk")
+  @@index([organization_id, cotizacion_responsable_id], map: "idx_prospecto_quote_assignee")
   @@index([etapa_operativa_codigo], map: "idx_prospectos_etapa_operativa_fk")
   @@index([servicio_catalogo_codigo], map: "idx_prospectos_servicio_catalogo_fk")
   @@index([notaria_id, organization_id], map: "idx_prospecto_notaria_org")
@@ -581,6 +605,27 @@ model ProspectoTransicion {
   @@index([organization_id, actor_id], map: "idx_prospecto_transition_actor")
   @@index([prospecto_id, organization_id, effective_at], map: "idx_prospecto_transition_history")
   @@map("prospecto_transiciones")
+}
+
+/// Revisión preliminar append-only: el análisis nunca modifica datos ni documentos.
+model ProspectoRevisionDocumental {
+  id                  String                 @id @default(uuid()) @db.Uuid
+  organization_id     String                 @db.Uuid
+  prospecto_id        String                 @db.Uuid
+  actor_id            String                 @db.Uuid
+  act_snapshot        Json
+  document_snapshot   Json
+  resumen             String                 @db.Text
+  hallazgos           Json
+  documentos_no_leidos Json
+  modelo              String                 @db.VarChar(120)
+  created_at          DateTime               @default(now())
+  organization        Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "prospect_review_org_fkey")
+  prospecto           Prospecto              @relation(fields: [prospecto_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "prospect_review_prospect_tenant_fkey")
+  actor               OrganizationMembership @relation(fields: [organization_id, actor_id], references: [organization_id, user_id], onDelete: Restrict, map: "prospect_review_actor_tenant_fkey")
+
+  @@index([organization_id, prospecto_id, created_at], map: "idx_prospect_review_org_prospect_created")
+  @@map("prospecto_revisiones_documentales")
 }
 
 // Versiones de una fuente: referencia al mismo sistema documental, no otro almacén.
@@ -1687,6 +1732,10 @@ model Expediente {
   cuestionarios              ExpedienteCuestionarioRespuesta[]
   projectFactSnapshots       ProjectFactSnapshot[]
   projectInstructionApps     ProjectInstructionApplication[]
+  archivoRegistro             ArchivoRegistro?
+  documentosCfdi             DocumentoCfdi[]
+  cuentasPorCobrarCfdi       CuentaPorCobrarCfdi[]
+  cuentasPorPagarCfdi        CuentaPorPagarCfdi[]
 
   @@unique([id, organization_id], map: "uq_expedientes_id_org")
   @@index([abogado_id], map: "idx_expedientes_abogado_fk")
@@ -1699,6 +1748,33 @@ model Expediente {
   @@index([plantilla_doc_version_id], map: "idx_expedientes_plantilla_version_fk")
   @@index([tipo_acto_id], map: "idx_expedientes_tipo_acto_fk")
   @@map("expedientes")
+}
+
+/// Un solo consumo canónico del protocolo: instrumento o folios inutilizados.
+/// Los campos legacy de Expediente son únicamente un reflejo de un instrumento.
+model ArchivoRegistro {
+  id                 String       @id @default(uuid()) @db.Uuid
+  organization_id    String       @db.Uuid
+  expediente_id      String?      @unique @db.Uuid
+  clase              String       @db.VarChar(24)
+  numero_escritura   BigInt?
+  folio_inicio       BigInt
+  folio_fin          BigInt
+  fecha_instrumento  DateTime     @db.Date
+  libro_tomo         String?      @db.VarChar(80)
+  no_paso            Boolean      @default(false)
+  motivo             String?      @db.VarChar(500)
+  created_by_id      String       @db.Uuid
+  updated_by_id      String       @db.Uuid
+  created_at         DateTime     @default(now())
+  updated_at         DateTime     @updatedAt
+  organization       Organization @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  expediente         Expediente?  @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict)
+
+  @@unique([organization_id, numero_escritura], map: "uq_archivo_numero_tenant")
+  @@unique([expediente_id, organization_id], map: "uq_archivo_exp_tenant")
+  @@index([organization_id, folio_inicio, folio_fin], map: "idx_archivo_folios_tenant")
+  @@map("archivo_registros")
 }
 
 /// Único estado económico editable del expediente. Los PDFs son documentos
@@ -2103,43 +2179,44 @@ model ExpedienteArtefactoDocumento {
 }
 
 model Predio {
-  id                                   String              @id @default(uuid()) @db.Uuid
-  organization_id                      String              @db.Uuid
-  apodo                                String?             @db.VarChar(160)
-  clave_catastral                      String?             @db.VarChar(180)
-  cuenta_predial                       String?             @db.VarChar(180)
-  folio_real                           String?             @db.VarChar(180)
+  id                                   String                       @id @default(uuid()) @db.Uuid
+  organization_id                      String                       @db.Uuid
+  apodo                                String?                      @db.VarChar(160)
+  clave_catastral                      String?                      @db.VarChar(180)
+  cuenta_predial                       String?                      @db.VarChar(180)
+  folio_real                           String?                      @db.VarChar(180)
   datos_registrales                    Json?
-  ubicacion_texto                      String?             @db.VarChar(500)
-  calle                                String?             @db.VarChar(180)
-  numero_exterior                      String?             @db.VarChar(80)
-  numero_interior                      String?             @db.VarChar(80)
-  colonia                              String?             @db.VarChar(180)
-  localidad                            String?             @db.VarChar(180)
-  municipio                            String?             @db.VarChar(180)
-  estado                               String?             @db.VarChar(180)
-  codigo_postal                        String?             @db.VarChar(20)
-  pais                                 String?             @default("México") @db.VarChar(120)
-  superficie_terreno_m2                Decimal?            @db.Decimal(18, 4)
-  superficie_construccion_m2           Decimal?            @db.Decimal(18, 4)
-  superficie_construccion_comercial_m2 Decimal?            @db.Decimal(18, 4)
-  valor_catastral                      Decimal?            @db.Decimal(18, 2)
-  valor_avaluo                         Decimal?            @db.Decimal(18, 2)
-  valor_operacion                      Decimal?            @db.Decimal(18, 2)
-  regimen                              String?             @db.VarChar(180)
+  ubicacion_texto                      String?                      @db.VarChar(500)
+  calle                                String?                      @db.VarChar(180)
+  numero_exterior                      String?                      @db.VarChar(80)
+  numero_interior                      String?                      @db.VarChar(80)
+  colonia                              String?                      @db.VarChar(180)
+  localidad                            String?                      @db.VarChar(180)
+  municipio                            String?                      @db.VarChar(180)
+  estado                               String?                      @db.VarChar(180)
+  codigo_postal                        String?                      @db.VarChar(20)
+  pais                                 String?                      @default("México") @db.VarChar(120)
+  superficie_terreno_m2                Decimal?                     @db.Decimal(18, 4)
+  superficie_construccion_m2           Decimal?                     @db.Decimal(18, 4)
+  superficie_construccion_comercial_m2 Decimal?                     @db.Decimal(18, 4)
+  valor_catastral                      Decimal?                     @db.Decimal(18, 2)
+  valor_avaluo                         Decimal?                     @db.Decimal(18, 2)
+  valor_operacion                      Decimal?                     @db.Decimal(18, 2)
+  regimen                              String?                      @db.VarChar(180)
   descripcion                          String?
-  version                              Int                 @default(1)
-  created_by                           String              @db.Uuid
-  updated_by                           String              @db.Uuid
-  created_at                           DateTime            @default(now())
-  updated_at                           DateTime            @default(now()) @updatedAt
+  version                              Int                          @default(1)
+  created_by                           String                       @db.Uuid
+  updated_by                           String                       @db.Uuid
+  created_at                           DateTime                     @default(now())
+  updated_at                           DateTime                     @default(now()) @updatedAt
   archived_at                          DateTime?
-  organization                         Organization        @relation(fields: [organization_id], references: [id], onDelete: Restrict)
-  creador                              User                @relation("PredioCreador", fields: [created_by], references: [id], onDelete: Restrict)
-  actualizador                         User                @relation("PredioActualizador", fields: [updated_by], references: [id], onDelete: Restrict)
+  organization                         Organization                 @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  creador                              User                         @relation("PredioCreador", fields: [created_by], references: [id], onDelete: Restrict)
+  actualizador                         User                         @relation("PredioActualizador", fields: [updated_by], references: [id], onDelete: Restrict)
   colindancias                         PredioColindancia[]
   expedientes                          ExpedientePredio[]
   documentos                           PredioDocumento[]
+  expedienteDocumentFolders            ExpedienteDocumentoCarpeta[] @relation("ExpedienteFolderPredio")
   datosFuente                          PredioDatoFuente[]
 
   @@unique([id, organization_id], map: "uq_predios_id_org")
@@ -2397,6 +2474,8 @@ model Documento {
   operationPaymentVerifications    ComplianceOperationPaymentVerification[]
   complianceOfficialProducts       ComplianceOfficialProduct[]
   complianceNoticeAcknowledgements ComplianceNoticeAcknowledgement[]
+  documentosCfdiXml                DocumentoCfdi[]                           @relation("DocumentoCfdiXml")
+  documentosCfdiPdf                DocumentoCfdi[]                           @relation("DocumentoCfdiPdf")
 
   @@unique([id, organization_id], map: "h2_documentos_id_tenant_key")
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
@@ -2408,40 +2487,42 @@ model Documento {
 }
 
 model ExpedienteDocumento {
-  id                  String                            @id @default(uuid()) @db.Uuid
-  organization_id     String?                           @db.Uuid
-  expediente_id       String                            @db.Uuid
-  documento_id        String                            @db.Uuid
-  tipo_vinculo        String
-  fecha_vinculo       DateTime                          @default(now())
-  creado_por_id       String                            @db.Uuid
-  estatus             VinculoEstatus                    @default(ACTIVO)
-  inactivado_at       DateTime?
-  inactivado_por_id   String?                           @db.Uuid
-  motivo_inactivacion String?
-  observaciones       String?
-  origen              ExpedienteDocumentoOrigen         @default(EXPEDIENTE)
-  source_entity_type  String?                           @db.VarChar(80)
-  source_entity_id    String?                           @db.Uuid
-  source_context      String?                           @db.VarChar(160)
-  source_key          String                            @db.VarChar(320)
-  document_version    String?                           @db.VarChar(128)
-  provenance          Json?
-  document_role       ExpedienteDocumentoRole?
-  carpeta_id          String?                           @db.Uuid
-  nombre_visual       String?                           @db.VarChar(500)
-  moved_at            DateTime?
-  moved_by_id         String?                           @db.Uuid
-  idempotency_key     String?                           @db.VarChar(160)
-  creado_por          User                              @relation("ExpedienteDocCreador", fields: [creado_por_id], references: [id])
-  documento           Documento                         @relation(fields: [documento_id], references: [id])
-  expediente          Expediente                        @relation(fields: [expediente_id], references: [id])
-  snapshotItems       ExpedienteDocumentoSnapshotItem[]
-  carpeta             ExpedienteDocumentoCarpeta?       @relation(fields: [carpeta_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, map: "expediente_documentos_carpeta_tenant_fkey")
-  movedBy             User?                             @relation("ExpedienteDocumentoMovedBy", fields: [moved_by_id], references: [id], onDelete: Restrict, map: "expediente_documentos_moved_by_id_fkey")
-  predioDocumentos    PredioDocumento[]                 @relation("PredioDocumentoSourceExpedienteDocumento")
+  id                      String                            @id @default(uuid()) @db.Uuid
+  organization_id         String?                           @db.Uuid
+  expediente_id           String                            @db.Uuid
+  documento_id            String                            @db.Uuid
+  tipo_vinculo            String
+  fecha_vinculo           DateTime                          @default(now())
+  creado_por_id           String                            @db.Uuid
+  estatus                 VinculoEstatus                    @default(ACTIVO)
+  inactivado_at           DateTime?
+  inactivado_por_id       String?                           @db.Uuid
+  motivo_inactivacion     String?
+  observaciones           String?
+  origen                  ExpedienteDocumentoOrigen         @default(EXPEDIENTE)
+  source_entity_type      String?                           @db.VarChar(80)
+  source_entity_id        String?                           @db.Uuid
+  source_context          String?                           @db.VarChar(160)
+  source_key              String                            @db.VarChar(320)
+  document_version        String?                           @db.VarChar(128)
+  provenance              Json?
+  document_role           ExpedienteDocumentoRole?
+  carpeta_id              String?                           @db.Uuid
+  nombre_visual           String?                           @db.VarChar(500)
+  moved_at                DateTime?
+  moved_by_id             String?                           @db.Uuid
+  idempotency_key         String?                           @db.VarChar(160)
+  creado_por              User                              @relation("ExpedienteDocCreador", fields: [creado_por_id], references: [id])
+  documento               Documento                         @relation(fields: [documento_id], references: [id])
+  expediente              Expediente                        @relation(fields: [expediente_id], references: [id])
+  snapshotItems           ExpedienteDocumentoSnapshotItem[]
+  carpeta                 ExpedienteDocumentoCarpeta?       @relation(fields: [carpeta_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, map: "expediente_documentos_carpeta_tenant_fkey")
+  movedBy                 User?                             @relation("ExpedienteDocumentoMovedBy", fields: [moved_by_id], references: [id], onDelete: Restrict, map: "expediente_documentos_moved_by_id_fkey")
+  predioDocumentos        PredioDocumento[]                 @relation("PredioDocumentoSourceExpedienteDocumento")
+  comparecienteDocumentos ComparecienteDocumento[]          @relation("ComparecienteDocumentoSourceExpedienteDocumento")
 
   @@unique([expediente_id, documento_id, tipo_vinculo])
+  @@unique([id, organization_id], map: "uq_exp_documentos_id_tenant")
   @@unique([organization_id, expediente_id, source_key], map: "uq_exp_documentos_source_key")
   @@unique([organization_id, expediente_id, idempotency_key], map: "uq_exp_documentos_idempotency")
   @@index([organization_id, expediente_id, origen, estatus], map: "idx_exp_documentos_source_status")
@@ -2455,21 +2536,25 @@ model ExpedienteDocumento {
 /// Organización visual del apéndice. La provenance permanece en
 /// ExpedienteDocumento y no cambia cuando el usuario mueve un archivo.
 model ExpedienteDocumentoCarpeta {
-  id              String                       @id @default(uuid()) @db.Uuid
-  organization_id String                       @db.Uuid
-  expediente_id   String                       @db.Uuid
-  parent_id       String?                      @db.Uuid
-  nombre          String                       @db.VarChar(180)
-  orden           Int                          @default(0)
-  created_by_id   String                       @db.Uuid
-  created_at      DateTime                     @default(now())
-  updated_at      DateTime                     @default(now()) @updatedAt
-  archived_at     DateTime?
-  expediente      Expediente                   @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "exp_document_folder_expediente_tenant_fkey")
-  parent          ExpedienteDocumentoCarpeta?  @relation("ExpedienteDocumentoCarpetaTree", fields: [parent_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, map: "exp_document_folder_parent_tenant_fkey")
-  children        ExpedienteDocumentoCarpeta[] @relation("ExpedienteDocumentoCarpetaTree")
-  documentos      ExpedienteDocumento[]
-  createdBy       User                         @relation("ExpedienteDocumentoCarpetaCreatedBy", fields: [created_by_id], references: [id], onDelete: Restrict, map: "exp_document_folder_actor_fkey")
+  id                      String                       @id @default(uuid()) @db.Uuid
+  organization_id         String                       @db.Uuid
+  expediente_id           String                       @db.Uuid
+  parent_id               String?                      @db.Uuid
+  nombre                  String                       @db.VarChar(180)
+  orden                   Int                          @default(0)
+  created_by_id           String                       @db.Uuid
+  created_at              DateTime                     @default(now())
+  updated_at              DateTime                     @default(now()) @updatedAt
+  archived_at             DateTime?
+  linked_compareciente_id String?                      @db.Uuid
+  linked_predio_id        String?                      @db.Uuid
+  expediente              Expediente                   @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "exp_document_folder_expediente_tenant_fkey")
+  parent                  ExpedienteDocumentoCarpeta?  @relation("ExpedienteDocumentoCarpetaTree", fields: [parent_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, map: "exp_document_folder_parent_tenant_fkey")
+  children                ExpedienteDocumentoCarpeta[] @relation("ExpedienteDocumentoCarpetaTree")
+  documentos              ExpedienteDocumento[]
+  linkedCompareciente     Compareciente?               @relation("ExpedienteFolderCompareciente", fields: [linked_compareciente_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "exp_document_folder_compareciente_tenant_fkey")
+  linkedPredio            Predio?                      @relation("ExpedienteFolderPredio", fields: [linked_predio_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "exp_document_folder_predio_tenant_fkey")
+  createdBy               User                         @relation("ExpedienteDocumentoCarpetaCreatedBy", fields: [created_by_id], references: [id], onDelete: Restrict, map: "exp_document_folder_actor_fkey")
 
   @@unique([id, organization_id, expediente_id], map: "uq_exp_document_folder_tenant")
   @@index([organization_id, expediente_id, parent_id, nombre], map: "idx_exp_document_folder_sibling")
@@ -2667,6 +2752,7 @@ model Compareciente {
   contactos                         ComparecienteContacto[]
   datosFuente                       ComparecienteDatoFuente[]
   documentos                        ComparecienteDocumento[]
+  expedienteDocumentFolders         ExpedienteDocumentoCarpeta[]        @relation("ExpedienteFolderCompareciente")
   domicilios                        ComparecienteDomicilio[]
   identificaciones                  ComparecienteIdentificacion[]
   creado_por                        User                                @relation("ComparecienteCreador", fields: [creado_por_id], references: [id], onUpdate: NoAction)
@@ -2685,6 +2771,7 @@ model Compareciente {
   operationPaymentParties           ComplianceOperationPaymentParty[]
   h5RuleResults                     ComplianceRuleResult[]              @relation("H5RuleResultSubject")
   cotizacionesSolicitanteFormal     Cotizacion[]                        @relation("CotizacionSolicitanteFormal")
+  documentosCfdiReceptor            DocumentoCfdi[]                     @relation("DocumentoCfdiReceptor")
 
   @@unique([id, organization_id], map: "h2_comparecientes_id_tenant_key")
   @@index([creado_por_id], map: "idx_comparecientes_creado_por_fk")
@@ -2911,32 +2998,35 @@ model ComparecienteIdentificacion {
 }
 
 model ComparecienteDocumento {
-  id                String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id   String?                    @db.Uuid
-  compareciente_id  String                     @db.Uuid
-  documento_id      String                     @db.Uuid
-  categoria         TipoDocumentoCompareciente @default(IDENTIFICACION)
-  subcategoria      String?                    @db.VarChar(100)
-  principal         Boolean?                   @default(false)
-  fecha_documento   DateTime?                  @db.Date
-  fecha_vencimiento DateTime?                  @db.Date
-  fecha_validacion  DateTime?                  @db.Timestamptz(6)
-  validado_por_id   String?                    @db.Uuid
-  estatus           VinculoEstatus?            @default(ACTIVO)
-  vigencia          PredioDocumentoVigencia    @default(VIGENTE)
-  observaciones     String?
-  creado_por_id     String                     @db.Uuid
-  created_at        DateTime?                  @default(now()) @db.Timestamptz(6)
-  updated_at        DateTime?                  @default(now()) @updatedAt @db.Timestamptz(6)
-  archived_at       DateTime?                  @db.Timestamptz(6)
-  compareciente     Compareciente              @relation(fields: [compareciente_id], references: [id], onUpdate: NoAction)
-  creado_por        User                       @relation("ComparecienteDocCreador", fields: [creado_por_id], references: [id], onUpdate: NoAction)
-  documento         Documento                  @relation(fields: [documento_id], references: [id], onUpdate: NoAction)
-  validado_por      User?                      @relation("ComparecienteDocValidador", fields: [validado_por_id], references: [id], onUpdate: NoAction)
+  id                             String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id                String?                    @db.Uuid
+  compareciente_id               String                     @db.Uuid
+  documento_id                   String                     @db.Uuid
+  source_expediente_documento_id String?                    @db.Uuid
+  categoria                      TipoDocumentoCompareciente @default(IDENTIFICACION)
+  subcategoria                   String?                    @db.VarChar(100)
+  principal                      Boolean?                   @default(false)
+  fecha_documento                DateTime?                  @db.Date
+  fecha_vencimiento              DateTime?                  @db.Date
+  fecha_validacion               DateTime?                  @db.Timestamptz(6)
+  validado_por_id                String?                    @db.Uuid
+  estatus                        VinculoEstatus?            @default(ACTIVO)
+  vigencia                       PredioDocumentoVigencia    @default(VIGENTE)
+  observaciones                  String?
+  creado_por_id                  String                     @db.Uuid
+  created_at                     DateTime?                  @default(now()) @db.Timestamptz(6)
+  updated_at                     DateTime?                  @default(now()) @updatedAt @db.Timestamptz(6)
+  archived_at                    DateTime?                  @db.Timestamptz(6)
+  compareciente                  Compareciente              @relation(fields: [compareciente_id], references: [id], onUpdate: NoAction)
+  creado_por                     User                       @relation("ComparecienteDocCreador", fields: [creado_por_id], references: [id], onUpdate: NoAction)
+  documento                      Documento                  @relation(fields: [documento_id], references: [id], onUpdate: NoAction)
+  sourceExpedienteDocumento      ExpedienteDocumento?       @relation("ComparecienteDocumentoSourceExpedienteDocumento", fields: [source_expediente_documento_id, organization_id], references: [id, organization_id], onDelete: Restrict)
+  validado_por                   User?                      @relation("ComparecienteDocValidador", fields: [validado_por_id], references: [id], onUpdate: NoAction)
 
   @@unique([compareciente_id, documento_id, categoria], map: "uq_compareciente_doc")
   @@index([creado_por_id], map: "idx_comp_documentos_creador_fk")
   @@index([documento_id], map: "idx_comp_documentos_documento_fk")
+  @@index([source_expediente_documento_id], map: "idx_comp_documentos_source_exp_documento")
   @@index([validado_por_id], map: "idx_comp_documentos_validador_fk")
   @@map("compareciente_documentos")
 }
@@ -3176,6 +3266,9 @@ model MovimientoFinanciero {
   ingresoReportadoExp008  ExpedienteIngresoReportado?
   solicitudPagoExp008     ExpedienteSolicitudPago?
   finanzaDocumentosExp008 ExpedienteFinanzaDocumento[]
+  aplicacionesPagoCfdi    AplicacionPagoCfdi[]
+  transferenciasOrigen    TransferenciaInterna[]           @relation("TransferenciaMovimientoOrigen")
+  transferenciasDestino   TransferenciaInterna[]           @relation("TransferenciaMovimientoDestino")
   aplicado_por            User?                        @relation("MovimientoAplicado", fields: [aplicado_por_id], references: [id])
   cancelado_por           User?                        @relation("MovimientoCancelado", fields: [cancelado_por_id], references: [id])
   capturado_por           User                         @relation("MovimientoCapturado", fields: [capturado_por_id], references: [id])
@@ -3205,6 +3298,7 @@ model MovimientoFinanciero {
   @@index([movimiento_origen_id], map: "idx_movimientos_origen_fk")
   @@index([revertido_por_id], map: "idx_movimientos_revertido_por_fk")
   @@index([validado_por_id], map: "idx_movimientos_validado_por_fk")
+  @@unique([id, organization_id], map: "uq_movimientos_id_org_exp008")
   @@map("movimientos_financieros")
 }
 
@@ -3245,10 +3339,14 @@ model CuentaFinanciera {
   transaccionesBanco       TransaccionEstadoCuenta[]
   ingresosReportadosExp008 ExpedienteIngresoReportado[]
   solicitudesPagoExp008    ExpedienteSolicitudPago[]
+  entidadesFiscales        EntidadFiscalCuenta[]
+  transferenciasOrigen     TransferenciaInterna[]           @relation("TransferenciaCuentaOrigen")
+  transferenciasDestino    TransferenciaInterna[]           @relation("TransferenciaCuentaDestino")
 
   @@unique([organization_id, institucion, alias], map: "uq_cuentas_financieras_org_institucion_alias")
   @@index([activa, predeterminada])
   @@index([creada_por_id], map: "idx_cuentas_financieras_creada_por_fk")
+  @@unique([id, organization_id], map: "uq_cuentas_id_org_exp008")
   @@map("cuentas_financieras")
 }
 
@@ -4291,38 +4389,59 @@ model Tarea {
 }
 
 model EventoAgenda {
-  id                 String              @id @default(uuid()) @db.Uuid
-  organization_id    String?             @db.Uuid
+  id                 String                     @id @default(uuid()) @db.Uuid
+  organization_id    String?                    @db.Uuid
   titulo             String
   descripcion        String?
   tipo               TipoEvento
   fecha_inicio       DateTime
   fecha_fin          DateTime?
-  todo_el_dia        Boolean             @default(false)
-  user_id            String?             @db.Uuid
-  expediente_id      String?             @db.Uuid
-  created_at         DateTime            @default(now())
-  event_id           String?             @db.Uuid
-  idempotency_key    String?             @unique
-  estatus            EventoAgendaEstatus @default(ACTIVO)
-  compareciente_id   String?             @db.Uuid
+  todo_el_dia        Boolean                    @default(false)
+  user_id            String?                    @db.Uuid
+  created_by_id      String?                    @db.Uuid
+  visibilidad        AgendaVisibilidad          @default(PRIVATE)
+  expediente_id      String?                    @db.Uuid
+  created_at         DateTime                   @default(now())
+  event_id           String?                    @db.Uuid
+  idempotency_key    String?                    @unique
+  estatus            EventoAgendaEstatus        @default(ACTIVO)
+  compareciente_id   String?                    @db.Uuid
   recordatorios      Json?
-  updated_at         DateTime            @default(now()) @updatedAt @db.Timestamp(6)
-  cancelado_at       DateTime?           @db.Timestamp(6)
-  cancelado_por_id   String?             @db.Uuid
+  updated_at         DateTime                   @default(now()) @updatedAt @db.Timestamp(6)
+  cancelado_at       DateTime?                  @db.Timestamp(6)
+  cancelado_por_id   String?                    @db.Uuid
   motivo_cancelacion String?
-  cancelado_por      User?               @relation("EventoCanceladoPor", fields: [cancelado_por_id], references: [id], onUpdate: NoAction)
-  compareciente      Compareciente?      @relation(fields: [compareciente_id], references: [id], onUpdate: NoAction)
-  expediente         Expediente?         @relation(fields: [expediente_id], references: [id])
-  usuario            User?               @relation("EventoResponsable", fields: [user_id], references: [id])
+  cancelado_por      User?                      @relation("EventoCanceladoPor", fields: [cancelado_por_id], references: [id], onUpdate: NoAction)
+  created_by         User?                      @relation("EventoAgendaCreadoPor", fields: [created_by_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  compareciente      Compareciente?             @relation(fields: [compareciente_id], references: [id], onUpdate: NoAction)
+  expediente         Expediente?                @relation(fields: [expediente_id], references: [id])
+  usuario            User?                      @relation("EventoResponsable", fields: [user_id], references: [id])
+  participantes      EventoAgendaParticipante[]
 
+  @@unique([id, organization_id], map: "uq_eventos_agenda_id_org")
   @@index([estatus])
   @@index([expediente_id], map: "eventos_agenda_expediente_idx")
   @@index([fecha_inicio])
   @@index([user_id, fecha_inicio], map: "eventos_agenda_user_fecha_idx")
   @@index([cancelado_por_id], map: "idx_agenda_cancelado_por_fk")
   @@index([compareciente_id], map: "idx_agenda_compareciente_fk")
+  @@index([organization_id, visibilidad, fecha_inicio], map: "idx_agenda_org_visibility_date")
+  @@index([created_by_id], map: "idx_agenda_created_by_fk")
   @@map("eventos_agenda")
+}
+
+model EventoAgendaParticipante {
+  id              String                 @id @default(uuid()) @db.Uuid
+  organization_id String                 @db.Uuid
+  evento_id       String                 @db.Uuid
+  user_id         String                 @db.Uuid
+  created_at      DateTime               @default(now())
+  evento          EventoAgenda           @relation(fields: [evento_id, organization_id], references: [id, organization_id], onDelete: Cascade, map: "agenda_participants_event_tenant_fkey")
+  membership      OrganizationMembership @relation("EventoAgendaParticipanteMembership", fields: [organization_id, user_id], references: [organization_id, user_id], onDelete: Restrict, map: "agenda_participants_membership_fkey")
+
+  @@unique([organization_id, evento_id, user_id], map: "uq_agenda_participant_event_user")
+  @@index([organization_id, user_id, evento_id], map: "idx_agenda_participant_user")
+  @@map("evento_agenda_participantes")
 }
 
 model TareaExterna {
@@ -7014,6 +7133,11 @@ enum EventoAgendaEstatus {
   CANCELADO
 }
 
+enum AgendaVisibilidad {
+  PRIVATE
+  ORGANIZATION
+}
+
 enum TipoEvento {
   PERSONAL
   DESPACHO
@@ -7218,6 +7342,7 @@ enum CatalogoDestinoFuncional {
   FINANZAS_SOLICITUD_PAGO
   PROYECTO_MACHOTE
   EXPEDIENTE_DOCUMENTO_GENERICO
+  ARCHIVO_NOTA
   CUMPLIMIENTO_PLD_UIF
   SIN_ASIGNAR
 }
@@ -7623,4 +7748,262 @@ model ExpedienteSocietyTarget {
   @@index([persona_moral_id, organization_id], map: "idx_fk_expediente_society_targets_9186dcc4")
   @@index([organization_id, created_by_id], map: "idx_fk_expediente_society_targets_a1ab134d")
   @@map("expediente_society_targets")
+}
+
+/// Configuración fiscal por organización. Los secretos son referencias a un
+/// almacén server-side; nunca se persiste aquí la llave privada o contraseña.
+model EntidadFiscalCfdi {
+  id                      String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id         String                 @db.Uuid
+  razon_social            String                 @db.VarChar(300)
+  rfc                     String                 @db.VarChar(13)
+  tipo_contribuyente      String?                @db.VarChar(20)
+  regimen_fiscal          String                 @db.VarChar(8)
+  codigo_postal           String                 @db.VarChar(5)
+  pac_provider            String?                @db.VarChar(80)
+  pac_secret_ref          String?                @db.VarChar(500)
+  csd_cer_storage_ref     String?                @db.VarChar(500)
+  csd_key_secret_ref      String?                @db.VarChar(500)
+  csd_password_secret_ref String?                @db.VarChar(500)
+  csd_serial              String?                @db.VarChar(80)
+  csd_vigente_desde       DateTime?              @db.Timestamptz(6)
+  csd_vigente_hasta       DateTime?              @db.Timestamptz(6)
+  serie                   String?                @db.VarChar(25)
+  siguiente_folio         BigInt                 @default(1)
+  plantilla_id            String?                @db.Uuid
+  activa                  Boolean                @default(true)
+  created_by_id           String                 @db.Uuid
+  created_at              DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  organization            Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_org_fkey")
+  createdBy               OrganizationMembership @relation("EntidadFiscalCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_creator_fkey")
+  cuentas                 EntidadFiscalCuenta[]
+  documentosCfdi         DocumentoCfdi[]
+
+  @@unique([organization_id, rfc], map: "uq_entidades_fiscales_cfdi_org_rfc")
+  @@unique([id, organization_id], map: "uq_entidades_fiscales_cfdi_id_org")
+  @@index([organization_id, activa], map: "idx_entidades_fiscales_cfdi_org_active")
+  @@index([organization_id, created_by_id], map: "idx_entidades_fiscales_cfdi_creator")
+  @@map("entidades_fiscales_cfdi")
+}
+
+model EntidadFiscalCuenta {
+  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id    String             @db.Uuid
+  entidad_fiscal_id  String             @db.Uuid
+  cuenta_id          String             @db.Uuid
+  predeterminada     Boolean            @default(false)
+  created_at         DateTime           @default(now()) @db.Timestamptz(6)
+  entidadFiscal      EntidadFiscalCfdi  @relation(fields: [entidad_fiscal_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_cuenta_entidad_fkey")
+  cuenta             CuentaFinanciera   @relation(fields: [cuenta_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_cuenta_cuenta_fkey")
+
+  @@unique([organization_id, entidad_fiscal_id, cuenta_id], map: "uq_entidad_fiscal_cuenta")
+  @@index([cuenta_id, organization_id], map: "idx_entidad_fiscal_cuenta_cuenta")
+  @@map("entidades_fiscales_cuentas")
+}
+
+model ProveedorFiscal {
+  id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id       String                 @db.Uuid
+  razon_social          String                 @db.VarChar(300)
+  rfc                   String                 @db.VarChar(13)
+  tipo_persona          String?                @db.VarChar(20)
+  codigo_postal         String?                @db.VarChar(5)
+  regimenes_fiscales    Json?
+  correo                String?                @db.VarChar(254)
+  telefono              String?                @db.VarChar(40)
+  datos_bancarios       Json?
+  csf_documento_id      String?                @db.Uuid
+  activo                Boolean                @default(true)
+  created_by_id         String                 @db.Uuid
+  created_at            DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  organization          Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_proveedor_org_fkey")
+  createdBy             OrganizationMembership @relation("ProveedorFiscalCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_proveedor_creator_fkey")
+  documentosCfdi       DocumentoCfdi[]
+  cuentasPorPagar      CuentaPorPagarCfdi[]
+
+  @@unique([organization_id, rfc], map: "uq_proveedores_fiscales_org_rfc")
+  @@unique([id, organization_id], map: "uq_proveedores_fiscales_id_org")
+  @@index([organization_id, activo], map: "idx_proveedores_fiscales_org_active")
+  @@index([organization_id, created_by_id], map: "idx_proveedores_fiscales_creator")
+  @@map("proveedores_fiscales")
+}
+
+/// Documento fiscal separado del movimiento financiero y de la cuenta por
+/// cobrar/pagar. DRAFT nunca se presenta como timbrado.
+model DocumentoCfdi {
+  id                       String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id          String                 @db.Uuid
+  direccion                String                 @db.VarChar(16)
+  tipo                     String                 @db.VarChar(8)
+  estado                   String                 @default("DRAFT") @db.VarChar(32)
+  version                  String                 @default("4.0") @db.VarChar(8)
+  source                   String                 @default("LOCAL_DRAFT") @db.VarChar(32)
+  uuid_fiscal              String?                @db.VarChar(36)
+  serie                    String?                @db.VarChar(25)
+  folio                    String?                @db.VarChar(60)
+  entidad_fiscal_id        String?                @db.Uuid
+  proveedor_id             String?                @db.Uuid
+  expediente_id            String?                @db.Uuid
+  receptor_compareciente_id String?               @db.Uuid
+  movimiento_id            String?                @db.Uuid
+  emisor_rfc               String                 @db.VarChar(13)
+  emisor_nombre            String                 @db.VarChar(300)
+  receptor_rfc             String                 @db.VarChar(13)
+  receptor_nombre          String                 @db.VarChar(300)
+  receptor_regimen         String?                @db.VarChar(8)
+  receptor_codigo_postal   String?                @db.VarChar(5)
+  uso_cfdi                 String?                @db.VarChar(8)
+  metodo_pago              String?                @db.VarChar(3)
+  forma_pago               String?                @db.VarChar(3)
+  moneda                   String                 @default("MXN") @db.VarChar(8)
+  subtotal                 Decimal                @db.Decimal(14, 2)
+  impuestos_trasladados    Decimal                @default(0) @db.Decimal(14, 2)
+  impuestos_retenidos      Decimal                @default(0) @db.Decimal(14, 2)
+  total                    Decimal                @db.Decimal(14, 2)
+  saldo                    Decimal                @db.Decimal(14, 2)
+  fecha_emision            DateTime?              @db.Timestamptz(6)
+  fecha_timbrado           DateTime?              @db.Timestamptz(6)
+  draft_payload            Json
+  provider                 String?                @db.VarChar(80)
+  provider_reference       String?                @db.VarChar(180)
+  xml_documento_id         String?                @db.Uuid
+  pdf_documento_id         String?                @db.Uuid
+  idempotency_key          String                 @db.VarChar(180)
+  created_by_id            String                 @db.Uuid
+  created_at               DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  organization             Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_org_fkey")
+  createdBy                OrganizationMembership @relation("DocumentoCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_creator_fkey")
+  entidadFiscal            EntidadFiscalCfdi?      @relation(fields: [entidad_fiscal_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_entidad_fkey")
+  proveedor                ProveedorFiscal?        @relation(fields: [proveedor_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_proveedor_fkey")
+  expediente               Expediente?             @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_expediente_fkey")
+  receptor                 Compareciente?          @relation("DocumentoCfdiReceptor", fields: [receptor_compareciente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_receptor_fkey")
+  xmlDocumento             Documento?              @relation("DocumentoCfdiXml", fields: [xml_documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_xml_fkey")
+  pdfDocumento             Documento?              @relation("DocumentoCfdiPdf", fields: [pdf_documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_pdf_fkey")
+  aplicacionesPago        AplicacionPagoCfdi[]
+  cuentaPorCobrar         CuentaPorCobrarCfdi?
+  cuentaPorPagar          CuentaPorPagarCfdi?
+
+  @@unique([organization_id, idempotency_key], map: "uq_documentos_cfdi_idempotency")
+  @@unique([id, organization_id], map: "uq_documentos_cfdi_id_org")
+  @@index([organization_id, direccion, estado], map: "idx_documentos_cfdi_org_state")
+  @@index([organization_id, uuid_fiscal], map: "idx_documentos_cfdi_org_uuid")
+  @@index([expediente_id, organization_id], map: "idx_documentos_cfdi_expediente")
+  @@index([movimiento_id, organization_id], map: "idx_documentos_cfdi_movimiento")
+  @@map("documentos_cfdi")
+}
+
+model CuentaPorCobrarCfdi {
+  id                 String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id    String                 @db.Uuid
+  cfdi_id            String?                @db.Uuid
+  expediente_id      String?                @db.Uuid
+  concepto           String                 @db.VarChar(500)
+  monto_total        Decimal                @db.Decimal(14, 2)
+  monto_cobrado      Decimal                @default(0) @db.Decimal(14, 2)
+  saldo              Decimal                @db.Decimal(14, 2)
+  fecha_vencimiento  DateTime?              @db.Date
+  estado             String                 @default("PENDIENTE") @db.VarChar(24)
+  created_by_id      String                 @db.Uuid
+  created_at         DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  organization       Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxc_org_fkey")
+  createdBy          OrganizationMembership @relation("CuentaPorCobrarCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxc_creator_fkey")
+  cfdi               DocumentoCfdi?         @relation(fields: [cfdi_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxc_cfdi_fkey")
+  expediente         Expediente?            @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxc_expediente_fkey")
+  aplicaciones       AplicacionPagoCfdi[]
+
+  @@unique([id, organization_id], map: "uq_cuentas_cobrar_cfdi_id_org")
+  @@unique([cfdi_id, organization_id], map: "uq_cuentas_cobrar_cfdi_documento")
+  @@index([organization_id, estado], map: "idx_cuentas_cobrar_cfdi_org_state")
+  @@index([expediente_id, organization_id], map: "idx_cuentas_cobrar_cfdi_expediente")
+  @@map("cuentas_por_cobrar_cfdi")
+}
+
+model CuentaPorPagarCfdi {
+  id                 String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id    String                 @db.Uuid
+  cfdi_id            String?                @db.Uuid
+  proveedor_id       String?                @db.Uuid
+  expediente_id      String?                @db.Uuid
+  concepto           String                 @db.VarChar(500)
+  monto_total        Decimal                @db.Decimal(14, 2)
+  monto_pagado       Decimal                @default(0) @db.Decimal(14, 2)
+  saldo              Decimal                @db.Decimal(14, 2)
+  fecha_vencimiento  DateTime?              @db.Date
+  estado             String                 @default("PENDIENTE") @db.VarChar(24)
+  created_by_id      String                 @db.Uuid
+  created_at         DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  organization       Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxp_org_fkey")
+  createdBy          OrganizationMembership @relation("CuentaPorPagarCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxp_creator_fkey")
+  cfdi               DocumentoCfdi?         @relation(fields: [cfdi_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxp_cfdi_fkey")
+  proveedor          ProveedorFiscal?       @relation(fields: [proveedor_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxp_proveedor_fkey")
+  expediente         Expediente?            @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxp_expediente_fkey")
+  aplicaciones       AplicacionPagoCfdi[]
+
+  @@unique([id, organization_id], map: "uq_cuentas_pagar_cfdi_id_org")
+  @@unique([cfdi_id, organization_id], map: "uq_cuentas_pagar_cfdi_documento")
+  @@index([organization_id, estado], map: "idx_cuentas_pagar_cfdi_org_state")
+  @@index([proveedor_id, organization_id], map: "idx_cuentas_pagar_cfdi_proveedor")
+  @@index([expediente_id, organization_id], map: "idx_cuentas_pagar_cfdi_expediente")
+  @@map("cuentas_por_pagar_cfdi")
+}
+
+model AplicacionPagoCfdi {
+  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id      String                 @db.Uuid
+  cfdi_id              String                 @db.Uuid
+  movimiento_id        String                 @db.Uuid
+  cuenta_por_cobrar_id String?                @db.Uuid
+  cuenta_por_pagar_id  String?                @db.Uuid
+  monto_aplicado       Decimal                @db.Decimal(14, 2)
+  numero_parcialidad   Int?
+  saldo_anterior       Decimal?               @db.Decimal(14, 2)
+  saldo_insoluto       Decimal?               @db.Decimal(14, 2)
+  rep_cfdi_id          String?                @db.Uuid
+  estado_rep           String?                @db.VarChar(32)
+  idempotency_key      String                 @db.VarChar(180)
+  created_by_id        String                 @db.Uuid
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  organization         Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_aplicacion_org_fkey")
+  createdBy            OrganizationMembership @relation("AplicacionPagoCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_aplicacion_creator_fkey")
+  cfdi                 DocumentoCfdi          @relation(fields: [cfdi_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_aplicacion_cfdi_fkey")
+  movimiento           MovimientoFinanciero   @relation(fields: [movimiento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_aplicacion_movimiento_fkey")
+  cuentaPorCobrar      CuentaPorCobrarCfdi?   @relation(fields: [cuenta_por_cobrar_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_aplicacion_cxc_fkey")
+  cuentaPorPagar       CuentaPorPagarCfdi?    @relation(fields: [cuenta_por_pagar_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_aplicacion_cxp_fkey")
+
+  @@unique([organization_id, idempotency_key], map: "uq_aplicaciones_pago_cfdi_idempotency")
+  @@unique([id, organization_id], map: "uq_aplicaciones_pago_cfdi_id_org")
+  @@index([cfdi_id, organization_id], map: "idx_aplicaciones_pago_cfdi_cfdi")
+  @@index([movimiento_id, organization_id], map: "idx_aplicaciones_pago_cfdi_movimiento")
+  @@map("aplicaciones_pago_cfdi")
+}
+
+model TransferenciaInterna {
+  id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id       String                 @db.Uuid
+  cuenta_origen_id      String                 @db.Uuid
+  cuenta_destino_id     String                 @db.Uuid
+  movimiento_origen_id  String                 @unique @db.Uuid
+  movimiento_destino_id String                 @unique @db.Uuid
+  monto                 Decimal                @db.Decimal(14, 2)
+  referencia            String?                @db.VarChar(180)
+  idempotency_key       String                 @db.VarChar(180)
+  created_by_id         String                 @db.Uuid
+  created_at            DateTime               @default(now()) @db.Timestamptz(6)
+  organization          Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_transferencia_org_fkey")
+  createdBy             OrganizationMembership @relation("TransferenciaInternaCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_transferencia_creator_fkey")
+  cuentaOrigen          CuentaFinanciera       @relation("TransferenciaCuentaOrigen", fields: [cuenta_origen_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_transferencia_cuenta_origen_fkey")
+  cuentaDestino         CuentaFinanciera       @relation("TransferenciaCuentaDestino", fields: [cuenta_destino_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_transferencia_cuenta_destino_fkey")
+  movimientoOrigen      MovimientoFinanciero   @relation("TransferenciaMovimientoOrigen", fields: [movimiento_origen_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_transferencia_movimiento_origen_fkey")
+  movimientoDestino     MovimientoFinanciero   @relation("TransferenciaMovimientoDestino", fields: [movimiento_destino_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_transferencia_movimiento_destino_fkey")
+
+  @@unique([organization_id, idempotency_key], map: "uq_transferencias_internas_idempotency")
+  @@unique([id, organization_id], map: "uq_transferencias_internas_id_org")
+  @@index([cuenta_origen_id, organization_id], map: "idx_transferencias_internas_origen")
+  @@index([cuenta_destino_id, organization_id], map: "idx_transferencias_internas_destino")
+  @@map("transferencias_internas")
 }

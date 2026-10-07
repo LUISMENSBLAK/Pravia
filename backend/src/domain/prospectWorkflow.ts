@@ -17,7 +17,7 @@ export type ProspectPipelineStage = keyof typeof PROSPECT_PIPELINE_STAGES;
 export const PROSPECT_ACTIONS = {
   COMENZAR_INTEGRACION: 'Comenzar integración',
   MARCAR_LISTO_PARA_COTIZAR: 'Marcar listo para cotizar',
-  CONVERTIR: 'Solicitar cotización',
+  CONVERTIR: 'Convertir en cotización',
   SUSPENDER: 'Suspender prospecto',
   CANCELAR: 'Cancelar prospecto',
   REACTIVAR: 'Reactivar prospecto',

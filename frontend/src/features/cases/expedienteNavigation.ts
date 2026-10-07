@@ -1,6 +1,6 @@
 export const expedienteSections = [
   'actos', 'comparecientes', 'predios', 'documentos', 'seguimiento',
-  'plantillas', 'cuestionarios', 'presupuesto', 'proyecto', 'finanzas', 'isr', 'cumplimiento', 'actividad',
+  'plantillas', 'cuestionarios', 'presupuesto', 'proyecto', 'finanzas', 'isr', 'cumplimiento', 'archivo', 'actividad',
 ] as const;
 
 export type ExpedienteSection = typeof expedienteSections[number];

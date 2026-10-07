@@ -82,6 +82,19 @@ describe('PRAVIA IA action layer', () => {
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ body: expect.objectContaining({ tipo: 'CITA' }) }), expect.anything());
   });
 
+  it('respeta la privacidad expresamente pedida por el usuario aunque el planificador proponga TODOS', async () => {
+    vi.spyOn(assistantConversationService, 'actionState').mockResolvedValue(undefined);
+    vi.spyOn(assistantConversationService, 'setActionState').mockResolvedValue(undefined as any);
+    const create = vi.spyOn(AgendaController, 'create').mockImplementation(async (req: any, res: any) => res.status(201).json({ success: true, evento: { id: 'event-private', titulo: req.body.titulo, fecha_inicio: req.body.fecha_inicio } }));
+    vi.spyOn((prisma as any).auditLog, 'create').mockResolvedValue({} as any);
+
+    await prepareOrExecuteAssistantAction({ ...base, origin: 'USER_COMMAND', actionKey: 'agenda.event.create',
+      context: { requestMessage: 'Agenda una cita solo para mí mañana.' },
+      args: { titulo: 'Cita privada', fecha_inicio: '2026-09-30T10:00:00-06:00', visibilidad: 'ORGANIZATION' } });
+
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ body: expect.objectContaining({ visibilidad: 'PRIVATE' }) }), expect.anything());
+  });
+
   it('normaliza etiquetas humanas de tipo de persona y solicita un catálogo válido si el planificador envía un placeholder', async () => {
     let stored: any;
     const partyActor = { ...actor, permissions: [...actor.permissions, 'comparecientes.write'] } as any;
@@ -362,6 +375,39 @@ describe('PRAVIA IA action layer', () => {
 
   it('no expone el flujo legacy de solicitud a una notaría externa', () => {
     expect(assistantActionCatalog(actor).map((item) => item.key)).not.toContain('prospect.notary_request.prepare');
+  });
+
+  it('solicita en el chat un responsable autorizado antes de confirmar listo para cotizar', async () => {
+    let pending: any;
+    vi.spyOn(assistantConversationService, 'actionState').mockImplementation(async () => pending);
+    vi.spyOn(assistantConversationService, 'setActionState').mockImplementation(async (_actor, _conversationId, state) => { pending = state; return undefined as any; });
+    vi.spyOn(ProspectWorkflowService.prototype, 'read').mockResolvedValue({
+      folio: 'PRO-0001-2026', stage: 'EN_INTEGRACION', stageLabel: 'En integración', version: 3,
+      actions: [{ code: 'MARCAR_LISTO_PARA_COTIZAR', label: 'Marcar listo para cotizar' }],
+      quoteAssignee: null,
+      quoteAssignees: [{ id: actor.id, nombre: 'Ana', apellido: 'Prueba' }],
+    } as any);
+    const act = vi.spyOn(ProspectWorkflowService.prototype, 'act');
+
+    const first = await prepareOrExecuteAssistantAction({ ...base, actionKey: 'prospect.transition',
+      args: { prospect_id: 'prospect-1', action: 'MARCAR_LISTO_PARA_COTIZAR' } });
+    expect(first.confirmation).toBeUndefined();
+    expect(first.collection?.fields).toContainEqual(expect.objectContaining({
+      name: 'quoteAssigneeId', type: 'select', options: [{ value: actor.id, label: 'Ana Prueba' }],
+    }));
+    expect(act).not.toHaveBeenCalled();
+
+    await expect(prepareOrExecuteAssistantAction({ ...base, messageId: 'form-foreign', actionKey: 'prospect.transition',
+      args: { quoteAssigneeId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' } }))
+      .rejects.toMatchObject({ code: 'AI_PROSPECT_QUOTE_ASSIGNEE_INVALID', status: 409 });
+    expect(act).not.toHaveBeenCalled();
+
+    const selected = await prepareOrExecuteAssistantAction({ ...base, messageId: 'form-valid', actionKey: 'prospect.transition',
+      args: { quoteAssigneeId: actor.id } });
+    expect(selected.confirmation).toBeDefined();
+    expect(selected.collection).toBeUndefined();
+    expect(pending).toMatchObject({ status: 'AWAITING_CONFIRMATION', args: { quoteAssigneeId: actor.id } });
+    expect(act).not.toHaveBeenCalled();
   });
 
   it('prepara una transición sensible y no la ejecuta antes de confirmar', async () => {

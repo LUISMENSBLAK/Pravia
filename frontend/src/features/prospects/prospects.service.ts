@@ -3,6 +3,22 @@ import type { ProspectWorkflow } from './prospects.types';
 import type { FollowUpInput, NewProspectInput, Prospect, ProspectCatalogs, ProspectDocument, ProspectFollowUp, ProspectListFilters, ProspectListResult, UpdateProspectInput } from './prospects.types';
 import { isActiveProspect, isConvertedProspect } from './prospects.types';
 
+export type ProspectDocumentReview = {
+  available: boolean;
+  requiresManualReview?: Array<{ id: string; name: string }>;
+  current: boolean;
+  review: null | {
+    id: string;
+    summary: string;
+    findings: Array<{ detail: string; document_ids: string[] }>;
+    unreadable: Array<{ id: string; name: string; reason: string }>;
+    documents: Array<{ id: string; name: string; checksum: string | null }>;
+    acts: Array<{ id: string; name: string }>;
+    reviewedAt: string;
+    model: string;
+  };
+};
+
 const asObject = (value: unknown): Record<string, unknown> | null => value && typeof value === 'object' ? value as Record<string, unknown> : null;
 
 export const normalizeProspects = (payload: unknown): Prospect[] => {
@@ -75,6 +91,12 @@ export const prospectsService = {
   async getDocuments(id: string, signal?: AbortSignal): Promise<ProspectDocument[]> {
     const payload = await apiRequest<unknown>(`/prospectos/${encodeURIComponent(id)}/documentos`, { signal });
     return Array.isArray(payload) ? payload.filter((item): item is ProspectDocument => Boolean(item && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string')) : [];
+  },
+  documentReview(id: string, signal?: AbortSignal): Promise<ProspectDocumentReview> {
+    return apiRequest<ProspectDocumentReview>(`/prospectos/${encodeURIComponent(id)}/revision-documental-ia`, { signal });
+  },
+  runDocumentReview(id: string): Promise<ProspectDocumentReview> {
+    return apiRequest<ProspectDocumentReview>(`/prospectos/${encodeURIComponent(id)}/revision-documental-ia`, { method: 'POST' });
   },
   async create(input: NewProspectInput, idempotencyKey = crypto.randomUUID()): Promise<Prospect> {
     return apiRequest<Prospect>('/prospectos', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(input) });

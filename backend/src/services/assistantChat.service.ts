@@ -275,6 +275,7 @@ function baseInstructions(user: AuthUser, input: AssistantMessageInput) {
     'El contexto visual orienta, pero nunca amplía permisos ni cambia el objeto explícitamente solicitado.',
     'Cada herramienta aplica RBAC, tenant y alcance por objeto. No intentes eludir esos controles.',
     'Distingue tareas personales, agenda, firmas, expedientes, documentación, cobranza y seguimiento comercial.',
+    'En Agenda, "solo yo" o "privado" significa visibilidad PRIVATE; "todos", "todo el equipo" o "toda la Notaría" significa ORGANIZATION. Confirma la visibilidad al crear o modificar un evento. Nunca reveles eventos privados ajenos.',
     'Solo llama incompleto a algo con evidencia objetiva: requisito, campo, documento, checklist, workflow o estado pendiente retornado.',
     'Distingue HECHO de RECOMENDACIÓN. Una prioridad recomendada debe citar la señal real que la sustenta.',
     'No incluyas UUID, correlation IDs, permisos internos, trazas, nombres de tools ni detalles técnicos.',

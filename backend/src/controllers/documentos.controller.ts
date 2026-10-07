@@ -60,6 +60,7 @@ export const uploadDocumento = async (req: Request, res: Response) => {
     const storage_key = await uploadFile(file.buffer, nombre_interno, canonicalMime);
 
     const documentoData = {
+      organization_id: req.user!.organizationId,
       nombre_original: file.originalname,
       nombre_interno,
       tipo,

@@ -1,7 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import {
   CalendarDays, Calculator, ChartNoAxesColumnIncreasing, CircleDollarSign, ContactRound, FileText,
-  Building2, FolderClosed, Landmark, PanelLeftClose, PanelLeftOpen, Settings, ShieldCheck, Sun, UsersRound,
+  Building2, FolderClosed, Landmark, PanelLeftClose, PanelLeftOpen, Settings, ShieldCheck, Sun, UsersRound, Archive,
 } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { BrandLogo } from './BrandLogo';
@@ -16,6 +16,7 @@ const navigation: NavItem[] = [
   { label: 'Prospectos', to: '/prospectos', icon: UsersRound, permission: 'prospectos.read' },
   { label: 'Cotizaciones', to: '/cotizaciones', icon: FileText, permission: 'cotizaciones.read' },
   { label: 'Expedientes', to: '/expedientes', icon: FolderClosed, permission: 'expedientes.read' },
+  { label: 'Archivo', to: '/archivo', icon: Archive, permission: 'expedientes.read' },
   { label: 'Predios', to: '/predios', icon: Building2, permission: 'expedientes.read' },
   { label: 'Notarías', to: '/notarias', icon: Landmark, permission: 'notarias.read' },
   { label: 'Comparecientes', to: '/comparecientes', icon: ContactRound, permission: 'comparecientes.read' },

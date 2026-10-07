@@ -3,6 +3,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import prisma from '../config/prisma';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { comparecienteObjectWhere, predioObjectWhere } from './objectAccess.service';
+import { agendaReadableWhere } from './agendaVisibility.service';
 
 export type NotificationActor = NonNullable<Request['user']>;
 export type NotificationStatus = 'ACTIVE' | 'RESOLVED' | 'DISMISSED' | 'NOT_APPLICABLE';
@@ -88,11 +89,10 @@ export class IntelligentNotificationService {
       estatus: { in: ['PENDIENTE', 'EN_PROCESO'] },
       ...(isGlobal ? {} : { asignado_a_id: actor.id }),
     };
-    const eventWhere = {
-      organization_id: actor.organizationId,
+    const eventWhere: Prisma.EventoAgendaWhereInput = {
+      ...agendaReadableWhere(actor),
       estatus: 'ACTIVO' as const,
       fecha_inicio: { lte: sevenDays },
-      ...(isGlobal ? {} : { user_id: actor.id }),
     };
 
     const [preference, tasks, events, cases, comparecientes, predios, complianceAlerts, paymentRequests, pendingIncome, movements] = await Promise.all([

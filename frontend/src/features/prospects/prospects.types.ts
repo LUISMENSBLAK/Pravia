@@ -141,6 +141,8 @@ export type ProspectWorkflow = {
   notaria: { id: string; nombre: string; correo_general?: string | null } | null;
   notaries: Array<{ id: string; nombre: string }>;
   responsibles: Array<{ id: string; nombre: string; apellido?: string | null }>;
+  quoteAssignees: Array<{ id: string; nombre: string; apellido?: string | null }>;
+  quoteAssignee: { id: string; nombre: string; apellido?: string | null } | null;
   source: ProspectSource | null; sourceHistory: ProspectSource[]; canReadSource: boolean;
   quote: { id: string; estado: string; numero_cotizacion?: string | null } | null;
   events: Array<{ id: string; previousLabel: string; nextLabel: string; viaLabel: string | null;

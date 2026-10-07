@@ -8,6 +8,7 @@ import styles from '../Agenda.module.css';
 const emptyDraft = (date: Date, userId: string): AgendaDraft => ({
   titulo: '', tipo: 'CITA', fecha: dateKey(date), hora_inicio: '09:00', hora_fin: '10:00',
   responsable_id: userId, expediente_id: '', compareciente_id: '', descripcion: '', recordatorio: '15',
+  visibilidad: 'PRIVATE', participante_ids: [],
 });
 const fromEvent = (event: AgendaEvent, timezone: string): AgendaDraft => {
   const start = zonedParts(event.fecha_inicio, timezone);
@@ -18,6 +19,7 @@ const fromEvent = (event: AgendaEvent, timezone: string): AgendaDraft => {
     responsable_id: event.user_id || '', expediente_id: event.expediente_id || '',
     compareciente_id: event.compareciente_id || '', descripcion: event.descripcion || '',
     recordatorio: String(event.recordatorios?.[0] || ''),
+    visibilidad: event.visibilidad || 'PRIVATE', participante_ids: event.participantes?.map((item) => item.user_id) || [],
   };
 };
 
@@ -30,6 +32,7 @@ export function NewEventFlow({ catalogs, date, currentUserId, initial, onClose, 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [conflicts, setConflicts] = useState<AgendaEvent[]>([]);
+  const [hiddenConflicts, setHiddenConflicts] = useState(0);
   const [checked, setChecked] = useState(false);
   useEffect(() => { setDraft(initial ? fromEvent(initial, catalogs.timezone) : emptyDraft(date, currentUserId)); }, [initial?.id, dateKey(date)]);
   const expediente = useMemo(() => catalogs.expedientes.find((item) => item.id === draft.expediente_id), [catalogs.expedientes, draft.expediente_id]);
@@ -56,8 +59,8 @@ export function NewEventFlow({ catalogs, date, currentUserId, initial, onClose, 
       setBusy(true);
       try {
         const result = await agendaService.conflicts(draft, catalogs.timezone, initial?.id);
-        setChecked(true); setConflicts(result.conflictos);
-        if (!result.conflictos.length) await persist();
+        setChecked(true); setConflicts(result.conflictos); setHiddenConflicts(result.meta.hidden || 0);
+        if (!result.meta.total) await persist();
       } catch (reason: any) { setError(reason?.message || 'No pudimos revisar el horario.'); }
       finally { setBusy(false); }
       return;
@@ -91,18 +94,20 @@ export function NewEventFlow({ catalogs, date, currentUserId, initial, onClose, 
         <label>Hora inicio *<input type="time" value={draft.hora_inicio} onChange={(e) => set('hora_inicio', e.target.value)} /></label>
         <label>Hora fin *<input type="time" value={draft.hora_fin} onChange={(e) => set('hora_fin', e.target.value)} /></label>
         <label>Responsable *<select value={draft.responsable_id} disabled={!catalogs.permisos.gestionar_equipo} onChange={(e) => set('responsable_id', e.target.value)}>{catalogs.usuarios.map((item) => <option key={item.id} value={item.id}>{item.nombre} {item.apellido}</option>)}</select></label>
+        <label>¿Quién puede ver este evento?<select value={draft.visibilidad} onChange={(e) => set('visibilidad', e.target.value as AgendaDraft['visibilidad'])}><option value="PRIVATE">Solo yo y participantes</option><option value="ORGANIZATION">Todos en la Notaría</option></select></label>
       </div></fieldset>}
       {step === 1 && <fieldset className={styles.formStep}><legend>Relaciones y recordatorio</legend><p>La notaría se obtiene del expediente; no se duplica dentro del evento.</p><div className={styles.formGrid}>
         <label className={styles.wideField}>Expediente {draft.tipo === 'FIRMA' ? '*' : ''}<select value={draft.expediente_id} onChange={(e) => chooseCase(e.target.value)}><option value="">Sin expediente</option>{catalogs.expedientes.map((item) => <option key={item.id} value={item.id}>{item.numero_pravia} · {item.cliente_alias || item.tipo_acto?.nombre || 'Sin cliente'}</option>)}</select></label>
         {expediente && <div className={`${styles.linkPreview} ${styles.wideField}`}><strong>{expediente.tipo_acto?.nombre || 'Acto sin registrar'}</strong><span>{expediente.notaria?.nombre || 'Sin notaría vinculada'} · {expediente.estatus.replaceAll('_', ' ')}</span>{expediente.fecha_real_firma && <em>Firma efectiva ya registrada: {new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium', timeStyle: 'short', timeZone: catalogs.timezone }).format(new Date(expediente.fecha_real_firma))}</em>}</div>}
         <label className={styles.wideField}>Compareciente<select value={draft.compareciente_id} onChange={(e) => set('compareciente_id', e.target.value)}><option value="">Sin compareciente</option>{catalogs.comparecientes.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select></label>
+        {draft.visibilidad === 'PRIVATE' && <fieldset className={styles.wideField}><legend>Participantes con acceso</legend><p>Solo las personas seleccionadas podrán ver este evento privado, además de ti y el responsable.</p><div className={styles.participantChoices}>{catalogs.usuarios.filter((item) => item.id !== currentUserId && item.id !== draft.responsable_id).map((item) => <label key={item.id}><input type="checkbox" checked={draft.participante_ids.includes(item.id)} onChange={(e) => setDraft((current) => ({ ...current, participante_ids: e.target.checked ? [...current.participante_ids, item.id] : current.participante_ids.filter((id) => id !== item.id) }))} />{item.nombre} {item.apellido}</label>)}</div></fieldset>}
         <label>Aviso previo<select value={draft.recordatorio} onChange={(e) => set('recordatorio', e.target.value)}><option value="">Sin aviso configurado</option><option value="5">5 minutos antes</option><option value="15">15 minutos antes</option><option value="60">1 hora antes</option><option value="1440">1 día antes</option></select></label>
         <label className={styles.wideField}>Notas<textarea value={draft.descripcion} onChange={(e) => set('descripcion', e.target.value)} rows={4} placeholder="Información operativa para el equipo" /></label>
       </div></fieldset>}
       {step === 2 && <section className={styles.reviewStep}><h3>Revisa antes de guardar</h3><dl>
-        <div><dt>Evento</dt><dd>{eventTypeLabel(draft.tipo)} · {draft.titulo || 'Sin título'}</dd></div><div><dt>Horario programado</dt><dd>{draft.fecha} · {draft.hora_inicio}–{draft.hora_fin}</dd></div><div><dt>Responsable</dt><dd>{catalogs.usuarios.find((item) => item.id === draft.responsable_id)?.nombre || 'Sin responsable'}</dd></div><div><dt>Expediente</dt><dd>{expediente?.numero_pravia || 'Sin expediente'}</dd></div><div><dt>Notaría</dt><dd>{expediente?.notaria?.nombre || 'Se obtiene del expediente cuando existe'}</dd></div>
-      </dl>{checked && conflicts.length > 0 && <aside className={styles.conflictWarning} role="alert"><AlertTriangle /><div><strong>Este horario tiene {conflicts.length} conflicto{conflicts.length === 1 ? '' : 's'}.</strong>{conflicts.map((item) => <p key={item.id}>{item.responsable_nombre} ya tiene “{item.titulo}” · {eventTime(item, catalogs.timezone)}</p>)}<span>Puedes revisar el horario o guardar si el negocio permite el traslape.</span></div></aside>}</section>}
+        <div><dt>Evento</dt><dd>{eventTypeLabel(draft.tipo)} · {draft.titulo || 'Sin título'}</dd></div><div><dt>Horario programado</dt><dd>{draft.fecha} · {draft.hora_inicio}–{draft.hora_fin}</dd></div><div><dt>Visibilidad</dt><dd>{draft.visibilidad === 'PRIVATE' ? 'Solo yo y participantes' : 'Todos en la Notaría'}</dd></div><div><dt>Responsable</dt><dd>{catalogs.usuarios.find((item) => item.id === draft.responsable_id)?.nombre || 'Sin responsable'}</dd></div><div><dt>Expediente</dt><dd>{expediente?.numero_pravia || 'Sin expediente'}</dd></div><div><dt>Notaría</dt><dd>{expediente?.notaria?.nombre || 'Se obtiene del expediente cuando existe'}</dd></div>
+      </dl>{checked && conflicts.length + hiddenConflicts > 0 && <aside className={styles.conflictWarning} role="alert"><AlertTriangle /><div><strong>Este horario tiene {conflicts.length + hiddenConflicts} conflicto{conflicts.length + hiddenConflicts === 1 ? '' : 's'}.</strong>{conflicts.map((item) => <p key={item.id}>{item.responsable_nombre} ya tiene “{item.titulo}” · {eventTime(item, catalogs.timezone)}</p>)}{hiddenConflicts > 0 && <p>{hiddenConflicts} evento{hiddenConflicts === 1 ? '' : 's'} privado{hiddenConflicts === 1 ? '' : 's'} no visible{hiddenConflicts === 1 ? '' : 's'}.</p>}<span>Puedes revisar el horario o guardar si el negocio permite el traslape.</span></div></aside>}</section>}
     </div>
-    <footer><button type="button" className={styles.secondaryButton} onClick={step === 0 ? onClose : () => { setStep((value) => value - 1); setChecked(false); setConflicts([]); }}>{step > 0 && <ArrowLeft size={15} />}{step === 0 ? 'Cancelar' : 'Anterior'}</button><span />{step < 2 ? <button type="button" className={styles.primaryButton} onClick={next}>Siguiente<ArrowRight size={15} /></button> : <button type="button" className={styles.primaryButton} disabled={busy} onClick={() => void submit()}>{busy ? 'Guardando…' : checked && conflicts.length ? 'Guardar de todos modos' : initial ? 'Guardar cambios' : 'Guardar evento'}<CalendarClock size={16} /></button>}</footer>
+    <footer><button type="button" className={styles.secondaryButton} onClick={step === 0 ? onClose : () => { setStep((value) => value - 1); setChecked(false); setConflicts([]); setHiddenConflicts(0); }}>{step > 0 && <ArrowLeft size={15} />}{step === 0 ? 'Cancelar' : 'Anterior'}</button><span />{step < 2 ? <button type="button" className={styles.primaryButton} onClick={next}>Siguiente<ArrowRight size={15} /></button> : <button type="button" className={styles.primaryButton} disabled={busy} onClick={() => void submit()}>{busy ? 'Guardando…' : checked && conflicts.length + hiddenConflicts ? 'Guardar de todos modos' : initial ? 'Guardar cambios' : 'Guardar evento'}<CalendarClock size={16} /></button>}</footer>
   </section></div>;
 }

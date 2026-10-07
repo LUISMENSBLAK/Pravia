@@ -1,10 +1,11 @@
 import { Request, Response } from 'express';
-import { EventoAgendaEstatus, Prisma } from '@prisma/client';
+import { AgendaVisibilidad, EventoAgendaEstatus, Prisma } from '@prisma/client';
 import prisma from '../config/prisma';
 import { activeOrganizationMembershipWhere, organizationMembershipRoleSelect, usersWithEffectiveMembershipRoles } from '../auth/organizationMembership';
 import { AGENDA_TIME_ZONE, AgendaError, agendaRangesOverlap, canAssignAgendaResponsibility, canManageAgendaTeam, normalizeAgendaType, normalizeReminders, parseAgendaRange } from '../domain/agenda';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { comparecienteObjectWhere } from '../services/objectAccess.service';
+import { agendaEditableWhere, agendaReadableWhere } from '../services/agendaVisibility.service';
 
 const EVENT_COLORS: Record<string, string> = {
   PERSONAL: '#64748b',
@@ -43,6 +44,7 @@ async function validateAgendaLinks(input: { expedienteId?: unknown; comparecient
 
 const eventInclude = {
   usuario: { select: { id: true, nombre: true, apellido: true } },
+  participantes: { select: { user_id: true } },
   expediente: {
     select: {
       id: true,
@@ -88,22 +90,37 @@ const serializeEvent = (event: any) => ({
 
 const agendaObjectWhere = (req: Request): Prisma.EventoAgendaWhereInput => {
   if (!req.user) return { id: '00000000-0000-0000-0000-000000000000' };
-  if (canManageAgendaTeam(req.user)) {
-    return { organization_id: req.user.organizationId, ...(req.query.user_id && req.query.user_id !== 'TODOS' ? { user_id: String(req.query.user_id) } : {}) };
-  }
-  const expedienteScope = expedienteAccessWhere(req.user);
   return {
-    organization_id: req.user.organizationId,
-    user_id: req.user.id,
-    AND: [{ OR: [{ expediente_id: null }, { expediente: expedienteScope }] }],
+    ...agendaReadableWhere(req.user),
+    ...(req.query.user_id && req.query.user_id !== 'TODOS' ? { user_id: String(req.query.user_id) } : {}),
   };
 };
 
-async function findConflicts(input: { organizationId: string; responsableId: string; start: Date; end: Date | null; excludeId?: string }) {
+const normalizeVisibility = (value: unknown): AgendaVisibilidad => {
+  const normalized = String(value || 'PRIVATE').trim().toUpperCase();
+  if (normalized !== 'PRIVATE' && normalized !== 'ORGANIZATION') {
+    throw new AgendaError('Selecciona si el evento es solo para ti o para toda la Notaría.', 'AGENDA_VISIBILITY_INVALID');
+  }
+  return normalized;
+};
+
+async function normalizeParticipants(value: unknown, organizationId: string, responsibleId: string, actorId: string) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > 50) throw new AgendaError('Selecciona hasta 50 participantes válidos.', 'AGENDA_PARTICIPANTS_INVALID');
+  const ids = [...new Set(value.map((item) => String(item).trim()).filter(Boolean))].filter((id) => id !== actorId && id !== responsibleId);
+  const memberships = await prisma.organizationMembership.findMany({
+    where: { organization_id: organizationId, user_id: { in: ids }, status: 'ACTIVE', user: { activo: true } },
+    select: { user_id: true },
+  });
+  if (memberships.length !== ids.length) throw new AgendaError('Un participante no pertenece a esta Notaría.', 'AGENDA_PARTICIPANT_TENANT_DENIED', 403);
+  return ids;
+}
+
+async function findConflicts(input: { actor: NonNullable<Request['user']>; responsableId: string; start: Date; end: Date | null; excludeId?: string }) {
   const proposedEnd = input.end || new Date(input.start.getTime() + 30 * 60 * 1000);
   const candidates = await prisma.eventoAgenda.findMany({
     where: {
-      organization_id: input.organizationId,
+      organization_id: input.actor.organizationId,
       user_id: input.responsableId,
       estatus: 'ACTIVO',
       ...(input.excludeId ? { id: { not: input.excludeId } } : {}),
@@ -114,9 +131,14 @@ async function findConflicts(input: { organizationId: string; responsableId: str
     orderBy: { fecha_inicio: 'asc' },
     take: 25,
   });
-  return candidates
-    .filter((event) => agendaRangesOverlap({ start: event.fecha_inicio, end: event.fecha_fin }, { start: input.start, end: input.end }))
-    .map(serializeEvent);
+  const overlapping = candidates.filter((event) => agendaRangesOverlap({ start: event.fecha_inicio, end: event.fecha_fin }, { start: input.start, end: input.end }));
+  if (!overlapping.length) return { visible: [], hiddenCount: 0 };
+  const readable = await prisma.eventoAgenda.findMany({
+    where: { id: { in: overlapping.map((event) => event.id) }, ...agendaReadableWhere(input.actor) },
+    select: { id: true },
+  });
+  const ids = new Set(readable.map((event) => event.id));
+  return { visible: overlapping.filter((event) => ids.has(event.id)).map(serializeEvent), hiddenCount: overlapping.length - ids.size };
 }
 
 export class AgendaController {
@@ -284,7 +306,11 @@ export class AgendaController {
         orderBy: { created_at: 'desc' },
         take: 20,
       });
-      return res.json({ success: true, evento: { ...serializeEvent(event), actividad: activity }, meta: { timezone: AGENDA_TIME_ZONE } });
+      const canEdit = Boolean(req.user && (
+        event.created_by_id === req.user.id || event.user_id === req.user.id ||
+        (event.visibilidad === 'ORGANIZATION' && canManageAgendaTeam(req.user))
+      ));
+      return res.json({ success: true, evento: { ...serializeEvent(event), can_edit: canEdit, actividad: activity }, meta: { timezone: AGENDA_TIME_ZONE } });
     } catch (error: any) {
       const status = error instanceof AgendaError ? error.status : 500;
       return res.status(status).json({ success: false, error: error instanceof AgendaError ? error.message : 'No fue posible cargar el evento.', code: error.code || 'AGENDA_DETAIL_FAILED' });
@@ -298,8 +324,8 @@ export class AgendaController {
       if (!canAssignAgendaResponsibility(req.user, responsableId)) throw new AgendaError('No puedes consultar la disponibilidad de ese responsable.', 'AGENDA_ASSIGNMENT_DENIED', 403);
       await requireActiveUser(responsableId, 'El responsable', req.user.organizationId);
       const range = parseAgendaRange({ fechaInicio: req.query.desde, fechaFin: req.query.hasta });
-      const conflictos = await findConflicts({ organizationId: req.user.organizationId, responsableId, start: range.start, end: range.end, excludeId: req.query.excluir_id ? String(req.query.excluir_id) : undefined });
-      return res.json({ success: true, conflictos, meta: { total: conflictos.length, timezone: AGENDA_TIME_ZONE, blocking: false } });
+      const conflicts = await findConflicts({ actor: req.user, responsableId, start: range.start, end: range.end, excludeId: req.query.excluir_id ? String(req.query.excluir_id) : undefined });
+      return res.json({ success: true, conflictos: conflicts.visible, meta: { total: conflicts.visible.length + conflicts.hiddenCount, hidden: conflicts.hiddenCount, timezone: AGENDA_TIME_ZONE, blocking: false } });
     } catch (error: any) {
       const status = error instanceof AgendaError ? error.status : 500;
       return res.status(status).json({ success: false, error: error instanceof AgendaError ? error.message : 'No fue posible revisar el horario.', code: error.code || 'AGENDA_CONFLICT_FAILED' });
@@ -314,7 +340,7 @@ export class AgendaController {
       const canManageTeam = canManageAgendaTeam(req.user);
       const [usuarios, expedientes, comparecientes] = await Promise.all([
         prisma.user.findMany({
-          where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(req.user.organizationId) }, ...(!canManageTeam ? { id: req.user.id } : {}) },
+          where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(req.user.organizationId) } },
           select: { id: true, nombre: true, apellido: true, ...organizationMembershipRoleSelect(req.user.organizationId) },
           orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }],
         }),
@@ -365,9 +391,11 @@ export class AgendaController {
       const tipo = normalizeAgendaType(req.body.tipo);
       const range = parseAgendaRange({ fechaInicio: req.body.fecha_inicio, fechaFin: req.body.fecha_fin, todoElDia: req.body.todo_el_dia });
       const reminders = normalizeReminders(req.body.recordatorios);
+      const visibilidad = normalizeVisibility(req.body.visibilidad);
+      const participantIds = await normalizeParticipants(req.body.participante_ids, organizationId, responsableId, actorId);
       const links = await validateAgendaLinks({ expedienteId: req.body.expediente_id, comparecienteId: req.body.compareciente_id }, req.user);
       if (tipo === 'FIRMA' && !links.expedienteId) throw new AgendaError('Una firma programada debe vincularse con un expediente.', 'AGENDA_SIGNATURE_CASE_REQUIRED');
-      const conflicts = await findConflicts({ organizationId: req.user.organizationId, responsableId, start: range.start, end: range.end });
+      const conflicts = await findConflicts({ actor: req.user, responsableId, start: range.start, end: range.end });
       const idempotencyKey = String(req.body.idempotency_key || '').trim() || null;
 
       const result = await prisma.$transaction(async (tx) => {
@@ -386,6 +414,9 @@ export class AgendaController {
             fecha_fin: range.end,
             todo_el_dia: range.allDay,
             user_id: responsableId,
+            created_by_id: actorId,
+            visibilidad,
+            participantes: participantIds.length ? { create: participantIds.map((userId) => ({ organization_id: organizationId, user_id: userId })) } : undefined,
             expediente_id: links.expedienteId,
             compareciente_id: links.comparecienteId,
             recordatorios: reminders,
@@ -399,7 +430,7 @@ export class AgendaController {
             accion: 'CREATE_AGENDA_EVENT',
             entidad: 'EventoAgenda',
             entidad_id: event.id,
-            valores_nuevos: { titulo, tipo, fecha_inicio: range.start, responsable_id: responsableId, expediente_id: links.expedienteId },
+            valores_nuevos: { titulo, tipo, fecha_inicio: range.start, responsable_id: responsableId, expediente_id: links.expedienteId, visibilidad, participante_ids: participantIds },
             correlation_id: (req as any).correlationId,
           },
         });
@@ -421,8 +452,8 @@ export class AgendaController {
         success: true,
         evento: serializeEvent(result.event),
         idempotent: result.idempotent,
-        conflictos: conflicts,
-        warnings: conflicts.length ? [{ code: 'SCHEDULE_CONFLICT', message: 'El responsable ya tiene otro evento en ese horario.' }] : [],
+        conflictos: conflicts.visible,
+        warnings: conflicts.visible.length + conflicts.hiddenCount ? [{ code: 'SCHEDULE_CONFLICT', message: 'El responsable tiene otro evento en ese horario.' }] : [],
       });
     } catch (error: any) {
       const status = error instanceof AgendaError ? error.status : 500;
@@ -434,15 +465,15 @@ export class AgendaController {
     try {
       if (!req.user) throw new AgendaError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
       const actorId = await requireActiveUser(actorIdFrom(req), 'El usuario que modifica', req.user.organizationId);
-      const current = await prisma.eventoAgenda.findFirst({ where: { id: req.params.id, organization_id: req.user.organizationId } });
+      const current = await prisma.eventoAgenda.findFirst({ where: { id: req.params.id, ...agendaEditableWhere(req.user) } });
       if (!current) throw new AgendaError('Evento no encontrado.', 'AGENDA_EVENT_NOT_FOUND', 404);
-      const canManageTeam = canManageAgendaTeam(req.user);
-      if (!canManageTeam && current.user_id !== actorId) throw new AgendaError('Solo puedes modificar tus eventos.', 'AGENDA_ACCESS_DENIED', 403);
       if (current.estatus === 'CANCELADO') throw new AgendaError('Un evento cancelado ya no puede modificarse.', 'AGENDA_EVENT_CANCELLED', 409);
       if (req.body.responsable_id && !canAssignAgendaResponsibility(req.user, req.body.responsable_id)) throw new AgendaError('No puedes reasignar el evento.', 'AGENDA_ASSIGNMENT_DENIED', 403);
       const responsableId = req.body.responsable_id
         ? await requireActiveUser(req.body.responsable_id, 'El responsable', req.user.organizationId)
         : current.user_id;
+      const visibilidad = req.body.visibilidad === undefined ? current.visibilidad : normalizeVisibility(req.body.visibilidad);
+      const participantIds = req.body.participante_ids === undefined ? null : await normalizeParticipants(req.body.participante_ids, req.user.organizationId, responsableId || actorId, actorId);
       if (!req.user) throw new AgendaError('Inicia sesión para continuar.', 'AUTH_REQUIRED', 401);
       const links = await validateAgendaLinks({
         expedienteId: req.body.expediente_id === undefined ? current.expediente_id : req.body.expediente_id,
@@ -459,7 +490,7 @@ export class AgendaController {
       if (!['ACTIVO', 'COMPLETADO'].includes(estatus)) throw new AgendaError('El estado solicitado no es válido.', 'AGENDA_STATUS_INVALID');
       const tipo = req.body.tipo ? normalizeAgendaType(req.body.tipo) : current.tipo;
       if (tipo === 'FIRMA' && !links.expedienteId) throw new AgendaError('Una firma programada debe vincularse con un expediente.', 'AGENDA_SIGNATURE_CASE_REQUIRED');
-      const conflicts = await findConflicts({ organizationId: req.user.organizationId, responsableId: responsableId || actorId, start: range.start, end: range.end, excludeId: current.id });
+      const conflicts = await findConflicts({ actor: req.user, responsableId: responsableId || actorId, start: range.start, end: range.end, excludeId: current.id });
 
       const updated = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:agenda-event:${current.id}`}))`);
@@ -473,6 +504,8 @@ export class AgendaController {
             fecha_fin: range.end,
             todo_el_dia: range.allDay,
             user_id: responsableId,
+            visibilidad,
+            ...(participantIds === null ? {} : { participantes: { deleteMany: {}, create: participantIds.map((userId) => ({ organization_id: req.user!.organizationId, user_id: userId })) } }),
             expediente_id: links.expedienteId,
             compareciente_id: links.comparecienteId,
             ...(req.body.recordatorios === undefined ? {} : { recordatorios: normalizeReminders(req.body.recordatorios) }),
@@ -486,8 +519,8 @@ export class AgendaController {
             accion: 'UPDATE_AGENDA_EVENT',
             entidad: 'EventoAgenda',
             entidad_id: event.id,
-            valores_anteriores: { titulo: current.titulo, tipo: current.tipo, fecha_inicio: current.fecha_inicio, estatus: current.estatus },
-            valores_nuevos: { titulo: event.titulo, tipo: event.tipo, fecha_inicio: event.fecha_inicio, estatus: event.estatus },
+            valores_anteriores: { titulo: current.titulo, tipo: current.tipo, fecha_inicio: current.fecha_inicio, estatus: current.estatus, visibilidad: current.visibilidad },
+            valores_nuevos: { titulo: event.titulo, tipo: event.tipo, fecha_inicio: event.fecha_inicio, estatus: event.estatus, visibilidad: event.visibilidad, participante_ids: participantIds },
             correlation_id: (req as any).correlationId,
           },
         });
@@ -496,8 +529,8 @@ export class AgendaController {
       return res.json({
         success: true,
         evento: serializeEvent(updated),
-        conflictos: conflicts,
-        warnings: conflicts.length ? [{ code: 'SCHEDULE_CONFLICT', message: 'El responsable ya tiene otro evento en ese horario.' }] : [],
+        conflictos: conflicts.visible,
+        warnings: conflicts.visible.length + conflicts.hiddenCount ? [{ code: 'SCHEDULE_CONFLICT', message: 'El responsable tiene otro evento en ese horario.' }] : [],
       });
     } catch (error: any) {
       const status = error instanceof AgendaError ? error.status : 500;
@@ -513,10 +546,8 @@ export class AgendaController {
       if (reason.length < 5) throw new AgendaError('El motivo de cancelación debe tener al menos 5 caracteres.', 'AGENDA_CANCEL_REASON_REQUIRED');
       const event = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:agenda-event:${req.params.id}`}))`);
-        const current = await tx.eventoAgenda.findFirst({ where: { id: req.params.id, organization_id: req.user!.organizationId } });
+        const current = await tx.eventoAgenda.findFirst({ where: { id: req.params.id, ...agendaEditableWhere(req.user!) } });
         if (!current) throw new AgendaError('Evento no encontrado.', 'AGENDA_EVENT_NOT_FOUND', 404);
-        const canManageTeam = canManageAgendaTeam(req.user);
-        if (!canManageTeam && current.user_id !== actorId) throw new AgendaError('Solo puedes cancelar tus eventos.', 'AGENDA_ACCESS_DENIED', 403);
         if (current.estatus === 'CANCELADO') return current;
         const cancelled = await tx.eventoAgenda.update({
           where: { id: current.id },

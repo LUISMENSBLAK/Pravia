@@ -90,11 +90,15 @@ export const expedientesService = {
   syncDocumentAppendix(id: string) { return apiRequest<ExpedienteDocumentAppendix>(`/expedientes/${encodeURIComponent(id)}/documentos/sincronizar`, { method: 'POST' }); },
   importDocumentSource(id: string, origin: 'compareciente' | 'predio') { return apiRequest<ExpedienteDocumentAppendix>(`/expedientes/${encodeURIComponent(id)}/documentos/importar/${origin}`, { method: 'POST' }); },
   createDocumentFolder(id: string, name: string, parentId?: string | null) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos/carpetas`, { method: 'POST', body: JSON.stringify({ name, parent_id: parentId || null }) }); },
+  documentFolderDestinations(id: string) { return apiRequest<{ comparecientes: Array<{ id: string; name: string }>; predios: Array<{ id: string; name: string }> }>(`/expedientes/${encodeURIComponent(id)}/documentos/carpetas/destinos`); },
+  linkDocumentFolder(id: string, folderId: string, targetType: 'COMPARECIENTE' | 'PREDIO' | null, targetId: string | null) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos/carpetas/${encodeURIComponent(folderId)}/destino`, { method: 'PATCH', body: JSON.stringify({ target_type: targetType, target_id: targetId }) }); },
+  syncLinkedDocumentFolders(id: string, folderId: string | null, onConflict: 'OMITIR' | 'CONSERVAR' | 'REEMPLAZAR') { return apiRequest<{ linked_folders: number; created: number; skipped: number; replaced: number; historical: number; blob_copies: 0 }>(`/expedientes/${encodeURIComponent(id)}/documentos/carpetas/sincronizar-destinos`, { method: 'POST', body: JSON.stringify({ folder_id: folderId, on_conflict: onConflict }) }); },
   renameDocumentFolder(id: string, folderId: string, name: string) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos/carpetas/${encodeURIComponent(folderId)}`, { method: 'PATCH', body: JSON.stringify({ name }) }); },
   deleteDocumentFolder(id: string, folderId: string) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos/carpetas/${encodeURIComponent(folderId)}`, { method: 'DELETE' }); },
   moveDocumentItems(id: string, input: { document_ids?: string[]; folder_ids?: string[]; target_folder_id?: string | null }) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos/mover`, { method: 'POST', body: JSON.stringify(input) }); },
   renameDocument(id: string, itemId: string, name: string) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos/${encodeURIComponent(itemId)}`, { method: 'PATCH', body: JSON.stringify({ nombre: name }) }); },
   deleteDocument(id: string, itemId: string) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos/${encodeURIComponent(itemId)}`, { method: 'DELETE' }); },
+  removeHistoricalDocument(id: string, itemId: string) { return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos/apendice/historial/${encodeURIComponent(itemId)}`, { method: 'DELETE' }); },
   appendixSignedUrl(id: string, itemId: string) { return apiRequest<{ url: string; expires_in: number; file_name: string; mime_type: string }>(`/expedientes/${encodeURIComponent(id)}/documentos/apendice/${encodeURIComponent(itemId)}/url`); },
   async downloadAppendixFile(id: string, itemId: string, name: string) {
     return downloadBlob(`/expedientes/${encodeURIComponent(id)}/documentos/apendice/${encodeURIComponent(itemId)}/descargar`, name);
@@ -105,6 +109,17 @@ export const expedientesService = {
   uploadDocument(id: string, file: File, fields: { categoria: string; carpeta: string; folder_id?: string | null }) {
     const body = new FormData(); body.set('file', file); body.set('categoria', fields.categoria); body.set('carpeta', fields.carpeta); if (fields.folder_id) body.set('folder_id', fields.folder_id);
     return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos`, { method: 'POST', body });
+  },
+  importDocumentBatch(id: string, input: { archive?: File; files?: File[]; folder_id?: string | null; onConflict: 'OMITIR' | 'CONSERVAR' | 'REEMPLAZAR' }) {
+    const body = new FormData();
+    body.set('on_conflict', input.onConflict);
+    if (input.folder_id) body.set('folder_id', input.folder_id);
+    if (input.archive) body.set('archive', input.archive);
+    if (input.files?.length) {
+      input.files.forEach((file) => body.append('files', file));
+      body.set('relative_paths', JSON.stringify(input.files.map((file) => file.webkitRelativePath || file.name)));
+    }
+    return apiRequest<{ created: number; restored: number; skipped: number; replaced: number; reused_blobs: number; uploaded_blobs: number }>(`/expedientes/${encodeURIComponent(id)}/documentos/carga-lote`, { method: 'POST', body });
   },
   uploadProject(id: string, file: File, note = '') {
     const body = new FormData(); body.set('file', file); if (note) body.set('nota_version', note);

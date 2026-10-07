@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'crypto';
 import type { Request, Response } from 'express';
 import prisma from '../config/prisma';
 import { AgendaController } from '../controllers/agenda.controller';
+import { agendaEditableWhere } from './agendaVisibility.service';
 import { analizarProyectoConIA } from '../controllers/proyectos.controller';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { canAccessCompareciente, prospectoObjectWhere, cotizacionObjectWhere } from './objectAccess.service';
@@ -157,7 +158,7 @@ const definitions: Definition[] = [
     permissions: ['agenda.write'], risk: 'SAFE_WRITE', confirmation: 'REQUIRED',
     fields: {
       titulo: { type: 'string', required: true, max: 180 }, tipo: { type: 'string', enum: ['PERSONAL','DESPACHO','FIRMA','AUDIENCIA','VENCIMIENTO','CITA','NOTARIA','SEGUIMIENTO','OTRO'] },
-      fecha_inicio: { type: 'string', required: true, max: 50 }, fecha_fin: { type: 'string', max: 50 }, todo_el_dia: { type: 'boolean' }, descripcion: { type: 'string', max: 2_000 },
+      fecha_inicio: { type: 'string', required: true, max: 50 }, fecha_fin: { type: 'string', max: 50 }, todo_el_dia: { type: 'boolean' }, descripcion: { type: 'string', max: 2_000 }, visibilidad: { type: 'string', enum: ['PRIVATE', 'ORGANIZATION'] }, participante_ids: { type: 'string[]' },
       responsable_id: { type: 'string', max: 80 }, expediente_id: { type: 'string', max: 80 }, expediente_query: { type: 'string', max: 120 }, compareciente_id: { type: 'string', max: 80 }, recordatorios: { type: 'object' },
     }, contextField: 'expediente_id', contextTypes: ['expediente'],
     async execute(input) {
@@ -170,10 +171,10 @@ const definitions: Definition[] = [
   {
     key: 'agenda.event.update', domain: 'Agenda', description: 'Actualizar un evento accesible de Agenda.',
     permissions: ['agenda.write'], risk: 'SAFE_WRITE', confirmation: 'REQUIRED',
-    fields: { event_id: { type: 'string', required: true, max: 80 }, titulo: { type: 'string', max: 180 }, tipo: { type: 'string', enum: ['PERSONAL','DESPACHO','FIRMA','AUDIENCIA','VENCIMIENTO','CITA','NOTARIA','SEGUIMIENTO','OTRO'] }, fecha_inicio: { type: 'string', max: 50 }, fecha_fin: { type: 'string', max: 50 }, todo_el_dia: { type: 'boolean' }, descripcion: { type: 'string', max: 2_000 }, responsable_id: { type: 'string', max: 80 }, expediente_id: { type: 'string', max: 80 }, compareciente_id: { type: 'string', max: 80 }, estatus: { type: 'string', enum: ['ACTIVO','COMPLETADO'] }, recordatorios: { type: 'object' } },
+    fields: { event_id: { type: 'string', required: true, max: 80 }, titulo: { type: 'string', max: 180 }, tipo: { type: 'string', enum: ['PERSONAL','DESPACHO','FIRMA','AUDIENCIA','VENCIMIENTO','CITA','NOTARIA','SEGUIMIENTO','OTRO'] }, fecha_inicio: { type: 'string', max: 50 }, fecha_fin: { type: 'string', max: 50 }, todo_el_dia: { type: 'boolean' }, descripcion: { type: 'string', max: 2_000 }, responsable_id: { type: 'string', max: 80 }, expediente_id: { type: 'string', max: 80 }, compareciente_id: { type: 'string', max: 80 }, estatus: { type: 'string', enum: ['ACTIVO','COMPLETADO'] }, recordatorios: { type: 'object' }, visibilidad: { type: 'string', enum: ['PRIVATE', 'ORGANIZATION'] }, participante_ids: { type: 'string[]' } },
     contextField: 'event_id', contextTypes: ['evento'],
     async prepare({ actor, args }) {
-      const event = await prisma.eventoAgenda.findFirst({ where: { id: args.event_id, organization_id: actor.organizationId, ...(!['DIRECCION', 'ADMINISTRACION'].includes(actor.rol) ? { user_id: actor.id } : {}) } });
+      const event = await prisma.eventoAgenda.findFirst({ where: { id: args.event_id, ...agendaEditableWhere(actor) } });
       if (!event) throw new AssistantActionError('No tienes acceso a ese evento.', 'AI_ACTION_TARGET_DENIED', 403);
       const { event_id: _id, ...changes } = args;
       return { object: { type: 'EventoAgenda', id: event.id, label: event.titulo }, before: { titulo: event.titulo, tipo: event.tipo, fecha_inicio: event.fecha_inicio, fecha_fin: event.fecha_fin, estatus: event.estatus }, after: changes, impact: 'Actualizará el evento indicado en la Agenda.', guard: { kind: 'EVENT_UPDATED_AT', id: event.id, version: event.updated_at.toISOString() } };
@@ -181,7 +182,7 @@ const definitions: Definition[] = [
     async assertFresh(input) {
       const guard = input.preview?.guard;
       if (!guard) return;
-      const current = await prisma.eventoAgenda.findFirst({ where: { id: guard.id, organization_id: input.actor.organizationId }, select: { updated_at: true } });
+      const current = await prisma.eventoAgenda.findFirst({ where: { id: guard.id, ...agendaEditableWhere(input.actor) }, select: { updated_at: true } });
       if (!current || current.updated_at.toISOString() !== guard.version) throw new AssistantActionError('El evento cambió desde que preparé la acción. Revísalo y vuelve a confirmar.', 'AI_ACTION_STALE', 409);
     },
     async execute(input) {
@@ -195,14 +196,14 @@ const definitions: Definition[] = [
     fields: { event_id: { type: 'string', required: true, max: 80 }, motivo_cancelacion: { type: 'string', required: true, max: 500 } },
     contextField: 'event_id', contextTypes: ['evento'],
     async prepare({ actor, args }) {
-      const event = await prisma.eventoAgenda.findFirst({ where: { id: args.event_id, organization_id: actor.organizationId, ...(!['DIRECCION', 'ADMINISTRACION'].includes(actor.rol) ? { user_id: actor.id } : {}) } });
+      const event = await prisma.eventoAgenda.findFirst({ where: { id: args.event_id, ...agendaEditableWhere(actor) } });
       if (!event) throw new AssistantActionError('No tienes acceso a ese evento.', 'AI_ACTION_TARGET_DENIED', 403);
       return { object: { type: 'EventoAgenda', id: event.id, label: event.titulo }, before: { estatus: event.estatus }, after: { estatus: 'CANCELADO', motivo: args.motivo_cancelacion }, impact: 'Cancelará el evento y conservará su trazabilidad.', guard: { kind: 'EVENT_UPDATED_AT', id: event.id, version: event.updated_at.toISOString() } };
     },
     async assertFresh(input) {
       const guard = input.preview?.guard;
       if (!guard) return;
-      const current = await prisma.eventoAgenda.findFirst({ where: { id: guard.id, organization_id: input.actor.organizationId }, select: { updated_at: true } });
+      const current = await prisma.eventoAgenda.findFirst({ where: { id: guard.id, ...agendaEditableWhere(input.actor) }, select: { updated_at: true } });
       if (!current || current.updated_at.toISOString() !== guard.version) throw new AssistantActionError('El evento cambió desde que preparé la acción. Revísalo y vuelve a confirmar.', 'AI_ACTION_STALE', 409);
     },
     async execute(input) {
@@ -239,11 +240,24 @@ const definitions: Definition[] = [
   {
     key: 'prospect.transition', domain: 'Prospectos', description: 'Ejecutar una transición contractual válida del prospecto.',
     permissions: ['prospectos.write'], risk: 'SENSITIVE_WRITE', confirmation: 'REQUIRED',
-    fields: { prospect_id: { type: 'string', required: true, max: 80 }, prospect_query: { type: 'string', max: 120 }, action: { type: 'string', required: true, max: 80 }, effectiveAt: { type: 'string', max: 50 }, channel: { type: 'string', max: 100 }, recipient: { type: 'string', max: 320 }, evidence: { type: 'string', max: 2_000 }, reason: { type: 'string', max: 500 }, attachmentIds: { type: 'string[]' }, documentId: { type: 'string', max: 80 } },
+    fields: { prospect_id: { type: 'string', required: true, max: 80 }, prospect_query: { type: 'string', max: 120 }, action: { type: 'string', required: true, max: 80 }, quoteAssigneeId: { type: 'string', max: 80 }, reason: { type: 'string', max: 500 } },
     contextField: 'prospect_id', contextTypes: ['prospecto'],
     async prepare({ actor, args }) {
       const current = await new ProspectWorkflowService(prisma).read(actor, args.prospect_id);
-      return { object: { type: 'Prospecto', id: args.prospect_id, label: current.folio || args.prospect_id }, before: { etapa: current.stage, version: current.version }, after: { action: args.action, effectiveAt: args.effectiveAt }, impact: 'Aplicará una transición contractual del flujo Prospecto → Cotización.', guard: { kind: 'PROSPECT_VERSION', id: args.prospect_id, version: current.version } };
+      if (!current.actions.some((available) => available.code === args.action)) {
+        throw new AssistantActionError('Esa transición no está disponible para este prospecto.', 'AI_PROSPECT_ACTION_UNAVAILABLE', 409);
+      }
+      const needsAssignee = args.action === 'MARCAR_LISTO_PARA_COTIZAR'
+        || (args.action === 'CONVERTIR' && !current.quoteAssignee);
+      if (needsAssignee && !current.quoteAssignees.some((person) => person.id === args.quoteAssigneeId)) {
+        throw new AssistantActionError('Selecciona quién continuará con la cotización entre las personas autorizadas de esta notaría.', 'AI_PROSPECT_QUOTE_ASSIGNEE_INVALID', 409);
+      }
+      if (args.action === 'CONVERTIR' && current.quoteAssignee && args.quoteAssigneeId
+        && args.quoteAssigneeId !== current.quoteAssignee.id) {
+        throw new AssistantActionError('La cotización conservará a la persona ya asignada. Revisa el prospecto antes de convertirlo.', 'AI_PROSPECT_QUOTE_ASSIGNEE_MISMATCH', 409);
+      }
+      const assignee = current.quoteAssignees.find((person) => person.id === args.quoteAssigneeId) || current.quoteAssignee;
+      return { object: { type: 'Prospecto', id: args.prospect_id, label: current.folio || args.prospect_id }, before: { etapa: current.stageLabel, version: current.version }, after: { action: current.actions.find((available) => available.code === args.action)?.label, ...(assignee ? { responsableCotizacion: [assignee.nombre, assignee.apellido].filter(Boolean).join(' ') } : {}) }, impact: 'Aplicará una transición contractual del flujo Prospecto → Cotización.', guard: { kind: 'PROSPECT_VERSION', id: args.prospect_id, version: current.version } };
     },
     async execute(input) {
       const service = new ProspectWorkflowService(prisma); const current = await service.read(input.actor, input.args.prospect_id);
@@ -922,7 +936,7 @@ function missingFields(definition: Definition, args: Record<string, any>) {
 
 const missingQuestion: Record<string, string> = {
   titulo: '¿Qué título tendrá?', fecha_inicio: '¿En qué fecha y hora lo registro?', event_id: '¿Qué evento quieres modificar?', motivo_cancelacion: '¿Cuál es el motivo de la cancelación?',
-  nombre: '¿Cuál es el nombre?', prospect_id: '¿Qué prospecto quieres usar?', action: '¿Qué cambio quieres registrar?', quote_id: '¿Qué cotización quieres usar?',
+  nombre: '¿Cuál es el nombre?', prospect_id: '¿Qué prospecto quieres usar?', action: '¿Qué cambio quieres registrar?', quoteAssigneeId: '¿Quién continuará con la cotización?', quote_id: '¿Qué cotización quieres usar?',
   expediente_id: '¿Qué expediente quieres usar?', note: '¿Qué nota quieres agregar?', tipo_acto_id: '¿Qué tipo de acto quieres agregar?', expediente_acto_id: '¿A qué acto del expediente corresponde?',
   compareciente_id: '¿Qué compareciente quieres vincular?', caracter_id: '¿Con qué carácter participa?', forma_comparecencia: '¿Cuál es su forma de comparecencia?',
   predio_id: '¿Qué predio quieres vincular?', expediente_acto_ids: '¿Con qué acto o actos se relaciona?', pending_id: '¿Qué formato pendiente quieres generar?',
@@ -936,7 +950,7 @@ const missingQuestion: Record<string, string> = {
 const fieldLabels: Record<string, string> = {
   titulo: 'Título', fecha_inicio: 'Fecha y hora', event_id: 'Evento', motivo_cancelacion: 'Motivo de cancelación',
   nombre: 'Nombre o razón social', tipo_persona: 'Tipo de persona', apellido_paterno: 'Apellido paterno', apellido_materno: 'Apellido materno',
-  rfc: 'RFC', curp: 'CURP', telefono: 'Teléfono', correo: 'Correo', prospect_id: 'Prospecto', action: 'Acción', quote_id: 'Cotización',
+  rfc: 'RFC', curp: 'CURP', telefono: 'Teléfono', correo: 'Correo', prospect_id: 'Prospecto', action: 'Acción', quoteAssigneeId: 'Responsable de cotización', quote_id: 'Cotización',
   expediente_id: 'Expediente', note: 'Nota', tipo_acto_id: 'Tipo de acto', expediente_acto_id: 'Acto del expediente',
   compareciente_id: 'Compareciente', caracter_id: 'Carácter', forma_comparecencia: 'Forma de comparecencia', predio_id: 'Predio',
   expediente_acto_ids: 'Actos relacionados', pending_id: 'Formato pendiente', activity_id: 'Actividad', estado: 'Estado', concepto: 'Concepto',
@@ -1009,7 +1023,20 @@ export async function prepareOrExecuteAssistantAction(input: { actor: Actor; con
   // El planificador puede proponer una etiqueta humana o un placeholder para un
   // catálogo cerrado. Nunca lo persistimos ni lo tratamos como dato real: si no
   // puede normalizarse, el formulario estructurado solicita el valor canónico.
-  const supplied = validateArgs(definition, input.args, { invalidEnumAsMissing: true });
+  const rawArgs = input.args && typeof input.args === 'object' && !Array.isArray(input.args)
+    ? { ...(input.args as Record<string, unknown>) }
+    : {};
+  if (definition.key.startsWith('agenda.event.') && definition.key !== 'agenda.event.cancel') {
+    const explicit = String(rawArgs.visibilidad || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const request = String(input.context?.requestMessage || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    // La orden explícita del usuario prevalece sobre la clasificación del planificador.
+    const visibilityText = /\b(?:solo yo|solo para mi|privad[ao]|todos|todo el equipo|toda la notaria|compartid[ao])\b/.test(request)
+      ? request : explicit;
+    if (/\b(?:solo yo|solo para mi|privad[ao])\b/.test(visibilityText)) rawArgs.visibilidad = 'PRIVATE';
+    else if (/\b(?:todos|todo el equipo|toda la notaria|compartid[ao])\b/.test(visibilityText)) rawArgs.visibilidad = 'ORGANIZATION';
+    else if (definition.key === 'agenda.event.create' && !rawArgs.visibilidad) rawArgs.visibilidad = 'PRIVATE';
+  }
+  const supplied = validateArgs(definition, rawArgs, { invalidEnumAsMissing: true });
   const previous = await assistantConversationService.actionState(input.actor, input.conversationId);
   const requestedInvocationId = actionId([input.actor.organizationId, input.actor.id, input.conversationId, input.messageId, definition.key]);
   if (previous?.status === 'COMPLETED' && previous.actionKey === definition.key
@@ -1020,11 +1047,33 @@ export async function prepareOrExecuteAssistantAction(input: { actor: Actor; con
   args = applyContext(definition, args, input.context);
   args = await resolveQuery(input.actor, args);
   const missing = missingFields(definition, args);
+  let prospectAssigneeOptions: AssistantCollection['fields'][number]['options'];
+  if (definition.key === 'prospect.transition' && args.prospect_id && args.action) {
+    const current = await new ProspectWorkflowService(prisma).read(input.actor, args.prospect_id);
+    if (!current.actions.some((available) => available.code === args.action)) {
+      throw new AssistantActionError('Esa transición no está disponible para este prospecto.', 'AI_PROSPECT_ACTION_UNAVAILABLE', 409);
+    }
+    const needsAssignee = args.action === 'MARCAR_LISTO_PARA_COTIZAR'
+      || (args.action === 'CONVERTIR' && !current.quoteAssignee);
+    if (needsAssignee && !args.quoteAssigneeId) {
+      missing.push('quoteAssigneeId');
+      prospectAssigneeOptions = current.quoteAssignees.map((person) => ({
+        value: person.id, label: [person.nombre, person.apellido].filter(Boolean).join(' '),
+      }));
+      if (!prospectAssigneeOptions.length) {
+        throw new AssistantActionError('No hay una persona activa con permiso para continuar la cotización en esta notaría.', 'AI_PROSPECT_QUOTE_ASSIGNEE_UNAVAILABLE', 409);
+      }
+    }
+  }
   const invocationId = previous?.status === 'COLLECTING' && previous.actionKey === definition.key
     ? previous.invocationId
     : requestedInvocationId;
   if (missing.length) {
     const collection = collectionFor(definition, args, missing);
+    if (prospectAssigneeOptions) {
+      const assigneeField = collection.fields.find((field) => field.name === 'quoteAssigneeId');
+      if (assigneeField) { assigneeField.type = 'select'; assigneeField.options = prospectAssigneeOptions; }
+    }
     const state: AssistantActionState = { status: 'COLLECTING', actionKey: definition.key, args, invocationId, missing, collection };
     await assistantConversationService.setActionState(input.actor, input.conversationId, state);
     return { status: 'success', message: missingQuestion[missing[0]] || `Necesito ${missing[0]} para continuar.`, collection };

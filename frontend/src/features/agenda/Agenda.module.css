@@ -207,6 +207,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .formStep legend, .reviewStep h3 { margin-bottom: 5px; color: #20314b; font-family: inherit; font-size: 1rem; font-weight: 710; }
 .formStep > p { margin: 0 0 18px; color: #7d8999; font-size: .64rem; }
 .formGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
+.participantChoices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 12px; max-height: 180px; overflow-y: auto; }
+.participantChoices label { display: flex; align-items: center; gap: 8px; min-height: 36px; font-size: .67rem; }
+.participantChoices input { width: 16px; height: 16px; accent-color: #af842c; }
 .wideField { grid-column: 1 / -1; }
 .linkPreview { display: grid; gap: 3px; border: 1px solid #dbe6f2; border-radius: 9px; padding: 11px; background: #f7faff; }
 .linkPreview strong { color: #33445e; font-size: .68rem; }
@@ -291,6 +294,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .eventDrawer > header, .eventFormDrawer > header { padding: 18px; }
   .eventDetailBody, .eventFormBody { padding: 18px; }
   .eventFacts, .formGrid { grid-template-columns: 1fr; }
+  .participantChoices { grid-template-columns: 1fr; }
   .wideField { grid-column: 1; }
   .eventDrawer > footer, .eventFormDrawer > footer { padding-bottom: calc(14px + env(safe-area-inset-bottom)); }
   .eventDrawer > footer .secondaryButton:nth-of-type(2) { display: none; }

@@ -1,5 +1,5 @@
-import { apiRequest } from '../../services/api/client';
-import type { ExpedienteInvoice, FinanceAccount, FinanceCatalogs, FinanceMovement, FinanceSummary, MovementDraft, Paginated, Receipt, Receivable, ReconciliationData, RecurringExpense } from './finance.types';
+import { apiBlobRequest, apiRequest } from '../../services/api/client';
+import type { ExpedienteInvoice, FinanceAccount, FinanceCatalogs, FinanceMovement, FinanceSummary, FiscalAccounts, FiscalDocument, FiscalEntity, FiscalProviderStatus, FiscalSupplier, MovementDraft, Paginated, Receipt, Receivable, ReconciliationData, RecurringExpense } from './finance.types';
 
 const data = <T>(value: { success:boolean;data:T }|T):T => value && typeof value === 'object' && 'data' in value ? (value as {data:T}).data : value as T;
 const params = (input:Record<string,string|number|undefined>) => { const result=new URLSearchParams(); Object.entries(input).forEach(([key,value])=>{if(value!==undefined&&value!=='')result.set(key,String(value));}); return result.toString(); };
@@ -11,6 +11,17 @@ export const financeService = {
   async receipts(filters:Record<string,string|number|undefined>,signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:Paginated<Receipt>}>(`/finanzas/comprobantes?${params(filters)}`,{signal}));},
   async accounts(signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:FinanceAccount[]}>('/finanzas/cuentas',{signal}));},
   async expedienteInvoices(estado='',signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:{items:ExpedienteInvoice[];source:string;count:number}}>(`/finanzas/facturacion/expedientes?${params({estado})}`,{signal}));},
+  async fiscalStatus(signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:FiscalProviderStatus}>('/finanzas/facturacion/estado',{signal}));},
+  async fiscalEntities(signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:FiscalEntity[]}>('/finanzas/facturacion/entidades',{signal}));},
+  async createFiscalEntity(input:Record<string,unknown>){return data(await apiRequest('/finanzas/facturacion/entidades',{method:'POST',body:JSON.stringify(input)}));},
+  async fiscalSuppliers(signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:FiscalSupplier[]}>('/finanzas/facturacion/proveedores',{signal}));},
+  async createFiscalSupplier(input:Record<string,unknown>){return data(await apiRequest('/finanzas/facturacion/proveedores',{method:'POST',body:JSON.stringify(input)}));},
+  async fiscalDocuments(signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:{items:FiscalDocument[];count:number}}>('/finanzas/facturacion/documentos',{signal}));},
+  async fiscalAccounts(signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:FiscalAccounts}>('/finanzas/facturacion/cuentas',{signal}));},
+  async createFiscalDraft(input:Record<string,unknown>){return data(await apiRequest('/finanzas/facturacion/borradores',{method:'POST',body:JSON.stringify(input)}));},
+  async uploadFiscalDocument(xml:File,pdf?:File){const form=new FormData();form.append('xml',xml);if(pdf)form.append('pdf',pdf);return data(await apiRequest('/finanzas/facturacion/manual',{method:'POST',body:form}));},
+  async fiscalFileUrl(id:string,kind:'xml'|'pdf'){return data(await apiRequest<{success:boolean;data:{url:string;filename:string;mimeType:string}}>(`/finanzas/facturacion/documentos/${encodeURIComponent(id)}/archivos/${kind}`));},
+  async downloadFiscalExport(){const blob=await apiBlobRequest('/finanzas/facturacion/exportar.xlsx');const objectUrl=URL.createObjectURL(blob);const link=document.createElement('a');link.href=objectUrl;link.download=`pravia-finanzas-${new Date().toISOString().slice(0,10)}.xlsx`;link.click();window.setTimeout(()=>URL.revokeObjectURL(objectUrl),1000);},
   async receivables(filters:Record<string,string|number|undefined>,signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:Paginated<Receivable>}>(`/finanzas/cartera?${params(filters)}`,{signal}));},
   async reconciliation(filters:Record<string,string|undefined>,signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:ReconciliationData}>(`/finanzas/conciliacion?${params(filters)}`,{signal}));},
   async createMovement(draft:MovementDraft){return data(await apiRequest('/finanzas/movimientos',{method:'POST',body:JSON.stringify(draft)}));},

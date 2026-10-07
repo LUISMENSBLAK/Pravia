@@ -12,6 +12,8 @@ const payload = (draft: AgendaDraft, timezone: string) => ({
   compareciente_id: draft.compareciente_id || undefined,
   descripcion: draft.descripcion.trim() || undefined,
   recordatorios: draft.recordatorio ? [Number(draft.recordatorio)] : [],
+  visibilidad: draft.visibilidad,
+  participante_ids: draft.participante_ids,
 });
 
 export const agendaService = {
@@ -20,7 +22,7 @@ export const agendaService = {
   tasks: (userId?: string, signal?: AbortSignal) => apiRequest<{ success: true; tareas: AgendaTask[]; meta: { total: number } }>(`/agenda/tareas?${query({ user_id: userId, estatus: 'TODOS' })}`, { signal }),
   detail: (id: string, signal?: AbortSignal) => apiRequest<{ success: true; evento: AgendaEvent; meta: { timezone: string } }>(`/agenda/${id}`, { signal }),
   conflicts: (draft: AgendaDraft, timezone: string, excludeId?: string) => {
-    const body = payload(draft, timezone); return apiRequest<{ success: true; conflictos: AgendaEvent[]; meta: { total: number; blocking: boolean; timezone: string } }>(`/agenda/conflictos?${query({ responsable_id: draft.responsable_id, desde: body.fecha_inicio, hasta: body.fecha_fin, excluir_id: excludeId })}`);
+    const body = payload(draft, timezone); return apiRequest<{ success: true; conflictos: AgendaEvent[]; meta: { total: number; hidden: number; blocking: boolean; timezone: string } }>(`/agenda/conflictos?${query({ responsable_id: draft.responsable_id, desde: body.fecha_inicio, hasta: body.fecha_fin, excluir_id: excludeId })}`);
   },
   create: (draft: AgendaDraft, timezone: string) => apiRequest<{ success: true; evento: AgendaEvent; conflictos: AgendaEvent[] }>('/agenda', { method: 'POST', body: JSON.stringify(payload(draft, timezone)) }),
   update: (id: string, draft: AgendaDraft, timezone: string) => apiRequest<{ success: true; evento: AgendaEvent; conflictos: AgendaEvent[] }>(`/agenda/${id}`, { method: 'PATCH', body: JSON.stringify(payload(draft, timezone)) }),

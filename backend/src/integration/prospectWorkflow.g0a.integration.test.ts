@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
 import { ProspectWorkflowService } from '../services/prospectWorkflow.service';
+import { ProspectDocumentReviewService } from '../services/prospectDocumentReview.service';
 import { CotizacionWorkflowService } from '../services/cotizacionWorkflow.service';
 import { CotizacionConversionService } from '../services/cotizacionConversion.service';
 import { ExpedienteBudgetService } from '../services/expedienteBudget.service';
@@ -26,13 +27,14 @@ const actor = (n: number): Actor => ({
   membershipId: `93000000-0000-4000-8000-00000000000${n}`,
   sessionId: randomUUID(), rol: 'ADMINISTRACION', nombre: 'Corrección', apellido: String(n),
   email: `correction-001-${n}@example.test`, scope: 'GLOBAL', requiresPasswordChange: false,
-  permissions: ['prospectos.read', 'prospectos.write', 'documentos.read', 'documentos.write', 'documentos.unlink', 'cotizaciones.read', 'cotizaciones.write', 'expedientes.read', 'expedientes.write', 'finanzas.read', 'finanzas.write'],
+  permissions: ['prospectos.read', 'prospectos.write', 'documentos.read', 'documentos.write', 'documentos.unlink', 'cotizaciones.read', 'cotizaciones.write', 'expedientes.read', 'expedientes.write', 'finanzas.read', 'finanzas.write', 'ia.execute'],
 });
 const primary = actor(1);
 const foreign = actor(2);
 let formalApplicantId = '';
 let primaryActTypeId = '';
 let secondaryActTypeId = '';
+let quoteWorkerId = '';
 const quoteWorkflow = new CotizacionWorkflowService(scoped);
 const quoteConversion = new CotizacionConversionService(scoped);
 const expedienteBudget = new ExpedienteBudgetService(scoped);
@@ -41,12 +43,13 @@ const run = <T>(who: Actor, fn: () => T) => runWithActorContext({
   sessionId: who.sessionId, role: who.rol, permissions: who.permissions, scope: who.scope,
 }, fn);
 const create = (who = primary, key = randomUUID(), nombre = '  cliente   corrección 001 ') =>
-  run(who, () => service.create(who, { nombre, servicio_catalogo_codigo: 'COMPRAVENTA' }, key)).then((result) => result.prospecto);
+  run(who, () => service.create(who, { nombre, servicio_catalogo_codigo: 'COMPRAVENTA', tipo_acto_ids: [primaryActTypeId] }, key)).then((result) => result.prospecto);
 const read = (id: string, who = primary) => run(who, () => service.read(who, id));
 const mutate = (who: Actor, id: string, payload: Record<string, unknown>) => run(who, () => service.act(who, id, payload));
 const act = async (id: string, action: string, who = primary, extra: Record<string, unknown> = {}) => {
   const current = await read(id, who);
-  return mutate(who, id, { action, expectedVersion: current.version, confirm: true, idempotencyKey: randomUUID(), ...extra });
+  return mutate(who, id, { action, expectedVersion: current.version, confirm: true, idempotencyKey: randomUUID(),
+    ...(action === 'MARCAR_LISTO_PARA_COTIZAR' ? { quoteAssigneeId: who.id } : {}), ...extra });
 };
 const ready = async (who = primary) => {
   const prospect = await create(who);
@@ -80,15 +83,21 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
         id: who.membershipId, organization_id: who.organizationId, user_id: who.id, rol: 'ADMINISTRACION', status: 'ACTIVE',
       } });
     }
+    quoteWorkerId = randomUUID();
+    await db.user.create({ data: { id: quoteWorkerId, email: `quote-worker-${quoteWorkerId}@example.test`,
+      password_hash: 'synthetic-not-a-login', nombre: 'Recepción', apellido: 'Cotizaciones', rol: 'RECEPCION', activo: true,
+      requires_password_change: false } });
+    await db.organizationMembership.create({ data: { organization_id: primary.organizationId, user_id: quoteWorkerId,
+      rol: 'RECEPCION', status: 'ACTIVE' } });
     const actType = await db.tipoActo.upsert({
       where: { codigo_catalogo: 'COMPRAVENTA' },
-      update: {},
+      update: { activo: true, archived_at: null },
       create: { codigo_catalogo: 'COMPRAVENTA', nombre: 'Compraventa', activo: true },
     });
     primaryActTypeId = actType.id;
     const secondaryActType = await db.tipoActo.upsert({
       where: { codigo_catalogo: 'PODER_GENERAL_QA_C015' },
-      update: {},
+      update: { activo: true, archived_at: null },
       create: { codigo_catalogo: 'PODER_GENERAL_QA_C015', nombre: 'Poder general', activo: true },
     });
     secondaryActTypeId = secondaryActType.id;
@@ -141,6 +150,90 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
     const workflow = await read(prospect.id);
     expect(workflow).toMatchObject({ stage: 'LISTO_PARA_COTIZAR', wait: { type: 'OFFICE_QUOTE' } });
     expect(workflow.events.map((item) => item.actionLabel)).toEqual(['Prospecto creado', 'Comenzar integración', 'Marcar listo para cotizar']);
+  });
+
+  it('exige responsable de cotización autorizado y distinto del responsable del prospecto', async () => {
+    const prospect = await create();
+    await act(prospect.id, 'COMENZAR_INTEGRACION');
+    const current = await read(prospect.id);
+    expect(current.quoteAssignees.map((member) => member.id)).toContain(quoteWorkerId);
+    await expect(mutate(primary, prospect.id, { action: 'MARCAR_LISTO_PARA_COTIZAR',
+      expectedVersion: current.version, confirm: true, idempotencyKey: randomUUID() }))
+      .rejects.toMatchObject({ status: 400, code: 'PRO001_QUOTE_ASSIGNEE_REQUIRED' });
+    await expect(act(prospect.id, 'MARCAR_LISTO_PARA_COTIZAR', primary, { quoteAssigneeId: foreign.id }))
+      .rejects.toMatchObject({ status: 400, code: 'PRO001_QUOTE_ASSIGNEE_INVALID' });
+    await act(prospect.id, 'MARCAR_LISTO_PARA_COTIZAR', primary, { quoteAssigneeId: quoteWorkerId });
+    const readyWorkflow = await read(prospect.id);
+    expect(readyWorkflow.quoteAssignee?.id).toBe(quoteWorkerId);
+    expect((await db.prospecto.findUniqueOrThrow({ where: { id: prospect.id } })).cotizacion_responsable_id).toBe(quoteWorkerId);
+    expect(readyWorkflow.events.at(-1)?.id).toBeTruthy();
+    await expect(act(prospect.id, 'CONVERTIR', primary, { quoteAssigneeId: primary.id }))
+      .rejects.toMatchObject({ status: 409, code: 'PRO001_QUOTE_ASSIGNEE_MISMATCH' });
+    expect(await db.cotizacion.count({ where: { prospecto_id: prospect.id } })).toBe(0);
+    const conversion = await act(prospect.id, 'CONVERTIR');
+    const quote = await db.cotizacion.findUniqueOrThrow({ where: { id: conversion.quoteId! } });
+    expect(quote.user_id).toBe(quoteWorkerId);
+    expect(quote.prospecto_id).toBe(prospect.id);
+  });
+
+  it('guarda revisión documental preliminar con fuentes verificables y la invalida al cambiar documentos', async () => {
+    const prospect = await create();
+    const previousKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'isolated-synthetic-provider-key';
+    const document = await db.documento.create({ data: {
+      organization_id: primary.organizationId, nombre_original: 'antecedente.txt', nombre_interno: `${randomUUID()}-antecedente.txt`,
+      storage_key: `qa/prospect-review/${randomUUID()}`, tipo: 'ANTECEDENTE', categoria: 'PROYECTO', mime_type: 'text/plain',
+      size_bytes: 30, checksum_sha256: 'synthetic-antecedent', estatus: 'VIGENTE', subido_por_id: primary.id, prospecto_id: prospect.id,
+    } });
+    const reviewService = new ProspectDocumentReviewService(scoped,
+      async () => Buffer.from('Titular documentado: Persona A'),
+      async (input) => ({ summary: 'Revisión preliminar: titular identificable en la fuente.',
+        findings: [{ detail: 'Verificar titular con documentación complementaria.', document_ids: [input.documents[0].id] }],
+        model: 'qa-provider', usage: { modelo: 'qa-provider', input_tokens: 4, cached_input_tokens: 0,
+          output_tokens: 4, reasoning_tokens: 0, total_tokens: 8, duracion_ms: 1, documentos_enviados: 1,
+          costo_estimado_usd: 0, precios_version: 'provider-usage-only-test', escalamiento_utilizado: false } }));
+    try {
+      const before = await run(primary, () => reviewService.latest(primary, prospect.id));
+      expect(before).toMatchObject({ available: true, current: false, review: null });
+      const saved = await run(primary, () => reviewService.run(primary, prospect.id));
+      expect(saved).toMatchObject({ current: true, review: { findings: [{ document_ids: [document.id] }] } });
+      expect(await run(primary, () => reviewService.latest(primary, prospect.id))).toMatchObject({ current: true });
+      expect(await db.prospectoRevisionDocumental.count({ where: { prospecto_id: prospect.id } })).toBe(1);
+      expect(await db.auditLog.count({ where: { entidad: 'Prospecto', entidad_id: prospect.id, accion: 'PROSPECT_DOCUMENT_REVIEW_AI' } })).toBe(1);
+      await expect(run(foreign, () => reviewService.latest(foreign, prospect.id))).rejects.toMatchObject({ status: 404 });
+      await expect(run(foreign, () => reviewService.run(foreign, prospect.id))).rejects.toMatchObject({ status: 404 });
+      await db.documento.create({ data: { organization_id: primary.organizationId, nombre_original: 'predial.txt',
+        nombre_interno: `${randomUUID()}-predial.txt`, storage_key: `qa/prospect-review/${randomUUID()}`,
+        tipo: 'PREDIAL', categoria: 'PROYECTO', mime_type: 'text/plain', size_bytes: 20,
+        checksum_sha256: 'synthetic-predial', estatus: 'VIGENTE', subido_por_id: primary.id, prospecto_id: prospect.id } });
+      expect(await run(primary, () => reviewService.latest(primary, prospect.id))).toMatchObject({ current: false });
+    } finally {
+      if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previousKey;
+    }
+  });
+
+  it('no presenta un .doc antiguo como revisión IA exitosa', async () => {
+    const prospect = await create();
+    await db.documento.create({ data: { organization_id: primary.organizationId, nombre_original: 'acta-antigua.doc',
+      nombre_interno: `${randomUUID()}-acta-antigua.doc`, storage_key: `qa/prospect-review/${randomUUID()}`,
+      tipo: 'INICIAL', categoria: 'PROYECTO', mime_type: 'application/msword', size_bytes: 100,
+      estatus: 'VIGENTE', subido_por_id: primary.id, prospecto_id: prospect.id } });
+    const previousKey = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'isolated-synthetic-provider-key';
+    try {
+      const reviewService = new ProspectDocumentReviewService(scoped, async () => Buffer.from('legacy'),
+        async () => { throw new Error('Provider must not run without readable documents'); });
+      expect(await run(primary, () => reviewService.latest(primary, prospect.id))).toMatchObject({
+        available: false, requiresManualReview: [{ name: 'acta-antigua.doc' }],
+      });
+      await expect(run(primary, () => reviewService.run(primary, prospect.id)))
+        .rejects.toMatchObject({ status: 422, code: 'PROSPECT_REVIEW_NO_READABLE_SOURCE' });
+      expect(await db.prospectoRevisionDocumental.count({ where: { prospecto_id: prospect.id } })).toBe(0);
+    } finally {
+      if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previousKey;
+    }
   });
 
   it('rechaza saltos, estado manual y acciones de notaría retiradas', async () => {

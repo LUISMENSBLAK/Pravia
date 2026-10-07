@@ -14,13 +14,14 @@ const expediente = { id: 'exp-1', numero_pravia: 'EXP-2026-0041', cliente_alias:
 const event = {
   id: 'event-1', titulo: 'Firma de escritura', descripcion: 'Llevar identificación oficial', tipo: 'FIRMA', estatus: 'ACTIVO',
   fecha_inicio: '2026-08-20T17:00:00.000Z', fecha_fin: '2026-08-20T18:00:00.000Z', todo_el_dia: false,
-  user_id: 'user-1', expediente_id: 'exp-1', compareciente_id: 'party-1', recordatorios: [15], cancelado_at: null,
+  user_id: 'user-1', created_by_id: 'user-1', visibilidad: 'PRIVATE', participantes: [], can_edit: true,
+  expediente_id: 'exp-1', compareciente_id: 'party-1', recordatorios: [15], cancelado_at: null,
   motivo_cancelacion: null, created_at: '2026-08-10T15:00:00.000Z', updated_at: '2026-08-10T15:00:00.000Z',
   usuario: { id: 'user-1', nombre: 'Andrea', apellido: 'Ruiz', rol: 'ABOGADO' }, responsable_nombre: 'Andrea Ruiz',
   expediente, compareciente_nombre: 'Ana Pérez', notaria, color: '#4d97d3',
   firma: { programada: '2026-08-20T17:00:00.000Z', estimada_expediente: '2026-08-20T17:00:00.000Z', efectiva: null },
 };
-const mariaEvent = { ...event, id: 'event-2', titulo: 'Revisión de proyecto', tipo: 'AUDIENCIA', user_id: 'user-2', expediente_id: null, expediente: null, notaria: null, firma: null, compareciente_nombre: null, usuario: { id: 'user-2', nombre: 'María', apellido: 'López', rol: 'ABOGADO' }, responsable_nombre: 'María López', fecha_inicio: '2026-08-21T16:00:00.000Z', fecha_fin: '2026-08-21T17:00:00.000Z' };
+const mariaEvent = { ...event, id: 'event-2', titulo: 'Revisión de proyecto', tipo: 'AUDIENCIA', user_id: 'user-2', created_by_id: 'user-2', visibilidad: 'ORGANIZATION', can_edit: false, expediente_id: null, expediente: null, notaria: null, firma: null, compareciente_nombre: null, usuario: { id: 'user-2', nombre: 'María', apellido: 'López', rol: 'ABOGADO' }, responsable_nombre: 'María López', fecha_inicio: '2026-08-21T16:00:00.000Z', fecha_fin: '2026-08-21T17:00:00.000Z' };
 const catalogs = {
   usuarios: [{ id: 'user-1', nombre: 'Andrea', apellido: 'Ruiz', rol: 'ABOGADO' }, { id: 'user-2', nombre: 'María', apellido: 'López', rol: 'ABOGADO' }],
   expedientes: [expediente], comparecientes: [{ id: 'party-1', tipo_persona: 'FISICA', nombre: 'Ana Pérez' }],

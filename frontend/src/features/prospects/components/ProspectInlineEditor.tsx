@@ -7,120 +7,85 @@ import type { Prospect, ProspectCatalogs, ProspectWorkflow } from '../prospects.
 import { displayProspectName, uppercaseProspectNameInput } from '../prospects.types';
 import styles from '../ProspectsPage.module.css';
 
-type Block = 'matter' | 'client' | 'economic';
-const amount = (value: number | string | null | undefined) => value == null ? '' : String(value);
+type Block = 'summary' | 'contact';
+const formatDate = (value: string) => new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' }).format(new Date(value));
 
-export function ProspectInlineEditor({ prospect, workflow, catalogs, canWrite, onChanged, notify }: {
+export function ProspectInlineEditor({ block, prospect, workflow, catalogs, canWrite, canAssign, onBusyChange, onChanged, notify }: {
+  block: Block;
   prospect: Prospect;
   workflow: ProspectWorkflow;
   catalogs: ProspectCatalogs;
   canWrite: boolean;
+  canAssign: boolean;
+  onBusyChange: (busy: boolean) => void;
   onChanged: () => Promise<void>;
   notify: (message: string) => void;
 }) {
   const location = useLocation();
   const navigate = useNavigate();
   const processedReturnedAct = useRef('');
-  const [editing, setEditing] = useState<Block | null>(null);
+  const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [form, setForm] = useState({
     nombre: displayProspectName(prospect.nombre), telefono: prospect.telefono ?? '', email: prospect.email ?? '',
-    actIds: prospect.actos?.map((item) => item.tipo_acto_id) ?? [], descripcion: prospect.necesidad ?? '', contexto: prospect.contexto_operacion ?? '', responsable: prospect.user_id ?? '',
-    honorarios: amount(prospect.honorarios_estimados), impuestos: amount(prospect.impuestos_derechos_estimados), total: amount(prospect.total_estimado),
+    actIds: prospect.actos?.map((item) => item.tipo_acto_id) ?? [], responsable: prospect.user_id ?? '',
   });
   useEffect(() => {
     if (editing) return;
     setForm({
       nombre: displayProspectName(prospect.nombre), telefono: prospect.telefono ?? '', email: prospect.email ?? '',
-      actIds: prospect.actos?.map((item) => item.tipo_acto_id) ?? [], descripcion: prospect.necesidad ?? '', contexto: prospect.contexto_operacion ?? '', responsable: prospect.user_id ?? '',
-      honorarios: amount(prospect.honorarios_estimados), impuestos: amount(prospect.impuestos_derechos_estimados), total: amount(prospect.total_estimado),
+      actIds: prospect.actos?.map((item) => item.tipo_acto_id) ?? [], responsable: prospect.user_id ?? '',
     });
   }, [editing, prospect]);
   useEffect(() => {
+    if (block !== 'summary') return;
     const returned = location.state as { cfg001CreatedActId?: string; cfg001CreatedActName?: string } | null;
     const actId = returned?.cfg001CreatedActId;
     if (!actId || processedReturnedAct.current === actId || busy) return;
     processedReturnedAct.current = actId;
     const actIds = Array.from(new Set([...(prospect.actos?.map((item) => item.tipo_acto_id) ?? []), actId]));
-    setBusy(true); setError('');
+    setBusy(true); onBusyChange(true); setError('');
     void prospectsService.update(prospect.id, { expectedVersion: workflow.version, tipo_acto_ids: actIds })
-      .then(async () => { await onChanged(); notify(`${returned?.cfg001CreatedActName || 'Acto'} quedó seleccionado en el prospecto.`); })
+      .then(async () => { await onChanged(); notify((returned?.cfg001CreatedActName || 'Acto') + ' quedó seleccionado en el prospecto.'); })
       .catch(() => notify('El acto se creó, pero no pudo vincularse al prospecto.'))
-      .finally(() => { setBusy(false); navigate(`/prospectos/${prospect.id}`, { replace: true, state: null }); });
-  }, [busy, location.state, navigate, notify, onChanged, prospect.actos, prospect.id, workflow.version]);
-  const set = (key: keyof typeof form, value: string) => setForm((current) => ({ ...current, [key]: value }));
-  const open = (block: Block) => { setEditing(block); setError(''); };
-  const cancel = () => { setEditing(null); setError(''); };
+      .finally(() => { setBusy(false); onBusyChange(false); navigate('/prospectos/' + prospect.id, { replace: true, state: null }); });
+  }, [block, busy, location.state, navigate, notify, onBusyChange, onChanged, prospect.actos, prospect.id, workflow.version]);
   const save = async (event: FormEvent) => {
     event.preventDefault();
-    if (!editing || busy) return;
+    if (busy) return;
     const payload: Record<string, unknown> = { expectedVersion: workflow.version };
-    if (editing === 'client') {
+    if (block === 'summary') {
       if (!form.nombre.trim()) return setError('El nombre o razón social es obligatorio.');
-      if (form.email && !/^\S+@\S+\.\S+$/.test(form.email)) return setError('Escribe un correo válido.');
-      Object.assign(payload, { nombre: displayProspectName(form.nombre), telefono: form.telefono, email: form.email });
-    }
-    if (editing === 'matter') Object.assign(payload, {
-      necesidad: form.descripcion,
-      contexto_operacion: form.contexto,
-      tipo_acto_ids: form.actIds,
-      ...(form.responsable && form.responsable !== prospect.user_id ? { responsable_id: form.responsable } : {}),
-    });
-    if (editing === 'economic') {
-      const allBlank = !form.honorarios && !form.impuestos && !form.total;
-      if (!allBlank) {
-        const fees = Number(form.honorarios), taxes = Number(form.impuestos), total = Number(form.total);
-        if (![fees, taxes, total].every((value) => Number.isFinite(value) && value >= 0)) return setError('Completa los tres importes con valores válidos.');
-        if (Math.round((fees + taxes) * 100) !== Math.round(total * 100)) return setError('El total debe coincidir con honorarios más impuestos y derechos.');
-      }
       Object.assign(payload, {
-        honorarios_estimados: allBlank ? null : form.honorarios,
-        impuestos_derechos_estimados: allBlank ? null : form.impuestos,
-        total_estimado: allBlank ? null : form.total,
+        nombre: displayProspectName(form.nombre), tipo_acto_ids: form.actIds,
+        ...(canAssign && form.responsable && form.responsable !== prospect.user_id ? { responsable_id: form.responsable } : {}),
       });
+    } else {
+      if (form.email && !/^\S+@\S+\.\S+$/.test(form.email)) return setError('Escribe un correo válido.');
+      Object.assign(payload, { telefono: form.telefono, email: form.email });
     }
-    setBusy(true);
-    setError('');
+    setBusy(true); onBusyChange(true); setError('');
     try {
       await prospectsService.update(prospect.id, payload);
-      setEditing(null);
+      setEditing(false);
       await onChanged();
       notify('Ficha actualizada.');
     } catch (caught) {
       setError(caught instanceof ApiError && caught.status === 409 ? 'La ficha cambió en otra sesión. Actualiza y revisa antes de guardar.' : 'No pudimos guardar este bloque. Revisa los datos.');
-    } finally { setBusy(false); }
+    } finally { setBusy(false); onBusyChange(false); }
   };
-  const actions = (block: Block) => canWrite && <button type="button" className={styles.inlineEditButton} onClick={() => open(block)}><Pencil size={15} />Editar bloque</button>;
-  const footer = <div className={styles.inlineFormActions}><button type="button" onClick={cancel} disabled={busy}><X size={16} />Cancelar</button><button type="submit" className={styles.primaryButton} disabled={busy}>{busy ? <LoaderCircle className={styles.spin} size={16} /> : <Check size={16} />}Guardar</button></div>;
-
-  return <div className={styles.workBlocks}>
-    <section className={styles.detailSection}><header><div><h2>Datos del asunto</h2><p>Acto, descripción y responsable de la oportunidad.</p></div>{editing !== 'matter' && actions('matter')}</header>
-      {editing === 'matter' ? <form className={styles.inlineForm} onSubmit={save}>
-        <fieldset className={styles.actSelector}><legend>Actos preliminares</legend>{catalogs.actTypes.length ? catalogs.actTypes.map((act) => <label key={act.id}><input type="checkbox" checked={form.actIds.includes(act.id)} onChange={(event) => setForm((current) => ({ ...current, actIds: event.target.checked ? [...current.actIds, act.id] : current.actIds.filter((id) => id !== act.id) }))} /><span>{act.nombre}</span></label>) : <p>No hay actos configurados para esta Notaría.</p>}<Link to={`/configuracion/actos-tiempos?returnTo=${encodeURIComponent(`/prospectos/${prospect.id}`)}`}>+ Crear nuevo acto en Actos y tiempos</Link></fieldset>
-        <label><span>Descripción breve</span><textarea rows={4} value={form.descripcion} onChange={(event) => set('descripcion', event.target.value)} /></label>
-        <label><span>Contexto de la operación</span><textarea rows={4} value={form.contexto} onChange={(event) => set('contexto', event.target.value)} placeholder="Hechos mínimos relevantes para preparar la cotización" /></label>
-        {workflow.responsibles.length > 0 && <label><span>Responsable</span><select value={form.responsable} onChange={(event) => set('responsable', event.target.value)}>{workflow.responsibles.map((responsible) => <option key={responsible.id} value={responsible.id}>{[responsible.nombre, responsible.apellido].filter(Boolean).join(' ')}</option>)}</select></label>}
-        {error && <p className={styles.formError} role="alert">{error}</p>}{footer}
-      </form> : <dl><div><dt>Acto(s)</dt><dd>{prospect.actos?.map((item) => item.tipo_acto.nombre).join(', ') || prospect.servicio_catalogo?.label || prospect.tipo_acto || 'Por definir'}</dd></div><div><dt>Descripción breve</dt><dd>{prospect.necesidad || 'Sin descripción'}</dd></div><div><dt>Contexto de la operación</dt><dd>{prospect.contexto_operacion || 'Sin contexto adicional'}</dd></div><div><dt>Responsable</dt><dd>{prospect.atendido_por?.nombre || 'Sin responsable visible'}</dd></div></dl>}
-    </section>
-
-    <section className={styles.detailSection}><header><div><h2>Cliente / solicitante</h2><p>Datos de identificación y contacto.</p></div>{editing !== 'client' && actions('client')}</header>
-      {editing === 'client' ? <form className={styles.inlineForm} onSubmit={save}>
-        <label><span>Nombre o razón social</span><input value={form.nombre} onChange={(event) => set('nombre', uppercaseProspectNameInput(event.target.value))} /></label>
-        <label><span>Teléfono</span><input type="tel" value={form.telefono} onChange={(event) => set('telefono', event.target.value)} /></label>
-        <label><span>Correo</span><input type="email" value={form.email} onChange={(event) => set('email', event.target.value)} /></label>
-        {error && <p className={styles.formError} role="alert">{error}</p>}{footer}
-      </form> : <dl><div><dt>Nombre</dt><dd>{displayProspectName(prospect.nombre)}</dd></div><div><dt>Teléfono</dt><dd>{prospect.telefono || 'No registrado'}</dd></div><div><dt>Correo</dt><dd>{prospect.email || 'No registrado'}</dd></div></dl>}
-    </section>
-
-    <section className={styles.detailSection}><header><div><h2>Cotización / preparación económica</h2><p>Importes que pasarán a la cotización sin volver a capturarlos.</p></div>{editing !== 'economic' && actions('economic')}</header>
-      {editing === 'economic' ? <form className={`${styles.inlineForm} ${styles.economicForm}`} onSubmit={save}>
-        <label><span>Honorarios</span><input type="number" min="0" step=".01" value={form.honorarios} onChange={(event) => set('honorarios', event.target.value)} /></label>
-        <label><span>Impuestos y derechos</span><input type="number" min="0" step=".01" value={form.impuestos} onChange={(event) => set('impuestos', event.target.value)} /></label>
-        <label><span>Total</span><input type="number" min="0" step=".01" value={form.total} onChange={(event) => set('total', event.target.value)} /></label>
-        {error && <p className={styles.formError} role="alert">{error}</p>}{footer}
-      </form> : <dl className={styles.economicSummary}><div><dt>Honorarios</dt><dd>{form.honorarios ? `$${Number(form.honorarios).toLocaleString('es-MX', { minimumFractionDigits: 2 })}` : 'Por definir'}</dd></div><div><dt>Impuestos y derechos</dt><dd>{form.impuestos ? `$${Number(form.impuestos).toLocaleString('es-MX', { minimumFractionDigits: 2 })}` : 'Por definir'}</dd></div><div><dt>Total</dt><dd>{form.total ? `$${Number(form.total).toLocaleString('es-MX', { minimumFractionDigits: 2 })}` : 'Por definir'}</dd></div></dl>}
-    </section>
-  </div>;
+  const footer = <div className={styles.inlineFormActions}><button type="button" onClick={() => { setEditing(false); setError(''); }} disabled={busy}><X size={16} />Cancelar</button><button type="submit" className={styles.primaryButton} disabled={busy}>{busy ? <LoaderCircle className={styles.spin} size={16} /> : <Check size={16} />}Guardar</button></div>;
+  if (block === 'contact') return <section className={styles.detailSection}><header><div><h2>Datos de contacto</h2><p>Medios para dar seguimiento a esta oportunidad.</p></div>{canWrite && !editing && <button type="button" className={styles.inlineEditButton} onClick={() => setEditing(true)}><Pencil size={15} />Editar contacto</button>}</header>
+    {editing ? <form className={styles.inlineForm} onSubmit={save}><label><span>Teléfono</span><input type="tel" value={form.telefono} onChange={(event) => setForm((current) => ({ ...current, telefono: event.target.value }))} /></label><label><span>Correo</span><input type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} /></label>{error && <p className={styles.formError} role="alert">{error}</p>}{footer}</form>
+      : <dl><div><dt>Teléfono</dt><dd>{prospect.telefono || 'No registrado'}</dd></div><div><dt>Correo</dt><dd>{prospect.email || 'No registrado'}</dd></div></dl>}
+  </section>;
+  return <section className={styles.detailSection}><header><div><h2>Resumen</h2><p>Datos esenciales del prospecto.</p></div>{canWrite && !editing && <button type="button" className={styles.inlineEditButton} onClick={() => setEditing(true)}><Pencil size={15} />Editar datos</button>}</header>
+    {editing ? <form className={styles.inlineForm} onSubmit={save}>
+      <label><span>Nombre o razón social</span><input value={form.nombre} onChange={(event) => setForm((current) => ({ ...current, nombre: uppercaseProspectNameInput(event.target.value) }))} /></label>
+      <fieldset className={styles.actSelector}><legend>Acto(s)</legend>{catalogs.actTypes.length ? catalogs.actTypes.map((act) => <label key={act.id}><input type="checkbox" checked={form.actIds.includes(act.id)} onChange={(event) => setForm((current) => ({ ...current, actIds: event.target.checked ? [...current.actIds, act.id] : current.actIds.filter((id) => id !== act.id) }))} /><span>{act.nombre}</span></label>) : <p>No hay actos configurados para esta Notaría.</p>}<Link to={'/configuracion/actos-tiempos?returnTo=' + encodeURIComponent('/prospectos/' + prospect.id)}>+ Crear nuevo acto en Actos y tiempos</Link></fieldset>
+      {canAssign && workflow.responsibles.length > 0 && <label><span>Responsable del prospecto</span><select value={form.responsable} onChange={(event) => setForm((current) => ({ ...current, responsable: event.target.value }))}>{workflow.responsibles.map((responsible) => <option key={responsible.id} value={responsible.id}>{[responsible.nombre, responsible.apellido].filter(Boolean).join(' ')}</option>)}</select></label>}
+      {error && <p className={styles.formError} role="alert">{error}</p>}{footer}
+    </form> : <dl><div><dt>Folio</dt><dd>{workflow.folio || 'Histórico sin folio canónico'}</dd></div><div><dt>Nombre</dt><dd>{displayProspectName(prospect.nombre)}</dd></div><div><dt>Acto(s)</dt><dd>{prospect.actos?.map((item) => item.tipo_acto.nombre).join(', ') || prospect.servicio_catalogo?.label || prospect.tipo_acto || 'Por definir'}</dd></div><div><dt>Responsable del prospecto</dt><dd>{prospect.atendido_por?.nombre || 'Sin responsable visible'}</dd></div><div><dt>Fecha de creación</dt><dd>{formatDate(prospect.created_at)}</dd></div></dl>}
+  </section>;
 }

@@ -11,6 +11,7 @@ import documentosRoutes from './routes/documentos.routes';
 import notariasRoutes from './routes/notarias.routes';
 import cotizacionesRoutes from './routes/cotizaciones.routes';
 import expedientesRoutes from './routes/expedientes.routes';
+import archivoRoutes from './routes/archivo.routes';
 import comparecientesRoutes from './routes/compareciente.routes';
 import comparecienteAltaSessionRoutes from './routes/comparecienteAltaSession.routes';
 import finanzasRoutes from './routes/finanzas.routes';
@@ -246,6 +247,7 @@ app.use('/api/documentos', authorizeByMethod('documentos.read', 'documentos.writ
 app.use('/api/notarias', authorizeByMethod('notarias.read', 'notarias.write'), notariasRoutes);
 app.use('/api/cotizaciones', authorizeByMethod('cotizaciones.read', 'cotizaciones.write'), cotizacionesRoutes);
 app.use('/api/expedientes', authorizeExpedienteRequest, expedientesRoutes);
+app.use('/api/archivo', archivoRoutes);
 app.use('/api/predios', authorizeByMethod('expedientes.read', 'expedientes.write'), prediosRoutes);
 app.use('/api/comparecientes/altas', authorizeByMethod('comparecientes.read', 'comparecientes.write'), comparecienteAltaSessionRoutes);
 app.use('/api/comparecientes/alta', authorizeByMethod('comparecientes.read', 'comparecientes.write'), comparecienteAltaSessionRoutes);

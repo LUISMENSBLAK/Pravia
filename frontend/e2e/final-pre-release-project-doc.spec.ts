@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 const expedienteId = '7a139000-0000-4000-8000-000000000001';
 const credentials = {
-  email: 'qa.correcciones@pravia.test',
+  email: process.env.PRAVIA_E2E_EMAIL || 'qa.correcciones@pravia.test',
   password: (process.env.PRAVIA_E2E_PASSWORD ?? ''),
 };
 

@@ -7,8 +7,10 @@ const fixtureUrl = '/calculo-isr/fixture-isr-2026?fixture=result&visual=1';
 
 async function login(page: Page) {
   await page.goto('/login', { waitUntil: 'domcontentloaded' });
-  await page.getByRole('textbox', { name: 'Correo electrónico' }).fill('qa.correcciones@pravia.test');
+  await page.getByRole('textbox', { name: 'Correo electrónico' }).fill(process.env.PRAVIA_E2E_EMAIL || 'qa.correcciones@pravia.test');
   await page.getByRole('textbox', { name: 'Contraseña', exact: true }).fill((process.env.PRAVIA_E2E_PASSWORD ?? ''));
+  await page.getByRole('textbox', { name: 'Correo electrónico' }).fill(process.env.PRAVIA_E2E_EMAIL || 'qa.correcciones@pravia.test');
+  await expect(page.getByRole('button', { name: 'Iniciar sesión', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
   await page.waitForURL('**/mi-dia');
 }

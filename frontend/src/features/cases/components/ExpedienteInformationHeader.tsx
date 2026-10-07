@@ -12,12 +12,8 @@ const snapshot = (expediente: ExpedienteDetail) => ({
   cliente_alias: expediente.cliente_alias || '',
   abogado_id: expediente.abogado?.id || '',
   tipo_acto_id: expediente.actos?.find((item) => item.estatus === 'ACTIVO' && !item.removed_at)?.tipo_acto_id || '',
-  fecha_firma: day(expediente.fecha_real_firma),
   fecha_estimada_firma: day(expediente.fecha_estimada_firma),
   fecha_estimada_entrega: day(expediente.fecha_estimada_entrega),
-  numero_escritura: expediente.numero_escritura || '',
-  folio_desde: expediente.folio_desde || '',
-  folio_hasta: expediente.folio_hasta || '',
   valor_operacion: money((expediente as any).valor_operacion),
 });
 
@@ -82,11 +78,11 @@ export function ExpedienteInformationHeader({ expediente, onChanged, onAssistant
       <label><span>Abogado responsable</span><select value={form.abogado_id} disabled={!expediente.capabilities.canWrite} onChange={(event) => set('abogado_id', event.target.value)}>{expediente.header_options?.responsibles.map((item) => <option key={item.id} value={item.id}>{fullName(item)}</option>)}</select></label>
       <label><span>Cliente</span><input value={form.cliente_alias} disabled={!expediente.capabilities.canWrite} onChange={(event) => set('cliente_alias', event.target.value)} /></label>
       <label className={styles.informationWide}><span>Acto</span><select value={form.tipo_acto_id} disabled={!expediente.capabilities.canWrite} onChange={(event) => set('tipo_acto_id', event.target.value)}><option value="">Selecciona un acto</option>{types.map((item) => <option key={item.id} value={item.id}>{item.configuracionesOperativas?.[0]?.nombre_personalizado || item.nombre}</option>)}</select><small>Los actos adicionales se conservan y se administran en la pestaña Actos.</small></label>
-      <label><span>Fecha de firma</span><input type="date" value={form.fecha_firma} disabled={!expediente.capabilities.canWrite} onChange={(event) => set('fecha_firma', event.target.value)} /></label>
+      <label><span>Fecha de firma</span><input type="date" value={day(expediente.fecha_real_firma)} readOnly aria-readonly="true" /><small>Se actualiza desde Archivo.</small></label>
       <label><span>Fecha estimada de firma</span><input type="date" value={form.fecha_estimada_firma} disabled={!expediente.capabilities.canWrite} onChange={(event) => set('fecha_estimada_firma', event.target.value)} /></label>
       <label><span>Fecha estimada de entrega</span><input type="date" value={form.fecha_estimada_entrega} disabled={!expediente.capabilities.canWrite} onChange={(event) => set('fecha_estimada_entrega', event.target.value)} /></label>
-      <label><span>Número de escritura</span><input value={form.numero_escritura} disabled={!expediente.capabilities.canWrite} onChange={(event) => set('numero_escritura', event.target.value)} /></label>
-      <fieldset className={styles.folioFields}><legend>Folios</legend><label><span>De</span><input value={form.folio_desde} disabled={!expediente.capabilities.canWrite} onChange={(event) => set('folio_desde', event.target.value)} /></label><label><span>A</span><input value={form.folio_hasta} disabled={!expediente.capabilities.canWrite} onChange={(event) => set('folio_hasta', event.target.value)} /></label></fieldset>
+      <label><span>Número de escritura</span><input value={expediente.numero_escritura || ''} readOnly aria-readonly="true" /><small>Se actualiza desde Archivo.</small></label>
+      <fieldset className={styles.folioFields}><legend>Folios</legend><label><span>De</span><input value={expediente.folio_desde || ''} readOnly aria-readonly="true" /></label><label><span>A</span><input value={expediente.folio_hasta || ''} readOnly aria-readonly="true" /></label></fieldset>
       <label><span>Valor de la operación</span><input type="number" min="0" step="0.01" value={form.valor_operacion} disabled={!expediente.capabilities.canWrite} onChange={(event) => set('valor_operacion', event.target.value)} /></label>
     </div>
     {error && <p className={styles.informationError} role="alert">{error}</p>}

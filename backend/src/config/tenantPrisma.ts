@@ -4,7 +4,7 @@ import { currentActorContext, TenantContextError } from '../auth/actorContext';
 // Modelos que poseen organization_id explícito. Los hijos derivados también lo
 // conservan para defensa en profundidad, consultas directas e índices eficientes.
 export const TENANT_SCOPED_MODELS = new Set([
-  'UserInvitation', 'Notification', 'NotificationReminder', 'Prospecto', 'ProspectoActo', 'ProspectoSeguimiento', 'ProspectoTransicion', 'ProspectoFuenteNotarial', 'Notaria', 'NotariaContacto',
+  'UserInvitation', 'Notification', 'NotificationReminder', 'Prospecto', 'ProspectoActo', 'ProspectoSeguimiento', 'ProspectoTransicion', 'ProspectoFuenteNotarial', 'ProspectoRevisionDocumental', 'Notaria', 'NotariaContacto',
   'Cotizacion', 'CotizacionActo', 'CotizacionVersion', 'CotizacionConcepto', 'CotizacionVersionConcepto', 'CotizacionSeguimiento', 'CotizacionTransicion', 'Expediente', 'ExpedienteEstatus_Log',
   'ExpedienteEtapa', 'Documento', 'ExpedienteDocumento', 'ExpedienteDocumentoCarpeta', 'CotizacionDocumento', 'ProspectoDocumento',
   'RequisitoDocumentoVinculo', 'MovimientoDocumento', 'ComunicacionDocumento', 'Compareciente',
@@ -14,7 +14,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'CategoriaFinanciera', 'CuentaFinanciera', 'HonorarioGenerado', 'MetaHonorario', 'MovimientoDistribucion',
   'ComprobanteFinanciero', 'TransaccionEstadoCuenta', 'ConciliacionFinanciera', 'Pago', 'ExpedienteActividad',
   'AuditLog', 'CalculoISR', 'CalculoISRVersion', 'CalculoISRDocumento', 'CalculoISRPropuesta', 'DomainEventOutbox',
-  'DomainEventProcessingLog', 'Tarea', 'EventoAgenda', 'TareaExterna', 'ExpedienteEntrega', 'Comunicacion', 'Nota',
+  'DomainEventProcessingLog', 'Tarea', 'EventoAgenda', 'EventoAgendaParticipante', 'TareaExterna', 'ExpedienteEntrega', 'Comunicacion', 'Nota',
   'MemoriaDespacho', 'ComparecienteAltaSession', 'AIUsageLog', 'AssistantConversation', 'AssistantMessage',
   'AssistantAttachment', 'ComplianceReview', 'ComplianceDecision', 'ComplianceEvidence', 'CompliancePartySnapshot',
   'ComplianceBeneficialOwner', 'CompliancePepReview', 'ComplianceScreeningResult', 'CompliancePayment',
@@ -52,7 +52,10 @@ export const TENANT_SCOPED_MODELS = new Set([
   'TimingPolicyRevision', 'TimingInterval',
   'KnowledgeSource', 'KnowledgeSourceVersion', 'KnowledgeArticle', 'KnowledgeCriterion', 'KnowledgeRadarRun', 'KnowledgeImpact',
   'AssistantAlert', 'GastoRecurrenteFinanciero', 'ConsultaFinancieraGuardada',
+  'EntidadFiscalCfdi', 'EntidadFiscalCuenta', 'ProveedorFiscal', 'DocumentoCfdi',
+  'CuentaPorCobrarCfdi', 'CuentaPorPagarCfdi', 'AplicacionPagoCfdi', 'TransferenciaInterna',
   'CotizacionIAProposal', 'ProjectFactSnapshot', 'ProjectInstructionApplication', 'ProjectTemplateAssignment',
+  'ArchivoRegistro',
   'FiscalReferenceRevision', 'FiscalExportProfile',
 ]);
 

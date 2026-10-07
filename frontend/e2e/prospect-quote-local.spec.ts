@@ -1,0 +1,175 @@
+import { expect, test } from '@playwright/test';
+
+const qaPassword = process.env.PRAVIA_E2E_PASSWORD;
+const qaEmail = 'adrian.hernandez@pravia.test';
+
+test('Prospecto: responsable de cotización explícito, conversión única y persistencia', async ({ page }, testInfo) => {
+  const base = new URL(String(testInfo.project.use.baseURL || ''));
+  if (base.hostname !== '127.0.0.1' || !qaPassword) throw new Error('LOCAL_PROSPECT_BROWSER_QA_SAFETY_GATE_FAILED');
+  await page.goto('/login');
+  await expect(page.getByRole('heading', { name: 'Bienvenido a PRAVIA OS' })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Correo electrónico' }).fill(qaEmail);
+  await page.getByRole('textbox', { name: 'Contraseña', exact: true }).fill(qaPassword);
+  await page.getByRole('textbox', { name: 'Correo electrónico' }).fill(qaEmail);
+  await expect(page.getByRole('button', { name: 'Iniciar sesión', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
+  await page.waitForURL('**/mi-dia');
+  await page.goto('/prospectos');
+  await page.getByRole('button', { name: 'Nuevo prospecto' }).click();
+  const name = 'QA PROSPECTO COTIZACION ' + Date.now();
+  await page.getByLabel(/Nombre o razón social/).fill(name);
+  await page.getByRole('button', { name: 'Crear prospecto' }).click();
+  await expect(page.getByRole('heading', { name, exact: true })).toBeAttached();
+  const prospectUrl = page.url();
+  await expect(page.getByRole('heading', { name: 'Resumen' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Progreso / flujo' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Datos de contacto' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Actividad de etapas' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Cotización / preparación económica' })).toHaveCount(0);
+  const summary = page.getByRole('heading', { name: 'Resumen' }).locator('..').locator('..').locator('..');
+  await summary.getByRole('button', { name: 'Editar datos' }).click();
+  const acts = summary.getByRole('checkbox');
+  await expect(acts.first()).toBeVisible();
+  await acts.first().check();
+  await summary.getByRole('button', { name: 'Guardar' }).click();
+  await expect(summary.getByRole('button', { name: 'Editar datos' })).toBeVisible();
+  await page.getByRole('button', { name: 'Comenzar integración' }).click();
+  await page.getByRole('group', { name: 'Confirmar acción' }).getByRole('button', { name: 'Confirmar' }).click();
+  await expect(page.getByRole('button', { name: 'Marcar listo para cotizar' })).toBeVisible();
+  await page.getByRole('button', { name: 'Marcar listo para cotizar' }).click();
+  const confirmation = page.getByRole('group', { name: 'Confirmar acción' });
+  await expect(confirmation.getByRole('combobox', { name: /Quién continuará con la cotización/i })).toBeVisible();
+  const assignee = confirmation.getByRole('combobox', { name: /Quién continuará con la cotización/i });
+  const option = (await assignee.locator('option').allTextContents()).find((label) => label.includes('Hernández'));
+  expect(option).toBeTruthy();
+  await assignee.selectOption({ label: option });
+  await confirmation.getByRole('button', { name: 'Confirmar' }).click();
+  await expect(page.getByRole('button', { name: 'Convertir en cotización' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Convertir en cotización' })).toBeVisible();
+  await page.getByRole('button', { name: 'Convertir en cotización' }).click();
+  await expect(page.getByText(/Responsable de cotización: Adrián Hernández/)).toBeVisible();
+  await page.getByRole('group', { name: 'Confirmar acción' }).getByRole('button', { name: 'Confirmar' }).click();
+  await page.waitForURL('**/cotizaciones/**');
+  const quoteUrl = page.url();
+  await expect(page.getByText(/COT-\d{4}-\d{4}/).first()).toBeVisible();
+  await page.goto(prospectUrl);
+  await expect(page.getByRole('link', { name: 'Ir a cotización' })).toHaveAttribute('href', new URL(quoteUrl).pathname);
+  await expect(page.getByRole('button', { name: 'Convertir en cotización' })).toHaveCount(0);
+  for (const width of [1440, 1366, 1024, 768, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(page.getByRole('heading', { name: 'Resumen' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Actividad de etapas' })).toBeVisible();
+    const dimensions = await page.evaluate(() => ({ pageWidth: document.documentElement.scrollWidth, viewportWidth: window.innerWidth }));
+    expect(dimensions.pageWidth, 'No page overflow at ' + width + 'px').toBeLessThanOrEqual(dimensions.viewportWidth);
+    await page.screenshot({ path: testInfo.outputPath('prospect-' + width + '.png'), fullPage: true });
+  }
+});
+
+test('PRAVIA IA solicita el responsable antes de avanzar un prospecto listo para cotizar', async ({ page }, testInfo) => {
+  const base = new URL(String(testInfo.project.use.baseURL || ''));
+  if (base.hostname !== '127.0.0.1' || !qaPassword) throw new Error('LOCAL_PROSPECT_BROWSER_QA_SAFETY_GATE_FAILED');
+  await page.goto('/login');
+  await page.getByRole('textbox', { name: 'Correo electrónico' }).fill(qaEmail);
+  await page.getByRole('textbox', { name: 'Contraseña', exact: true }).fill(qaPassword);
+  await page.getByRole('textbox', { name: 'Correo electrónico' }).fill(qaEmail);
+  await page.getByRole('textbox', { name: 'Contraseña', exact: true }).fill(qaPassword);
+  await expect(page.getByRole('button', { name: 'Iniciar sesión', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
+  await page.waitForURL('**/mi-dia');
+  await page.goto('/prospectos');
+  await page.getByRole('button', { name: 'Nuevo prospecto' }).click();
+  await page.getByLabel(/Nombre o razón social/).fill('QA PROSPECTO IA ' + Date.now());
+  await page.getByRole('button', { name: 'Crear prospecto' }).click();
+  const summary = page.getByRole('heading', { name: 'Resumen' }).locator('..').locator('..').locator('..');
+  const folio = (await summary.locator('dd').first().textContent())?.trim();
+  expect(folio).toMatch(/^PRO-\d{4}-\d{4}$/);
+  await summary.getByRole('button', { name: 'Editar datos' }).click();
+  await summary.getByRole('checkbox').first().check();
+  await summary.getByRole('button', { name: 'Guardar' }).click();
+  await expect(summary.getByRole('button', { name: 'Editar datos' })).toBeVisible();
+  await page.getByRole('button', { name: 'Comenzar integración' }).click();
+  await page.getByRole('group', { name: 'Confirmar acción' }).getByRole('button', { name: 'Confirmar' }).click();
+  await expect(page.getByRole('button', { name: 'Marcar listo para cotizar' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Abrir PRAVIA IA', exact: true }).click();
+  const assistant = page.getByRole('dialog', { name: 'PRAVIA IA' });
+  await assistant.getByRole('button', { name: 'Nueva conversación' }).click();
+  const messageResponse = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith('/assistant/messages'));
+  const composer = assistant.getByLabel('Pregúntame algo...');
+  await composer.fill(`Marca el prospecto ${folio} listo para cotizar.`);
+  await composer.press('Enter');
+  expect((await messageResponse).status()).toBe(200);
+  const form = assistant.getByRole('form', { name: 'Formulario operativo de PRAVIA IA' });
+  const assignee = form.getByRole('combobox', { name: /Responsable de cotización/ });
+  await expect(assignee).toBeVisible();
+  await expect(assistant.getByRole('region', { name: 'Confirmación requerida' })).toHaveCount(0);
+  const option = (await assignee.locator('option').allTextContents()).find((label) => label.includes('Hernández'));
+  expect(option).toBeTruthy();
+  await assignee.selectOption({ label: option });
+  const collected = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith('/assistant/actions/collect'));
+  await form.getByRole('button', { name: 'Continuar' }).click();
+  expect((await collected).status()).toBe(200);
+  const confirmation = assistant.getByRole('region', { name: 'Confirmación requerida' });
+  await expect(confirmation).toContainText('Adrián Hernández');
+  const confirmed = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith('/assistant/confirmations'));
+  await confirmation.getByRole('button', { name: /Confirmar/ }).click();
+  expect((await confirmed).status()).toBe(200);
+  await assistant.getByRole('button', { name: 'Cerrar PRAVIA IA' }).click();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Convertir en cotización' })).toBeVisible();
+  await page.getByRole('button', { name: 'Convertir en cotización' }).click();
+  await expect(page.getByText('Responsable de cotización: Adrián Hernández')).toBeVisible();
+  await page.getByRole('group', { name: 'Confirmar acción' }).getByRole('button', { name: 'Cancelar' }).click();
+});
+
+test('Prospectos conserva documentos y ofrece revisión IA opcional con fallback explícito y sin falso éxito', async ({ page }, testInfo) => {
+  const base = new URL(String(testInfo.project.use.baseURL || ''));
+  if (base.hostname !== '127.0.0.1' || !qaPassword) throw new Error('LOCAL_PROSPECT_BROWSER_QA_SAFETY_GATE_FAILED');
+  await page.goto('/login');
+  await page.getByRole('textbox', { name: 'Correo electrónico' }).fill(qaEmail);
+  await page.getByRole('textbox', { name: 'Contraseña', exact: true }).fill(qaPassword);
+  await page.getByRole('textbox', { name: 'Correo electrónico' }).fill(qaEmail);
+  await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
+  await page.waitForURL('**/mi-dia');
+  await page.goto('/prospectos');
+  await page.getByRole('button', { name: 'Nuevo prospecto' }).click();
+  await page.getByLabel(/Nombre o razón social/).fill('QA REVISION DOCUMENTAL ' + Date.now());
+  await page.getByRole('button', { name: 'Crear prospecto' }).click();
+  const summary = page.getByRole('heading', { name: 'Resumen' }).locator('..').locator('..').locator('..');
+  await summary.getByRole('button', { name: 'Editar datos' }).click();
+  await summary.getByRole('checkbox').first().check();
+  await summary.getByRole('button', { name: 'Guardar' }).click();
+  const review = page.getByRole('region', { name: 'Revisión documental con IA' });
+  await expect(review.getByText('Selecciona un acto y carga documentos para habilitar esta revisión.')).toBeVisible();
+  const documentName = `qa-minuta-${Date.now()}.xml`;
+  await page.locator('#initial-document').setInputFiles({ name: documentName, mimeType: 'application/xml',
+    buffer: Buffer.from('<?xml version="1.0"?><documento><fecha>2026-10-05</fecha><tipo>Minuta QA</tipo></documento>') });
+  const uploaded = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith('/documentos'));
+  await page.getByRole('button', { name: 'Subir seleccionados' }).click();
+  expect((await uploaded).status()).toBe(201);
+  await expect(page.getByText(documentName, { exact: true })).toBeVisible();
+  await expect(review.getByRole('button', { name: 'Revisar con IA' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText(documentName, { exact: true })).toBeVisible();
+  const reviewAfterReload = page.getByRole('region', { name: 'Revisión documental con IA' });
+  const reviewed = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith('/revision-documental-ia'));
+  await reviewAfterReload.getByRole('button', { name: 'Revisar con IA' }).click();
+  const result = await reviewed;
+  if (result.status() === 201) {
+    const body = await result.json();
+    expect(body.current).toBe(true);
+    expect(body.review.documents).toEqual(expect.arrayContaining([expect.objectContaining({ name: documentName })]));
+    for (const finding of body.review.findings) {
+      expect(finding.document_ids.length).toBeGreaterThan(0);
+      expect(finding.document_ids.every((id: string) => body.review.documents.some((doc: { id: string }) => doc.id === id))).toBe(true);
+    }
+    await expect(reviewAfterReload.getByText('Resultado preliminar', { exact: false })).toBeVisible();
+  } else {
+    expect(result.status()).toBe(503);
+    await expect(reviewAfterReload.getByRole('alert')).toContainText(/no está disponible|fuentes no verificables|no se completó/i);
+    await expect(reviewAfterReload.getByText('Resultado preliminar', { exact: false })).toHaveCount(0);
+  }
+  await reviewAfterReload.getByRole('button', { name: 'Omitir revisión por ahora' }).click();
+  await expect(reviewAfterReload.getByText('Continuarás sin revisión automática.')).toBeVisible();
+});

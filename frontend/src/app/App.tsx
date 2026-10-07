@@ -15,6 +15,7 @@ const QuotesPage = lazy(() => import('../features/quotes/QuotesPage').then((modu
 const QuoteDetailPage = lazy(() => import('../features/quotes/QuoteDetailPage').then((module) => ({ default: module.QuoteDetailPage })));
 const ExpedientesPage = lazy(() => import('../features/cases/ExpedientesPage').then((module) => ({ default: module.ExpedientesPage })));
 const ExpedienteWorkspace = lazy(() => import('../features/cases/ExpedienteWorkspace').then((module) => ({ default: module.ExpedienteWorkspace })));
+const ArchivePage = lazy(() => import('../features/archive/ArchivePage').then((module) => ({ default: module.ArchivePage })));
 const ComparecientesPage = lazy(() => import('../features/comparecientes/ComparecientesPage').then((module) => ({ default: module.ComparecientesPage })));
 const ComparecienteWorkspace = lazy(() => import('../features/comparecientes/ComparecienteWorkspace').then((module) => ({ default: module.ComparecienteWorkspace })));
 const NotariasPage = lazy(() => import('../features/notarias/NotariasPage').then((module) => ({ default: module.NotariasPage })));
@@ -55,6 +56,7 @@ export function App() {
               <Route path="/cotizaciones/:id" element={<QuoteDetailPage />} />
               <Route path="/expedientes" element={<ExpedientesPage />} />
               <Route path="/expedientes/:id" element={<ExpedienteWorkspace />} />
+              <Route path="/archivo" element={<ArchivePage />} />
               <Route path="/predios" element={<PropertiesPage />} />
               <Route path="/predios/nuevo" element={<PropertyWorkspace />} />
               <Route path="/predios/:id" element={<PropertyWorkspace />} />

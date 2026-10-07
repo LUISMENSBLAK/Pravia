@@ -54,11 +54,13 @@ export type ExpedienteDocumentAppendixItem = {
   source_entity_type?: string | null; source_entity_id?: string | null; source_context?: string | null;
   document_version: string; name: string; type: string; status: string; incorporated_at: string;
   file_available: boolean; snapshot: boolean; folder_id?: string | null; folder_path?: string | null;
+  history_at?: string | null;
 };
-export type ExpedienteDocumentFolder = { id: string; parent_id?: string | null; nombre: string; orden: number };
+export type ExpedienteDocumentFolder = { id: string; parent_id?: string | null; nombre: string; orden: number; linked_compareciente_id?: string | null; linked_predio_id?: string | null };
 export type ExpedienteDocumentAppendix = {
   state: 'SINCRONIZADO_PREFIRMA' | 'CONGELADO_AL_FIRMAR'; frozen_at?: string | null; revision: string;
   groups: Array<{ origin: ExpedienteDocumentOrigin; label: string; items: ExpedienteDocumentAppendixItem[] }>;
+  history?: ExpedienteDocumentAppendixItem[];
   folders: ExpedienteDocumentFolder[];
   sync?: { created: number; reactivated: number; inactivated: number; blob_copies: 0 };
   import?: { origin: 'COMPARECIENTE' | 'PREDIO'; new: number; updated: number; unchanged: number; duplicates_created: 0; historical_imported: 0; blob_copies: 0 };

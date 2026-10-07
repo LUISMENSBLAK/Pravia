@@ -1,8 +1,8 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { hashVerificationToken, moneyDecimal, renderPaymentRequestPdf, renderPraviaReceiptPdf, validateIncomeAllocation } from '../domain/expedienteFinance';
-import { assertExp008InvoiceFile, normalizeExp008PaymentMethod } from './expedienteFinance.service';
+import { assertExp008InvoiceFile, ExpedienteFinanceService, incomePrefillSuggestions, normalizeExp008PaymentMethod, type ExpedienteFinanceActor } from './expedienteFinance.service';
 
 const root = resolve(process.cwd(), '..');
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
@@ -30,6 +30,57 @@ describe('EXP-008 · precisión monetaria y documentos operativos', () => {
   it('genera hash estable sin persistir token abierto', () => { expect(hashVerificationToken('token')).toHaveLength(64); expect(hashVerificationToken('token')).toBe(hashVerificationToken('token')); });
   it('genera ficha de solicitud PDF operativa', () => expect(renderPaymentRequestPdf({folio:'EXP-0001-2026',concept:'RPP',amount:'100.00',createdAt:'29/08/2026',formatSource:'CFG-002'}).subarray(0,4).toString()).toBe('%PDF'));
   it('genera comprobante PRAVIA no fiscal', () => expect(renderPraviaReceiptPdf({receiptFolio:'COM-1',caseFolio:'EXP-1',concept:'Anticipo',amount:'100.00',date:'29/08/2026',code:'ABC',verificationUrl:'/verify',formatSource:'CFG-002'}).toString('latin1')).toContain('No es CFDI'));
+});
+
+describe('EXP-008 · prellenado IA no vinculante', () => {
+  it('acepta sólo una lectura clara y normaliza el importe sin crear movimiento', () => {
+    expect(incomePrefillSuggestions({ campos: [
+      { campo: 'monto', valor: '1,234.50', confianza: 'LECTURA_CLARA', pagina: 1, fragmento: '$1,234.50' },
+      { campo: 'concepto', valor: 'Anticipo', confianza: 'LECTURA_CLARA', pagina: 1, fragmento: 'Anticipo' },
+    ], conflictos: [] })).toEqual({ monto_reportado: '1234.50', concepto_contexto: 'Anticipo', evidencia: [
+      { campo: 'monto', pagina: 1, fragmento: '$1,234.50' },
+      { campo: 'concepto', pagina: 1, fragmento: 'Anticipo' },
+    ] });
+  });
+  it('normaliza símbolos monetarios visibles sin perder centavos ni aceptar divisa extranjera', () => {
+    const amount = (valor: string, currency?: string) => incomePrefillSuggestions({
+      campos: [
+        { campo: 'monto', valor, confianza: 'LECTURA_CLARA' },
+        ...(currency ? [{ campo: 'moneda', valor: currency, confianza: 'LECTURA_CLARA' }] : []),
+      ], conflictos: [],
+    }).monto_reportado;
+    expect(amount('$ 12,345.67 MXN')).toBe('12345.67');
+    expect(amount('MXN $12,345.67')).toBe('12345.67');
+    expect(amount('12,345.67', 'USD')).toBeNull();
+    expect(amount('US$12,345.67')).toBeNull();
+    expect(amount('$ 12,345.678')).toBeNull();
+  });
+  it('no sugiere importes ambiguos, dudosos, inválidos o en conflicto', () => {
+    const base = { campo: 'monto', confianza: 'LECTURA_CLARA', pagina: null, fragmento: null };
+    for (const extraction of [
+      { campos: [{ ...base, valor: '100.00' }, { ...base, valor: '200.00' }], conflictos: [] },
+      { campos: [{ ...base, valor: '100.00' }, { ...base, valor: '200.00', confianza: 'LECTURA_DUDOSA' }], conflictos: [] },
+      { campos: [{ ...base, valor: '100.00', confianza: 'LECTURA_DUDOSA' }], conflictos: [] },
+      { campos: [{ ...base, valor: '100.001' }], conflictos: [] },
+      { campos: [{ ...base, valor: '100.00' }], conflictos: [{ campo: 'monto' }] },
+      { campos: [{ ...base, valor: '100.00' }, { campo: 'moneda', valor: 'USD', confianza: 'LECTURA_CLARA' }], conflictos: [] },
+    ]) expect(incomePrefillSuggestions(extraction).monto_reportado).toBeNull();
+  });
+  it('niega prellenado sin ia.execute antes de consultar el expediente', async () => {
+    const findFirst = vi.fn();
+    const service = new ExpedienteFinanceService({ expediente: { findFirst } } as any);
+    const actor = { id: 'user-a', organizationId: 'org-a', rol: 'ABOGADO', permissions: ['expedientes.write', 'documentos.write'] } as ExpedienteFinanceActor;
+    await expect(service.previewIncomeAI(actor, 'case-a', { buffer: Buffer.from('%PDF-1.4'), originalname: 'pago.pdf', mimetype: 'application/pdf', size: 8 })).rejects.toMatchObject({ status: 403, code: 'EXP008_AI_DENIED' });
+    expect(findFirst).not.toHaveBeenCalled();
+  });
+  it('exige acceso al expediente y no acepta XML para prellenado automático', async () => {
+    const findFirst = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'case-a' });
+    const service = new ExpedienteFinanceService({ expediente: { findFirst } } as any);
+    const actor = { id: 'user-a', organizationId: 'org-a', rol: 'ABOGADO', permissions: ['expedientes.write', 'documentos.write', 'ia.execute'] } as ExpedienteFinanceActor;
+    await expect(service.previewIncomeAI(actor, 'case-a', { buffer: Buffer.from('%PDF-1.4'), originalname: 'pago.pdf', mimetype: 'application/pdf', size: 8 })).rejects.toMatchObject({ status: 403, code: 'EXP008_EXPEDIENTE_ACCESS_DENIED' });
+    await expect(service.previewIncomeAI(actor, 'case-a', { buffer: Buffer.from('<cfdi/>'), originalname: 'pago.xml', mimetype: 'application/xml', size: 7 })).rejects.toMatchObject({ status: 415, code: 'EXP008_AI_FILE_UNSUPPORTED' });
+    expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ organization_id: 'org-a', id: 'case-a' }) }));
+  });
 });
 
 const cases: Array<[string, () => boolean]> = [

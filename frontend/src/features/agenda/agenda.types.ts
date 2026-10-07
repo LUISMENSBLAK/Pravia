@@ -1,5 +1,6 @@
 export type AgendaView = 'day' | 'week' | 'month' | 'list';
 export type AgendaEventStatus = 'ACTIVO' | 'COMPLETADO' | 'CANCELADO';
+export type AgendaVisibility = 'PRIVATE' | 'ORGANIZATION';
 export type AgendaEventType = 'PERSONAL' | 'DESPACHO' | 'FIRMA' | 'AUDIENCIA' | 'VENCIMIENTO' | 'CITA' | 'NOTARIA' | 'SEGUIMIENTO' | 'OTRO';
 
 export type AgendaUser = { id: string; nombre: string; apellido: string; rol: string };
@@ -14,6 +15,8 @@ export type AgendaParty = { id: string; tipo_persona: string; nombre: string };
 export type AgendaEvent = {
   id: string; titulo: string; descripcion: string | null; tipo: AgendaEventType; estatus: AgendaEventStatus;
   fecha_inicio: string; fecha_fin: string | null; todo_el_dia: boolean; user_id: string | null;
+  created_by_id: string | null; visibilidad: AgendaVisibility; participantes: Array<{ user_id: string }>;
+  can_edit?: boolean;
   expediente_id: string | null; compareciente_id: string | null; recordatorios: number[] | null;
   cancelado_at?: string | null; motivo_cancelacion?: string | null; created_at: string; updated_at: string;
   usuario: AgendaUser | null; responsable_nombre: string; expediente: AgendaCase | null;
@@ -37,7 +40,7 @@ export type AgendaCatalogs = {
 export type AgendaDraft = {
   titulo: string; tipo: AgendaEventType; fecha: string; hora_inicio: string; hora_fin: string;
   responsable_id: string; expediente_id: string; compareciente_id: string; descripcion: string; recordatorio: string;
+  visibilidad: AgendaVisibility; participante_ids: string[];
 };
 
 export type AgendaLoadResult = { eventos: AgendaEvent[]; meta: { total: number; desde: string; hasta: string; timezone: string } };
-

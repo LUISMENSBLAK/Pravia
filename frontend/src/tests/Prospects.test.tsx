@@ -242,11 +242,12 @@ describe('Prospectos', () => {
     expect(await screen.findByRole('heading', { name: 'CONSTRUCTORA HORIZONTE' })).toBeInTheDocument();
     expect(screen.getAllByText('Nuevo').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /Comenzar integración/i })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Datos del asunto' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Cliente / solicitante' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Resumen' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Datos de contacto' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Actividad de etapas' })).toBeInTheDocument();
     expect(screen.queryByText('Ciudad')).not.toBeInTheDocument();
     expect(screen.queryByText('Origen')).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Registrar seguimiento' }));
+    await user.click(screen.getByRole('button', { name: /Registrar seguimiento/ }));
     await user.type(screen.getByRole('textbox', { name: /Nota/ }), 'Se recibió información');
     await user.click(screen.getByRole('button', { name: 'Guardar seguimiento' }));
     expect(await screen.findByText('Seguimiento registrado.')).toBeInTheDocument();
@@ -257,13 +258,13 @@ describe('Prospectos', () => {
     render(<MemoryRouter initialEntries={['/prospectos/prospect-1']}><App /></MemoryRouter>);
     await screen.findByRole('heading', { name: 'CONSTRUCTORA HORIZONTE' });
     expect(screen.queryByRole('button', { name: /^Editar$/ })).not.toBeInTheDocument();
-    const clientSection = screen.getByRole('heading', { name: 'Cliente / solicitante' }).closest('section')!;
-    await user.click(within(clientSection).getByRole('button', { name: 'Editar bloque' }));
+    const summarySection = screen.getByRole('heading', { name: 'Resumen' }).closest('section')!;
+    await user.click(within(summarySection).getByRole('button', { name: 'Editar datos' }));
     expect(screen.queryByLabelText('Origen')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Ciudad')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Tiempo estimado')).not.toBeInTheDocument();
     const name = screen.getByLabelText(/Nombre o razón social/); await user.clear(name); await user.type(name, 'josé ñuñez');
-    await user.click(within(clientSection).getByRole('button', { name: 'Guardar' }));
+    await user.click(within(summarySection).getByRole('button', { name: 'Guardar' }));
     await waitFor(() => {
       const updateCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/prospectos/prospect-1') && init?.method === 'PUT');
       expect(JSON.parse(String(updateCall?.[1]?.body))).toMatchObject({ nombre: 'JOSÉ ÑUÑEZ', expectedVersion: 1 });

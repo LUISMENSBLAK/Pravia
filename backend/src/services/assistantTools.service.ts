@@ -14,6 +14,7 @@ import { actsAndTimesService } from './configurationCatalog.service';
 import { functionalDestinationService } from './functionalDestination.service';
 import { KnowledgeService } from './knowledge.service';
 import { EXPEDIENTE_STATUS_LABELS } from '../domain/expedienteWorkflow';
+import { agendaReadableWhere } from './agendaVisibility.service';
 
 type AuthUser = NonNullable<Request['user']>;
 export type AssistantToolName =
@@ -276,7 +277,7 @@ const readAgenda: ToolExecutor = async (db, input) => {
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from || to.getTime() - from.getTime() > 93 * 86_400_000) throw new AssistantToolError('El rango de agenda no es válido o supera 93 días.', 'AI_AGENDA_RANGE_INVALID');
   const expId = args.expediente_id ? textArg(args.expediente_id, 64) : input.context?.entity_type === 'expediente' ? input.context.entity_id : undefined;
   if (expId) await findScopedExpediente(db, input.user, expId);
-  const data = await db.eventoAgenda.findMany({ where: { organization_id: input.user.organizationId, estatus: 'ACTIVO', fecha_inicio: { gte: from, lt: to }, ...(!['DIRECCION', 'ADMINISTRACION'].includes(input.user.rol) ? { user_id: input.user.id } : {}), ...(expId ? { expediente_id: expId } : {}) }, select: { id: true, titulo: true, tipo: true, fecha_inicio: true, fecha_fin: true, todo_el_dia: true, expediente: { select: { id: true, numero_pravia: true } }, usuario: { select: { id: true, nombre: true, apellido: true } } }, orderBy: { fecha_inicio: 'asc' }, take: limit });
+  const data = await db.eventoAgenda.findMany({ where: { ...agendaReadableWhere(input.user), estatus: 'ACTIVO', fecha_inicio: { gte: from, lt: to }, ...(expId ? { expediente_id: expId } : {}) }, select: { id: true, titulo: true, tipo: true, fecha_inicio: true, fecha_fin: true, todo_el_dia: true, visibilidad: true, expediente: { select: { id: true, numero_pravia: true } }, usuario: { select: { id: true, nombre: true, apellido: true } } }, orderBy: { fecha_inicio: 'asc' }, take: limit });
   return { data: { periodo: { key: period.period, timezone, from, to }, eventos: data }, provenance: data.map((event) => source('EventoAgenda', event.id, event.titulo, '/agenda')), truncated: data.length === limit };
 };
 
@@ -574,7 +575,7 @@ const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
         take: limit,
       }),
       db.eventoAgenda.findMany({
-        where: { organization_id: input.user.organizationId, user_id: input.user.id, estatus: 'ACTIVO', fecha_inicio: { gte: range.from, lt: range.to } },
+        where: { ...agendaReadableWhere(input.user), estatus: 'ACTIVO', fecha_inicio: { gte: range.from, lt: range.to } },
         select: { id: true, titulo: true, tipo: true, fecha_inicio: true, fecha_fin: true, expediente: { select: { id: true, numero_pravia: true } } },
         orderBy: { fecha_inicio: 'asc' },
         take: limit,
