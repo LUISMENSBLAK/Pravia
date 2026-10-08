@@ -117,12 +117,38 @@ test.describe.serial('Finanzas CFDI local', () => {
     await page.getByRole('tab', { name: 'CFDI y cuentas' }).click();
     await expect(page.getByRole('heading', { name: 'CFDI, cuentas y proveedores' })).toBeVisible();
     for (const width of [1440, 1366, 1024, 768, 390, 320]) {
-      await page.setViewportSize({ width, height: width <= 390 ? 844 : 900 });
+      await page.setViewportSize({ width, height: width === 320 ? 740 : width <= 390 ? 844 : 900 });
       await expect(page.getByRole('heading', { name: 'CFDI, cuentas y proveedores' })).toBeVisible();
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
       expect(overflow, `Finanzas CFDI presenta overflow horizontal a ${width}px`).toBe(false);
       await expect(page.getByRole('button', { name: 'Cargar XML/PDF' })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Nueva prefactura' })).toBeVisible();
+      if (width <= 390) {
+        await page.getByRole('button', { name: 'Cargar XML/PDF' }).click();
+        const dialog = page.getByRole('dialog', { name: 'Cargar CFDI manual' });
+        const submit = dialog.getByRole('button', { name: 'Cargar CFDI', exact: true });
+        await expect(submit).toBeVisible();
+        const submitBox = await submit.boundingBox();
+        const launcherBox = await page.getByRole('button', { name: 'Abrir PRAVIA IA' }).boundingBox();
+        expect(submitBox).not.toBeNull();
+        expect(launcherBox).not.toBeNull();
+        const left = Math.max(submitBox!.x, launcherBox!.x);
+        const right = Math.min(submitBox!.x + submitBox!.width, launcherBox!.x + launcherBox!.width);
+        const top = Math.max(submitBox!.y, launcherBox!.y);
+        const bottom = Math.min(submitBox!.y + submitBox!.height, launcherBox!.y + launcherBox!.height);
+        if (width === 320) {
+          expect(right - left, 'El caso de 320px debe cubrir la intersección real').toBeGreaterThan(0);
+          expect(bottom - top, 'El caso de 320px debe cubrir la intersección real').toBeGreaterThan(0);
+        }
+        if (right > left && bottom > top) {
+          const dialogOwnsOverlap = await dialog.evaluate(
+            (element, point) => element.contains(document.elementFromPoint(point.x, point.y)),
+            { x: (left + right) / 2, y: (top + bottom) / 2 },
+          );
+          expect(dialogOwnsOverlap, `PRAVIA IA cubre el botón CFDI a ${width}px`).toBe(true);
+        }
+        await dialog.getByRole('button', { name: 'Cancelar' }).click();
+      }
     }
   });
 });
