@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { DOCUMENT_UPLOAD_MAX_BYTES, uploadLimitLabel } from '../config/uploadLimits';
 import JSZip from 'jszip';
 import { CatalogConfigurationError } from './configurationCatalogError';
 
@@ -6,7 +7,7 @@ export const CFG002_LIBRARY_CODE = 'PRAVIA_CFG002_STANDARD';
 export const CFG002_LIBRARY_VERSION = 'v2-LEGAL';
 export const CFG002_LIBRARY_SHA256 = '52de78a24956643b8f39556ccc04aa778ddcd011966590ced840316c5a80733a';
 export const CFG002_MAX_FILES = 100;
-export const CFG002_MAX_FILE_BYTES = 25 * 1024 * 1024;
+export const CFG002_MAX_FILE_BYTES = DOCUMENT_UPLOAD_MAX_BYTES;
 export const CFG002_MAX_TOTAL_BYTES = 100 * 1024 * 1024;
 export const CFG002_MAX_COMPRESSION_RATIO = 100;
 
@@ -49,7 +50,7 @@ export function validateCatalogFile(path: string, buffer: Buffer, declaredMime?:
   const extension = name.includes('.') ? name.split('.').at(-1)!.toLowerCase() : '';
   if (!allowedExtensions.has(extension)) throw new CatalogConfigurationError(400, 'CFG002_FILE_EXTENSION_FORBIDDEN', `El tipo .${extension || '(sin extensión)'} no está permitido.`);
   if (!buffer.length) throw new CatalogConfigurationError(400, 'CFG002_FILE_EMPTY', `${name} está vacío.`);
-  if (buffer.length > CFG002_MAX_FILE_BYTES) throw new CatalogConfigurationError(413, 'CFG002_FILE_TOO_LARGE', `${name} supera 25 MB.`);
+  if (buffer.length > CFG002_MAX_FILE_BYTES) throw new CatalogConfigurationError(413, 'CFG002_FILE_TOO_LARGE', `${name} supera ${uploadLimitLabel(CFG002_MAX_FILE_BYTES)}.`);
   const expectedMime = mimeFor(extension);
   if (declaredMime && declaredMime !== 'application/octet-stream' && ![expectedMime, 'application/zip', 'application/x-zip-compressed'].includes(declaredMime)) {
     throw new CatalogConfigurationError(400, 'CFG002_FILE_MIME_CONFLICT', `${name} no coincide con el tipo de archivo declarado.`);

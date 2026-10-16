@@ -37,7 +37,9 @@
 /* Correction 002: manual and imported budgets converge in the same editor. */
 .budgetEntryModes{margin:12px 0;display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--color-text-secondary);font-size:.7rem}.importBudgetButton{min-height:42px;padding:0 13px;display:inline-flex;align-items:center;gap:7px;border:1px solid var(--color-border-strong);border-radius:var(--radius-md);color:var(--color-text-primary);background:#fff;font-weight:700;cursor:pointer}.importBudgetButton input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}.importNotice{margin:0 0 12px;padding:10px 12px;border:1px solid var(--color-blue-200);border-radius:var(--radius-md);color:var(--color-blue-700);background:var(--color-blue-100);font-size:.7rem;line-height:1.45}.conceptHeader,.conceptRow{grid-template-columns:132px minmax(0,1fr) 132px 78px 42px}.conceptOrder{display:grid;grid-template-columns:1fr 1fr;gap:4px}.conceptOrder button{width:37px}.conceptOrder+button{width:42px}
 @media(max-width:767px){.budgetEntryModes{align-items:stretch;flex-direction:column}.importBudgetButton{justify-content:center}.conceptRow{grid-template-columns:1fr 1fr}.conceptRow input,.conceptRow select{grid-column:1/-1}.conceptRow select{grid-column:1/-1;grid-row:auto}.conceptOrder{grid-column:1;grid-row:auto}.conceptOrder button{grid-column:auto;grid-row:auto}.conceptOrder+button{grid-column:2;grid-row:auto;justify-self:end}}
-.quoteProgressPanel { margin-bottom: 18px; padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
+.quoteProgressPanel { margin-bottom: 10px; padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
+.quoteNextAction { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.quoteNextAction > button, .quoteNextAction > a { min-width: 190px; }
 .quoteProgressPanel > div { display: flex; justify-content: space-between; gap: 12px; color: var(--color-text-secondary); font-size: .78rem; }
 .quoteProgressPanel > div strong { color: var(--color-text-primary); }
 .quoteProgress { margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; list-style: none; }
@@ -54,6 +56,7 @@
   .quoteProgress li:nth-child(3) > svg, .quoteProgress li:nth-child(5) > svg { display: none; }
 }
 @media (max-width: 767px) {
+  .quoteNextAction > button, .quoteNextAction > a { width: 100%; min-width: 0; }
   .quoteProgressPanel { padding: 13px; }
   .quoteProgressPanel > div { align-items: flex-start; flex-direction: column; gap: 4px; }
   .quoteProgress { grid-template-columns: repeat(2, minmax(0, 1fr)); }

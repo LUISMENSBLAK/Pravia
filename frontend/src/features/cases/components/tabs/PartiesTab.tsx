@@ -1,7 +1,8 @@
-import { AlertTriangle, Building2, LoaderCircle, Pencil, Plus, Search, ShieldAlert, Trash2, UserPlus, UserRound, X } from 'lucide-react';
+import { AlertTriangle, Building2, CheckCircle2, LoaderCircle, Pencil, Plus, Search, ShieldAlert, ShieldCheck, Trash2, UserPlus, UserRound, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ApiError } from '../../../../services/api/client';
+import { useAuth } from '../../../auth/AuthProvider';
 import { expedienteReturnParams } from '../../expedienteNavigation';
 import { expedientesService } from '../../expedientes.service';
 import type { ExpedienteDetail, ExpedientePartyCatalogs, ExpedientePartyCommand, ExpedientePartyPreview, ExpedientePartyRelation, ExpedientePartySearchOption, ExpedientePartyValidation } from '../../expedientes.types';
@@ -25,6 +26,7 @@ const relationName = (relation: ExpedientePartyRelation) => relation.comparecien
 const representedName = (relation: ExpedientePartyRelation) => { const party = relation.representacionesComoRepresentante?.[0]?.representado; return party?.personaFisica?.nombre_completo_calculado || party?.personaMoral?.razon_social || party?.nombre_busqueda || ''; };
 
 export function PartiesTab({ expediente, onChanged = () => undefined }: { expediente: ExpedienteDetail; onChanged?: () => void }) {
+  const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const returned = location.state as { exp003NewComparecienteId?: string; exp003ActId?: string | null } | null;
@@ -55,6 +57,9 @@ export function PartiesTab({ expediente, onChanged = () => undefined }: { expedi
   const [creatingRole, setCreatingRole] = useState(false);
   const [roleName, setRoleName] = useState('');
   const [roleDescription, setRoleDescription] = useState('');
+  const [validationTarget, setValidationTarget] = useState<ExpedientePartyRelation | null>(null);
+  const [validationMessage, setValidationMessage] = useState('');
+  const canValidate = Boolean(expediente.capabilities.canWrite && user?.permissions?.includes('expedientes.write') && user.permissions.includes('comparecientes.write'));
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -159,6 +164,16 @@ export function PartiesTab({ expediente, onChanged = () => undefined }: { expedi
     return [...groups.values()];
   }, [relations]);
   const viewMaster = (comparecienteId: string) => navigate(`/comparecientes/${encodeURIComponent(comparecienteId)}?${expedienteReturnParams(expediente.id, 'comparecientes')}`);
+  const validateRelation = async () => {
+    if (!validationTarget) return;
+    setWorking(true); setValidationMessage('');
+    try {
+      await expedientesService.validatePartyData(expediente.id, validationTarget.id, { confirm: true, idempotency_key: crypto.randomUUID() });
+      await load(); onChanged(); setValidationTarget(null);
+    } catch (error) {
+      setValidationMessage(error instanceof ApiError ? error.message : 'No pudimos registrar la validación.');
+    } finally { setWorking(false); }
+  };
 
   return <section className={styles.sectionCard}>
     <header className={styles.partyHeader}><div><h2>Comparecientes</h2><p>Participaciones vinculadas a cada acto, sin duplicar la ficha maestra de la persona.</p></div>{expediente.capabilities.canWrite && <button type="button" className={styles.primaryButton} onClick={() => open('LINK')}><Plus size={16} />Agregar compareciente</button>}</header>
@@ -169,7 +184,11 @@ export function PartiesTab({ expediente, onChanged = () => undefined }: { expedi
     {status === 'ready' && !relations.length && <p className={styles.sectionEmpty}>No hay comparecientes vinculados.</p>}
     {status === 'ready' && relations.length > 0 && <div className={styles.partyRelations}>{relationGroups.map((group) => { const first = group[0]; const physical = first.compareciente.tipo_persona === 'FISICA'; return <article key={first.compareciente_id} className={styles.partyPersonGroup}>
       <span>{physical ? <UserRound size={19} /> : <Building2 size={19} />}</span><div className={styles.partyRelationIdentity}><strong>{relationName(first)}</strong><small>Ficha maestra única · {physical ? 'Persona física' : 'Persona moral'} · {group.length} {group.length === 1 ? 'relación' : 'relaciones'}</small><button type="button" className={styles.createMasterLink} onClick={() => viewMaster(first.compareciente_id)}>Ver ficha maestra</button>{expediente.capabilities.canWrite && <button type="button" className={styles.createMasterLink} onClick={() => open('LINK', undefined, first.compareciente_id, null)}>Asignar a otro acto</button>}</div>
-      <div className={styles.partyActRelations}>{group.map((relation) => { const representation = representedName(relation); return <section key={relation.id}><dl><div><dt>Acto</dt><dd>{relation.expedienteActo?.tipo_acto.nombre || 'Acto pendiente de asignar'}</dd></div><div><dt>Rol</dt><dd>{relation.caracter?.nombre || 'Sin carácter'}</dd></div><div><dt>Comparecencia</dt><dd>{appearanceLabels[relation.forma_comparecencia || 'PROPIO_DERECHO']}</dd></div><div><dt>Participación</dt><dd>{relation.participacion_porcentaje == null ? 'No aplica' : `${Number(relation.participacion_porcentaje).toLocaleString('es-MX', { maximumFractionDigits: 6 })}%`}</dd></div>{representation && <div><dt>Representación</dt><dd>{representation}</dd></div>}</dl>{expediente.capabilities.canWrite && <div className={styles.partyRelationActions}><button type="button" aria-label={`Editar comparecencia de ${relationName(relation)} en ${relation.expedienteActo?.tipo_acto.nombre || 'acto'}`} onClick={() => open('UPDATE', relation)}><Pencil size={16} /></button><button type="button" aria-label={`Desvincular ${relationName(relation)} de ${relation.expedienteActo?.tipo_acto.nombre || 'acto'}`} onClick={() => open('UNLINK', relation)}><Trash2 size={16} /></button></div>}</section>; })}</div>
+      <div className={styles.partyActRelations}>{group.map((relation) => { const representation = representedName(relation); return <section key={relation.id}>
+        <dl><div><dt>Acto</dt><dd>{relation.expedienteActo?.tipo_acto.nombre || 'Acto pendiente de asignar'}</dd></div><div><dt>Rol</dt><dd>{relation.caracter?.nombre || 'Sin carácter'}</dd></div><div><dt>Comparecencia</dt><dd>{appearanceLabels[relation.forma_comparecencia || 'PROPIO_DERECHO']}</dd></div><div><dt>Participación</dt><dd>{relation.participacion_porcentaje == null ? 'No aplica' : `${Number(relation.participacion_porcentaje).toLocaleString('es-MX', { maximumFractionDigits: 6 })}%`}</dd></div>{representation && <div><dt>Representación</dt><dd>{representation}</dd></div>}<div><dt>Revisión de datos</dt><dd className={relation.datos_validados ? styles.partyValidationComplete : styles.partyValidationPending}>{relation.datos_validados ? <><CheckCircle2 size={14} />Validada{relation.validado_at ? ` · ${new Date(relation.validado_at).toLocaleDateString('es-MX')}` : ''}</> : <><AlertTriangle size={14} />Pendiente</>}</dd></div></dl>
+        <div className={styles.partyValidationControl}>{!relation.datos_validados && canValidate && <button type="button" className={styles.validatePartyButton} onClick={() => { setValidationMessage(''); setValidationTarget(relation); }}><ShieldCheck size={16} />Confirmar datos revisados</button>}{relation.datos_validados && relation.validado_por && <small>Por {relation.validado_por.nombre} {relation.validado_por.apellido}</small>}</div>
+        {expediente.capabilities.canWrite && <div className={styles.partyRelationActions}><button type="button" aria-label={`Editar comparecencia de ${relationName(relation)} en ${relation.expedienteActo?.tipo_acto.nombre || 'acto'}`} onClick={() => open('UPDATE', relation)}><Pencil size={16} /></button><button type="button" aria-label={`Desvincular ${relationName(relation)} de ${relation.expedienteActo?.tipo_acto.nombre || 'acto'}`} onClick={() => open('UNLINK', relation)}><Trash2 size={16} /></button></div>}
+      </section>; })}</div>
     </article>; })}</div>}
 
     {dialog && <div className={styles.dialogBackdrop} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !working) setDialog(null); }}><section className={`${styles.dialog} ${styles.partyDialog}`} role="dialog" aria-modal="true" aria-labelledby="party-dialog-title">
@@ -188,6 +207,11 @@ export function PartiesTab({ expediente, onChanged = () => undefined }: { expedi
         {preview && <div className={styles.impactPreview} data-classification={preview.classification}><div className={styles.impactStatus}><ShieldAlert size={19} /><div><strong>{preview.classification === 'SAFE' ? 'Cambio seguro' : preview.classification === 'REVIEW_REQUIRED' ? 'Revisión humana requerida' : 'Cambio bloqueado'}</strong><small>CFG-002 reevaluado · trabajo protegido detectado: {preview.impact.protected_work.count}</small></div></div><section><h3>Documentos y artefactos <span>CFG-002</span></h3><dl><div><dt>Nuevos pendientes</dt><dd>{preview.impact.added.length ? preview.impact.added.map((item) => item.name).join(', ') : 'Sin cambios'}</dd></div><div><dt>Dejan de aplicar</dt><dd>{preview.impact.removed_or_no_longer_applicable.length ? preview.impact.removed_or_no_longer_applicable.map((item) => item.name).join(', ') : 'Sin cambios'}</dd></div><div><dt>Se conservan</dt><dd>{preview.impact.retained.length ? `${preview.impact.retained.length} elementos` : 'Ninguno'}</dd></div></dl></section>{preview.classification === 'REVIEW_REQUIRED' && <label className={styles.confirmImpact}><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />Confirmo que revisé el impacto sobre el trabajo existente.</label>}</div>}
       </div>
       <footer><button type="button" className={styles.secondaryButton} disabled={working} onClick={() => setDialog(null)}>Cancelar</button>{!preview ? <button type="button" className={styles.primaryButton} disabled={!formReady || working} onClick={() => void requestPreview()}>{working && <LoaderCircle className={styles.spin} size={16} />}Revisar impacto</button> : <button type="button" className={styles.primaryButton} disabled={preview.classification === 'BLOCKED' || (preview.classification === 'REVIEW_REQUIRED' && !confirmed) || working} onClick={() => void apply()}>{working && <LoaderCircle className={styles.spin} size={16} />}Confirmar cambio</button>}</footer>
+    </section></div>}
+    {validationTarget && <div className={styles.dialogBackdrop} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !working) setValidationTarget(null); }}><section className={`${styles.dialog} ${styles.partyValidationDialog}`} role="dialog" aria-modal="true" aria-labelledby="party-validation-title" aria-describedby="party-validation-description">
+      <header><div><h2 id="party-validation-title">Confirmar datos revisados</h2><p id="party-validation-description">Esta acción registra quién revisó los datos, la fecha y la relación exacta dentro del expediente.</p></div><button type="button" className={styles.iconButton} aria-label="Cerrar" disabled={working} onClick={() => setValidationTarget(null)}><X size={18} /></button></header>
+      <div className={styles.dialogBody}><div className={styles.validationConfirmationSummary}><ShieldCheck size={22} /><div><strong>{relationName(validationTarget)}</strong><span>{validationTarget.expedienteActo?.tipo_acto.nombre || 'Acto pendiente de asignar'} · {validationTarget.caracter.nombre}</span></div></div><p>Confirmo que revisé los datos de esta comparecencia. Si la ficha maestra cambia después, PRAVIA invalidará esta confirmación y solicitará una nueva revisión.</p>{validationMessage && <p className={styles.formError} role="alert">{validationMessage}</p>}</div>
+      <footer><button type="button" className={styles.secondaryButton} disabled={working} onClick={() => setValidationTarget(null)}>Cancelar</button><button type="button" className={styles.primaryButton} disabled={working} onClick={() => void validateRelation()}>{working ? <LoaderCircle className={styles.spin} size={16} /> : <ShieldCheck size={16} />}Confirmar revisión</button></footer>
     </section></div>}
   </section>;
 }

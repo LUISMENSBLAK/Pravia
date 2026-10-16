@@ -84,6 +84,22 @@ test('cinco usuarios operativos · login, RBAC, object access, IA, aislamiento y
       expect(mePayload.user).toMatchObject({ email: user.email, rol: user.role, organization: { id: organizationId }, organizations: [{ id: organizationId }] });
       expect(mePayload.user.permissions).toEqual(payload.user.permissions);
 
+      const myDay = await request.get(`${apiBase}/api/mi-dia`, { headers });
+      expect(myDay.status(), `${user.name}: lectura de Mi Día`).toBe(200);
+      const dashboard = await myDay.json();
+      expect(dashboard.success).toBe(true);
+      expect(dashboard.usuario_id).toBeDefined();
+      expect(dashboard.permissions.canViewFinance).toBe(user.role !== 'ABOGADO');
+      if (user.role === 'ABOGADO') {
+        expect(dashboard.metricas.saldo_pendiente_total).toBeNull();
+        expect(JSON.stringify(dashboard.operacion.recientes)).not.toContain('presupuesto');
+        expect(JSON.stringify(dashboard.operacion.recientes)).not.toContain('cotizacion');
+      }
+      if (user.role === 'FINANCIERO') {
+        expect(dashboard.operacion.recientes).toEqual([]);
+        expect(dashboard.metricas.documentos_faltantes).toBeNull();
+      }
+
       const foreignDocument = await request.get(`${apiBase}/api/documentos/${foreignDocumentId}/url`, { headers });
       await expectDenied(foreignDocument);
 

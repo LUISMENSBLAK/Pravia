@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import multer from 'multer';
+import { DOCUMENT_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
 import { AIController } from '../controllers/ai.controller';
 import { requirePermission } from '../middleware/auth.middleware';
 
 const router = Router();
-const assistantUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
+const assistantUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: DOCUMENT_UPLOAD_MAX_BYTES, files: 1 } });
 
 router.get('/assistant/conversations', requirePermission('ai.use'), AIController.listConversations);
 router.post('/assistant/conversations', requirePermission('ai.use'), AIController.createConversation);

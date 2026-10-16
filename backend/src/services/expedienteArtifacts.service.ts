@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'crypto';
+import { DOCUMENT_UPLOAD_MAX_BYTES, uploadLimitLabel } from '../config/uploadLimits';
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
@@ -139,7 +140,7 @@ export class ExpedienteArtifactsService {
     let canonicalMime: string;
     try { canonicalMime = canonicalUploadedDocumentMime(file); }
     catch (error) { throw new ExpedienteArtifactsError(400, 'EXP006_FILE_INVALID', error instanceof Error ? error.message : 'El archivo no es compatible.'); }
-    if (file.size > 25 * 1024 * 1024) throw new ExpedienteArtifactsError(400, 'EXP006_FILE_INVALID', 'El archivo supera 25 MB.');
+    if (file.size > DOCUMENT_UPLOAD_MAX_BYTES) throw new ExpedienteArtifactsError(413, 'EXP006_FILE_TOO_LARGE', `El archivo supera ${uploadLimitLabel(DOCUMENT_UPLOAD_MAX_BYTES)}.`);
     const existing = await this.prisma.expedienteArtefactoDocumento.findFirst({ where: { organization_id: actor.organizationId, pendiente_id: pending.id, idempotency_key: input.idempotency_key } });
     if (existing) return { document_id: existing.documento_id, idempotent: true, estado: 'PENDIENTE_REVISION' };
     const storageKey = `organizations/${actor.organizationId}/expedientes/${expedienteId}/exp006/${randomUUID()}_${safe(file.originalname)}`;

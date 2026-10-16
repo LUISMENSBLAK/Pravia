@@ -20,7 +20,7 @@ export function agendaReadableWhere(actor: Actor): Prisma.EventoAgendaWhereInput
           { participantes: { some: { organization_id: actor.organizationId, user_id: actor.id, membership: { status: 'ACTIVE' } } } },
         ],
       },
-      { OR: [{ expediente_id: null }, { expediente: caseScope }] },
+      { OR: [{ expediente_id: null }, { expediente: { is: caseScope } }] },
     ],
   };
 }

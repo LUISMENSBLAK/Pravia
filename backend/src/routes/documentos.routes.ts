@@ -8,9 +8,10 @@ import {
 } from '../controllers/documentos.controller';
 import { requirePermission } from '../middleware/auth.middleware';
 import { requireDocumentoObjectAccess } from '../middleware/objectAccess.middleware';
+import { DOCUMENT_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: DOCUMENT_UPLOAD_MAX_BYTES, files: 1 } });
 
 router.post('/', upload.single('archivo'), uploadDocumento);
 router.get('/:id/url', requireDocumentoObjectAccess, getDocumentoUrl);

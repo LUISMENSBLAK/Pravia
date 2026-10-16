@@ -26,7 +26,8 @@ export type ExpedientePartyRepresentation = { id?: string; representado_comparec
 export type ExpedientePartyRelation = {
   id: string; expediente_id: string; expediente_acto_id?: string | null; compareciente_id: string; caracter_id: string;
   forma_comparecencia: 'PROPIO_DERECHO' | 'EN_REPRESENTACION_PERSONA_MORAL' | 'EN_REPRESENTACION_PERSONA_FISICA' | 'POR_PROPIO_DERECHO_Y_REPRESENTACION' | 'CARACTER_INSTITUCIONAL' | 'OTRO';
-  participacion_porcentaje?: number | string | null; datos_validados: boolean; estatus: string;
+  participacion_porcentaje?: number | string | null; datos_validados: boolean; validado_at?: string | null; validado_por_id?: string | null; estatus: string;
+  validado_por?: { id: string; nombre: string; apellido: string } | null;
   expedienteActo?: ExpedienteAct | null; caracter: { id: string; clave?: string; nombre: string };
   compareciente: { id: string; nombre_busqueda: string; tipo_persona: string; personaFisica?: { nombre_completo_calculado?: string } | null; personaMoral?: { razon_social?: string } | null };
   representacionesComoRepresentante?: ExpedientePartyRepresentation[];
@@ -174,7 +175,8 @@ export type ExpedienteDetail = ExpedienteListItem & {
   flujoVersion?: { id: string; version: number } | null;
   comparecientes: ExpedientePartyRelation[]; expedienteRepresentaciones?: Array<any>; actos?: ExpedienteAct[];
   predios?: ExpedientePredioRelation[];
-  requisitos_docs: Array<any>; expedienteDocumentos?: Array<any>; documentos_autorizados?: Array<any>;
+  requisitos_docs: Array<{ id: string; nombre: string; categoria: string; obligatorio: boolean; estatus: string }>;
+  expedienteDocumentos?: Array<any>; documentos_autorizados?: Array<any>;
   etapas?: Array<any>; tareas?: Array<any>; tareas_externas?: Array<any>; tareas_postfirma?: Array<any>; entrega?: any;
   movimientosFinancieros?: Array<any>; honorariosGenerados?: Array<any>; financialSummary?: { ingresos_recibidos:number;honorarios_generados:number;honorarios_cobrados:number;honorarios_por_cobrar:number;fondos_terceros:number;otros_destinos:number;fondos_terceros_pendientes:number;egresos:number } | null; actividades?: Array<any>; complianceReviews?: Array<any>;
   workflow: { current_status_label: string; transitions: ExpedienteTransition[]; next_stage?: any; stages?: Array<any> };

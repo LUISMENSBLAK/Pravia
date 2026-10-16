@@ -10,6 +10,7 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   '.doc': 'application/msword',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.xml': 'application/xml',
+  '.txt': 'text/plain',
   '.zip': 'application/zip',
 };
 
@@ -28,6 +29,12 @@ function detectedMime(buffer: Buffer, extension: string) {
     const prefix = buffer.subarray(0, Math.min(buffer.length, 512)).toString('utf8').replace(/^\uFEFF/, '').trimStart();
     if (prefix.startsWith('<')) return 'application/xml';
   }
+  if (extension === '.txt') {
+    try {
+      const content = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+      if (content.trim() && !/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(content)) return 'text/plain';
+    } catch { /* Invalid UTF-8 is not a text document. */ }
+  }
   return null;
 }
 
@@ -36,7 +43,7 @@ export function canonicalUploadedDocumentMime(file: { buffer: Buffer; originalna
   if (!file.buffer?.length) throw new Error('El archivo está vacío o no pudo leerse.');
   const extension = path.extname(file.originalname || '').toLowerCase();
   const expected = MIME_BY_EXTENSION[extension];
-  if (!expected) throw new Error('Tipo de archivo no permitido. Usa PDF, JPG/JPEG, PNG, WEBP, BMP, DOC, DOCX, XML o ZIP.');
+  if (!expected) throw new Error('Tipo de archivo no permitido. Usa PDF, JPG/JPEG, PNG, WEBP, BMP, DOC, DOCX, XML, TXT o ZIP.');
   const detected = detectedMime(file.buffer, extension);
   if (!detected) throw new Error(`El archivo ${file.originalname || ''} está corrupto o su contenido no corresponde con la extensión ${extension}.`);
   if (detected !== expected) throw new Error(`El contenido de ${file.originalname || ''} no corresponde con su extensión ${extension}.`);

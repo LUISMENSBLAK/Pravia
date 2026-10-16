@@ -12,7 +12,7 @@ export function RecentFiles({ items, loading, error, onRetry, className }: { ite
         <WidgetEmpty>No hay expedientes recientes.</WidgetEmpty>
       ) : (
         <ul className={`${styles.compactList} ${styles.recentList}`}>
-          {items.slice(0, 4).map((item) => (
+          {items.map((item) => (
             <li key={item.id}>
               <FolderClosed className={styles.folderIcon} size={17} aria-hidden="true" />
               <Link className={styles.itemCopy} to={item.href ?? `/expedientes/${item.id}`}>

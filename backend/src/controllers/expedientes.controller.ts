@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { DOCUMENT_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
 import fs from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
@@ -1758,7 +1759,7 @@ import multer from 'multer';
 // crear una segunda copia temporal en uploads/finanzas.
 export const uploadDocumentoMulter = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 }
+  limits: { fileSize: DOCUMENT_UPLOAD_MAX_BYTES, files: 1 }
 });
 
 const FINANZAS_DIR = path.join(__dirname, '../../uploads/finanzas');
@@ -1768,7 +1769,7 @@ if (!fs.existsSync(FINANZAS_DIR)) {
 
 export const uploadMulter = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 }
+  limits: { fileSize: DOCUMENT_UPLOAD_MAX_BYTES, files: 1 }
 });
 
 export const uploadMovimientoAdjuntoFile = async (req: Request, res: Response) => {
@@ -2051,7 +2052,7 @@ export const getTiposActo = async (req: Request, res: Response) => {
           take: 1,
         },
         tipoActoCaracteresCompareciente: {
-          where: { caracter: { activo: true } },
+          where: { caracter: { activo: true, OR: [{ organization_id: null }, { organization_id: req.user.organizationId }] } },
           include: { caracter: true },
           orderBy: [{ sugerido: 'desc' }, { orden: 'asc' }],
         },

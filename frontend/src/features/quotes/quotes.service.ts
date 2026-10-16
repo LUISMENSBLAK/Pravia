@@ -89,9 +89,9 @@ export const quotesService = {
   async attachAct(id: string, actId: string) {
     return apiRequest<{ relation: NonNullable<Quote['actos']>[number]; idempotent: boolean }>(`/cotizaciones/${encodeURIComponent(id)}/actos`, { method: 'POST', body: JSON.stringify({ tipo_acto_id: actId }) });
   },
-  async convert(id: string, input?: { expectedVersion?: number; idempotencyKey?: string; confirm?: true; effectiveAt?: string; tipoActoId?: string }): Promise<{ id: string; numero_pravia?: string; idempotent?: boolean }> {
-    const { tipoActoId, ...contract } = input ?? {};
-    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/convertir`, { method: 'POST', body: JSON.stringify({ ...contract, ...(tipoActoId ? { tipo_acto_id: tipoActoId } : {}) }) });
+  async convert(id: string, input?: { expectedVersion?: number; idempotencyKey?: string; confirm?: true; effectiveAt?: string; tipoActoId?: string; solicitanteCaracterPorActo?: Record<string, string | null> }): Promise<{ id: string; numero_pravia?: string; idempotent?: boolean }> {
+    const { tipoActoId, solicitanteCaracterPorActo, ...contract } = input ?? {};
+    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/convertir`, { method: 'POST', body: JSON.stringify({ ...contract, ...(tipoActoId ? { tipo_acto_id: tipoActoId } : {}), ...(solicitanteCaracterPorActo ? { solicitante_caracter_por_acto: solicitanteCaracterPorActo } : {}) }) });
   },
   async documentUrl(documentId: string): Promise<string> {
     const payload = await apiRequest<{ url: string }>(`/documentos/${encodeURIComponent(documentId)}/url`);

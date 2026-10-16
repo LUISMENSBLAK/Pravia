@@ -8,6 +8,7 @@ import { displayProspectName, uppercaseProspectNameInput } from '../prospects.ty
 import styles from '../ProspectsPage.module.css';
 
 type Block = 'summary' | 'contact';
+type ReturnDraft = { block: Block; nombre: string; telefono: string; email: string; actIds: string[]; responsable: string };
 const formatDate = (value: string) => new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' }).format(new Date(value));
 
 export function ProspectInlineEditor({ block, prospect, workflow, catalogs, canWrite, canAssign, onBusyChange, onChanged, notify }: {
@@ -22,12 +23,16 @@ export function ProspectInlineEditor({ block, prospect, workflow, catalogs, canW
   notify: (message: string) => void;
 }) {
   const location = useLocation();
+  const returnedDraft = (location.state as { cfg001ReturnDraft?: ReturnDraft } | null)?.cfg001ReturnDraft;
   const navigate = useNavigate();
   const processedReturnedAct = useRef('');
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(returnedDraft?.block === block);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [form, setForm] = useState({
+  const [form, setForm] = useState(() => returnedDraft?.block === block ? {
+    nombre: returnedDraft.nombre, telefono: returnedDraft.telefono, email: returnedDraft.email,
+    actIds: returnedDraft.actIds, responsable: returnedDraft.responsable,
+  } : {
     nombre: displayProspectName(prospect.nombre), telefono: prospect.telefono ?? '', email: prospect.email ?? '',
     actIds: prospect.actos?.map((item) => item.tipo_acto_id) ?? [], responsable: prospect.user_id ?? '',
   });
@@ -44,13 +49,17 @@ export function ProspectInlineEditor({ block, prospect, workflow, catalogs, canW
     const actId = returned?.cfg001CreatedActId;
     if (!actId || processedReturnedAct.current === actId || busy) return;
     processedReturnedAct.current = actId;
+    setForm((current) => ({ ...current, actIds: Array.from(new Set([...current.actIds, actId])) }));
+    // When returning to an inline draft, the user saves the draft and new act
+    // together. A competing auto-save would advance the version and reject it.
+    if (editing && returnedDraft?.block === block) return;
     const actIds = Array.from(new Set([...(prospect.actos?.map((item) => item.tipo_acto_id) ?? []), actId]));
     setBusy(true); onBusyChange(true); setError('');
     void prospectsService.update(prospect.id, { expectedVersion: workflow.version, tipo_acto_ids: actIds })
       .then(async () => { await onChanged(); notify((returned?.cfg001CreatedActName || 'Acto') + ' quedó seleccionado en el prospecto.'); })
       .catch(() => notify('El acto se creó, pero no pudo vincularse al prospecto.'))
       .finally(() => { setBusy(false); onBusyChange(false); navigate('/prospectos/' + prospect.id, { replace: true, state: null }); });
-  }, [block, busy, location.state, navigate, notify, onBusyChange, onChanged, prospect.actos, prospect.id, workflow.version]);
+  }, [block, busy, editing, location.state, navigate, notify, onBusyChange, onChanged, prospect.actos, prospect.id, returnedDraft?.block, workflow.version]);
   const save = async (event: FormEvent) => {
     event.preventDefault();
     if (busy) return;
@@ -68,8 +77,9 @@ export function ProspectInlineEditor({ block, prospect, workflow, catalogs, canW
     setBusy(true); onBusyChange(true); setError('');
     try {
       await prospectsService.update(prospect.id, payload);
-      setEditing(false);
       await onChanged();
+      if (returnedDraft?.block === block) navigate('/prospectos/' + prospect.id, { replace: true, state: null });
+      setEditing(false);
       notify('Ficha actualizada.');
     } catch (caught) {
       setError(caught instanceof ApiError && caught.status === 409 ? 'La ficha cambió en otra sesión. Actualiza y revisa antes de guardar.' : 'No pudimos guardar este bloque. Revisa los datos.');
@@ -83,7 +93,7 @@ export function ProspectInlineEditor({ block, prospect, workflow, catalogs, canW
   return <section className={styles.detailSection}><header><div><h2>Resumen</h2><p>Datos esenciales del prospecto.</p></div>{canWrite && !editing && <button type="button" className={styles.inlineEditButton} onClick={() => setEditing(true)}><Pencil size={15} />Editar datos</button>}</header>
     {editing ? <form className={styles.inlineForm} onSubmit={save}>
       <label><span>Nombre o razón social</span><input value={form.nombre} onChange={(event) => setForm((current) => ({ ...current, nombre: uppercaseProspectNameInput(event.target.value) }))} /></label>
-      <fieldset className={styles.actSelector}><legend>Acto(s)</legend>{catalogs.actTypes.length ? catalogs.actTypes.map((act) => <label key={act.id}><input type="checkbox" checked={form.actIds.includes(act.id)} onChange={(event) => setForm((current) => ({ ...current, actIds: event.target.checked ? [...current.actIds, act.id] : current.actIds.filter((id) => id !== act.id) }))} /><span>{act.nombre}</span></label>) : <p>No hay actos configurados para esta Notaría.</p>}<Link to={'/configuracion/actos-tiempos?returnTo=' + encodeURIComponent('/prospectos/' + prospect.id)}>+ Crear nuevo acto en Actos y tiempos</Link></fieldset>
+      <fieldset className={styles.actSelector}><legend>Acto(s)</legend>{catalogs.actTypes.length ? catalogs.actTypes.map((act) => <label key={act.id}><input type="checkbox" checked={form.actIds.includes(act.id)} onChange={(event) => setForm((current) => ({ ...current, actIds: event.target.checked ? [...current.actIds, act.id] : current.actIds.filter((id) => id !== act.id) }))} /><span>{act.nombre}</span></label>) : <p>No hay actos configurados para esta Notaría.</p>}<Link to={'/configuracion/actos-tiempos?returnTo=' + encodeURIComponent('/prospectos/' + prospect.id)} state={{ cfg001ReturnDraft: { block, ...form } }}>+ Crear nuevo acto en Actos y tiempos</Link></fieldset>
       {canAssign && workflow.responsibles.length > 0 && <label><span>Responsable del prospecto</span><select value={form.responsable} onChange={(event) => setForm((current) => ({ ...current, responsable: event.target.value }))}>{workflow.responsibles.map((responsible) => <option key={responsible.id} value={responsible.id}>{[responsible.nombre, responsible.apellido].filter(Boolean).join(' ')}</option>)}</select></label>}
       {error && <p className={styles.formError} role="alert">{error}</p>}{footer}
     </form> : <dl><div><dt>Folio</dt><dd>{workflow.folio || 'Histórico sin folio canónico'}</dd></div><div><dt>Nombre</dt><dd>{displayProspectName(prospect.nombre)}</dd></div><div><dt>Acto(s)</dt><dd>{prospect.actos?.map((item) => item.tipo_acto.nombre).join(', ') || prospect.servicio_catalogo?.label || prospect.tipo_acto || 'Por definir'}</dd></div><div><dt>Responsable del prospecto</dt><dd>{prospect.atendido_por?.nombre || 'Sin responsable visible'}</dd></div><div><dt>Fecha de creación</dt><dd>{formatDate(prospect.created_at)}</dd></div></dl>}

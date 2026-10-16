@@ -117,15 +117,72 @@ export const refreshSession = (rejectedToken: string | null = accessToken) => {
 
 type RequestOptions = RequestInit & { retryOnUnauthorized?: boolean };
 
+const fetchWithConnectionError = async (url: string, options: RequestInit) => {
+  try {
+    return await fetch(url, options);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    if (error instanceof TypeError) {
+      throw new ApiError('Error de conexión. Revisa tu red y vuelve a intentar la carga.', 0, { code: 'NETWORK_ERROR' });
+    }
+    throw error;
+  }
+};
+
+export type UploadPolicy = {
+  standard_file_max_bytes: number;
+  fiscal_file_max_bytes: number;
+  catalog_import_file_max_bytes: number;
+  archive_file_max_bytes: number;
+  batch_total_max_bytes: number;
+};
+let uploadPolicyInFlight: Promise<UploadPolicy> | null = null;
+
+export const getUploadPolicy = () => {
+  if (!uploadPolicyInFlight) {
+    uploadPolicyInFlight = apiRequest<UploadPolicy>('/upload-policy').catch((error) => {
+      uploadPolicyInFlight = null;
+      throw error;
+    });
+  }
+  return uploadPolicyInFlight;
+};
+
+const uploadLimitForRequest = (path: string, field: string, policy: UploadPolicy) => {
+  if (/^\/finanzas\/facturacion\/(?:manual|proveedores(?:\/|$))/.test(path)) return policy.fiscal_file_max_bytes;
+  if (/^\/settings\/catalogs\/artifacts\/import\//.test(path)) return policy.catalog_import_file_max_bytes;
+  if (/^\/expedientes\/[^/]+\/documentos\/carga-lote$/.test(path) && field === 'archive') return policy.archive_file_max_bytes;
+  return policy.standard_file_max_bytes;
+};
+
+const preflightUploadSize = async (path: string, body: FormData) => {
+  const files = [...body.entries()].filter((entry): entry is [string, File] => entry[1] instanceof File);
+  if (!files.length) return;
+  const policy = await getUploadPolicy();
+  const tooLarge = files.map(([field, file]) => ({ file, maxBytes: uploadLimitForRequest(path, field, policy) }))
+    .find(({ file, maxBytes }) => file.size > maxBytes);
+  if (tooLarge) {
+    const { maxBytes } = tooLarge;
+    const limit = `${maxBytes / (1024 * 1024)} MB`;
+    throw new ApiError(`El archivo supera el límite permitido de ${limit}.`, 413, { code: 'UPLOAD_FILE_TOO_LARGE', max_file_size_bytes: maxBytes });
+  }
+  if (files.length > 1 && files.reduce((total, [, file]) => total + file.size, 0) > policy.batch_total_max_bytes) {
+    throw new ApiError(`La carga conjunta supera el límite de ${policy.batch_total_max_bytes / (1024 * 1024)} MB. Divide los documentos en lotes más pequeños.`, 413, {
+      code: 'UPLOAD_BATCH_TOO_LARGE', max_batch_size_bytes: policy.batch_total_max_bytes,
+    });
+  }
+};
+
 export const apiRequest = async <T>(path: string, options: RequestOptions = {}): Promise<T> => {
   const { retryOnUnauthorized = true, headers, ...init } = options;
+  if (init.body instanceof FormData) await preflightUploadSize(path, init.body);
   const token = tokenStore.get();
   const requestHeaders = new Headers(headers);
   requestHeaders.set('Accept', 'application/json');
   if (init.body && !(init.body instanceof FormData)) requestHeaders.set('Content-Type', 'application/json');
   if (token) requestHeaders.set('Authorization', `Bearer ${token}`);
 
-  const response = await fetch(apiUrl(path), {
+  const response = await fetchWithConnectionError(apiUrl(path), {
     ...init,
     credentials: 'include',
     headers: requestHeaders,
@@ -161,7 +218,7 @@ export const apiBlobRequest = async (path: string, options: RequestOptions = {})
   const token = tokenStore.get();
   if (token) requestHeaders.set('Authorization', `Bearer ${token}`);
 
-  const response = await fetch(apiUrl(path), {
+  const response = await fetchWithConnectionError(apiUrl(path), {
     ...init,
     credentials: 'include',
     headers: requestHeaders,

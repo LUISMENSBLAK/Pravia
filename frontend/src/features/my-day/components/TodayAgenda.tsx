@@ -4,12 +4,15 @@ import { formatOperationalStatus, formatTime } from '../formatters';
 import { WidgetCard, WidgetEmpty, WidgetError, WidgetLoading } from './WidgetCard';
 import styles from './MyDayWidgets.module.css';
 
-export function TodayAgenda({ items, loading, error, onRetry, className }: { items: AgendaItem[]; loading: boolean; error?: string; onRetry: () => void; className?: string }) {
-  const sorted = [...items].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()).slice(0, 5);
+export function TodayAgenda({ items, loading, error, onRetry, className, title = 'Agenda del día', count, visibleLimit = 5, emptyMessage = 'No tienes eventos programados para hoy.', errorMessage = 'No pudimos cargar tus eventos.' }: {
+  items: AgendaItem[]; loading: boolean; error?: string; onRetry: () => void; className?: string;
+  title?: string; count?: number; visibleLimit?: number; emptyMessage?: string; errorMessage?: string;
+}) {
+  const sorted = [...items].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()).slice(0, visibleLimit);
   return (
-    <WidgetCard title="Agenda del día" action={<Link to="/agenda">Ver agenda completa</Link>} className={className}>
-      {loading ? <WidgetLoading rows={5} /> : error ? <WidgetError message="No pudimos cargar tus eventos." onRetry={onRetry} /> : sorted.length === 0 ? (
-        <WidgetEmpty>No tienes eventos programados para hoy.</WidgetEmpty>
+    <WidgetCard title={title} badge={count} action={<Link to="/agenda">Ver agenda completa</Link>} className={className}>
+      {loading ? <WidgetLoading rows={5} /> : error ? <WidgetError message={errorMessage} onRetry={onRetry} /> : sorted.length === 0 ? (
+        <WidgetEmpty>{emptyMessage}</WidgetEmpty>
       ) : (
         <ol className={styles.timeline}>
           {sorted.map((item) => (
@@ -17,7 +20,7 @@ export function TodayAgenda({ items, loading, error, onRetry, className }: { ite
               <time>{formatTime(item.startsAt)}</time>
               <span className={`${styles.timelineDot} ${styles[item.tone ?? 'blue']}`} aria-hidden="true" />
               <div>
-                <strong>{item.title}</strong>
+                <strong>{item.href ? <Link to={item.href}>{item.title}</Link> : item.title}</strong>
                 {(item.type || item.fileNumber) && <p>{[item.type, item.fileNumber].filter(Boolean).join(' · ')}</p>}
                 {item.context && <small>{item.context}</small>}
               </div>

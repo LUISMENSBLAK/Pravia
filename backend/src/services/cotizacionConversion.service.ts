@@ -33,6 +33,7 @@ export interface ConvertCotizacionInput {
   idempotencyKey?: unknown;
   confirm?: unknown;
   effectiveAt?: unknown;
+  solicitanteCaracterPorActo?: Record<string, string | null>;
 }
 
 export interface ConvertCotizacionResult {
@@ -82,6 +83,7 @@ export class CotizacionConversionService {
         expectedVersion: input.expectedVersion,
         effectiveAt: input.effectiveAt,
         actor: input.actorUserId,
+        solicitanteCaracterPorActo: input.solicitanteCaracterPorActo,
       }) : null;
       const replay = canonical && key
         ? await tx.cotizacionTransicion.findFirst({ where: {
@@ -135,11 +137,49 @@ export class CotizacionConversionService {
         if (!cotizacion.actos.length) throw new CotizacionBusinessError('La cotización no tiene actos estructurados.', 'COTIZACION_ACTS_REQUIRED', 409);
         if (cotizacion.actos.some((item) => !item.confirmed_at)) throw new CotizacionBusinessError('Confirma todos los actos al aceptar la cotización antes de convertir.', 'COTIZACION_ACTS_NOT_CONFIRMED', 409);
         if (!cotizacion.solicitante_formal) throw new CotizacionBusinessError('La cotización no tiene solicitante formal confirmado.', 'COTIZACION_FORMAL_APPLICANT_REQUIRED', 409);
+        const activeActTypes = await tx.tipoActo.findMany({
+          where: {
+            id: { in: cotizacion.actos.map((item) => item.tipo_acto_id) },
+            activo: true,
+            archived_at: null,
+            OR: [{ organization_id: null }, { organization_id: input.actorOrganizationId }],
+          },
+          select: { id: true },
+        });
+        const activeActIds = new Set(activeActTypes.map((item) => item.id));
+        const unavailableAct = cotizacion.actos.find((item) => !activeActIds.has(item.tipo_acto_id));
+        if (unavailableAct) throw new CotizacionBusinessError(
+          `El acto ${unavailableAct.tipo_acto.nombre} está inactivo o no disponible para esta Notaría; no se creó ningún expediente.`,
+          'TIPO_ACTO_INACTIVE', 409,
+        );
         const selected = input.tipoActoId
           ? cotizacion.actos.find((item) => item.tipo_acto_id === input.tipoActoId)
           : cotizacion.actos[0];
         if (!selected) throw new CotizacionBusinessError('El acto principal debe pertenecer a los actos aceptados de la cotización.', 'TIPO_ACTO_NOT_IN_QUOTE', 400);
         tipoActo = selected.tipo_acto;
+        const selections = input.solicitanteCaracterPorActo;
+        const acceptedIds = new Set(cotizacion.actos.map((item) => item.id));
+        if (!selections || Array.isArray(selections) || typeof selections !== 'object'
+          || Object.keys(selections).length !== acceptedIds.size
+          || cotizacion.actos.some((item) => !Object.prototype.hasOwnProperty.call(selections, item.id))) {
+          throw new CotizacionBusinessError('Confirma la participación del solicitante formal en cada acto antes de convertir.', 'FORMAL_APPLICANT_ROLE_REQUIRED', 409);
+        }
+        if (Object.entries(selections).some(([id, value]) => !acceptedIds.has(id) || (value !== null && (typeof value !== 'string' || !value.trim())))) {
+          throw new CotizacionBusinessError('La selección de caracteres del solicitante no es válida.', 'FORMAL_APPLICANT_ROLE_INVALID', 400);
+        }
+        const allowedCharacters = await tx.tipoActoCaracterCompareciente.findMany({
+          where: {
+            tipo_acto_id: { in: cotizacion.actos.map((item) => item.tipo_acto_id) },
+            caracter: { activo: true, OR: [{ organization_id: null }, { organization_id: input.actorOrganizationId }] },
+          },
+          select: { tipo_acto_id: true, caracter_id: true },
+        });
+        if (cotizacion.actos.some((item) => {
+          const selectedCharacter = selections[item.id];
+          return selectedCharacter !== null && !allowedCharacters.some((candidate) => candidate.tipo_acto_id === item.tipo_acto_id && candidate.caracter_id === selectedCharacter);
+        })) {
+          throw new CotizacionBusinessError('El carácter seleccionado no corresponde al acto o a la Notaría.', 'FORMAL_APPLICANT_ROLE_INVALID', 409);
+        }
       } else {
         tipoActo = await this.resolveTipoActo(
           tx,
@@ -178,7 +218,9 @@ export class CotizacionConversionService {
         clienteAlias: cotizacion.prospecto?.nombre || 'Cliente',
         notariaId: cotizacion.notaria_id,
         cotizacionId: cotizacion.id,
-        comparecienteId: cotizacion.solicitante_formal?.id || null,
+        comparecienteId: !canonical || input.solicitanteCaracterPorActo![cotizacion.actos.find((item) => item.tipo_acto_id === tipoActo.id)!.id]
+          ? cotizacion.solicitante_formal?.id || null : null,
+        caracterId: canonical ? input.solicitanteCaracterPorActo![cotizacion.actos.find((item) => item.tipo_acto_id === tipoActo.id)!.id] : null,
         proximaAccion: 'Integrar documentación y comparecientes',
         correlationId,
       });
@@ -199,18 +241,14 @@ export class CotizacionConversionService {
             sessionId: input.actorSessionId || correlationId,
           }, expediente.id, additionalAct.id);
 
-          const character = await tx.tipoActoCaracterCompareciente.findFirst({
-            where: { tipo_acto_id: quoteAct.tipo_acto_id },
-            orderBy: [{ sugerido: 'desc' }, { orden: 'asc' }],
-            select: { caracter_id: true },
-          });
-          if (!character) throw new CotizacionBusinessError(`El acto ${quoteAct.tipo_acto.nombre} no tiene carácter de compareciente configurado.`, 'EXPEDIENTE_PARTY_CHARACTER_MISSING', 409);
+          const characterId = input.solicitanteCaracterPorActo![quoteAct.id];
+          if (!characterId) continue;
           await tx.expedienteCompareciente.create({ data: {
             organization_id: input.actorOrganizationId,
             expediente_id: expediente.id,
             expediente_acto_id: additionalAct.id,
             compareciente_id: cotizacion.solicitante_formal!.id,
-            caracter_id: character.caracter_id,
+            caracter_id: characterId,
             forma_comparecencia: 'PROPIO_DERECHO',
             orden_comparecencia: 1,
             es_principal: true,

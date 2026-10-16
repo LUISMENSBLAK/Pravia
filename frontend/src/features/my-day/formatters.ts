@@ -22,7 +22,7 @@ export const formatRelativeDate = (value?: string) => {
 };
 
 export const formatCurrency = (value: number, currency = 'MXN') => new Intl.NumberFormat('es-MX', {
-  style: 'currency', currency, maximumFractionDigits: 0,
+  style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2,
 }).format(value);
 
 const OPERATIONAL_STATUS_LABELS: Record<string, string> = {

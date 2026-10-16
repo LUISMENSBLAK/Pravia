@@ -38,6 +38,7 @@ export const expedientesService = {
   createPartyRole(id: string, input: { expediente_acto_id: string; nombre: string; descripcion?: string | null }) { return apiRequest<{ role: { id: string; clave: string; nombre: string; descripcion?: string | null }; created: boolean; reusable_within_tenant: true; applied_to_expediente_acto_id: string }>(`/expedientes/${encodeURIComponent(id)}/comparecientes/roles`, { method: 'POST', body: JSON.stringify(input) }); },
   previewParty(id: string, input: ExpedientePartyCommand) { return apiRequest<ExpedientePartyPreview>(`/expedientes/${encodeURIComponent(id)}/comparecientes/preview`, { method: 'POST', body: JSON.stringify(input) }); },
   applyParty(id: string, input: ExpedientePartyCommand) { return apiRequest<{ relation: ExpedientePartyRelation; idempotent: boolean; version?: number }>(`/expedientes/${encodeURIComponent(id)}/comparecientes/aplicar`, { method: 'POST', body: JSON.stringify(input) }); },
+  validatePartyData(id: string, relationId: string, input: { confirm: true; idempotency_key: string }) { return apiRequest<{ relation: ExpedientePartyRelation; idempotent: boolean }>(`/expedientes/${encodeURIComponent(id)}/comparecientes/${encodeURIComponent(relationId)}/validar-datos`, { method: 'POST', body: JSON.stringify(input) }); },
   listProperties(id: string, signal?: AbortSignal) { return apiRequest<{ data: ExpedientePredioRelation[]; canonical_source: string }>(`/expedientes/${encodeURIComponent(id)}/predios`, { signal }); },
   searchProperties(id: string, search: string, signal?: AbortSignal) { const params = new URLSearchParams({ search }); return apiRequest<{ data: PredioSummary[] }>(`/expedientes/${encodeURIComponent(id)}/predios/buscar?${params}`, { signal }); },
   propertyCatalogs(id: string, signal?: AbortSignal) { return apiRequest<{ data: ExpedientePredioCatalogs }>(`/expedientes/${encodeURIComponent(id)}/predios/catalogos`, { signal }).then((payload) => payload.data); },
@@ -106,8 +107,8 @@ export const expedientesService = {
   async downloadAppendixZip(id: string, input: { folder_id?: string | null; folder_ids?: string[]; item_ids?: string[] }, name = 'expediente-documental.zip') {
     return downloadBlob(`/expedientes/${encodeURIComponent(id)}/documentos/apendice/descargar-zip`, name, input);
   },
-  uploadDocument(id: string, file: File, fields: { categoria: string; carpeta: string; folder_id?: string | null }) {
-    const body = new FormData(); body.set('file', file); body.set('categoria', fields.categoria); body.set('carpeta', fields.carpeta); if (fields.folder_id) body.set('folder_id', fields.folder_id);
+  uploadDocument(id: string, file: File, fields: { categoria: string; carpeta: string; folder_id?: string | null; requisito_id?: string }) {
+    const body = new FormData(); body.set('file', file); body.set('categoria', fields.categoria); body.set('carpeta', fields.carpeta); if (fields.folder_id) body.set('folder_id', fields.folder_id); if (fields.requisito_id) body.set('requisito_id', fields.requisito_id);
     return apiRequest(`/expedientes/${encodeURIComponent(id)}/documentos`, { method: 'POST', body });
   },
   importDocumentBatch(id: string, input: { archive?: File; files?: File[]; folder_id?: string | null; onConflict: 'OMITIR' | 'CONSERVAR' | 'REEMPLAZAR' }) {

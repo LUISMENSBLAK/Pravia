@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express, { NextFunction, Request, Response } from 'express';
 import cors from 'cors';
+import multer from 'multer';
 import { randomUUID } from 'crypto';
 import { configuredDatabaseMode, configuredDatabasePrimary, configuredDatabaseSchema, prisma } from './config/prisma';
 import { checkStorageHealth, getStorageInfo } from './services/supabase.service';
@@ -38,6 +39,8 @@ import './events/screeningEventHandlers';
 import './events/beneficialControllerEventHandlers';
 import './events/complianceH6EventHandlers';
 import { DomainEventOutboxService } from './services/domainEventOutbox.service';
+import { CATALOG_IMPORT_MAX_BYTES, DOCUMENT_ARCHIVE_MAX_BYTES, DOCUMENT_BATCH_MAX_BYTES, DOCUMENT_UPLOAD_MAX_BYTES, FISCAL_UPLOAD_MAX_BYTES, uploadLimitForPath, uploadLimitLabel } from './config/uploadLimits';
+import { DocumentBatchUploadError } from './config/documentBatchUpload';
 
 const startupErrors = validateRuntimeConfig(resolveRuntimeConfig());
 const jwtSecretError = validateJwtSecret(process.env.AUTH_JWT_SECRET);
@@ -58,7 +61,7 @@ app.disable('etag');
 app.disable('x-powered-by');
 if (process.env.NODE_ENV === 'production') app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
-const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:5174,http://localhost:5175')
+const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175')
   .split(',')
   .map(origin => origin.trim())
   .filter(Boolean);
@@ -237,6 +240,13 @@ if (process.env.NODE_ENV !== 'production') app.get('/api/debug/openai', authenti
 // ══════════════════════════════════════
 app.use('/api', authenticate);
 app.use('/api', requirePasswordReady);
+app.get('/api/upload-policy', (_req: Request, res: Response) => res.json({
+  standard_file_max_bytes: DOCUMENT_UPLOAD_MAX_BYTES,
+  fiscal_file_max_bytes: FISCAL_UPLOAD_MAX_BYTES,
+  catalog_import_file_max_bytes: CATALOG_IMPORT_MAX_BYTES,
+  archive_file_max_bytes: DOCUMENT_ARCHIVE_MAX_BYTES,
+  batch_total_max_bytes: DOCUMENT_BATCH_MAX_BYTES,
+}));
 app.use('/api/users', usersRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/settings/catalogs', configurationCatalogRoutes);
@@ -273,6 +283,23 @@ app.use((req: Request, res: Response) => {
 // Error final: captura fallos no controlados sin exponer stack, secretos o datos del usuario.
 app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
   const correlationId = req.correlationId || randomUUID();
+  if (error instanceof DocumentBatchUploadError) {
+    return res.status(413).json({ code: error.code, error: error.message, max_batch_size_bytes: DOCUMENT_BATCH_MAX_BYTES });
+  }
+  if (error instanceof multer.MulterError) {
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      const maxBytes = uploadLimitForPath(req.path, error.field);
+      return res.status(413).json({
+        code: 'UPLOAD_FILE_TOO_LARGE',
+        error: `El archivo supera el límite permitido de ${uploadLimitLabel(maxBytes)}.`,
+        max_file_size_bytes: maxBytes,
+      });
+    }
+    return res.status(400).json({
+      code: 'UPLOAD_MULTIPART_INVALID',
+      error: 'La carga contiene demasiados archivos o campos, o no tiene el formato esperado.',
+    });
+  }
   console.error(JSON.stringify({
     type: 'unhandled_error',
     level: 'error',

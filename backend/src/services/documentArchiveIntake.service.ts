@@ -3,6 +3,7 @@ import path from 'path';
 import JSZip from 'jszip';
 import { createExtractorFromData } from 'node-unrar-js';
 import { canonicalUploadedDocumentMime } from './documentUploadValidation';
+import { DOCUMENT_UPLOAD_MAX_BYTES, DOCUMENT_ARCHIVE_MAX_BYTES, DOCUMENT_BATCH_MAX_BYTES, uploadLimitLabel } from '../config/uploadLimits';
 
 export type IntakeFile = { relativePath: string; name: string; buffer: Buffer; mimeType: string; checksum: string };
 export class DocumentArchiveIntakeError extends Error {
@@ -10,9 +11,9 @@ export class DocumentArchiveIntakeError extends Error {
 }
 
 const MAX_FILES = 300;
-const MAX_FILE_BYTES = 25 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 200 * 1024 * 1024;
-const MAX_ARCHIVE_BYTES = 75 * 1024 * 1024;
+const MAX_FILE_BYTES = DOCUMENT_UPLOAD_MAX_BYTES;
+const MAX_TOTAL_BYTES = DOCUMENT_BATCH_MAX_BYTES;
+const MAX_ARCHIVE_BYTES = DOCUMENT_ARCHIVE_MAX_BYTES;
 
 export function safeDocumentPath(input: string) {
   const normalized = input.normalize('NFC').replace(/\\/g, '/');
@@ -36,7 +37,7 @@ function checkPreflight(entries: Array<{ path: string; size: number; encrypted?:
     if (names.has(name)) throw new DocumentArchiveIntakeError('DOCUMENT_ARCHIVE_DUPLICATE_PATH', 'El paquete repite una ruta documental.');
     names.add(name);
     if (entry.encrypted) throw new DocumentArchiveIntakeError('DOCUMENT_ARCHIVE_PASSWORD_REQUIRED', 'El paquete contiene archivos protegidos con contraseña y requiere revisión manual.');
-    if (!Number.isSafeInteger(entry.size) || entry.size < 0 || entry.size > MAX_FILE_BYTES) throw new DocumentArchiveIntakeError('DOCUMENT_ARCHIVE_FILE_TOO_LARGE', 'Un documento supera el límite de 25 MB.');
+    if (!Number.isSafeInteger(entry.size) || entry.size < 0 || entry.size > MAX_FILE_BYTES) throw new DocumentArchiveIntakeError('DOCUMENT_ARCHIVE_FILE_TOO_LARGE', `Un documento supera el límite de ${uploadLimitLabel(MAX_FILE_BYTES)}.`);
     total += entry.size;
     if (total > MAX_TOTAL_BYTES) throw new DocumentArchiveIntakeError('DOCUMENT_ARCHIVE_EXPANSION_LIMIT', 'El contenido descomprimido supera el límite de 200 MB.');
   }
@@ -55,7 +56,7 @@ function finalize(entries: Array<{ path: string; buffer: Buffer }>): IntakeFile[
 }
 
 export async function extractDocumentArchive(file: { originalname: string; buffer: Buffer }): Promise<IntakeFile[]> {
-  if (!file.buffer.length || file.buffer.length > MAX_ARCHIVE_BYTES) throw new DocumentArchiveIntakeError('DOCUMENT_ARCHIVE_SIZE_INVALID', 'El paquete debe tener contenido y no superar 75 MB.');
+  if (!file.buffer.length || file.buffer.length > MAX_ARCHIVE_BYTES) throw new DocumentArchiveIntakeError('DOCUMENT_ARCHIVE_SIZE_INVALID', `El paquete debe tener contenido y no superar ${uploadLimitLabel(MAX_ARCHIVE_BYTES)}.`);
   const extension = path.extname(file.originalname).toLowerCase();
   if (extension === '.zip') {
     if (file.buffer.subarray(0, 2).toString('ascii') !== 'PK') throw new DocumentArchiveIntakeError('DOCUMENT_ARCHIVE_CORRUPT', 'El ZIP no tiene un encabezado válido.');

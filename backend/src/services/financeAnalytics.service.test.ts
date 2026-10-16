@@ -82,4 +82,35 @@ describe('FinanceAnalyticsService', () => {
     expect(result.items).toHaveLength(1);
     expect(result.meta).toMatchObject({ total: 2, totalPages: 2, totals: { generated: 180_000, collected: 60_000, pending: 120_000 } });
   });
+
+  it('scopea cartera por organización y responsable, conserva centavos y excluye saldos liquidados', async () => {
+    const findMany = vi.fn().mockResolvedValue([
+      {
+        id: 'fee-open', monto: '1000.37',
+        expediente: { id: 'exp-open', numero_pravia: 'EXP-0001-2026', cliente_alias: 'Cliente abierto' },
+        cotizacion: { id: 'cot-open', numero_cotizacion: 'COT-0001-2026', prospecto: { nombre: 'Cliente abierto' } },
+        responsable: { id: 'user-1', nombre: 'Adrián', apellido: 'Hernández' }, notaria: null,
+        fecha_reconocimiento: new Date('2026-10-01T12:00:00Z'), fecha_vencimiento: new Date('2026-10-31T12:00:00Z'),
+        distribuciones: [{ monto: '400.12' }, { monto: '100.10' }],
+      },
+      {
+        id: 'fee-paid', monto: '50.05',
+        expediente: { id: 'exp-paid', numero_pravia: 'EXP-0002-2026', cliente_alias: 'Cliente liquidado' },
+        cotizacion: { id: 'cot-paid', numero_cotizacion: 'COT-0002-2026', prospecto: { nombre: 'Cliente liquidado' } },
+        responsable: null, notaria: null,
+        fecha_reconocimiento: new Date('2026-10-01T12:00:00Z'), fecha_vencimiento: null,
+        distribuciones: [{ monto: '50.05' }],
+      },
+    ]);
+    const result = await new FinanceAnalyticsService({ honorarioGenerado: { findMany } } as any).receivables({
+      organization_id: 'org-1', responsable_id: 'user-1', page: 1, pageSize: 20,
+      fecha_hasta: new Date('2026-10-31T23:59:59Z'),
+    });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
+      organization_id: 'org-1', responsable_id: 'user-1', estado: { not: 'CANCELADO' },
+    }) }));
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ id: 'fee-open', generated: 1000.37, collected: 500.22, pending: 500.15 });
+    expect(result.meta).toMatchObject({ total: 1, totals: { generated: 1000.37, collected: 500.22, pending: 500.15 } });
+  });
 });

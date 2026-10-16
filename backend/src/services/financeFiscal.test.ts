@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import { describe, expect, it, vi } from 'vitest';
 import { ContractTestCfdiProvider, DisabledCfdiProvider } from './cfdiProvider';
-import { FinanceFiscalError, FinanceFiscalService, extractCsfFields, parseCfdi40Xml } from './financeFiscal.service';
+import { FinanceFiscalError, FinanceFiscalService, calculateFiscalLine, draftFiscalDetails, extractCsfFields, parseCfdi40Xml } from './financeFiscal.service';
 
 const xml = (overrides = '') => Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
 <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" Version="4.0" Serie="QA" Folio="12" Fecha="2026-10-06T10:00:00" SubTotal="1000.00" Total="1160.00" Moneda="MXN" TipoDeComprobante="I" MetodoPago="PPD" FormaPago="99" ${overrides}>
@@ -47,7 +47,7 @@ describe('B3 · dominio fiscal local seguro', () => {
       documentoCfdi: { findMany: vi.fn().mockResolvedValue([{ direccion: 'EMITIDO', estado: 'PREFACTURA', uuid_fiscal: null, receptor_rfc: 'BBB010101BBB', receptor_nombre: 'CLIENTE', emisor_rfc: 'AAA010101AAA', emisor_nombre: 'NOTARIA', total: 100, saldo: 100, created_at: new Date('2026-10-06T00:00:00Z') }]) },
       cuentaPorCobrarCfdi: { findMany: vi.fn().mockResolvedValue([]) }, cuentaPorPagarCfdi: { findMany: vi.fn().mockResolvedValue([]) }, transferenciaInterna: { findMany: vi.fn().mockResolvedValue([]) },
     };
-    const result = await new FinanceFiscalService(db as any).exportXlsx({ id: 'user', organizationId: 'org', permissions: [] });
+    const result = await new FinanceFiscalService(db as any).exportXlsx({ id: 'user', organizationId: 'org', rol: 'DIRECCION', permissions: [] });
     expect(result.buffer.subarray(0, 2).toString()).toBe('PK');
     expect(result.rowCount).toBe(1);
     const zip = await JSZip.loadAsync(result.buffer);
@@ -59,5 +59,26 @@ describe('B3 · dominio fiscal local seguro', () => {
   it('distingue errores fiscales de errores genéricos', () => {
     const error = new FinanceFiscalError(409, 'CFDI_TEST', 'conflicto');
     expect(error).toMatchObject({ status: 409, code: 'CFDI_TEST', message: 'conflicto' });
+  });
+
+  it('calcula impuestos por tasas configuradas, sin imponer IVA universal', () => {
+    const exempt = calculateFiscalLine({ quantity: '1', unitPrice: '100.00', ivaRate: '0', ivaRetentionRate: '0', isrRetentionRate: '0' });
+    expect(exempt.total.toFixed(2)).toBe('100.00');
+    const configured = calculateFiscalLine({ quantity: '2', unitPrice: '100.00', ivaRate: '0.080000', ivaRetentionRate: '0.020000', isrRetentionRate: '0.010000' });
+    expect(configured.subtotal.toFixed(2)).toBe('200.00');
+    expect(configured.iva.toFixed(2)).toBe('16.00');
+    expect(configured.ivaRetention.toFixed(2)).toBe('4.00');
+    expect(configured.isrRetention.toFixed(2)).toBe('2.00');
+    expect(configured.total.toFixed(2)).toBe('210.00');
+  });
+
+  it('conserva los datos del comprobante al editar y valida moneda, tipo de cambio y lugar de expedición', () => {
+    const saved = draftFiscalDetails({ moneda: 'MXN', exportacion: '01', lugar_expedicion: '63735', condiciones_pago: 'CONTADO' });
+    expect(draftFiscalDetails({ condiciones_pago: 'CRÉDITO' }, { ...saved, complemento_notarios: { clave: 'QA' } })).toEqual({
+      moneda: 'MXN', fiscal_comprobante: { tipo_cambio: null, exportacion: '01', lugar_expedicion: '63735', condiciones_pago: 'CRÉDITO' },
+    });
+    expect(() => draftFiscalDetails({ moneda: 'USD' })).toThrowError(expect.objectContaining({ code: 'CFDI_EXCHANGE_RATE_REQUIRED' }));
+    expect(() => draftFiscalDetails({ lugar_expedicion: '6373' })).toThrowError(expect.objectContaining({ code: 'CFDI_ISSUE_PLACE_INVALID' }));
+    expect(draftFiscalDetails({ moneda: 'USD', tipo_cambio: '17.123456' }).fiscal_comprobante.tipo_cambio).toBe('17.123456');
   });
 });

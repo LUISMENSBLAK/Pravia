@@ -31,10 +31,16 @@ async function login(page: Page) {
     await email.fill(credentials.email);
     await password.fill(credentials.password);
     await page.waitForTimeout(100);
-    if (await submit.isEnabled()) break;
+    if (await email.inputValue() === credentials.email
+      && await password.inputValue() === credentials.password && await submit.isEnabled()) break;
   }
+  await expect(email).toHaveValue(credentials.email);
+  await expect(password).toHaveValue(credentials.password);
   await expect(submit).toBeEnabled();
+  const response = page.waitForResponse((item) => item.url().endsWith('/api/auth/login')
+    && item.request().method() === 'POST');
   await submit.click();
+  expect((await response).status()).toBe(200);
   await page.waitForURL('**/mi-dia');
 }
 
@@ -93,17 +99,24 @@ test('EXP-008 · cinco casos de pago y facturación con fuente única', async ({
   await expect(pendingCard).toContainText('Factura pendiente');
   await expect(pendingCard.getByRole('button', { name: 'Agregar factura' })).toBeVisible();
 
-  // CASO 4 · Finanzas Central lee el registro del expediente y permite regresar a él.
+  // CASO 4 · Finanzas Central lee el registro y abre el generador fiscal sobre
+  // el mismo ingreso, sin duplicar la contabilidad.
   await page.goto('/finanzas?view=facturacion', { waitUntil: 'networkidle' });
   const centralRow = page.getByRole('row')
     .filter({ hasText: 'EXP-0139-2026' })
     .filter({ hasText: pendingAmountLabel })
-    .filter({ has: page.getByRole('link', { name: 'Completar factura' }) })
+    .filter({ has: page.getByRole('button', { name: 'Completar factura' }) })
     .first();
   await expect(centralRow).toContainText('Factura pendiente');
   await page.screenshot({ path: testInfo.outputPath('case4-central-pending.png'), fullPage: true });
-  await centralRow.getByRole('link', { name: 'Completar factura' }).click();
-  await page.waitForURL(`**/expedientes/${expedienteId}#finanzas`);
+  await centralRow.getByRole('button', { name: 'Completar factura' }).click();
+  const generator = page.getByRole('dialog', { name: 'Generar factura CFDI' });
+  await expect(generator).toBeVisible();
+  await expect(generator).toContainText('EXP-0139-2026');
+  await expect(generator).toContainText(pendingAmountLabel);
+  await generator.getByRole('button', { name: 'Cerrar generador' }).click();
+  await page.goto(`/expedientes/${expedienteId}#finanzas`, { waitUntil: 'networkidle' });
+  await expect(page.getByRole('tabpanel', { name: 'Finanzas' })).toBeVisible();
 
   // CASO 3 · Administración completa posteriormente PDF + XML.
   pendingCard = page.locator('article').filter({ hasText: pendingConcept });

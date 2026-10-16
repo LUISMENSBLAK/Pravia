@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import multer from 'multer';
+import { DOCUMENT_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
+import { boundedDocumentBatchStorage } from '../config/documentBatchUpload';
 import { ComparecienteAltaSessionController } from '../controllers/comparecienteAltaSession.controller';
 import { requirePermission } from '../middleware/auth.middleware';
 import { requireAltaCargaObjectAccess, requireAltaSessionObjectAccess } from '../middleware/objectAccess.middleware';
 
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024, files: 10 } // 25 MB max limit
+  storage: boundedDocumentBatchStorage,
+  limits: { fileSize: DOCUMENT_UPLOAD_MAX_BYTES, files: 10 }
 });
 
 const router = Router();

@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
+import { DOCUMENT_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
 import JSZip from 'jszip';
 import mammoth from 'mammoth';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType } from 'docx';
@@ -87,7 +88,7 @@ if (!fs.existsSync(DOCS_DIR)) fs.mkdirSync(DOCS_DIR, { recursive: true });
 
 export const uploadProyectoMulter = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024 }
+  limits: { fileSize: DOCUMENT_UPLOAD_MAX_BYTES, files: 1 }
 });
 
 // In-Memory / File-Persisted Store for Proyecto Versions & IA Reports

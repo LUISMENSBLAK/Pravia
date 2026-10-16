@@ -1,11 +1,13 @@
 import { Router } from 'express';
 import multer from 'multer';
+import { DOCUMENT_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
+import { boundedDocumentBatchStorage } from '../config/documentBatchUpload';
 import { ComparecienteController } from '../controllers/compareciente.controller';
 import { requireComparecienteObjectAccess } from '../middleware/objectAccess.middleware';
 import { requirePermission } from '../middleware/auth.middleware';
 import { BeneficialControllerController } from '../controllers/beneficialController.controller';
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 10 } });
+const upload = multer({ storage: boundedDocumentBatchStorage, limits: { fileSize: DOCUMENT_UPLOAD_MAX_BYTES, files: 10 } });
 const router = Router();
 router.param('id', requireComparecienteObjectAccess);
 

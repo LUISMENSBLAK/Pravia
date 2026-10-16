@@ -6,6 +6,7 @@ import { AssistantProvider, useAssistant } from '../features/assistant/Assistant
 import type { AssistantService } from '../features/assistant/assistant.service';
 import type { AssistantAttachment, AssistantConversation, AssistantReply, AssistantSuggestion } from '../features/assistant/assistant.types';
 import { AssistantLayer } from '../features/assistant/components/AssistantLayer';
+import { PraviaAiCard } from '../features/my-day/components/PraviaAiCard';
 import appShellCss from '../components/layout/AppShell.module.css?inline';
 
 const apiRequestMock = vi.hoisted(() => vi.fn());
@@ -69,6 +70,23 @@ const renderAssistant = (service = makeService(), extra?: React.ReactNode) => re
 );
 
 describe('PRAVIA IA global', () => {
+  it('conecta la tarjeta de Mi Dia con el asistente y respeta el permiso financiero', async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderAssistant(makeService(), <PraviaAiCard canViewFinance={false} />);
+    expect(screen.getByRole('button', { name: 'Resumen financiero' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: 'Buscar expediente' }));
+    expect(await screen.findByRole('dialog', { name: 'PRAVIA IA' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Pregúntame algo...')).toHaveValue('Ayúdame a buscar un expediente.');
+    unmount();
+
+    renderAssistant(makeService(), <PraviaAiCard canViewFinance />);
+    const finance = screen.getByRole('button', { name: 'Resumen financiero' });
+    expect(finance).toBeEnabled();
+    await user.click(finance);
+    expect(await screen.findByRole('dialog', { name: 'PRAVIA IA' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Pregúntame algo...')).toHaveValue('Muéstrame el resumen financiero disponible.');
+  });
+
   it('reserva un dock móvil real para que el búho no cubra contenido', () => {
     expect(appShellCss).toMatch(/grid-template-rows:\s*var\(--topbar-height\)\s+minmax\(0,\s*1fr\)\s+calc\(var\(--assistant-mobile-dock-height\)\s*\+\s*env\(safe-area-inset-bottom\)\)/);
     expect(appShellCss).toMatch(/workspace[^\{]*\{\s*height:\s*auto;\s*min-height:\s*0;\s*overflow-x:\s*hidden;\s*overflow-y:\s*auto/);

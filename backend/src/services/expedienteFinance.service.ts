@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from 'crypto';
+import { DOCUMENT_UPLOAD_MAX_BYTES, uploadLimitLabel } from '../config/uploadLimits';
 import { CatalogoDestinoFuncional, Prisma, PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
@@ -326,20 +327,24 @@ export class ExpedienteFinanceService {
     } catch (error) { await Promise.all(uploads.map(({ stored }) => deleteFile(stored.storageKey).catch(() => undefined))); throw error; }
   }
 
-  async listInvoices(actor: ExpedienteFinanceActor, status?: string) {
+  async listInvoices(actor: ExpedienteFinanceActor, status?: string, incomeId?: string) {
     const invoiceStatus = status === 'PENDIENTE' || status === 'CARGADA' ? status : undefined;
     // Finanzas Central is a tenant-wide financial read model.  A FINANCIERO may
     // inspect invoice state without receiving access to the legal expediente.
     const expedienteScope = actor.rol === 'FINANCIERO' ? {} : expedienteAccessWhere(actor);
     const items = await this.prisma.expedienteIngresoReportado.findMany({
-      where: { organization_id: actor.organizationId, factura_estado: invoiceStatus || { not: null }, expediente: { archived_at: null, ...expedienteScope } },
+      where: { organization_id: actor.organizationId, factura_estado: invoiceStatus || { not: null },
+        ...(incomeId ? { id: incomeId } : {}), expediente: { archived_at: null, ...expedienteScope } },
       select: {
         id: true, expediente_id: true, monto_reportado: true, monto_validado: true, factura_estado: true, created_at: true, factura_completada_at: true,
         expediente: { select: { numero_pravia: true, cliente_alias: true } },
         facturarAVinculo: { select: { id: true, compareciente: { select: { id: true, nombre_busqueda: true, tipo_persona: true } } } },
         documentos: { where: { estatus: 'ACTIVO', tipo: 'COMPROBANTE_FISCAL', documento: { estatus: 'VIGENTE' } }, select: { id: true, documento: { select: { nombre_original: true, mime_type: true } } } },
       },
-      orderBy: [{ factura_estado: 'desc' }, { created_at: 'desc' }],
+      // The central queue is capped, so recency must be the primary order.
+      // Ordering by the enum first can hide recent pending invoices behind
+      // hundreds of older completed rows.
+      orderBy: [{ created_at: 'desc' }, { factura_estado: 'desc' }],
       take: 500,
     });
     return { items, source: 'expediente_ingresos_reportados', count: items.length };
@@ -448,7 +453,7 @@ export class ExpedienteFinanceService {
     if (!actor.permissions.includes('ia.execute')) throw new ExpedienteFinanceError(403, 'EXP008_AI_DENIED', 'No tienes permiso para usar la asistencia de IA.');
     await this.assertExpediente(this.prisma, actor, expedienteId);
     if (!file?.buffer?.length) throw new ExpedienteFinanceError(400, 'EXP008_FILE_REQUIRED', 'Selecciona un comprobante.');
-    if (file.size > 25 * 1024 * 1024) throw new ExpedienteFinanceError(413, 'EXP008_FILE_TOO_LARGE', 'El archivo supera 25 MB.');
+    if (file.size > DOCUMENT_UPLOAD_MAX_BYTES) throw new ExpedienteFinanceError(413, 'EXP008_FILE_TOO_LARGE', `El archivo supera ${uploadLimitLabel(DOCUMENT_UPLOAD_MAX_BYTES)}.`);
     let mimeType: string;
     try { mimeType = canonicalUploadedDocumentMime(file); }
     catch (error) { throw new ExpedienteFinanceError(400, 'EXP008_FILE_TYPE_INVALID', error instanceof Error ? error.message : 'El archivo no es compatible.'); }
@@ -713,7 +718,7 @@ export class ExpedienteFinanceService {
       throw error;
     }
   }
-  private async storeUpload(actor: ExpedienteFinanceActor, expedienteId: string, file: Upload, folder: string) { if (!file?.buffer?.length) throw new ExpedienteFinanceError(400, 'EXP008_FILE_REQUIRED', 'Selecciona un documento.'); if (file.size > 25 * 1024 * 1024) throw new ExpedienteFinanceError(413, 'EXP008_FILE_TOO_LARGE', 'El archivo supera 25 MB.'); let mimeType: string; try { mimeType = canonicalUploadedDocumentMime(file); } catch (error) { throw new ExpedienteFinanceError(400, 'EXP008_FILE_TYPE_INVALID', error instanceof Error ? error.message : 'El archivo no es compatible.'); } return this.storeBuffer(actor, expedienteId, file.buffer, safeName(file.originalname), mimeType, folder); }
+  private async storeUpload(actor: ExpedienteFinanceActor, expedienteId: string, file: Upload, folder: string) { if (!file?.buffer?.length) throw new ExpedienteFinanceError(400, 'EXP008_FILE_REQUIRED', 'Selecciona un documento.'); if (file.size > DOCUMENT_UPLOAD_MAX_BYTES) throw new ExpedienteFinanceError(413, 'EXP008_FILE_TOO_LARGE', `El archivo supera ${uploadLimitLabel(DOCUMENT_UPLOAD_MAX_BYTES)}.`); let mimeType: string; try { mimeType = canonicalUploadedDocumentMime(file); } catch (error) { throw new ExpedienteFinanceError(400, 'EXP008_FILE_TYPE_INVALID', error instanceof Error ? error.message : 'El archivo no es compatible.'); } return this.storeBuffer(actor, expedienteId, file.buffer, safeName(file.originalname), mimeType, folder); }
   private async storeBuffer(actor: ExpedienteFinanceActor, expedienteId: string, buffer: Buffer, fileName: string, mimeType: string, folder: string) { const storageKey = `organizations/${actor.organizationId}/expedientes/${expedienteId}/finanzas/${folder}/${randomUUID()}_${safeName(fileName)}`; await uploadFile(buffer, storageKey, mimeType); return { storageKey, buffer, fileName, mimeType, checksum: checksum(buffer) }; }
   private async createDocument(tx: Prisma.TransactionClient, actor: ExpedienteFinanceActor, expedienteId: string, stored: { storageKey: string; buffer: Buffer; fileName: string; mimeType: string; checksum: string }, type: string, provenance: Record<string, unknown>) { const document = await tx.documento.create({ data: { organization_id: actor.organizationId, nombre_original: stored.fileName, nombre_interno: `${randomUUID()}-${stored.fileName}`, tipo: type, categoria: 'OTROS', storage_key: stored.storageKey, mime_type: stored.mimeType, size_bytes: stored.buffer.length, checksum_sha256: stored.checksum, estatus: 'VIGENTE', subido_por_id: actor.id, expediente_id: expedienteId, datos_extraidos: json(provenance) } }); await tx.expedienteDocumento.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, documento_id: document.id, tipo_vinculo: type, creado_por_id: actor.id, origen: 'FINANZAS', source_entity_type: 'ExpedienteFinanzaDocumento', source_entity_id: document.id, source_context: type, source_key: `FINANZAS:Documento:${document.id}:${type}`, document_version: stored.checksum, provenance: json(provenance) } }); return document; }
   private async linkDocument(tx: Prisma.TransactionClient, actor: ExpedienteFinanceActor, expedienteId: string, documentId: string, type: any, key: string, target: { ingreso_reportado_id?: string; solicitud_pago_id?: string; movimiento_id?: string; comprobante_id?: string }) { return tx.expedienteFinanzaDocumento.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, documento_id: documentId, tipo: type, ingreso_reportado_id: target.ingreso_reportado_id || null, solicitud_pago_id: target.solicitud_pago_id || null, movimiento_id: target.movimiento_id || null, comprobante_id: target.comprobante_id || null, vinculado_por_id: actor.id, idempotency_key: key } }); }

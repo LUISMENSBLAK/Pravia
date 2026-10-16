@@ -15,6 +15,7 @@ type LocationState = { from?: { pathname?: string } };
 
 const loginErrorMessage = (error: unknown) => {
   if (error instanceof ApiError) {
+    if (error.status === 0 && (error.payload as { code?: string } | null)?.code === 'NETWORK_ERROR') return 'No fue posible conectar con el backend. Revisa la red o el proxy de desarrollo.';
     if (error.status === 409) return 'Selecciona la organización con la que deseas trabajar.';
     if (error.status === 401) return 'No pudimos iniciar sesión con esos datos. Verifica tu correo y contraseña.';
     if (error.status === 403) return 'El entorno local no está autorizado para comunicarse con el backend. Revisa el proxy de desarrollo.';

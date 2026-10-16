@@ -1,6 +1,7 @@
 import { AlertTriangle, ChevronRight, Download, Eye, FileArchive, FileText, Folder, FolderOpen, LayoutGrid, List, LoaderCircle, LockKeyhole, Pencil, Plus, Search, Trash2, Upload, Users, Warehouse } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { DocumentViewer } from '../../../../components/documents/DocumentViewer';
+import { getUploadPolicy, type UploadPolicy } from '../../../../services/api/client';
 import { expedientesService } from '../../expedientes.service';
 import type { ExpedienteDetail, ExpedienteDocumentAppendix, ExpedienteDocumentAppendixItem, ExpedienteDocumentFolder } from '../../expedientes.types';
 import { dateTime } from '../../expedienteFormatters';
@@ -10,6 +11,8 @@ const originLabels: Record<string, string> = { PROSPECTO: 'Prospecto', COTIZACIO
 
 export function DocumentsTab({ expediente, onChanged }: { expediente: ExpedienteDetail; onChanged(): void }) {
   const input = useRef<HTMLInputElement>(null);
+  const requirementInput = useRef<HTMLInputElement>(null);
+  const [selectedRequirementId, setSelectedRequirementId] = useState<string | null>(null);
   const archiveInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const [appendix, setAppendix] = useState<ExpedienteDocumentAppendix | null>(null);
@@ -20,6 +23,9 @@ export function DocumentsTab({ expediente, onChanged }: { expediente: Expediente
   const [search, setSearch] = useState(''); const [sort, setSort] = useState<'name' | 'date' | 'type'>('name');
   const [view, setView] = useState<'grid' | 'list'>('grid');
   const [conflictPolicy, setConflictPolicy] = useState<'OMITIR' | 'CONSERVAR' | 'REEMPLAZAR'>('OMITIR');
+  const [pendingUpload, setPendingUpload] = useState<{ archive?: File; files?: File[] } | null>(null);
+  const [uploadPolicy, setUploadPolicy] = useState<UploadPolicy | null>(null);
+  useEffect(() => { let active = true; void getUploadPolicy().then((policy) => { if (active) setUploadPolicy(policy); }).catch(() => undefined); return () => { active = false; }; }, []);
   const [destinations, setDestinations] = useState<{ comparecientes: Array<{ id: string; name: string }>; predios: Array<{ id: string; name: string }> }>({ comparecientes: [], predios: [] });
   const [linkPanel, setLinkPanel] = useState(false); const [linkChoice, setLinkChoice] = useState('');
   const load = useCallback(async (signal?: AbortSignal) => { setError(''); try { setAppendix(await expedientesService.documentAppendix(expediente.id, signal)); } catch { if (!signal?.aborted) setError('No pudimos cargar el explorador documental.'); } finally { if (!signal?.aborted) setBusy(''); } }, [expediente.id]);
@@ -31,6 +37,7 @@ export function DocumentsTab({ expediente, onChanged }: { expediente: Expediente
     return () => { active = false; };
   }, [expediente.id, preview]);
   const frozen = appendix?.state === 'CONGELADO_AL_FIRMAR';
+  const requirements = expediente.requisitos_docs || [];
   const allItems = useMemo(() => appendix?.groups.flatMap((group) => group.items) || [], [appendix]);
   const hasImportedComparecientes = allItems.some((item) => item.origin === 'COMPARECIENTE');
   const hasImportedPredios = allItems.some((item) => item.origin === 'PREDIO');
@@ -42,14 +49,34 @@ export function DocumentsTab({ expediente, onChanged }: { expediente: Expediente
   const run = async (key: string, action: () => Promise<unknown>, success?: string) => { setBusy(key); setError(''); setNotice(''); try { await action(); await load(); if (success) setNotice(success); onChanged(); } catch (reason) { setError(reason instanceof Error ? reason.message : 'No pudimos completar la operación.'); } finally { setBusy(''); } };
   const importBatch = async (selection: { archive?: File; files?: File[] }) => {
     if (!selection.archive && !selection.files?.length) return;
-    await run('batch', async () => {
+    setPendingUpload(selection);
+    setBusy('batch'); setError(''); setNotice('');
+    try {
       const result = await expedientesService.importDocumentBatch(expediente.id, { ...selection, folder_id: folderId, onConflict: conflictPolicy });
+      await load();
       setNotice(`${result.created} documentos incorporados · ${result.restored} versiones recuperadas · ${result.skipped} omitidos · ${result.replaced} versiones sustituidas · ${result.reused_blobs} archivos reutilizados.`);
-    });
-    if (input.current) input.current.value = '';
-    if (archiveInput.current) archiveInput.current.value = '';
-    if (folderInput.current) folderInput.current.value = '';
+      onChanged();
+      setPendingUpload(null);
+      if (input.current) input.current.value = '';
+      if (archiveInput.current) archiveInput.current.value = '';
+      if (folderInput.current) folderInput.current.value = '';
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'No pudimos cargar los archivos. Conservamos la selección para reintentar.');
+    } finally {
+      setBusy('');
+    }
   };
+  const uploadRequirement = async (file: File | undefined) => {
+    const requirement = requirements.find((item) => item.id === selectedRequirementId);
+    if (!file || !requirement) return;
+    await run('requirement', () => expedientesService.uploadDocument(expediente.id, file, {
+      categoria: requirement.categoria, carpeta: 'Administrativo', requisito_id: requirement.id,
+    }), `Documento vinculado al requisito “${requirement.nombre}”.`);
+    if (requirementInput.current) requirementInput.current.value = '';
+    setSelectedRequirementId(null);
+  };
+  const pendingUploadFiles = pendingUpload?.archive ? [pendingUpload.archive] : pendingUpload?.files || [];
+  const pendingUploadBytes = pendingUploadFiles.reduce((total, file) => total + file.size, 0);
   const linkedDestination = current?.linked_compareciente_id
     ? `COMPARECIENTE:${current.linked_compareciente_id}`
     : current?.linked_predio_id ? `PREDIO:${current.linked_predio_id}` : '';
@@ -80,12 +107,14 @@ export function DocumentsTab({ expediente, onChanged }: { expediente: Expediente
   const zip = (payload: { folder_id?: string | null; folder_ids?: string[]; item_ids?: string[] }, name: string) => run('zip', () => expedientesService.downloadAppendixZip(expediente.id, payload, name));
 
   return <section className={`${styles.sectionCard} ${styles.appendixCard}`}>
-    <header className={styles.appendixHeader}><div><div className={styles.appendixEyebrow}>Documentos · Apéndice de la operación</div><h2>Explorador documental</h2><p>{frozen ? 'Snapshot documental congelado al firmar.' : 'Organiza e importa únicamente las fuentes que decidas incorporar.'}</p></div><div className={styles.appendixActions}>{!frozen && expediente.capabilities.canUploadDocuments && <><input ref={input} className={styles.srOnly} type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.bmp,.webp,.doc,.docx,.xml,.zip" onChange={(event) => void importBatch({ files: Array.from(event.target.files || []) })} /><input ref={archiveInput} className={styles.srOnly} type="file" accept=".zip,.rar" onChange={(event) => void importBatch({ archive: event.target.files?.[0] })} /><input ref={folderInput} className={styles.srOnly} type="file" multiple {...({ webkitdirectory: '', directory: '' } as React.InputHTMLAttributes<HTMLInputElement>)} onChange={(event) => void importBatch({ files: Array.from(event.target.files || []) })} /><button type="button" className={styles.secondaryButton} disabled={Boolean(busy)} onClick={() => input.current?.click()}><Upload size={16} />Cargar archivos</button><button type="button" className={styles.secondaryButton} disabled={Boolean(busy)} onClick={() => archiveInput.current?.click()}><FileArchive size={16} />Importar ZIP/RAR</button><button type="button" className={styles.secondaryButton} disabled={Boolean(busy)} onClick={() => folderInput.current?.click()}><FolderOpen size={16} />Importar carpeta</button><button type="button" className={styles.secondaryButton} disabled={Boolean(busy)} onClick={createFolder}><Plus size={16} />Carpeta</button></>}<button type="button" className={styles.secondaryButton} disabled={Boolean(busy) || !allItems.length} onClick={() => void zip({}, `Expediente-${expediente.numero_pravia}.zip`)}><FileArchive size={16} />ZIP completo</button></div></header>
+    <header className={styles.appendixHeader}><div><div className={styles.appendixEyebrow}>Documentos · Apéndice de la operación</div><h2>Explorador documental</h2><p>{frozen ? 'Snapshot documental congelado al firmar.' : 'Organiza e importa únicamente las fuentes que decidas incorporar.'}</p>{!frozen && uploadPolicy && <p>Hasta {uploadPolicy.standard_file_max_bytes / (1024 * 1024)} MB por documento; ZIP/RAR hasta {uploadPolicy.archive_file_max_bytes / (1024 * 1024)} MB.</p>}</div><div className={styles.appendixActions}>{!frozen && expediente.capabilities.canUploadDocuments && <><input ref={input} className={styles.srOnly} type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.bmp,.webp,.doc,.docx,.xml,.zip" onChange={(event) => void importBatch({ files: Array.from(event.target.files || []) })} /><input ref={archiveInput} className={styles.srOnly} type="file" accept=".zip,.rar" onChange={(event) => void importBatch({ archive: event.target.files?.[0] })} /><input ref={folderInput} className={styles.srOnly} type="file" multiple {...({ webkitdirectory: '', directory: '' } as React.InputHTMLAttributes<HTMLInputElement>)} onChange={(event) => void importBatch({ files: Array.from(event.target.files || []) })} /><button type="button" className={styles.secondaryButton} disabled={Boolean(busy)} onClick={() => input.current?.click()}><Upload size={16} />Cargar archivos</button><button type="button" className={styles.secondaryButton} disabled={Boolean(busy)} onClick={() => archiveInput.current?.click()}><FileArchive size={16} />Importar ZIP/RAR</button><button type="button" className={styles.secondaryButton} disabled={Boolean(busy)} onClick={() => folderInput.current?.click()}><FolderOpen size={16} />Importar carpeta</button><button type="button" className={styles.secondaryButton} disabled={Boolean(busy)} onClick={createFolder}><Plus size={16} />Carpeta</button></>}<button type="button" className={styles.secondaryButton} disabled={Boolean(busy) || !allItems.length} onClick={() => void zip({}, `Expediente-${expediente.numero_pravia}.zip`)}><FileArchive size={16} />ZIP completo</button></div></header>
+    {requirements.length > 0 && <section className={styles.documentRequirementSection} aria-labelledby="document-requirements-title"><input ref={requirementInput} className={styles.srOnly} type="file" tabIndex={-1} aria-hidden="true" accept=".pdf,.png,.jpg,.jpeg,.bmp,.webp,.doc,.docx,.xml" onChange={(event) => void uploadRequirement(event.target.files?.[0])} /><h3 id="document-requirements-title">Requisitos documentales</h3><ul>{requirements.map((requirement) => <li key={requirement.id}><span>{requirement.nombre} · {requirement.estatus === 'RECIBIDO' ? 'Recibido' : requirement.estatus === 'VALIDADO' ? 'Validado' : 'Pendiente'}{requirement.obligatorio ? ' · Obligatorio' : ''}</span>{!frozen && expediente.capabilities.canUploadDocuments && <button type="button" aria-label={`Cargar documento para ${requirement.nombre}`} disabled={Boolean(busy)} onClick={() => { setSelectedRequirementId(requirement.id); requirementInput.current?.click(); }}>Cargar para este requisito</button>}</li>)}</ul></section>}
     {!frozen && expediente.capabilities.canUploadDocuments && <div className={styles.documentBatchOptions}><label>Si la ruta ya existe <select aria-label="Resolver archivos con la misma ruta" value={conflictPolicy} onChange={(event) => setConflictPolicy(event.target.value as typeof conflictPolicy)}><option value="OMITIR">Omitir</option><option value="CONSERVAR">Conservar ambas versiones</option><option value="REEMPLAZAR">Sustituir versión activa</option></select></label><span>La estructura de carpetas se conserva. Los archivos sustituidos permanecen en la trazabilidad, pero dejan de alimentar la versión activa.</span></div>}
     {appendix && <div className={frozen ? styles.appendixStateFrozen : styles.appendixStateLive} role="status">{frozen ? <LockKeyhole size={17} /> : <FolderOpen size={17} />}<div><strong>{frozen ? 'Apéndice congelado al firmar' : 'Pre-firma · Organización editable'}</strong><span>{frozen && appendix.frozen_at ? dateTime(appendix.frozen_at) : `${allItems.length} documento${allItems.length === 1 ? '' : 's'} · Revisión ${appendix.revision.slice(0, 10)}`}</span></div></div>}
     {!frozen && expediente.capabilities.canUploadDocuments && <div className={styles.documentImportBar}><span>Importación controlada:</span><button type="button" disabled={Boolean(busy)} onClick={() => void importSource('compareciente')}><Users size={15} />{hasImportedComparecientes?'Actualizar desde comparecientes':'Importar documentos vigentes de comparecientes'}</button><button type="button" disabled={Boolean(busy)} onClick={() => void importSource('predio')}><Warehouse size={15} />{hasImportedPredios?'Actualizar desde Predios / Inmuebles':'Importar documentos vigentes de Predios / Inmuebles'}</button><small>Vincular una persona o inmueble nunca importa documentos automáticamente. La actualización es incremental y no duplica blobs.</small></div>}
     {!frozen && expediente.capabilities.canUploadDocuments && <div className={styles.documentBatchOptions}><button type="button" disabled={Boolean(busy)} onClick={() => syncLinked(null)}>SINCRONIZAR TODO LO VINCULADO</button>{current && <><strong>{linkedDestination ? `CARPETA RELACIONADA: ${linkedName || linkedDestination}` : 'CARPETA SIN RELACIÓN'}</strong><button type="button" disabled={Boolean(busy)} onClick={openLinkPanel}>{linkedDestination ? 'CAMBIAR RELACIÓN' : 'RELACIONAR CARPETA'}</button>{linkedDestination && <><button type="button" disabled={Boolean(busy)} onClick={unlinkFolder}>QUITAR RELACIÓN</button><button type="button" disabled={Boolean(busy)} onClick={() => syncLinked(current.id)}>SINCRONIZAR ESTA CARPETA</button></>}</>}</div>}
     {linkPanel && current && !frozen && <div className={styles.documentBatchOptions}><label>DESTINO <select aria-label="Destino de esta carpeta" value={linkChoice} onChange={(event) => setLinkChoice(event.target.value)}><option value="" disabled>SELECCIONA UN DESTINO</option><optgroup label="COMPARECIENTES">{destinations.comparecientes.map((item) => <option key={`c-${item.id}`} value={`COMPARECIENTE:${item.id}`}>{item.name}</option>)}</optgroup><optgroup label="PREDIOS / INMUEBLES">{destinations.predios.map((item) => <option key={`p-${item.id}`} value={`PREDIO:${item.id}`}>{item.name}</option>)}</optgroup></select></label><button type="button" disabled={!linkChoice || Boolean(busy)} onClick={saveFolderLink}>GUARDAR RELACIÓN</button><button type="button" onClick={() => setLinkPanel(false)}>CANCELAR</button></div>}
+    {pendingUpload && <div className={styles.documentUploadStatus} role="status" aria-live="polite"><span>{pendingUploadFiles.length} archivo{pendingUploadFiles.length === 1 ? '' : 's'} · {(pendingUploadBytes / (1024 * 1024)).toFixed(2)} MB · {pendingUploadFiles.map((file) => file.name).join(', ')}</span><strong>{busy === 'batch' ? 'Cargando y validando…' : error ? 'Carga no completada' : 'Seleccionado'}</strong>{error && !busy && <button type="button" onClick={() => void importBatch(pendingUpload)}>Reintentar carga</button>}</div>}
     {busy && busy !== 'load' && <div className={styles.documentNotice} role="status" aria-live="polite"><LoaderCircle className={styles.spin} size={17} />{busy === 'batch' ? 'Validando archivos, estructura y versiones. La carga sigue en proceso…' : 'Procesando la operación documental…'}</div>}
     {error && <div className={styles.inlineError} role="alert">{error}</div>}{notice && <div className={styles.documentNotice} role="status">{notice}</div>}
     {busy === 'load' ? <div className={styles.appendixLoading}><LoaderCircle className={styles.spin} size={22} /><span>Abriendo explorador…</span></div> : appendix && <div className={styles.documentExplorer}>

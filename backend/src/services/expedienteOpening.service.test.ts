@@ -38,6 +38,9 @@ describe('motor único de apertura de expedientes', () => {
     const result = await runWithActorContext(actorContext, () => service.openInTransaction(tx, { tipoActoId: 'act-1', abogadoId: 'lawyer-1', actorUserId: 'actor-1', clienteAlias: 'Cliente Real', comparecienteId: 'party-1', cotizacionId: 'quote-1' }));
     expect(result.numero_pravia).toBe('EXP-0041-2026');
     expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(tx.tipoActo.findFirst).toHaveBeenCalledWith(expect.objectContaining({ include: expect.objectContaining({
+      tipoActoCaracteresCompareciente: expect.objectContaining({ where: { caracter: { activo: true, OR: [{ organization_id: null }, { organization_id: TEST_ORGANIZATION_ID }] } } }),
+    }) }));
     expect(tx.expediente.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ flujo_version_id: 'flow-v1', formulario_version_id: 'form-v1', plantilla_doc_version_id: 'docs-v1' }) }));
     expect(tx.expedienteCompareciente.create).toHaveBeenCalled();
     expect(tx.expedienteActividad.create).toHaveBeenCalled();

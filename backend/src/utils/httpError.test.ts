@@ -50,6 +50,18 @@ describe('normalizeErrorBody', () => {
     });
   });
 
+  it('distingue fallo de almacenamiento sin exponer detalles internos', () => {
+    expect(normalizeErrorBody({
+      code: 'UPLOAD_STORAGE_UNAVAILABLE',
+      error: 'Error secreto de proveedor',
+      storage_key: 'organizations/private.pdf',
+    }, 503, 'corr-upload', true)).toEqual({
+      code: 'UPLOAD_STORAGE_UNAVAILABLE',
+      error: 'El almacenamiento no pudo guardar el archivo. No se creó ningún documento; intenta de nuevo.',
+      correlation_id: 'corr-upload',
+    });
+  });
+
   it('clasifica el nivel de bitácora por estado', () => {
     expect(errorLogLevel(200)).toBe('info');
     expect(errorLogLevel(404)).toBe('warn');

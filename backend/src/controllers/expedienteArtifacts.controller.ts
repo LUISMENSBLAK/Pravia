@@ -1,10 +1,11 @@
 import type { Request, Response } from 'express';
 import multer from 'multer';
+import { DOCUMENT_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
 import prisma from '../config/prisma';
 import { ExpedienteArtifactsError, ExpedienteArtifactsService } from '../services/expedienteArtifacts.service';
 
 const service = new ExpedienteArtifactsService(prisma);
-export const uploadExp006Multer = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
+export const uploadExp006Multer = multer({ storage: multer.memoryStorage(), limits: { fileSize: DOCUMENT_UPLOAD_MAX_BYTES, files: 1 } });
 const actor = (req: Request) => req.user!;
 const fail = (res: Response, error: unknown) => {
   if (error instanceof ExpedienteArtifactsError) return res.status(error.status).json({ code: error.code, error: error.message });

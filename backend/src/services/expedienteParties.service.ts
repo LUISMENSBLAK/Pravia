@@ -28,6 +28,10 @@ export type ExpedientePartyCommand = {
   preview_fingerprint?: string;
   confirm_protected_work?: boolean;
 };
+export type ExpedientePartyValidationCommand = {
+  confirm?: boolean;
+  idempotency_key?: string;
+};
 
 export class ExpedientePartyError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
@@ -45,6 +49,7 @@ const relationInclude = {
   expedienteActo: { include: { tipo_acto: { select: { id: true, nombre: true } } } },
   caracter: { select: { id: true, clave: true, nombre: true } },
   compareciente: { include: { personaFisica: true, personaMoral: true } },
+  validado_por: { select: { id: true, nombre: true, apellido: true } },
   representacionesComoRepresentante: {
     where: { archived_at: null },
     include: {
@@ -218,6 +223,87 @@ export class ExpedientePartiesService {
       };
     });
     return { data, validations, canonical_source: 'ExpedienteCompareciente', legacy_pending_act_assignment: data.filter((item) => !item.expediente_acto_id).length };
+  }
+
+  async validateData(actor: Actor, expedienteId: string, relationId: string, command: ExpedientePartyValidationCommand) {
+    if (!actor.organizationId || !actor.permissions.includes('expedientes.write') || !actor.permissions.includes('comparecientes.write')) {
+      throw new ExpedientePartyError(403, 'EXPEDIENTE_PARTY_VALIDATION_PERMISSION_DENIED', 'No tienes permiso para confirmar los datos del compareciente.');
+    }
+    if (command.confirm !== true) {
+      throw new ExpedientePartyError(400, 'EXPEDIENTE_PARTY_VALIDATION_CONFIRMATION_REQUIRED', 'Confirma expresamente que revisaste los datos de esta comparecencia.');
+    }
+    const key = clean(command.idempotency_key, 160);
+    if (!key) throw new ExpedientePartyError(400, 'EXPEDIENTE_PARTY_VALIDATION_IDEMPOTENCY_REQUIRED', 'La validación requiere una clave de idempotencia.');
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:expediente-party-validation:${actor.organizationId}:${relationId}`}))`);
+      await this.assertExpediente(tx, actor, expedienteId);
+      const relation = await this.currentRelation(tx, actor, expedienteId, relationId);
+      const priorAudit = await tx.auditLog.findFirst({
+        where: {
+          organization_id: actor.organizationId,
+          accion: 'VALIDATE_EXPEDIENTE_PARTY_DATA',
+          entidad: 'ExpedienteCompareciente',
+          entidad_id: relationId,
+          detalles: { path: ['idempotency_key'], equals: key },
+        },
+        orderBy: { created_at: 'desc' },
+      });
+      if (priorAudit && relation.datos_validados) return { relation, idempotent: true };
+
+      const validatedAt = new Date();
+      const updated = await tx.expedienteCompareciente.update({
+        where: { id: relation.id },
+        data: { datos_validados: true, validado_por_id: actor.id, validado_at: validatedAt },
+        include: relationInclude,
+      });
+      const correlationId = randomUUID();
+      const summary = {
+        idempotency_key: key,
+        source: 'HUMAN_REVIEW',
+        expediente_id: expedienteId,
+        relation_id: relation.id,
+        compareciente_id: relation.compareciente_id,
+        actor_user_id: actor.id,
+        actor_membership_id: actor.membershipId,
+        actor_role: actor.rol,
+        validated_at: validatedAt.toISOString(),
+      };
+      await tx.expedienteActividad.create({ data: {
+        organization_id: actor.organizationId,
+        expediente_id: expedienteId,
+        usuario_id: actor.id,
+        tipo: 'AUDITORIA',
+        categoria: 'OPERACION',
+        titulo: 'Datos del compareciente validados',
+        descripcion: 'Una persona autorizada confirmó la revisión de los datos de la comparecencia.',
+        metadatos: json(summary),
+        seccion_relacionada: 'comparecientes',
+        entidad_relacionada: 'ExpedienteCompareciente',
+        entidad_relacionada_id: relation.id,
+      } });
+      await tx.auditLog.create({ data: {
+        organization_id: actor.organizationId,
+        user_id: actor.id,
+        accion: 'VALIDATE_EXPEDIENTE_PARTY_DATA',
+        entidad: 'ExpedienteCompareciente',
+        entidad_id: relation.id,
+        valores_anteriores: json({ datos_validados: relation.datos_validados, validado_por_id: relation.validado_por_id, validado_at: relation.validado_at }),
+        valores_nuevos: json({ datos_validados: true, validado_por_id: actor.id, validado_at: validatedAt }),
+        detalles: json(summary),
+        correlation_id: correlationId,
+        session_id: actor.sessionId,
+      } });
+      await tx.domainEventOutbox.create({ data: {
+        organization_id: actor.organizationId,
+        event_type: 'ExpedientePartyDataValidated',
+        aggregate_type: 'Expediente',
+        aggregate_id: expedienteId,
+        actor_user_id: actor.id,
+        correlation_id: correlationId,
+        payload: json(summary),
+      } });
+      return { relation: updated, idempotent: false };
+    }, { timeout: 20_000 });
   }
 
   async search(actor: Actor, expedienteId: string, term: string) {

@@ -1,26 +1,31 @@
 import { Building2, Download, FilePlus2, Landmark, Plus, RefreshCw, ShieldCheck, UploadCloud, UsersRound, WalletCards, X } from 'lucide-react';
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthProvider';
 import styles from '../Finance.module.css';
 import { financeService } from '../finance.service';
-import type { FiscalAccounts, FiscalDocument, FiscalEntity, FiscalProviderStatus, FiscalSupplier } from '../finance.types';
+import type { FiscalAccounts, FiscalConcept, FiscalDocument, FiscalEntity, FiscalProviderStatus, FiscalSupplier } from '../finance.types';
 
-type Panel = 'documents'|'entities'|'suppliers'|'accounts';
+type Panel = 'documents'|'entities'|'concepts'|'suppliers'|'accounts';
 const money = (value: unknown) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(Number(value || 0));
 const date = (value: string) => new Intl.DateTimeFormat('es-MX', { dateStyle: 'medium' }).format(new Date(value));
 const emptyAccounts: FiscalAccounts = { receivables: [], payables: [], transfers: [] };
 
 export function FiscalWorkspace() {
+  const [searchParams] = useSearchParams();
+  const focusCfdiId = searchParams.get('cfdi_id');
   const { user } = useAuth();
   const [panel, setPanel] = useState<Panel>('documents');
   const [status, setStatus] = useState<'loading'|'ready'|'error'>('loading');
   const [provider, setProvider] = useState<FiscalProviderStatus|null>(null);
   const [entities, setEntities] = useState<FiscalEntity[]>([]);
+  const [concepts, setConcepts] = useState<FiscalConcept[]>([]);
+  const [actOptions, setActOptions] = useState<Array<{id:string;nombre:string}>>([]);
   const [suppliers, setSuppliers] = useState<FiscalSupplier[]>([]);
   const [documents, setDocuments] = useState<FiscalDocument[]>([]);
   const [accounts, setAccounts] = useState<FiscalAccounts>(emptyAccounts);
-  const [dialog, setDialog] = useState<'manual'|'draft'|'entity'|'supplier'|null>(null);
+  const [dialog, setDialog] = useState<'manual'|'draft'|'entity'|'concept'|'supplier'|null>(null);
   const [notice, setNotice] = useState('');
   const canWrite = Boolean(user?.permissions?.includes('finanzas.write'));
   const canValidate = Boolean(user?.permissions?.includes('finanzas.validate'));
@@ -28,13 +33,18 @@ export function FiscalWorkspace() {
   const load = useCallback(async (signal?: AbortSignal) => {
     setStatus('loading');
     try {
-      const [nextProvider, nextEntities, nextSuppliers, nextDocuments, nextAccounts] = await Promise.all([
-        financeService.fiscalStatus(signal), financeService.fiscalEntities(signal), financeService.fiscalSuppliers(signal), financeService.fiscalDocuments(signal), financeService.fiscalAccounts(signal),
+      const [nextProvider, nextEntities, nextConcepts, nextActs, nextSuppliers, nextDocuments, nextAccounts] = await Promise.all([
+        financeService.fiscalStatus(signal), financeService.fiscalEntities(signal), financeService.fiscalConcepts(undefined,signal), financeService.fiscalActOptions(signal), financeService.fiscalSuppliers(signal), financeService.fiscalDocuments(signal), financeService.fiscalAccounts(signal),
       ]);
-      setProvider(nextProvider); setEntities(nextEntities); setSuppliers(nextSuppliers); setDocuments(nextDocuments.items); setAccounts(nextAccounts); setStatus('ready');
+      setProvider(nextProvider); setEntities(nextEntities); setConcepts(Array.isArray(nextConcepts)?nextConcepts:[]); setActOptions(Array.isArray(nextActs)?nextActs:[]); setSuppliers(nextSuppliers); setDocuments(nextDocuments.items); setAccounts(nextAccounts); setStatus('ready');
     } catch (error) { if (!(error instanceof DOMException && error.name === 'AbortError')) setStatus('error'); }
   }, []);
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
+  useEffect(() => {
+    if (status !== 'ready' || !focusCfdiId) return;
+    const target = document.getElementById(`cfdi-${focusCfdiId}`);
+    target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [status, focusCfdiId]);
   const changed = (message: string) => { setDialog(null); setNotice(message); void load(); window.setTimeout(() => setNotice(''), 3200); };
 
   return <section className={styles.fiscalWorkspace} aria-label="Facturación fiscal local">
@@ -46,26 +56,29 @@ export function FiscalWorkspace() {
     <nav className={styles.fiscalNav} aria-label="Secciones fiscales">
       <button type="button" data-active={panel==='documents'} onClick={()=>setPanel('documents')}><WalletCards/>CFDI</button>
       <button type="button" data-active={panel==='entities'} onClick={()=>setPanel('entities')}><Landmark/>Entidades fiscales</button>
+      <button type="button" data-active={panel==='concepts'} onClick={()=>setPanel('concepts')}><FilePlus2/>Conceptos fiscales</button>
       <button type="button" data-active={panel==='suppliers'} onClick={()=>setPanel('suppliers')}><UsersRound/>Proveedores</button>
       <button type="button" data-active={panel==='accounts'} onClick={()=>setPanel('accounts')}><Building2/>CxC / CxP</button>
     </nav>
     {status==='loading'&&<div className={styles.invoiceState} role="status">Cargando información fiscal…</div>}
     {status==='error'&&<div className={styles.invoiceState} role="alert"><strong>No pudimos cargar la información fiscal.</strong><button type="button" onClick={()=>void load()}><RefreshCw/>Reintentar</button></div>}
-    {status==='ready'&&panel==='documents'&&<Documents documents={documents} onDownload={async(id,kind)=>{const result=await financeService.fiscalFileUrl(id,kind);window.open(result.url,'_blank','noopener,noreferrer');}} onExport={()=>void financeService.downloadFiscalExport()}/>}
+    {status==='ready'&&panel==='documents'&&<Documents documents={documents} focusCfdiId={focusCfdiId} onDownload={async(id,kind)=>{const result=await financeService.fiscalFileUrl(id,kind);window.open(result.url,'_blank','noopener,noreferrer');}} onExport={()=>void financeService.downloadFiscalExport()}/>}
     {status==='ready'&&panel==='entities'&&<Cards title="Entidades fiscales" empty="Aún no hay entidades fiscales" action={canValidate?<button type="button" onClick={()=>setDialog('entity')}><Plus/>Agregar entidad</button>:null}>{entities.map(item=><article key={item.id}><header><span>{item.activa?'Activa':'Inactiva'}</span><small>{item.rfc}</small></header><h3>{item.razon_social}</h3><p>Régimen {item.regimen_fiscal} · CP {item.codigo_postal}</p><footer>{item.serie&&<span>Serie {item.serie}</span>}<span>{item.cuentas?.length||0} cuenta(s)</span></footer></article>)}</Cards>}
+    {status==='ready'&&panel==='concepts'&&<Cards title="Conceptos fiscales configurados" empty="Todavía no hay conceptos fiscales para generar prefacturas" action={canValidate?<button type="button" onClick={()=>setDialog('concept')}><Plus/>Configurar concepto</button>:null}>{concepts.map(item=><article key={item.id}><header><span>{item.activo?'Activo':'Inactivo'}</span><small>{item.tipoActo?.nombre||'Cualquier acto'}</small></header><h3>{item.descripcion}</h3><p>Clave SAT {item.clave_prod_serv} · Unidad {item.clave_unidad} · Objeto {item.objeto_impuesto}</p><footer><span>IVA {item.iva_tasa}</span><span>Ret. IVA {item.iva_retencion_tasa}</span><span>Ret. ISR {item.isr_retencion_tasa}</span></footer></article>)}</Cards>}
     {status==='ready'&&panel==='suppliers'&&<Cards title="Proveedores" empty="Aún no hay proveedores fiscales" action={canWrite?<button type="button" onClick={()=>setDialog('supplier')}><Plus/>Agregar proveedor</button>:null}>{suppliers.map(item=><article key={item.id}><header><span>{item.activo?'Activo':'Inactivo'}</span><small>{item.rfc}</small></header><h3>{item.razon_social}</h3><p>{item.codigo_postal?`CP ${item.codigo_postal}`:'Sin CP'} · {item.regimenes_fiscales?.length||0} régimen(es)</p></article>)}</Cards>}
     {status==='ready'&&panel==='accounts'&&<FiscalAccountsView data={accounts}/>}
     {dialog==='manual'&&<ManualDialog onClose={()=>setDialog(null)} onSaved={(message)=>changed(message)}/>}
     {dialog==='draft'&&<DraftDialog entities={entities} suppliers={suppliers} onClose={()=>setDialog(null)} onSaved={()=>changed('Prefactura creada sin invocar al PAC.')}/>}
     {dialog==='entity'&&<EntityDialog onClose={()=>setDialog(null)} onSaved={()=>changed('Entidad fiscal guardada.')}/>}
-    {dialog==='supplier'&&<SupplierDialog onClose={()=>setDialog(null)} onSaved={()=>changed('Proveedor fiscal guardado.')}/>}
+    {dialog==='concept'&&<FiscalConceptDialog entities={entities} acts={actOptions} onClose={()=>setDialog(null)} onSaved={()=>changed('Concepto fiscal configurado para esta organización.')}/>}
+    {dialog==='supplier'&&<SupplierDialog onClose={()=>setDialog(null)} onSaved={changed}/>}
     {notice&&<div className={styles.fiscalToast} role="status">{notice}</div>}
   </section>;
 }
 
-function Documents({documents,onDownload,onExport}:{documents:FiscalDocument[];onDownload:(id:string,kind:'xml'|'pdf')=>Promise<void>;onExport:()=>void}) {
+function Documents({documents,focusCfdiId,onDownload,onExport}:{documents:FiscalDocument[];focusCfdiId:string|null;onDownload:(id:string,kind:'xml'|'pdf')=>Promise<void>;onExport:()=>void}) {
   if (!documents.length) return <div className={styles.invoiceState}><FilePlus2/><strong>No hay CFDI ni prefacturas</strong><p>Crea una prefactura o carga XML/PDF sin simular timbrado.</p></div>;
-  return <div className={styles.fiscalDocumentArea}><div className={styles.fiscalSectionTitle}><div><h3>Documentos fiscales</h3><p>{documents.length} registro(s) del tenant activo</p></div><button type="button" onClick={onExport}><Download/>Exportar XLSX</button></div><div className={styles.fiscalDocumentGrid}>{documents.map(item=><article key={item.id}><header><span data-state={item.estado}>{item.estado==='PREFACTURA'?'Prefactura':item.estado==='VIGENTE'?'Vigente':item.estado}</span><small>{item.direccion==='EMITIDO'?'Emitido':'Recibido'}</small></header><h3>{item.serie||''}{item.folio||item.uuid_fiscal?.slice(0,8)||'Sin folio fiscal'}</h3><p>{item.direccion==='EMITIDO'?item.receptor_nombre:item.emisor_nombre}</p><strong>{money(item.total)}</strong><dl><div><dt>Método</dt><dd>{item.metodo_pago||'Sin definir'}</dd></div><div><dt>Saldo</dt><dd>{money(item.saldo)}</dd></div><div><dt>Registro</dt><dd>{date(item.created_at)}</dd></div></dl><footer>{item.xmlDocumento&&<button type="button" onClick={()=>void onDownload(item.id,'xml')}>XML</button>}{item.pdfDocumento&&<button type="button" onClick={()=>void onDownload(item.id,'pdf')}>PDF</button>}<small>{item.source==='MANUAL_XML'?'XML manual validado':'Borrador local'}</small></footer></article>)}</div></div>;
+  return <div className={styles.fiscalDocumentArea}><div className={styles.fiscalSectionTitle}><div><h3>Documentos fiscales</h3><p>{documents.length} registro(s) del tenant activo</p></div><button type="button" onClick={onExport}><Download/>Exportar XLSX</button></div><div className={styles.fiscalDocumentGrid}>{documents.map(item=><article key={item.id} id={`cfdi-${item.id}`} data-focused={focusCfdiId===item.id}><header><span data-state={item.estado}>{item.estado==='PREFACTURA'?'Prefactura':item.estado==='VIGENTE'?'Vigente':item.estado}</span><small>{item.direccion==='EMITIDO'?'Emitido':'Recibido'}</small></header><h3>{item.serie||''}{item.folio||item.uuid_fiscal?.slice(0,8)||'Sin folio fiscal'}</h3><p>{item.direccion==='EMITIDO'?item.receptor_nombre:item.emisor_nombre}</p><strong>{money(item.total)}</strong><dl><div><dt>Método</dt><dd>{item.metodo_pago||'Sin definir'}</dd></div><div><dt>Saldo</dt><dd>{money(item.saldo)}</dd></div><div><dt>Registro</dt><dd>{date(item.created_at)}</dd></div></dl><footer>{item.xmlDocumento&&<button type="button" onClick={()=>void onDownload(item.id,'xml')}>XML</button>}{item.pdfDocumento&&<button type="button" onClick={()=>void onDownload(item.id,'pdf')}>PDF</button>}<small>{item.source==='MANUAL_XML'?'XML manual validado':'Borrador local'}</small></footer></article>)}</div></div>;
 }
 
 function Cards({title,empty,action,children}:{title:string;empty:string;action:ReactNode;children:ReactNode}) {
@@ -93,5 +106,49 @@ function DraftDialog({entities,suppliers,onClose,onSaved}:{entities:FiscalEntity
 }
 
 function EntityDialog({onClose,onSaved}:{onClose:()=>void;onSaved:()=>void}) {return <SimpleDialog title="Agregar entidad fiscal" onClose={onClose} onSaved={onSaved} submit={data=>financeService.createFiscalEntity({...data,tipo_contribuyente:'MORAL'})} fields={[['razon_social','Razón social'],['rfc','RFC'],['regimen_fiscal','Régimen fiscal'],['codigo_postal','Código postal'],['serie','Serie opcional']]}/>}
-function SupplierDialog({onClose,onSaved}:{onClose:()=>void;onSaved:()=>void}) {return <SimpleDialog title="Agregar proveedor" onClose={onClose} onSaved={onSaved} submit={data=>financeService.createFiscalSupplier({...data,regimenes_fiscales:data.regimen_fiscal?[{clave:data.regimen_fiscal,descripcion:''}]:[]})} fields={[['razon_social','Razón social'],['rfc','RFC'],['codigo_postal','Código postal'],['regimen_fiscal','Régimen fiscal']]}/>}
+function SupplierDialog({onClose,onSaved}:{onClose:()=>void;onSaved:(message:string)=>void}) {
+  const [csf,setCsf]=useState<File|null>(null);
+  const [fields,setFields]=useState({razon_social:'',rfc:'',codigo_postal:'',regimen_fiscal:'',correo:''});
+  const [extracting,setExtracting]=useState(false);
+  const [busy,setBusy]=useState(false);
+  const [reviewed,setReviewed]=useState(false);
+  const [error,setError]=useState('');
+  const choose=async(file:File|null)=>{
+    setCsf(file);setReviewed(false);setError('');
+    if(!file)return;
+    setExtracting(true);
+    try{
+      const result=await financeService.extractCsf(file);
+      setFields(previous=>({
+        ...previous,
+        razon_social:result.razon_social||previous.razon_social,
+        rfc:result.rfc||previous.rfc,
+        codigo_postal:result.codigo_postal||previous.codigo_postal,
+        regimen_fiscal:result.regimenes_fiscales?.[0]?.clave||previous.regimen_fiscal,
+      }));
+    }catch(reason){setError(reason instanceof Error?reason.message:'No se pudo extraer la CSF. Revisa los datos manualmente.');}
+    finally{setExtracting(false);}
+  };
+  const update=(key:keyof typeof fields,value:string)=>setFields(previous=>({...previous,[key]:value}));
+  return <Dialog title="Agregar proveedor" subtitle="Carga la constancia fiscal y confirma los datos extraídos antes de guardarlos." onClose={onClose}>
+    <form onSubmit={async(event)=>{event.preventDefault();if(!csf||!reviewed)return;setBusy(true);setError('');try{const result=await financeService.createFiscalSupplier(fields,csf) as {idempotent?:boolean};onSaved(result?.idempotent?'Proveedor existente reutilizado; no se guardó una segunda CSF.':'Proveedor fiscal y constancia guardados.');}catch(reason){setError(reason instanceof Error?reason.message:'No pudimos guardar el proveedor.');}finally{setBusy(false);}}}>
+      <div className={styles.fiscalFormGrid}>
+        <Field label="Constancia de situación fiscal"><input type="file" accept=".pdf,.txt,application/pdf,text/plain" onChange={event=>void choose(event.target.files?.[0]||null)}/></Field>
+        <Field label="Razón social"><input required value={fields.razon_social} onChange={event=>update('razon_social',event.target.value)}/></Field>
+        <Field label="RFC"><input required value={fields.rfc} onChange={event=>update('rfc',event.target.value.toUpperCase())}/></Field>
+        <Field label="Código postal fiscal"><input required inputMode="numeric" maxLength={5} value={fields.codigo_postal} onChange={event=>update('codigo_postal',event.target.value)}/></Field>
+        <Field label="Régimen fiscal"><input required value={fields.regimen_fiscal} onChange={event=>update('regimen_fiscal',event.target.value)}/></Field>
+        <Field label="Correo (opcional)"><input type="email" value={fields.correo} onChange={event=>update('correo',event.target.value)}/></Field>
+      </div>
+      <p className={styles.fiscalHint}>{extracting?'Extrayendo datos de la CSF…':'La extracción es una sugerencia: confirma RFC, régimen y domicilio fiscal. La CSF queda vinculada al proveedor.'}</p>
+      <label className={styles.fiscalField}><span><input type="checkbox" checked={reviewed} onChange={event=>setReviewed(event.target.checked)}/> Confirmé los datos fiscales con el documento</span></label>
+      {error&&<p className={styles.fiscalError} role="alert">{error}</p>}
+      <footer><button type="button" onClick={onClose}>Cancelar</button><button type="submit" className={styles.fiscalPrimary} disabled={!csf||!reviewed||extracting||busy}>{busy?'Guardando…':'Guardar proveedor'}</button></footer>
+    </form>
+  </Dialog>;
+}
+function FiscalConceptDialog({entities,acts,onClose,onSaved}:{entities:FiscalEntity[];acts:Array<{id:string;nombre:string}>;onClose:()=>void;onSaved:()=>void}) {
+  const [busy,setBusy]=useState(false);const [error,setError]=useState('');
+  return <Dialog title="Configurar concepto fiscal" subtitle="El responsable fiscal confirma claves y tasas; PRAVIA no las infiere del nombre del acto." onClose={onClose}><form onSubmit={async(event)=>{event.preventDefault();const form=new FormData(event.currentTarget);setBusy(true);setError('');try{await financeService.createFiscalConcept({entidad_fiscal_id:form.get('entity'),tipo_acto_id:form.get('act')||null,descripcion:form.get('description'),clave_prod_serv:form.get('product'),clave_unidad:form.get('unit'),objeto_impuesto:form.get('taxObject'),iva_tasa:form.get('iva'),iva_retencion_tasa:form.get('ivaRetention'),isr_retencion_tasa:form.get('isrRetention')});onSaved();}catch(reason){setError(reason instanceof Error?reason.message:'No pudimos guardar el concepto fiscal.');}finally{setBusy(false);}}}><div className={styles.fiscalFormGrid}><Field label="Entidad emisora"><select name="entity" required><option value="">Seleccionar</option>{entities.filter(item=>item.activa).map(item=><option key={item.id} value={item.id}>{item.razon_social}</option>)}</select></Field><Field label="Acto (opcional)"><select name="act"><option value="">Cualquier acto</option>{acts.map(item=><option key={item.id} value={item.id}>{item.nombre}</option>)}</select></Field><Field label="Descripción"><input name="description" required maxLength={500}/></Field><Field label="Clave SAT producto/servicio"><input name="product" required inputMode="numeric" pattern="[0-9]{8}" maxLength={8}/></Field><Field label="Clave SAT unidad"><input name="unit" required maxLength={8}/></Field><Field label="Objeto de impuesto"><select name="taxObject" required><option value="">Seleccionar</option><option value="01">01</option><option value="02">02</option><option value="03">03</option></select></Field><Field label="Tasa IVA (0 a 1)"><input name="iva" required inputMode="decimal" pattern="(?:0|1)(?:\.[0-9]{1,6})?" placeholder="Confirmar tasa"/></Field><Field label="Tasa retención IVA (0 a 1)"><input name="ivaRetention" required inputMode="decimal" pattern="(?:0|1)(?:\.[0-9]{1,6})?" placeholder="Confirmar tasa"/></Field><Field label="Tasa retención ISR (0 a 1)"><input name="isrRetention" required inputMode="decimal" pattern="(?:0|1)(?:\.[0-9]{1,6})?" placeholder="Confirmar tasa"/></Field></div><p className={styles.fiscalHint}>No se aplica una tasa universal. Si una retención no corresponde, registra explícitamente 0.</p>{error&&<p className={styles.fiscalError} role="alert">{error}</p>}<footer><button type="button" onClick={onClose}>Cancelar</button><button type="submit" className={styles.fiscalPrimary} disabled={busy||!entities.some(item=>item.activa)}>{busy?'Guardando…':'Guardar concepto'}</button></footer></form></Dialog>;
+}
 function SimpleDialog({title,onClose,onSaved,submit,fields}:{title:string;onClose:()=>void;onSaved:()=>void;submit:(data:Record<string,string>)=>Promise<unknown>;fields:Array<[string,string]>}) {const [busy,setBusy]=useState(false);const [error,setError]=useState('');return <Dialog title={title} subtitle="Los datos se guardan sólo para la organización activa." onClose={onClose}><form onSubmit={async(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const raw=new FormData(event.currentTarget);const data=Object.fromEntries(fields.map(([name])=>[name,String(raw.get(name)||'')]));setBusy(true);setError('');try{await submit(data);onSaved();}catch(reason){setError(reason instanceof Error?reason.message:'No pudimos guardar.');}finally{setBusy(false);}}}><div className={styles.fiscalFormGrid}>{fields.map(([name,label])=><Field key={name} label={label}><input name={name} required={name!=='serie'} /></Field>)}</div>{error&&<p className={styles.fiscalError} role="alert">{error}</p>}<footer><button type="button" onClick={onClose}>Cancelar</button><button className={styles.fiscalPrimary} disabled={busy}>{busy?'Guardando…':'Guardar'}</button></footer></form></Dialog>}

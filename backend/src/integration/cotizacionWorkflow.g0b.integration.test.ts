@@ -175,10 +175,13 @@ describe.runIf(process.env.G0B_RUN_ISOLATED === '1')('G0-B PostgreSQL aislado ·
     const id = await acceptedQuote();
     const quote = await db.cotizacion.findUniqueOrThrow({ where: { id } });
     const type = await db.tipoActo.findFirstOrThrow({ where: { activo: true } });
+    const quoteActs = await db.cotizacionActo.findMany({ where: { cotizacion_id: id } });
+    const applicantRoles = Object.fromEntries(quoteActs.map((act) => [act.id, null]));
     const request = (key: string) => run(a, () => conversions.convert({
       cotizacionId: id, actorUserId: a.id, actorOrganizationId: a.organizationId,
       actorSessionId: a.sessionId, actor: a, expectedVersion: quote.version_operativa,
       idempotencyKey: key, confirm: true, effectiveAt: new Date().toISOString(), tipoActoId: type.id,
+      solicitanteCaracterPorActo: applicantRoles,
     }));
     const results = await Promise.all([request(randomUUID()), request(randomUUID())]);
     expect(results.filter((result) => !result.alreadyConverted)).toHaveLength(1);

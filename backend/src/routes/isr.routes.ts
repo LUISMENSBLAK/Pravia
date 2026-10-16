@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import multer from 'multer';
+import { DOCUMENT_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
 import { requirePermission } from '../middleware/auth.middleware';
 import { auditISRExport, calculateISRAdditionalTax, calculateISRRecord, calculateISRReferredValue, calculateISRSurcharges, createISR, downloadISRDocument, extractISR, generateISRPDF, getISR, getISRResources, listISR, openISRForExpediente, prepareISRExport, previewISRDocument, reviewISRProposal, searchISRPostalCodes, unlinkISRDocument, unlinkISRFromExpediente, updateISR, uploadISRDocument, validateISRExport } from '../controllers/isr.controller';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: DOCUMENT_UPLOAD_MAX_BYTES, files: 1 } });
 
 router.get('/', requirePermission('isr.read'), listISR);
 router.post('/', requirePermission('isr.write'), createISR);

@@ -9,6 +9,7 @@ describe('validación canónica de documentos CMP-001 / PRD-001', () => {
     ['captura.webp', Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WEBP')]), 'image/webp'],
     ['plantilla.docx', Buffer.from([0x50, 0x4b, 0x03, 0x04]), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
     ['factura.xml', Buffer.from('<?xml version="1.0"?><cfdi:Comprobante/>'), 'application/xml'],
+    ['constancia.txt', Buffer.from('RFC: AAA010101AAA\nRazón social: QA', 'utf8'), 'text/plain'],
     ['expediente.zip', Buffer.from([0x50, 0x4b, 0x03, 0x04]), 'application/zip'],
   ])('acepta %s por sus bytes reales aunque el navegador omita el MIME', (originalname, buffer, expected) => {
     expect(canonicalUploadedDocumentMime({ originalname, buffer, mimetype: '' })).toBe(expected);
@@ -20,5 +21,6 @@ describe('validación canónica de documentos CMP-001 / PRD-001', () => {
 
   it('rechaza contenido que no corresponde con la extensión', () => {
     expect(() => canonicalUploadedDocumentMime({ originalname: 'engaño.pdf', buffer: Buffer.from([0xff, 0xd8, 0xff]) })).toThrow(/no corresponde/);
+    expect(() => canonicalUploadedDocumentMime({ originalname: 'engaño.txt', buffer: Buffer.from([0xff, 0x00, 0xfe]) })).toThrow(/corrupto/);
   });
 });

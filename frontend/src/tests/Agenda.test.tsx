@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../app/App';
 import { getAssistantActions, resolveAssistantContext } from '../features/assistant/assistantContext';
-import { eventStatusLabel, formatPeriod } from '../features/agenda/agenda.utils';
+import { eventStatusLabel, formatPeriod, parseDateKey, startOfWeek } from '../features/agenda/agenda.utils';
 import agendaStyles from '../features/agenda/Agenda.module.css';
 
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -81,7 +81,10 @@ describe('Agenda', () => {
   it('navega periodos, vuelve a hoy y cambia entre día, mes y lista', async () => {
     mockApi(); const user = userEvent.setup(); renderAgenda(); await screen.findByLabelText('Calendario semanal');
     await user.click(screen.getByRole('button', { name: 'Periodo siguiente' }));
-    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('desde=2026-08-24'))).toBe(true));
+    const nextWeekStart = startOfWeek(parseDateKey('2026-08-27')).toISOString();
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) =>
+      new URL(String(url), 'http://localhost').searchParams.get('desde') === nextWeekStart,
+    )).toBe(true));
     await user.click(screen.getByRole('tab', { name: 'Día' })); expect(screen.getByLabelText('Agenda del día')).toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: 'Mes' })); expect(screen.getByLabelText('Vista mensual')).toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: 'Lista' })); expect(screen.getByLabelText('Lista cronológica de eventos')).toBeInTheDocument();

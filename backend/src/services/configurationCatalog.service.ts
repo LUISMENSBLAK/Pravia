@@ -19,6 +19,7 @@ import { deleteFile, getSignedUrl, uploadFile } from './supabase.service';
 import { inheritableActivityAttributes, resolveInheritedActivity, validateDeclarativeCondition } from './configurationCatalogV2.domain';
 import { CatalogConfigurationError } from './configurationCatalogError';
 import { normalizeOperationalText, optionalOperationalText as normalizeOptionalOperationalText } from '../utils/operationalText';
+import { actProcessDefaultByCode, actProcessDefaults } from '../domain/actCreationDefaults';
 
 export { CatalogConfigurationError } from './configurationCatalogError';
 
@@ -183,6 +184,11 @@ export const resolveOperationalActivityConfiguration = (activity: any, selectors
 
 const effectiveAct = ({ configuracionesOperativas, ...act }: any) => {
   const configuration = configuracionesOperativas[0] || null;
+  const characterRoles = act.tipoActoCaracteresCompareciente || [];
+  const missingRequirements = [
+    ...(!configurationComplete(configuration) ? ['Completa y revisa los procesos y tiempos del acto.'] : []),
+    ...(!characterRoles.some((role: any) => role.sugerido && role.caracter?.activo) ? ['Configura al menos un carácter principal de compareciente.'] : []),
+  ];
   return {
     ...act,
     nombre_catalogo: act.nombre,
@@ -191,7 +197,9 @@ const effectiveAct = ({ configuracionesOperativas, ...act }: any) => {
     descripcion: configuration?.descripcion_personalizada ?? act.descripcion,
     activo: Boolean(act.activo && (configuration?.activa ?? true)),
     configuration,
-    complete: configurationComplete(configuration),
+    character_roles: characterRoles,
+    missing_requirements: missingRequirements,
+    complete: missingRequirements.length === 0,
     edited: Boolean(configuration && configuration.revision > 1),
   };
 };
@@ -230,6 +238,18 @@ async function assertOwner(actor: Actor, ownerType: CatalogoPropietarioTipo, own
 }
 
 export const actsAndTimesService = {
+  async creationDefaults(actor: Actor) {
+    const codes = [...actProcessDefaultByCode.keys()];
+    const tenantConcepts = await prisma.configuracionConceptoActividad.findMany({
+      where: { organization_id: actor.organizationId, codigo: { in: codes }, activa: true },
+      select: { id: true, codigo: true, nombre: true, duracion_estimada: true, tipo_dias: true, naturaleza: true },
+    });
+    const byCode = new Map(tenantConcepts.map((concept) => [concept.codigo, concept]));
+    return Object.fromEntries(Object.entries(actProcessDefaults).map(([group, processes]) => [group, processes.map((process) => {
+      const override = byCode.get(process.code);
+      return override ? { ...process, name: override.nombre, duration: override.duracion_estimada, dayType: override.tipo_dias, nature: override.naturaleza } : process;
+    })]));
+  },
   async list(actor: Actor, search = '') {
     const acts = await prisma.tipoActo.findMany({
       where: {
@@ -239,6 +259,7 @@ export const actsAndTimesService = {
       select: {
         id: true, organization_id: true, codigo_catalogo: true, nombre: true, descripcion: true, activo: true, created_at: true, updated_at: true,
         configuracionesOperativas: { where: { organization_id: actor.organizationId }, include: actInclude },
+        tipoActoCaracteresCompareciente: { where: { caracter: { activo: true, OR: [{ organization_id: null }, { organization_id: actor.organizationId }] } }, include: { caracter: { select: { id: true, nombre: true, activo: true } } }, orderBy: { orden: 'asc' } },
       },
       orderBy: [{ activo: 'desc' }, { nombre: 'asc' }],
     });
@@ -258,6 +279,7 @@ export const actsAndTimesService = {
       select: {
         id: true, organization_id: true, codigo_catalogo: true, nombre: true, descripcion: true, activo: true, created_at: true, updated_at: true,
         configuracionesOperativas: { where: { organization_id: actor.organizationId }, include: actInclude },
+        tipoActoCaracteresCompareciente: { where: { caracter: { activo: true, OR: [{ organization_id: null }, { organization_id: actor.organizationId }] } }, include: { caracter: { select: { id: true, nombre: true, activo: true } } }, orderBy: { orden: 'asc' } },
       },
     });
     if (!act) throw new CatalogConfigurationError(404, 'ACT_NOT_FOUND', 'Acto no encontrado.');
@@ -316,12 +338,61 @@ export const actsAndTimesService = {
   async create(actor: Actor, input: any) {
     const nombre = requiredOperationalText(input.nombre, 'Nombre del acto');
     const descripcion = normalizeOptionalOperationalText(input.descripcion);
+    const configured = Array.isArray(input.processes);
+    const processInputs = configured ? input.processes as Array<Record<string, unknown>> : [];
+    const roleInputs = configured && Array.isArray(input.characters) ? input.characters as Array<Record<string, unknown>> : [];
+    if (configured && (!processInputs.length || processInputs.length > 40)) throw new CatalogConfigurationError(400, 'ACT_PROCESSES_REQUIRED', 'Selecciona al menos un proceso y un máximo de 40.');
+    if (configured && (!roleInputs.length || roleInputs.length > 20 || !roleInputs.some((role) => role.principal === true))) throw new CatalogConfigurationError(400, 'ACT_MAIN_CHARACTER_REQUIRED', 'Configura al menos un carácter principal de compareciente.');
+    const processCodes = new Set<string>();
+    const processes = processInputs.map((process) => {
+      const code = requiredText(process.code, 'Código del proceso', 100);
+      const source = actProcessDefaultByCode.get(code);
+      if (!source || processCodes.has(code)) throw new CatalogConfigurationError(400, 'ACT_PROCESS_INVALID', 'Los procesos deben pertenecer a los defaults de CFG-001 y no repetirse.');
+      processCodes.add(code);
+      const exceptions = Array.isArray(process.exceptions) ? process.exceptions as Array<Record<string, unknown>> : [];
+      if (exceptions.length > 10) throw new CatalogConfigurationError(400, 'ACT_PROCESS_EXCEPTIONS_LIMIT', 'Cada proceso admite como máximo diez excepciones.');
+      return {
+        ...source, duration: nonNegative(process.duration, 'Duración'), dayType: enumValue(ConfiguracionTipoDias, process.dayType, 'Tipo de días'),
+        margin: nonNegative(process.margin ?? 0, 'Margen de seguridad'), parallelGroup: optionalText(process.parallelGroup, 80),
+        condition: validateDeclarativeCondition(process.condition),
+        dependencyCodes: Array.isArray(process.dependencyCodes) ? process.dependencyCodes.map((item) => requiredText(item, 'Proceso previo', 100)) : [],
+        exceptions: exceptions.map((item) => ({
+          selector: enumValue(ConfiguracionSelectorExcepcion, item.selector, 'Tipo de excepción'),
+          targetId: optionalText(item.targetId, 64), jurisdiction: normalizeOptionalOperationalText(item.jurisdiction, 120),
+          duration: nonNegative(item.duration, 'Duración de excepción'), dayType: enumValue(ConfiguracionTipoDias, item.dayType, 'Tipo de días de excepción'),
+          margin: nonNegative(item.margin ?? 0, 'Margen de excepción'),
+        })),
+      };
+    });
+    for (const process of processes) {
+      if (new Set(process.dependencyCodes).size !== process.dependencyCodes.length || process.dependencyCodes.some((code) => code === process.code || !processCodes.has(code))) {
+        throw new CatalogConfigurationError(400, 'ACT_PROCESS_DEPENDENCY_INVALID', 'Las dependencias deben referirse a otros procesos seleccionados y no repetirse.');
+      }
+      for (const exception of process.exceptions) {
+        if (exception.selector === 'JURISDICCION' && !exception.jurisdiction) throw new CatalogConfigurationError(400, 'ACT_EXCEPTION_JURISDICTION_REQUIRED', 'Indica la jurisdicción de la excepción.');
+        if (exception.selector !== 'JURISDICCION' && !exception.targetId) throw new CatalogConfigurationError(400, 'ACT_EXCEPTION_TARGET_REQUIRED', 'Selecciona la institución o Notaría de la excepción.');
+        if (exception.selector === 'INSTITUCION') await assertOwner(actor, 'INSTITUCION', exception.targetId!);
+        if (exception.selector === 'NOTARIA') await assertOwner(actor, 'NOTARIA', exception.targetId!);
+      }
+    }
+    const dependencies = processes.flatMap((process) => process.dependencyCodes.map((code) => ({ actividad_id: process.code, depende_actividad_id: code })));
+    if (dependencyGraphHasCycle(dependencies)) throw new CatalogConfigurationError(409, 'DEPENDENCY_CYCLE', 'La selección crea un ciclo de dependencias.');
+    const roleNames = new Set<string>();
+    const characters = roleInputs.map((role) => {
+      const name = requiredOperationalText(role.name, 'Carácter de compareciente', 150);
+      if (roleNames.has(name)) throw new CatalogConfigurationError(400, 'ACT_CHARACTER_DUPLICATE', 'Un carácter no puede repetirse en el acto.');
+      roleNames.add(name);
+      return { name, principal: role.principal === true };
+    });
+    const jurisdiction = configured ? requiredOperationalText(input.jurisdiccion, 'Jurisdicción', 120) : null;
+    if (configured && (typeof input.registrable !== 'boolean' || typeof input.actividad_vulnerable !== 'boolean')) throw new CatalogConfigurationError(400, 'ACT_GENERAL_FIELDS_REQUIRED', 'Indica si el acto es registrable y si constituye actividad vulnerable.');
     const definitionType = input.tipo_definicion === 'VARIANTE' ? 'VARIANTE' : 'ACTO_BASE';
     const baseActId = definitionType === 'VARIANTE' ? requiredText(input.acto_base_id, 'Acto base') : null;
     const requestedClassification = definitionType === 'ACTO_BASE' ? requiredText(input.clasificacion, 'Clasificación') : optionalText(input.clasificacion, 80);
     if (requestedClassification && !['TRASLATIVOS', 'NO TRASLATIVOS'].includes(requestedClassification)) throw new CatalogConfigurationError(400, 'ACT_CLASSIFICATION_INVALID', 'Selecciona Traslativos o No traslativos.');
     const requestedFamily = definitionType === 'ACTO_BASE' ? requiredOperationalText(input.familia, 'Familia') : normalizeOptionalOperationalText(input.familia, 180);
     return prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:act:${actor.organizationId}:${nombre}`}))`);
       const duplicate = await tx.tipoActo.findFirst({ where: { nombre: { equals: nombre, mode: 'insensitive' }, archived_at: null, OR: [{ organization_id: actor.organizationId }, { organization_id: null }] }, select: { id: true } });
       if (duplicate) throw new CatalogConfigurationError(409, 'ACT_ALREADY_EXISTS', 'Ya existe un acto con ese nombre.');
       const baseConfiguration = baseActId ? await tx.configuracionActo.findFirst({
@@ -343,13 +414,63 @@ export const actsAndTimesService = {
         creado_por_id: actor.id,
         actualizado_por_id: actor.id,
         activa: booleanValue(input.activo, true),
+        requiere_revision: !configured,
         clasificacion: baseConfiguration?.clasificacion || clasificacion,
         familia: baseConfiguration?.familia || familia,
+        jurisdiccion: jurisdiction,
+        registrable: configured ? input.registrable : null,
+        actividad_vulnerable: configured ? input.actividad_vulnerable : null,
         hereda_configuracion_id: baseConfiguration?.id || null,
-        ...(baseConfiguration ? {} : { etapas: { create: ['Prefirma', 'Firma', 'Postfirma', 'Registro', 'Cierre'].map((stage, index) => ({ organization_id: actor.organizationId, nombre: stage, orden: index + 1 })) } }),
+        ...(configured || baseConfiguration ? {} : { etapas: { create: ['Prefirma', 'Firma', 'Postfirma', 'Registro', 'Cierre'].map((stage, index) => ({ organization_id: actor.organizationId, nombre: stage, orden: index + 1 })) } }),
       }, include: actInclude });
-      await audit(tx, actor, 'CFG_ACT_CREATED', 'TipoActo', act.id, undefined, { nombre, descripcion, clasificacion: configuration.clasificacion, familia: configuration.familia, tipo_definicion: definitionType, acto_base_id: baseActId, configuracion_id: configuration.id });
-      return { ...act, configuration, complete: false };
+      if (configured) {
+        const conceptRows = await tx.configuracionConceptoActividad.findMany({ where: { organization_id: actor.organizationId, codigo: { in: processes.map((item) => item.code) }, activa: true }, select: { id: true, codigo: true, nombre: true, naturaleza: true } });
+        const conceptByCode = new Map(conceptRows.map((item) => [item.codigo, item]));
+        const activityByCode = new Map<string, string>();
+        const stageNames = ['Prefirma', 'Firma', 'Postfirma', 'Registro', 'Cierre'] as const;
+        for (const [index, stageName] of stageNames.entries()) {
+          const selected = processes.filter((process) => process.stage === stageName);
+          if (!selected.length) continue;
+          const stage = await tx.configuracionEtapa.create({ data: { organization_id: actor.organizationId, configuracion_id: configuration.id, nombre: stageName, orden: index + 1 } });
+          for (const [order, process] of selected.entries()) {
+            const concept = conceptByCode.get(process.code);
+            const activity = await tx.configuracionActividad.create({ data: {
+              organization_id: actor.organizationId, etapa_id: stage.id, concepto_maestro_id: concept?.id || null,
+              nombre: concept?.nombre || process.name, duracion_estimada: process.duration, tipo_dias: process.dayType,
+              margen_seguridad: process.margin, naturaleza: concept?.naturaleza || enumValue(ConfiguracionActividadNaturaleza, process.nature, 'Naturaleza'),
+              orden_operativo: order + 1, aplica_por_defecto: true, atributos_heredados: [],
+              grupo_paralelo: process.parallelGroup, condicion_json: process.condition,
+            } });
+            activityByCode.set(process.code, activity.id);
+          }
+        }
+        for (const process of processes) {
+          const activityId = activityByCode.get(process.code)!;
+          if (process.dependencyCodes.length) await tx.configuracionDependencia.createMany({ data: process.dependencyCodes.map((code) => ({
+            organization_id: actor.organizationId, actividad_id: activityId, depende_actividad_id: activityByCode.get(code)!, bloqueante: true,
+          })) });
+          for (const exception of process.exceptions) await tx.configuracionExcepcion.create({ data: {
+            organization_id: actor.organizationId, actividad_id: activityId, selector_tipo: exception.selector,
+            institucion_id: exception.selector === 'INSTITUCION' ? exception.targetId : null,
+            notaria_id: exception.selector === 'NOTARIA' ? exception.targetId : null,
+            jurisdiccion: exception.selector === 'JURISDICCION' ? exception.jurisdiction : null,
+            duracion: exception.duration, tipo_dias: exception.dayType, margen_seguridad: exception.margin,
+          } });
+        }
+        for (const [order, character] of characters.entries()) {
+          let role = await tx.caracterCompareciente.findFirst({ where: { organization_id: actor.organizationId, nombre: { equals: character.name, mode: 'insensitive' } }, select: { id: true, activo: true } });
+          if (role && role.activo !== true) role = await tx.caracterCompareciente.update({ where: { id: role.id }, data: { activo: true }, select: { id: true, activo: true } });
+          if (!role) role = await tx.caracterCompareciente.findFirst({ where: { organization_id: null, nombre: { equals: character.name, mode: 'insensitive' }, activo: true }, select: { id: true, activo: true } });
+          if (!role) role = await tx.caracterCompareciente.create({ data: {
+            organization_id: actor.organizationId,
+            clave: `CUSTOM_${createHash('sha256').update(`${actor.organizationId}:${character.name}`).digest('hex').slice(0, 40).toUpperCase()}`,
+            nombre: character.name, activo: true,
+          }, select: { id: true, activo: true } });
+          await tx.tipoActoCaracterCompareciente.create({ data: { tipo_acto_id: act.id, caracter_id: role.id, sugerido: character.principal, orden: order + 1 } });
+        }
+      }
+      await audit(tx, actor, 'CFG_ACT_CREATED', 'TipoActo', act.id, undefined, { nombre, descripcion, clasificacion: configuration.clasificacion, familia: configuration.familia, tipo_definicion: definitionType, acto_base_id: baseActId, configuracion_id: configuration.id, process_codes: processes.map((item) => item.code), characters });
+      return { ...act, configuration, complete: configured };
     });
   },
 
@@ -389,6 +510,38 @@ export const actsAndTimesService = {
         ...(functionalChange ? { revision: { increment: 1 } } : {}),
       } });
       await audit(tx, actor, 'CFG_ACT_UPDATED', 'ConfiguracionActo', config.id, before, { ...identity, ...configuration });
+    });
+    return this.get(actor, actId);
+  },
+
+  async addCharacter(actor: Actor, actId: string, input: any) {
+    const name = requiredOperationalText(input.name, 'Carácter de compareciente', 150);
+    const principal = input.principal === true;
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:act-character:${actId}`}))`);
+      const act = await tx.tipoActo.findFirst({
+        where: { id: actId, archived_at: null, OR: [{ organization_id: actor.organizationId }, { organization_id: null }] },
+        select: { id: true },
+      });
+      if (!act) throw new CatalogConfigurationError(404, 'ACT_NOT_FOUND', 'Acto no encontrado.');
+      const duplicate = await tx.tipoActoCaracterCompareciente.findFirst({
+        where: { tipo_acto_id: actId, caracter: { nombre: { equals: name, mode: 'insensitive' }, activo: true, OR: [{ organization_id: null }, { organization_id: actor.organizationId }] } },
+        select: { id: true },
+      });
+      if (duplicate) throw new CatalogConfigurationError(409, 'ACT_CHARACTER_DUPLICATE', 'Este carácter ya está configurado en el acto.');
+      let role = await tx.caracterCompareciente.findFirst({ where: { organization_id: actor.organizationId, nombre: { equals: name, mode: 'insensitive' } }, select: { id: true, activo: true } });
+      if (role && role.activo !== true) role = await tx.caracterCompareciente.update({ where: { id: role.id }, data: { activo: true }, select: { id: true, activo: true } });
+      if (!role) role = await tx.caracterCompareciente.findFirst({ where: { organization_id: null, nombre: { equals: name, mode: 'insensitive' }, activo: true }, select: { id: true, activo: true } });
+      if (!role) role = await tx.caracterCompareciente.create({ data: {
+        organization_id: actor.organizationId,
+        clave: `CUSTOM_${createHash('sha256').update(`${actor.organizationId}:${name}`).digest('hex').slice(0, 40).toUpperCase()}`,
+        nombre: name, activo: true,
+      }, select: { id: true, activo: true } });
+      const existing = await tx.tipoActoCaracterCompareciente.aggregate({ where: { tipo_acto_id: actId }, _max: { orden: true } });
+      const link = await tx.tipoActoCaracterCompareciente.create({ data: { tipo_acto_id: actId, caracter_id: role.id, sugerido: principal, orden: (existing._max.orden || 0) + 1 } });
+      const configuration = await tx.configuracionActo.findFirst({ where: { organization_id: actor.organizationId, tipo_acto_id: actId }, select: { id: true } });
+      if (configuration) await touchConfiguration(tx, actor, configuration.id);
+      await audit(tx, actor, 'CFG_ACT_CHARACTER_ADDED', 'TipoActoCaracterCompareciente', link.id, undefined, { tipo_acto_id: actId, caracter_id: role.id, name, principal });
     });
     return this.get(actor, actId);
   },
@@ -686,7 +839,7 @@ export const templatesAndFormatsService = {
       prisma.catalogoInstitucion.findMany({ where: { organization_id: actor.organizationId, activa: true }, select: { id: true, nombre: true, tipo: true, tipos_respuesta: { orderBy: { nombre: 'asc' } } }, orderBy: { nombre: 'asc' } }),
       prisma.configuracionEtapa.findMany({ where: { organization_id: actor.organizationId, activa: true }, select: { id: true, nombre: true, configuracion: { select: { tipo_acto_id: true } } }, orderBy: [{ configuracion_id: 'asc' }, { orden: 'asc' }] }),
       prisma.organizationMembership.findMany({ where: { organization_id: actor.organizationId, status: 'ACTIVE', user: { activo: true } }, select: { user: { select: { id: true, nombre: true, apellido: true } } }, orderBy: { created_at: 'asc' } }),
-      prisma.caracterCompareciente.findMany({ where: { activo: true }, select: { id: true, nombre: true }, orderBy: { nombre: 'asc' } }),
+      prisma.caracterCompareciente.findMany({ where: { activo: true, OR: [{ organization_id: null }, { organization_id: actor.organizationId }] }, select: { id: true, nombre: true }, orderBy: { nombre: 'asc' } }),
     ]);
     return {
       acts: acts.map(({ configuracionesOperativas, ...act }) => ({

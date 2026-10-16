@@ -81,6 +81,56 @@ function submittedWorkspaceValue(dto: Record<string, any>, field: string): unkno
   return identificationKey ? dto.identificacion?.[identificationKey] : undefined;
 }
 
+function validationFingerprint(record: any): string {
+  const material = {
+    tipo_persona: record.tipo_persona,
+    nombre_busqueda: record.nombre_busqueda,
+    persona_fisica: record.personaFisica ? {
+      nombre: record.personaFisica.nombre,
+      apellido_paterno: record.personaFisica.apellido_paterno,
+      apellido_materno: record.personaFisica.apellido_materno,
+      rfc: record.personaFisica.rfc,
+      curp: record.personaFisica.curp,
+      sexo: record.personaFisica.sexo,
+      fecha_nacimiento: record.personaFisica.fecha_nacimiento,
+      lugar_nacimiento: record.personaFisica.lugar_nacimiento,
+      pais_nacimiento: record.personaFisica.pais_nacimiento,
+      nacionalidad: record.personaFisica.nacionalidad,
+      estado_civil: record.personaFisica.estado_civil,
+      regimen_matrimonial: record.personaFisica.regimen_matrimonial,
+      ocupacion: record.personaFisica.ocupacion,
+      actividad_economica: record.personaFisica.actividad_economica,
+      pep_estado: record.personaFisica.pep_estado,
+      relacion_pep: record.personaFisica.relacion_pep,
+    } : null,
+    persona_moral: record.personaMoral ? {
+      razon_social: record.personaMoral.razon_social,
+      nombre_comercial: record.personaMoral.nombre_comercial,
+      tipo_societario: record.personaMoral.tipo_societario,
+      rfc: record.personaMoral.rfc,
+      nacionalidad: record.personaMoral.nacionalidad,
+      fecha_constitucion: record.personaMoral.fecha_constitucion,
+      duracion: record.personaMoral.duracion,
+      folio_mercantil: record.personaMoral.folio_mercantil,
+      objeto_social_resumido: record.personaMoral.objeto_social_resumido,
+      estatus_societario: record.personaMoral.estatus_societario,
+    } : null,
+    domicilios: (record.domicilios || []).map((item: any) => ({
+      tipo: item.tipo, pais: item.pais, estado: item.estado, municipio: item.municipio,
+      localidad: item.localidad, colonia: item.colonia, calle: item.calle,
+      exterior: item.exterior, interior: item.interior, codigo_postal: item.codigo_postal,
+    })).sort((a: any, b: any) => String(a.tipo).localeCompare(String(b.tipo))),
+    contactos: (record.contactos || []).map((item: any) => ({ tipo: item.tipo, valor: item.valor, principal: item.principal }))
+      .sort((a: any, b: any) => `${a.tipo}:${a.valor}`.localeCompare(`${b.tipo}:${b.valor}`)),
+    identificaciones: (record.identificaciones || []).map((item: any) => ({
+      tipo_identificacion: item.tipo_identificacion, numero: item.numero,
+      autoridad_emisora: item.autoridad_emisora, pais_emisor: item.pais_emisor,
+      fecha_expedicion: item.fecha_expedicion, fecha_vencimiento: item.fecha_vencimiento,
+    })).sort((a: any, b: any) => `${a.tipo_identificacion}:${a.numero}`.localeCompare(`${b.tipo_identificacion}:${b.numero}`)),
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(material)).digest('hex');
+}
+
 export class ComparecienteService {
   private prisma: PrismaClient;
 
@@ -760,6 +810,7 @@ export class ComparecienteService {
       } });
       if (!current) throw new Error('Compareciente no encontrado.');
       const identityBefore = await loadScreeningIdentity(tx, organizationId, id);
+      const validationFingerprintBefore = validationFingerprint(current);
       let nombreBusqueda = current.nombre_busqueda;
       if (current.tipo_persona === 'FISICA' && current.personaFisica) {
         const nombre = this.uppercase(dto.nombre ?? current.personaFisica.nombre) || '';
@@ -867,7 +918,41 @@ export class ComparecienteService {
         });
       }
       const correlationId = crypto.randomUUID();
-      await tx.auditLog.create({ data: { user_id: actorUserId, accion: 'EDITAR_COMPARECIENTE', entidad: 'Compareciente', entidad_id: id, valores_anteriores: { version: current.version }, valores_nuevos: { version: header.version, campos: Object.keys(dto) }, detalles: { modulo: 'COMPARECIENTES' }, correlation_id: correlationId } });
+      const validationAfter = await tx.compareciente.findFirst({ where: { id, archived_at: null }, include: {
+        personaFisica: true, personaMoral: true,
+        domicilios: { where: { archived_at: null, vigente: true } },
+        contactos: { where: { archived_at: null, activo: true } },
+        identificaciones: { where: { archived_at: null, principal: true } },
+      } });
+      const validationChanged = validationAfter ? validationFingerprintBefore !== validationFingerprint(validationAfter) : false;
+      const validatedRelations = validationChanged ? await tx.expedienteCompareciente.findMany({
+        where: { organization_id: organizationId, compareciente_id: id, archived_at: null, estatus: 'ACTIVO', datos_validados: true },
+        select: { id: true, expediente_id: true },
+      }) : [];
+      if (validatedRelations.length) {
+        await tx.expedienteCompareciente.updateMany({
+          where: { organization_id: organizationId, id: { in: validatedRelations.map((item) => item.id) }, datos_validados: true },
+          data: { datos_validados: false, validado_por_id: null, validado_at: null },
+        });
+        for (const expedienteId of [...new Set(validatedRelations.map((item) => item.expediente_id))]) {
+          await tx.expedienteActividad.create({ data: {
+            organization_id: organizationId, expediente_id: expedienteId, usuario_id: actorUserId,
+            tipo: 'AUDITORIA', categoria: 'OPERACION', titulo: 'Validación de compareciente invalidada',
+            descripcion: 'Los datos maestros relevantes cambiaron y requieren una nueva revisión humana.',
+            metadatos: { source: 'COMPARECIENTE_MASTER_CHANGE', compareciente_id: id, relation_ids: validatedRelations.filter((item) => item.expediente_id === expedienteId).map((item) => item.id) },
+            seccion_relacionada: 'comparecientes', entidad_relacionada: 'Compareciente', entidad_relacionada_id: id,
+          } });
+        }
+        await tx.auditLog.create({ data: {
+          organization_id: organizationId, user_id: actorUserId, accion: 'INVALIDATE_EXPEDIENTE_PARTY_DATA_VALIDATION',
+          entidad: 'Compareciente', entidad_id: id,
+          valores_anteriores: { validated_relation_ids: validatedRelations.map((item) => item.id) },
+          valores_nuevos: { datos_validados: false },
+          detalles: { source: 'COMPARECIENTE_MASTER_CHANGE', affected_relations: validatedRelations.length },
+          correlation_id: correlationId,
+        } });
+      }
+      await tx.auditLog.create({ data: { organization_id: organizationId, user_id: actorUserId, accion: 'EDITAR_COMPARECIENTE', entidad: 'Compareciente', entidad_id: id, valores_anteriores: { version: current.version }, valores_nuevos: { version: header.version, campos: Object.keys(dto) }, detalles: { modulo: 'COMPARECIENTES', validaciones_relacion_invalidadas: validatedRelations.length }, correlation_id: correlationId } });
       const identityAfter = await loadScreeningIdentity(tx, organizationId, id);
       if (screeningIdentityFingerprint(identityBefore) !== screeningIdentityFingerprint(identityAfter)) {
         const event = await tx.domainEventOutbox.create({ data: {
@@ -1050,10 +1135,11 @@ export class ComparecienteService {
       'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'application/xml',
+      'text/plain',
       'application/zip',
     ]);
     if (!allowedMimeTypes.has(mimeType)) {
-      throw new Error('Tipo de archivo no permitido. Usa PDF, JPG/JPEG, PNG, WEBP, BMP, DOC, DOCX, XML o ZIP.');
+      throw new Error('Tipo de archivo no permitido. Usa PDF, JPG/JPEG, PNG, WEBP, BMP, DOC, DOCX, XML, TXT o ZIP.');
     }
     if (!Object.values(TipoDocumentoCompareciente).includes(categoria as TipoDocumentoCompareciente)) {
       throw new Error('La categoría documental seleccionada no es válida.');

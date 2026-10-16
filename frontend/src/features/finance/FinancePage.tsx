@@ -53,6 +53,8 @@ export function FinancePage() {
   const periodFrom = params.get('fecha_desde') || '';
   const periodTo = params.get('fecha_hasta') || '';
   const page = Math.max(1, Number(params.get('page') || 1));
+  const receivableResponsibleId = params.get('responsable_id') || '';
+  const focusedMovementId = params.get('movimiento_id') || '';
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const loaded = useRef(false);
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -91,16 +93,17 @@ export function FinancePage() {
       setCatalogs(cat);
       if (current === 'resumen') setSummary(await financeService.summary(periodQuery, signal));
       if (current === 'proyeccion') { const [nextSummary,nextExpenses]=await Promise.all([financeService.summary(periodQuery,signal),financeService.recurringExpenses(signal)]);setSummary(nextSummary);setRecurringExpenses(nextExpenses); }
-      if (current === 'movimientos') setMovements(await financeService.movements({ ...periodQuery, ...filters, page, pageSize: 20 }, signal));
+      if (current === 'movimientos') setMovements(await financeService.movements({ ...periodQuery, ...filters,
+        movimiento_id: focusedMovementId || undefined, page, pageSize: 20 }, signal));
       if (current === 'cuentas') setAccounts(await financeService.accounts(signal));
-      if (current === 'cartera') setReceivables(await financeService.receivables({ ...periodQuery, page, pageSize: 20 }, signal));
+      if (current === 'cartera') setReceivables(await financeService.receivables({ ...periodQuery, responsable_id: receivableResponsibleId || undefined, page, pageSize: 20 }, signal));
       if (current === 'conciliacion') setReconciliation(await financeService.reconciliation({ ...periodQuery, cuenta_id: filters.cuenta_id }, signal));
       setStatus('ready');
       loaded.current = true;
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) setStatus('error');
     }
-  }, [canRead, current, filters, page, periodQuery]);
+  }, [canRead, current, filters, focusedMovementId, page, periodQuery, receivableResponsibleId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -116,6 +119,8 @@ export function FinancePage() {
   const navigate = (view: FinanceView) => {
     const next = new URLSearchParams(params);
     view === 'resumen' ? next.delete('view') : next.set('view', view);
+    if (view !== 'cartera') next.delete('responsable_id');
+    if (view !== 'movimientos') next.delete('movimiento_id');
     next.delete('page');
     setParams(next, { replace: true });
   };
@@ -174,11 +179,23 @@ export function FinancePage() {
       {status === 'ready' && catalogs && <>
         {current === 'resumen' && summary && <FinanceSummaryView summary={summary} onOpen={navigate} />}
         {current === 'proyeccion' && summary && <FinanceProjectionView summary={summary} expenses={recurringExpenses} canWrite={catalogs.permisos.escribir} onChanged={()=>void load()}/>}
-        {current === 'movimientos' && <MovementsView result={movements} catalogs={catalogs} filters={filters} onFilter={change} onPage={(value) => change('page', String(value))} onSelect={setSelected} onNew={() => setNewOpen(true)} />}
+        {current === 'movimientos' && <>
+          {focusedMovementId && <div className={styles.infoBanner} role="status"><p><strong>Movimiento específico</strong>
+            <span>Se muestra el movimiento seleccionado desde Mi Día.</span></p>
+            <button type="button" className={styles.secondaryButton} onClick={() => change('movimiento_id', '')}>Ver movimientos del periodo</button>
+          </div>}
+          <MovementsView result={movements} catalogs={catalogs} filters={filters} onFilter={change} onPage={(value) => change('page', String(value))} onSelect={setSelected} onNew={() => setNewOpen(true)} />
+        </>}
         {current === 'cuentas' && <AccountsView accounts={accounts} canWrite={catalogs.permisos.escribir} onNew={() => setAccountOpen(true)} />}
         {current === 'conciliacion' && reconciliation && <ReconciliationView data={reconciliation} canReconcile={catalogs.permisos.conciliar} onReconcile={async (movementId, bankId) => { await financeService.reconcile(movementId, bankId); saved('Conciliación registrada correctamente.'); }} />}
         {current === 'facturacion' && <InvoicesView />}
-        {current === 'cartera' && <ReceivablesView result={receivables} />}
+        {current === 'cartera' && <>
+          {receivableResponsibleId && <div className={styles.infoBanner} role="status">
+            <p><strong>Cartera filtrada por responsable</strong><span>Se muestran sólo los honorarios asociados a este usuario.</span></p>
+            <button type="button" className={styles.secondaryButton} onClick={() => change('responsable_id', '')}>Ver toda la organización</button>
+          </div>}
+          <ReceivablesView result={receivables} />
+        </>}
       </>}
       {newOpen && catalogs && <NewMovementFlow catalogs={catalogs} onClose={() => setNewOpen(false)} onSaved={() => saved()} />}
       {accountOpen && <AccountForm onClose={() => setAccountOpen(false)} onSaved={() => { setAccountOpen(false); saved('Cuenta guardada correctamente.'); }} />}

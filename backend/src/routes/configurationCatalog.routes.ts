@@ -1,11 +1,13 @@
 import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
+import { CATALOG_IMPORT_MAX_BYTES, DOCUMENT_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
+import { boundedDocumentBatchStorage } from '../config/documentBatchUpload';
 import { catalogError, configurationCatalogController } from '../controllers/configurationCatalog.controller';
 import { requirePermission } from '../middleware/auth.middleware';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
-const importUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024, files: 100, fields: 8 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: DOCUMENT_UPLOAD_MAX_BYTES, files: 1 } });
+const importUpload = multer({ storage: boundedDocumentBatchStorage, limits: { fileSize: CATALOG_IMPORT_MAX_BYTES, files: 100, fields: 8 } });
 const read = requirePermission('configuracion.catalogos.read');
 const manageActs = requirePermission('configuracion.actos_tiempos.manage');
 const manageArtifacts = requirePermission('configuracion.plantillas_formatos.manage');
@@ -15,6 +17,7 @@ const endpoint = (handler: (req: Request) => Promise<unknown>, success = 200) =>
 };
 
 router.get('/acts', read, endpoint(configurationCatalogController.listActs));
+router.get('/acts/creation-defaults', read, endpoint(configurationCatalogController.actCreationDefaults));
 router.post('/acts', manageActs, endpoint(configurationCatalogController.createAct, 201));
 router.post('/v2/bootstrap', manageActs, endpoint(configurationCatalogController.bootstrapV2));
 router.get('/v2/concepts', read, endpoint(configurationCatalogController.listConcepts));
@@ -27,6 +30,7 @@ router.post('/acts/:id/activities/:activityId/override', manageActs, endpoint(co
 router.delete('/acts/:id/activities/:activityId', manageActs, endpoint(configurationCatalogController.removeConceptFromAct));
 router.post('/acts/:id/configuration', manageActs, endpoint(configurationCatalogController.ensureActConfiguration, 201));
 router.patch('/acts/:id', manageActs, endpoint(configurationCatalogController.updateAct));
+router.post('/acts/:id/characters', manageActs, endpoint(configurationCatalogController.addActCharacter, 201));
 router.post('/acts/:actId/stages', manageActs, endpoint(configurationCatalogController.createStage, 201));
 router.patch('/stages/:stageId', manageActs, endpoint(configurationCatalogController.updateStage));
 router.delete('/stages/:stageId', manageActs, endpoint(configurationCatalogController.deleteStage));

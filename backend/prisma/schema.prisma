@@ -98,6 +98,10 @@ model Organization {
   cuentasPorPagarCfdi               CuentaPorPagarCfdi[]
   aplicacionesPagoCfdi              AplicacionPagoCfdi[]
   transferenciasInternas            TransferenciaInterna[]
+  miDiaConfig                      MiDiaTenantConfig?
+  miDiaLayouts                     MiDiaUserLayout[]
+  miDiaCardPermissions             MiDiaCardPermission[]
+  miDiaPersonalTasks               MiDiaPersonalTask[]
 
   @@index([status])
   @@map("organizations")
@@ -162,12 +166,17 @@ model OrganizationMembership {
   agendaParticipations                    EventoAgendaParticipante[]                  @relation("EventoAgendaParticipanteMembership")
   prospectosCotizacionAsignada            Prospecto[]                                 @relation("ProspectQuoteAssigneeMembership")
   entidadesFiscalesCfdiCreadas           EntidadFiscalCfdi[]                         @relation("EntidadFiscalCfdiCreadorMembership")
+  perfilesFiscalesComparecientesConfirmados ComparecienteFiscalProfile[]             @relation("ComparecienteFiscalProfileConfirmer")
+  conceptosFiscalesCfdiCreados          ConceptoFiscalCfdi[]                          @relation("ConceptoFiscalCfdiCreadorMembership")
   proveedoresFiscalesCreados             ProveedorFiscal[]                           @relation("ProveedorFiscalCreadorMembership")
   documentosCfdiCreados                  DocumentoCfdi[]                             @relation("DocumentoCfdiCreadorMembership")
   cuentasPorCobrarCfdiCreadas            CuentaPorCobrarCfdi[]                       @relation("CuentaPorCobrarCfdiCreadorMembership")
   cuentasPorPagarCfdiCreadas             CuentaPorPagarCfdi[]                        @relation("CuentaPorPagarCfdiCreadorMembership")
   aplicacionesPagoCfdiCreadas            AplicacionPagoCfdi[]                        @relation("AplicacionPagoCfdiCreadorMembership")
   transferenciasInternasCreadas          TransferenciaInterna[]                      @relation("TransferenciaInternaCreadorMembership")
+  miDiaLayouts                           MiDiaUserLayout[]
+  miDiaCardPermissions                   MiDiaCardPermission[]
+  miDiaPersonalTasks                     MiDiaPersonalTask[]
 
   @@unique([organization_id, user_id])
   @@index([user_id, status])
@@ -393,6 +402,76 @@ model UserPreference {
   user                          User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@map("user_preferences")
+}
+
+/// Configuración compartida del tenant; no concede acceso por sí sola.
+model MiDiaTenantConfig {
+  organization_id   String       @id @db.Uuid
+  enabled_cards     Json
+  default_layout    Json
+  recommended_cards Json
+  version           Int          @default(1)
+  created_at        DateTime     @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime     @default(now()) @updatedAt @db.Timestamptz(6)
+  organization      Organization @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+
+  @@map("mi_dia_tenant_config")
+}
+
+/// Layout particular del usuario dentro de una organización; no se comparte entre tenants.
+model MiDiaUserLayout {
+  id              String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String                 @db.Uuid
+  user_id         String                 @db.Uuid
+  layout          Json
+  personalized    Boolean                @default(false)
+  version         Int                    @default(1)
+  created_at      DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  organization    Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  membership      OrganizationMembership @relation(fields: [organization_id, user_id], references: [organization_id, user_id], onDelete: Restrict)
+
+  @@unique([organization_id, user_id])
+  @@map("mi_dia_user_layouts")
+}
+
+/// Excepción por tarjeta y usuario, siempre intersectada con RBAC canónico.
+model MiDiaCardPermission {
+  id              String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String                 @db.Uuid
+  user_id         String                 @db.Uuid
+  card_key        String                 @db.VarChar(80)
+  enabled         Boolean                @default(true)
+  max_scope       String                 @default("OWN") @db.VarChar(20)
+  created_at      DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  organization    Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  membership      OrganizationMembership @relation(fields: [organization_id, user_id], references: [organization_id, user_id], onDelete: Restrict)
+
+  @@unique([organization_id, user_id, card_key])
+  @@index([organization_id, card_key])
+  @@map("mi_dia_card_permissions")
+}
+
+/// Libreta personal: fechas originales y arrastres persisten separados de Agenda.
+model MiDiaPersonalTask {
+  id              String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String                 @db.Uuid
+  user_id         String                 @db.Uuid
+  title           String                 @db.VarChar(300)
+  notes           String?                @db.Text
+  original_on     DateTime               @db.Date
+  effective_on    DateTime               @db.Date
+  completed_at    DateTime?              @db.Timestamptz(6)
+  canceled_at     DateTime?              @db.Timestamptz(6)
+  carry_history   Json
+  created_at      DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  organization    Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  membership      OrganizationMembership @relation(fields: [organization_id, user_id], references: [organization_id, user_id], onDelete: Restrict)
+
+  @@index([organization_id, user_id, effective_on, completed_at])
+  @@map("mi_dia_personal_tasks")
 }
 
 model UserInvitation {
@@ -1027,6 +1106,7 @@ model TipoActo {
   cotizacionActos                 CotizacionActo[]
   tipoActoCaracteresCompareciente TipoActoCaracterCompareciente[]
   projectTemplateAssignments      ProjectTemplateAssignment[]
+  conceptosFiscalesCfdi           ConceptoFiscalCfdi[]
 
   @@map("tipos_acto")
 }
@@ -1159,6 +1239,10 @@ model ConfiguracionActo {
   familia                   String?
   /// Nivel superior requerido por CFG-001: TRASLATIVOS / NO TRASLATIVOS.
   clasificacion             String?
+  /// Datos declarados por la Notaría; NULL conserva desconocimiento histórico.
+  jurisdiccion              String?
+  registrable               Boolean?
+  actividad_vulnerable      Boolean?
   hereda_configuracion_id   String?              @db.Uuid
   exclusiones_conceptos     Json?
   creado_por_id             String               @db.Uuid
@@ -2772,6 +2856,7 @@ model Compareciente {
   h5RuleResults                     ComplianceRuleResult[]              @relation("H5RuleResultSubject")
   cotizacionesSolicitanteFormal     Cotizacion[]                        @relation("CotizacionSolicitanteFormal")
   documentosCfdiReceptor            DocumentoCfdi[]                     @relation("DocumentoCfdiReceptor")
+  fiscalProfile                     ComparecienteFiscalProfile?
 
   @@unique([id, organization_id], map: "h2_comparecientes_id_tenant_key")
   @@index([creado_por_id], map: "idx_comparecientes_creado_por_fk")
@@ -3503,7 +3588,9 @@ model ExpedienteIngresoReportado {
   facturarAVinculo             ExpedienteCompareciente?         @relation("Exp008IngresoFacturarAVinculo", fields: [facturar_a_vinculo_id, organization_id, expediente_id, facturar_a_compareciente_id], references: [id, organization_id, expediente_id, compareciente_id], onDelete: Restrict, onUpdate: NoAction)
   documentos                   ExpedienteFinanzaDocumento[]
   propuestasIA                 ExpedienteFinanzaPropuestaIA[]
+  documentosCfdi               DocumentoCfdi[]                @relation("DocumentoCfdiIngresoReportado")
 
+  @@unique([id, organization_id, expediente_id], map: "uq_exp008_ingreso_cfdi_scope")
   @@unique([organization_id, expediente_id, idempotency_key], map: "uq_exp008_ingreso_idempotency")
   @@index([organization_id, expediente_id, estado, created_at], map: "idx_exp008_ingreso_pending")
   @@index([cuenta_id], map: "idx_exp008_ingreso_cuenta_fk")
@@ -7752,6 +7839,28 @@ model ExpedienteSocietyTarget {
 
 /// Configuración fiscal por organización. Los secretos son referencias a un
 /// almacén server-side; nunca se persiste aquí la llave privada o contraseña.
+/// Perfil fiscal confirmado por una persona; una extracción de CSF nunca lo
+/// modifica automáticamente. Una sola fuente fiscal por compareciente/tenant.
+model ComparecienteFiscalProfile {
+  id                 String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id    String          @db.Uuid
+  compareciente_id   String          @db.Uuid
+  rfc                String          @db.VarChar(13)
+  razon_social       String          @db.VarChar(300)
+  regimen_fiscal     String          @db.VarChar(8)
+  codigo_postal      String          @db.VarChar(5)
+  csf_documento_id   String?         @db.Uuid
+  confirmed_by_id    String          @db.Uuid
+  confirmed_at       DateTime        @default(now()) @db.Timestamptz(6)
+  version            Int             @default(1)
+  compareciente      Compareciente   @relation(fields: [compareciente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_profile_compareciente_fkey")
+  confirmedBy        OrganizationMembership @relation("ComparecienteFiscalProfileConfirmer", fields: [organization_id, confirmed_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_profile_confirmer_fkey")
+
+  @@unique([compareciente_id, organization_id], map: "uq_cfdi_profile_compareciente_org")
+  @@index([organization_id, rfc], map: "idx_cfdi_profile_org_rfc")
+  @@map("compareciente_fiscal_profiles")
+}
+
 model EntidadFiscalCfdi {
   id                      String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organization_id         String                 @db.Uuid
@@ -7779,6 +7888,7 @@ model EntidadFiscalCfdi {
   createdBy               OrganizationMembership @relation("EntidadFiscalCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_creator_fkey")
   cuentas                 EntidadFiscalCuenta[]
   documentosCfdi         DocumentoCfdi[]
+  conceptosFiscales      ConceptoFiscalCfdi[]
 
   @@unique([organization_id, rfc], map: "uq_entidades_fiscales_cfdi_org_rfc")
   @@unique([id, organization_id], map: "uq_entidades_fiscales_cfdi_id_org")
@@ -7800,6 +7910,32 @@ model EntidadFiscalCuenta {
   @@unique([organization_id, entidad_fiscal_id, cuenta_id], map: "uq_entidad_fiscal_cuenta")
   @@index([cuenta_id, organization_id], map: "idx_entidad_fiscal_cuenta_cuenta")
   @@map("entidades_fiscales_cuentas")
+}
+
+/// Fiscal mapping configured by the tenant for an issuer and (optionally) act.
+/// No tax rate or SAT code is inferred from generic labels.
+model ConceptoFiscalCfdi {
+  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id      String                 @db.Uuid
+  entidad_fiscal_id    String                 @db.Uuid
+  tipo_acto_id         String?                @db.Uuid
+  descripcion          String                 @db.VarChar(500)
+  clave_prod_serv      String                 @db.VarChar(8)
+  clave_unidad         String                 @db.VarChar(8)
+  objeto_impuesto      String                 @db.VarChar(2)
+  iva_tasa             Decimal                @db.Decimal(9, 6)
+  iva_retencion_tasa   Decimal                @db.Decimal(9, 6)
+  isr_retencion_tasa   Decimal                @db.Decimal(9, 6)
+  activo               Boolean                @default(true)
+  created_by_id        String                 @db.Uuid
+  created_at           DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  entidadFiscal        EntidadFiscalCfdi      @relation(fields: [entidad_fiscal_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_concepto_entidad_fkey")
+  tipoActo             TipoActo?              @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_concepto_acto_fkey")
+  createdBy            OrganizationMembership @relation("ConceptoFiscalCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_concepto_creator_fkey")
+
+  @@index([organization_id, entidad_fiscal_id, tipo_acto_id, activo], map: "idx_cfdi_concepto_contexto")
+  @@map("conceptos_fiscales_cfdi")
 }
 
 model ProveedorFiscal {
@@ -7846,6 +7982,7 @@ model DocumentoCfdi {
   entidad_fiscal_id        String?                @db.Uuid
   proveedor_id             String?                @db.Uuid
   expediente_id            String?                @db.Uuid
+  ingreso_reportado_id     String?                @db.Uuid
   receptor_compareciente_id String?               @db.Uuid
   movimiento_id            String?                @db.Uuid
   emisor_rfc               String                 @db.VarChar(13)
@@ -7879,6 +8016,7 @@ model DocumentoCfdi {
   entidadFiscal            EntidadFiscalCfdi?      @relation(fields: [entidad_fiscal_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_entidad_fkey")
   proveedor                ProveedorFiscal?        @relation(fields: [proveedor_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_proveedor_fkey")
   expediente               Expediente?             @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_expediente_fkey")
+  ingresoReportado         ExpedienteIngresoReportado? @relation("DocumentoCfdiIngresoReportado", fields: [ingreso_reportado_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_ingreso_fkey")
   receptor                 Compareciente?          @relation("DocumentoCfdiReceptor", fields: [receptor_compareciente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_receptor_fkey")
   xmlDocumento             Documento?              @relation("DocumentoCfdiXml", fields: [xml_documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_xml_fkey")
   pdfDocumento             Documento?              @relation("DocumentoCfdiPdf", fields: [pdf_documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_pdf_fkey")
@@ -7891,6 +8029,7 @@ model DocumentoCfdi {
   @@index([organization_id, direccion, estado], map: "idx_documentos_cfdi_org_state")
   @@index([organization_id, uuid_fiscal], map: "idx_documentos_cfdi_org_uuid")
   @@index([expediente_id, organization_id], map: "idx_documentos_cfdi_expediente")
+  @@index([ingreso_reportado_id, organization_id, expediente_id], map: "idx_documentos_cfdi_ingreso")
   @@index([movimiento_id, organization_id], map: "idx_documentos_cfdi_movimiento")
   @@map("documentos_cfdi")
 }

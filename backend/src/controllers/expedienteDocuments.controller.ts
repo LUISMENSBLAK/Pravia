@@ -3,9 +3,11 @@ import prisma from '../config/prisma';
 import { ExpedienteDocumentAppendixError, ExpedienteDocumentAppendixService } from '../services/expedienteDocumentAppendix.service';
 import { DocumentArchiveIntakeError, extractDocumentArchive, intakeLooseFiles } from '../services/documentArchiveIntake.service';
 import multer from 'multer';
+import { boundedDocumentBatchStorage } from '../config/documentBatchUpload';
+import { DOCUMENT_ARCHIVE_MAX_BYTES } from '../config/uploadLimits';
 
 const service = new ExpedienteDocumentAppendixService(prisma);
-export const uploadDocumentBatchMulter = multer({ storage: multer.memoryStorage(), limits: { fileSize: 75 * 1024 * 1024, files: 301, fields: 10 } });
+export const uploadDocumentBatchMulter = multer({ storage: boundedDocumentBatchStorage, limits: { fileSize: DOCUMENT_ARCHIVE_MAX_BYTES, files: 301, fields: 10 } });
 const fail = (res: Response, error: unknown) => {
   if (error instanceof ExpedienteDocumentAppendixError) return res.status(error.status).json({ code: error.code, error: error.message });
   if (error instanceof DocumentArchiveIntakeError) return res.status(400).json({ code: error.code, error: error.message });

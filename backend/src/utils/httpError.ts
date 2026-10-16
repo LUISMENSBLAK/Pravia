@@ -46,6 +46,13 @@ export function normalizeErrorBody(
   // environments. Production additionally keeps every upstream 5xx opaque.
   // Technical context belongs in server-side logs, never in the response.
   const hideInternalDetails = status === 500 || (production && status >= 500);
+  if (status === 503 && source.code === 'UPLOAD_STORAGE_UNAVAILABLE') {
+    return {
+      code: 'UPLOAD_STORAGE_UNAVAILABLE',
+      error: 'El almacenamiento no pudo guardar el archivo. No se creó ningún documento; intenta de nuevo.',
+      correlation_id: correlationId,
+    };
+  }
   if (hideInternalDetails) {
     return {
       code: STATUS_CODES[status] || 'INTERNAL_ERROR',

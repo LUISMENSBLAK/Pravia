@@ -56,6 +56,7 @@ import {
   listExpedienteParties,
   previewExpedientePartyChange,
   searchExpedienteParties,
+  validateExpedientePartyData,
 } from '../controllers/expedienteParties.controller';
 import {
   applyExpedientePredioChange,
@@ -147,6 +148,7 @@ router.get('/:id/comparecientes/catalogos', requirePermission('comparecientes.re
 router.post('/:id/comparecientes/roles', requirePermission('expedientes.write'), requirePermission('comparecientes.write'), createExpedientePartyRole);
 router.post('/:id/comparecientes/preview', requirePermission('expedientes.write'), requirePermission('comparecientes.write'), previewExpedientePartyChange);
 router.post('/:id/comparecientes/aplicar', requirePermission('expedientes.write'), requirePermission('comparecientes.write'), applyExpedientePartyChange);
+router.post('/:id/comparecientes/:relationId/validar-datos', requirePermission('expedientes.write'), requirePermission('comparecientes.write'), validateExpedientePartyData);
 router.get('/:id/predios', listExpedientePredios);
 router.get('/:id/predios/buscar', searchExpedientePredios);
 router.get('/:id/predios/catalogos', getExpedientePredioCatalogs);

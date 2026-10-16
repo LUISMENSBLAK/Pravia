@@ -30,10 +30,12 @@ export function catalogError(error: unknown) {
 
 export const configurationCatalogController = {
   listActs: (req: Request) => actsAndTimesService.list(actor(req), String(req.query.search || '').trim()),
+  actCreationDefaults: (req: Request) => actsAndTimesService.creationDefaults(actor(req)),
   getAct: (req: Request) => actsAndTimesService.get(actor(req), req.params.id),
   createAct: (req: Request) => actsAndTimesService.create(actor(req), req.body),
   ensureActConfiguration: (req: Request) => actsAndTimesService.ensureConfiguration(actor(req), req.params.id),
   updateAct: (req: Request) => actsAndTimesService.update(actor(req), req.params.id, req.body),
+  addActCharacter: (req: Request) => actsAndTimesService.addCharacter(actor(req), req.params.id, req.body),
   createStage: (req: Request) => actsAndTimesService.createStage(actor(req), req.params.actId, req.body),
   updateStage: (req: Request) => actsAndTimesService.updateStage(actor(req), req.params.stageId, req.body),
   deleteStage: (req: Request) => actsAndTimesService.deleteStage(actor(req), req.params.stageId),

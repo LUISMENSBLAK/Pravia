@@ -19,7 +19,15 @@ export const uploadDocumento = async (req: Request, res: Response) => {
     if (!file) {
       return res.status(400).json({ error: 'No se envió ningún archivo' });
     }
-    const canonicalMime = canonicalUploadedDocumentMime(file);
+    let canonicalMime: string;
+    try {
+      canonicalMime = canonicalUploadedDocumentMime(file);
+    } catch (error) {
+      return res.status(400).json({
+        code: 'UPLOAD_FILE_INVALID',
+        error: error instanceof Error ? error.message : 'El archivo no tiene un formato válido.',
+      });
+    }
 
     const {
       tipo,
@@ -57,7 +65,16 @@ export const uploadDocumento = async (req: Request, res: Response) => {
     nombre_interno = `organizations/${req.user!.organizationId}/documentos/${uuidv4()}${ext}`;
 
     // Upload to Supabase Storage
-    const storage_key = await uploadFile(file.buffer, nombre_interno, canonicalMime);
+    let storage_key: string;
+    try {
+      storage_key = await uploadFile(file.buffer, nombre_interno, canonicalMime);
+    } catch {
+      await deleteFile(nombre_interno).catch(() => undefined);
+      return res.status(503).json({
+        code: 'UPLOAD_STORAGE_UNAVAILABLE',
+        error: 'El almacenamiento no pudo guardar el archivo. No se creó ningún documento; intenta de nuevo.',
+      });
+    }
 
     const documentoData = {
       organization_id: req.user!.organizationId,
@@ -76,8 +93,6 @@ export const uploadDocumento = async (req: Request, res: Response) => {
       expediente_id: expediente_id || null,
       compareciente_id: compareciente_id || null,
     };
-
-    console.log('DOCUMENTO DATA:', documentoData);
 
     try {
       // Documento maestro + vínculos canónicos en una sola transacción.

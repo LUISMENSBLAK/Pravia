@@ -1,0 +1,24 @@
+.source { color: var(--color-text-muted); font-size: 11px; }
+.controls { display: grid; gap: var(--space-2); padding: var(--space-3); border-bottom: 1px solid var(--color-border); }
+.views, .dateControls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.views button, .dateControls button { min-height: 44px; min-width: 44px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: white; color: var(--color-text-secondary); font: inherit; font-size: 12px; cursor: pointer; padding: 5px 9px; }
+.views button[aria-pressed='true'] { border-color: var(--color-gold-500); color: var(--color-navy-800); background: var(--color-gold-100); font-weight: 700; }
+.dateControls input { min-height: 44px; min-width: 0; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 5px 8px; color: var(--color-text-primary); font: inherit; font-size: 12px; }
+.list { margin: 0; padding: 0 var(--space-3); list-style: none; max-height: 360px; overflow-y: auto; }
+.list li { display: grid; gap: 3px; padding: 11px 0; border-bottom: 1px solid var(--color-border); }
+.list li:last-child { border-bottom: 0; }
+.task { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 44px; color: var(--color-text-primary); font-size: 13px; line-height: 1.4; cursor: pointer; }
+.task input { width: 18px; height: 18px; flex: 0 0 auto; margin: 0; accent-color: var(--color-gold-500); }
+.task span { overflow-wrap: anywhere; }
+.done { color: var(--color-text-muted); text-decoration: line-through; }
+.list small { padding-left: 27px; color: var(--color-text-muted); font-size: 11px; }
+.more { margin: 0; padding: 8px var(--space-3); color: var(--color-danger-600); font-size: 12px; }
+.systemSection { border-top: 1px solid var(--color-border); padding-top: var(--space-2); }
+.systemSection > strong { display: block; padding: 0 var(--space-3); color: var(--color-text-secondary); font-size: 12px; }
+.systemSection .list a { color: var(--color-navy-800); font-size: 13px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; }
+.systemSection .list small { padding-left: 0; }
+.addForm { display: flex; gap: 8px; padding: var(--space-3); border-top: 1px solid var(--color-border); }
+.addForm input { min-width: 0; flex: 1; min-height: 44px; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 7px 10px; font: inherit; font-size: 13px; }
+.addForm button { display: flex; align-items: center; gap: 5px; min-height: 44px; border: 0; border-radius: var(--radius-md); padding: 7px 10px; background: var(--color-gold-500); color: var(--color-navy-900); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.addForm button:disabled { opacity: .55; cursor: not-allowed; }
+@media (max-width: 390px) { .addForm { flex-wrap: wrap; } .addForm button { width: 100%; justify-content: center; } .dateControls input { flex: 1; } }

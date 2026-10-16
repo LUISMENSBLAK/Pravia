@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'crypto';
+import { DOCUMENT_UPLOAD_MAX_BYTES, uploadLimitLabel } from '../config/uploadLimits';
 import { Prisma, PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
@@ -99,6 +100,35 @@ export function renderArchivoDocx(templateBuffer: Buffer, fields: Record<string,
 export class ArchivoService {
   constructor(private readonly prisma: PrismaClient) {}
 
+  /** Mi Día reads actual instrument assignments, not the bounded overview list. */
+  async assignmentsInRange(actor: Actor, from: Date, to: Date, limit: number, offset = 0) {
+    const where: Prisma.ArchivoRegistroWhereInput = {
+      organization_id: actor.organizationId,
+      clase: 'INSTRUMENTO',
+      created_at: { gte: from, lt: to },
+      expediente: { is: { archived_at: null, ...expedienteAccessWhere(actor) } },
+    };
+    const [count, records] = await Promise.all([
+      this.prisma.archivoRegistro.count({ where }),
+      this.prisma.archivoRegistro.findMany({
+        where,
+        select: { id: true, expediente_id: true, numero_escritura: true, created_at: true,
+          expediente: { select: { numero_pravia: true, cliente_alias: true } } },
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+        skip: Math.max(0, offset),
+        take: limit,
+      }),
+    ]);
+    return { count, records: records.map((record) => ({
+      id: record.id,
+      expediente_id: record.expediente_id,
+      numero_escritura: record.numero_escritura?.toString() ?? null,
+      folio: record.expediente?.numero_pravia ?? null,
+      cliente: record.expediente?.cliente_alias ?? null,
+      assigned_at: record.created_at.toISOString(),
+    })) };
+  }
+
   async overview(actor: Actor) {
     const [records, unused, latestNumber, latestFolio, legacy] = await Promise.all([
       this.prisma.archivoRegistro.findMany({ where: { organization_id: actor.organizationId, clase: 'INSTRUMENTO', expediente: { is: { archived_at: null, ...expedienteAccessWhere(actor) } } }, include: recordInclude, orderBy: [{ numero_escritura: 'desc' }, { created_at: 'desc' }], take: 200 }),
@@ -148,7 +178,7 @@ export class ArchivoService {
 
   async uploadAppendix(actor: Actor, expedienteId: string, file: Express.Multer.File, context: 'APENDICE_ARCHIVO' | 'NOTA_ARCHIVO' = 'APENDICE_ARCHIVO') {
     if (!file?.buffer?.length) throw new ArchivoError(400, 'ARCHIVO_APPENDIX_FILE_REQUIRED', 'Selecciona un archivo del apéndice.');
-    if (file.size > 25 * 1024 * 1024) throw new ArchivoError(413, 'ARCHIVO_APPENDIX_FILE_TOO_LARGE', 'El archivo supera 25 MB.');
+    if (file.size > DOCUMENT_UPLOAD_MAX_BYTES) throw new ArchivoError(413, 'ARCHIVO_APPENDIX_FILE_TOO_LARGE', `El archivo supera ${uploadLimitLabel(DOCUMENT_UPLOAD_MAX_BYTES)}.`);
     await this.assertExpediente(this.prisma, actor, expedienteId);
     const record = await this.prisma.archivoRegistro.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, clase: 'INSTRUMENTO' }, select: { id: true } });
     if (!record) throw new ArchivoError(409, 'ARCHIVO_INSTRUMENT_REQUIRED', 'Asigna la escritura antes de agregar documentos al apéndice.');

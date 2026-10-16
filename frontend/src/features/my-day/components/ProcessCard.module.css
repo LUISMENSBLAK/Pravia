@@ -1,0 +1,12 @@
+.total { margin: 0 0 10px; color: #556476; font-size: .78rem; }
+.hint { margin: -4px 0 10px; color: var(--color-text-secondary); font-size: .7rem; line-height: 1.4; }
+.list { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.list li { min-width: 0; }
+.list a { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; padding: 8px 10px; border: 1px solid #e2e8ef; border-radius: 8px; color: #173453; text-decoration: none; }
+.list a:hover, .list a:focus-visible { border-color: #b99a4a; background: #faf8f1; }
+.list a:focus-visible { outline: 2px solid #8b6a25; outline-offset: 2px; }
+.list span { min-width: 0; display: grid; gap: 2px; }
+.list strong { font-size: .86rem; overflow-wrap: anywhere; }
+.list small { color: #64748b; font-size: .73rem; }
+.list time { flex: none; color: #6d5727; font-size: .75rem; white-space: nowrap; }
+@media (max-width: 390px) { .list a { align-items: flex-start; } .list time { white-space: normal; text-align: right; } }

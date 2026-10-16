@@ -46,7 +46,7 @@ export class ExpedienteOpeningService {
       throw new ExpedienteOpeningError('La cotización no contiene los datos necesarios para abrir el expediente.', 'EXPEDIENTE_OPEN_REQUIRED');
     }
     const [tipoActo, actor, lawyer, notary, formVersion, workflowVersion, documentTemplateVersion, selectedParty] = await Promise.all([
-      tx.tipoActo.findFirst({ where: { id: input.tipoActoId, activo: true, archived_at: null, OR: [{ organization_id: null }, { organization_id: organizationId }] }, include: { tipoActoCaracteresCompareciente: { include: { caracter: true }, orderBy: [{ sugerido: 'desc' }, { orden: 'asc' }] } } }),
+      tx.tipoActo.findFirst({ where: { id: input.tipoActoId, activo: true, archived_at: null, OR: [{ organization_id: null }, { organization_id: organizationId }] }, include: { tipoActoCaracteresCompareciente: { where: { caracter: { activo: true, OR: [{ organization_id: null }, { organization_id: organizationId }] } }, include: { caracter: true }, orderBy: [{ sugerido: 'desc' }, { orden: 'asc' }] } } }),
       tx.user.findFirst({ where: { id: input.actorUserId, activo: true }, select: { id: true } }),
       tx.user.findFirst({
         where: { id: input.abogadoId, activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(organizationId, Array.from(ALLOWED_RESPONSIBLE_ROLES)) } },

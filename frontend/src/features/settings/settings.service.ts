@@ -54,10 +54,12 @@ export const settingsService = {
     }).then((payload) => payload.data);
   },
   catalogActs: (search = '') => apiRequest<{ data: ActListPayload }>(`/settings/catalogs/acts${search ? `?search=${encodeURIComponent(search)}` : ''}`).then((payload) => payload.data),
+  actCreationDefaults: () => apiRequest<{ data: Record<string, Array<{ code: string; name: string; stage: string; duration: number; dayType: 'HABILES' | 'NATURALES'; nature: string }>> }>('/settings/catalogs/acts/creation-defaults').then((payload) => payload.data),
   catalogAct: (id: string) => apiRequest<{ data: CatalogAct }>(`/settings/catalogs/acts/${id}`).then((payload) => payload.data),
   createCatalogAct: (data: Record<string, unknown>) => apiRequest<{ data: CatalogAct }>('/settings/catalogs/acts', { method: 'POST', body: JSON.stringify(data) }).then((payload) => payload.data),
   ensureActConfiguration: (id: string) => apiRequest(`/settings/catalogs/acts/${id}/configuration`, { method: 'POST' }),
   updateCatalogAct: (id: string, data: Record<string, unknown>) => apiRequest(`/settings/catalogs/acts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  addCatalogActCharacter: (id: string, data: { name: string; principal: boolean }) => apiRequest(`/settings/catalogs/acts/${id}/characters`, { method: 'POST', body: JSON.stringify(data) }),
   createCatalogStage: (actId: string, data: Record<string, unknown>) => apiRequest(`/settings/catalogs/acts/${actId}/stages`, { method: 'POST', body: JSON.stringify(data) }),
   updateCatalogStage: (stageId: string, data: Record<string, unknown>) => apiRequest(`/settings/catalogs/stages/${stageId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteCatalogStage: (stageId: string) => apiRequest(`/settings/catalogs/stages/${stageId}`, { method: 'DELETE' }),

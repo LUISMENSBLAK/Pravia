@@ -41,3 +41,10 @@ export async function applyExpedientePartyChange(req: Request, res: Response) {
     return res.status(result.idempotent ? 200 : 201).json(result);
   } catch (error) { return handle(error, res); }
 }
+
+export async function validateExpedientePartyData(req: Request, res: Response) {
+  try {
+    const result = await service.validateData(actor(req), req.params.id, req.params.relationId, req.body || {});
+    return res.status(result.idempotent ? 200 : 201).json(result);
+  } catch (error) { return handle(error, res); }
+}

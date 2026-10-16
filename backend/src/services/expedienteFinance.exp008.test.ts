@@ -197,5 +197,6 @@ describe('EXP-008 · corrección pago y facturación', () => {
     expect(service()).toContain("source: 'expediente_ingresos_reportados'");
     expect(service()).toContain('listInvoices');
     expect(service()).toContain("actor.rol === 'FINANCIERO' ? {} : expedienteAccessWhere(actor)");
+    expect(service()).toContain("orderBy: [{ created_at: 'desc' }, { factura_estado: 'desc' }]");
   });
 });

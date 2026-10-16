@@ -68,10 +68,14 @@ export class FinancialMovementService {
   }
 
   async list(input: any) {
+    if (input.movimiento_id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(clean(input.movimiento_id))) {
+      throw new FinanceDomainError('El identificador de movimiento no es válido.', 'FINANCE_MOVEMENT_ID_INVALID');
+    }
     const page = Math.max(1, Number(input.page || 1));
     const pageSize = Math.min(100, Math.max(1, Number(input.pageSize || 20)));
     const where: Prisma.MovimientoFinancieroWhereInput = {
       ...(input.organization_id ? { organization_id: input.organization_id } : {}),
+      ...(input.movimiento_id ? { id: clean(input.movimiento_id) } : {}),
       ...(input.naturaleza && input.naturaleza !== 'TODOS' ? { naturaleza: input.naturaleza } : {}),
       ...(input.estatus && input.estatus !== 'TODOS' ? { estatus: input.estatus } : {}),
       ...(input.cuenta_id ? { cuenta_id: input.cuenta_id } : {}),
@@ -80,7 +84,7 @@ export class FinancialMovementService {
       ...(input.responsable_id ? { responsable_id: input.responsable_id } : {}),
       ...(input.comprobante === 'CON' ? { movimientoDocumentos: { some: { estatus: 'ACTIVO', tipo_vinculo: 'COMPROBANTE_PAGO' } } } : {}),
       ...(input.comprobante === 'SIN' ? { movimientoDocumentos: { none: { estatus: 'ACTIVO', tipo_vinculo: 'COMPROBANTE_PAGO' } } } : {}),
-      ...(input.fecha_desde || input.fecha_hasta ? { fecha_movimiento: { ...(input.fecha_desde ? { gte: new Date(input.fecha_desde) } : {}), ...(input.fecha_hasta ? { lte: new Date(`${input.fecha_hasta}T23:59:59.999`) } : {}) } } : {}),
+      ...(!input.movimiento_id && (input.fecha_desde || input.fecha_hasta) ? { fecha_movimiento: { ...(input.fecha_desde ? { gte: new Date(input.fecha_desde) } : {}), ...(input.fecha_hasta ? { lte: new Date(`${input.fecha_hasta}T23:59:59.999`) } : {}) } } : {}),
       ...(input.search ? { OR: [
         { folio: { contains: clean(input.search), mode: 'insensitive' } },
         { referencia: { contains: clean(input.search), mode: 'insensitive' } },

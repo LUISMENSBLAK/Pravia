@@ -1,6 +1,7 @@
 import path from 'path';
 import crypto from 'crypto';
 import multer from 'multer';
+import { DOCUMENT_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
 import type { Request, Response } from 'express';
 import prisma from '../config/prisma';
 import { PredioError, PrediosService } from '../services/predios.service';
@@ -8,7 +9,7 @@ import { deleteFile, getSignedUrl, uploadFile } from '../services/supabase.servi
 import { canonicalUploadedDocumentMime } from '../services/documentUploadValidation';
 
 const service = new PrediosService(prisma);
-export const uploadPredioDocumentoMulter = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+export const uploadPredioDocumentoMulter = multer({ storage: multer.memoryStorage(), limits: { fileSize: DOCUMENT_UPLOAD_MAX_BYTES, files: 1 } });
 
 const actor = (req: Request) => {
   if (!req.user) throw new PredioError(401, 'AUTH_REQUIRED', 'Inicia sesión para continuar.');

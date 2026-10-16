@@ -19,6 +19,7 @@ const api = vi.hoisted(() => ({
   downloadAppendixZip: vi.fn(),
   appendixSignedUrl: vi.fn(),
   uploadDocument: vi.fn(),
+  importDocumentBatch: vi.fn(),
   transition: vi.fn(),
   signaturePreflight: vi.fn(),
 }));
@@ -73,6 +74,7 @@ describe('EXP-004 apéndice documental', () => {
     api.downloadAppendixZip.mockResolvedValue(undefined);
     api.appendixSignedUrl.mockResolvedValue({ url: 'https://signed.example.test/file', expires_in: 600, file_name: 'Identificación vigente.pdf', mime_type: 'application/pdf' });
     api.uploadDocument.mockResolvedValue({});
+    api.importDocumentBatch.mockResolvedValue({ created: 1, restored: 0, skipped: 0, replaced: 0, reused_blobs: 0 });
     api.transition.mockResolvedValue({});
     api.signaturePreflight.mockResolvedValue({ preflight: { ready: true, ready_label: 'Listo para firma', count: 0, hash: 'preflight-hash', missing: [] } });
     vi.spyOn(window, 'open').mockImplementation(() => null);
@@ -92,6 +94,25 @@ describe('EXP-004 apéndice documental', () => {
     await userEvent.click(screen.getByRole('button', { name: /(?:Importar documentos vigentes de|Actualizar desde) comparecientes/ }));
     await waitFor(() => expect(api.importDocumentSource).toHaveBeenCalledWith('exp-1', 'compareciente'));
     expect(changed).toHaveBeenCalled();
+  });
+
+  it('vincula la carga de un requisito existente sin confundirla con una carga genérica', async () => {
+    const changed = vi.fn();
+    const withRequirement = { ...expediente, requisitos_docs: [{
+      id: 'req-1', nombre: 'Identificación del adquirente', categoria: 'IDENTIFICACION',
+      obligatorio: true, estatus: 'PENDIENTE',
+    }] };
+    render(<DocumentsTab expediente={withRequirement} onChanged={changed} />);
+    await screen.findByText('Pre-firma · Organización editable');
+    const section = screen.getByRole('region', { name: 'Requisitos documentales' });
+    expect(within(section).getByText(/Identificación del adquirente · Pendiente · Obligatorio/)).toBeInTheDocument();
+    await userEvent.click(within(section).getByRole('button', { name: 'Cargar documento para Identificación del adquirente' }));
+    const file = new File(['%PDF-1.7 QA'], 'qa-identificacion.pdf', { type: 'application/pdf' });
+    await userEvent.upload(section.querySelector('input[type="file"]') as HTMLInputElement, file);
+    await waitFor(() => expect(api.uploadDocument).toHaveBeenCalledWith('exp-1', file, {
+      categoria: 'IDENTIFICACION', carpeta: 'Administrativo', requisito_id: 'req-1',
+    }));
+    await waitFor(() => expect(changed).toHaveBeenCalled());
   });
 
   it('muestra missing-file humano y no ofrece descarga en snapshot', async () => {
@@ -121,6 +142,23 @@ describe('EXP-004 apéndice documental', () => {
     await userEvent.click(await screen.findByRole('checkbox', { name: 'Seleccionar carpeta Antecedentes' }));
     await userEvent.click(screen.getByRole('button', { name: 'ZIP selección' }));
     await waitFor(() => expect(api.downloadAppendixZip).toHaveBeenCalledWith('exp-1', { item_ids: [], folder_ids: ['folder-1'] }, 'seleccion-documental.zip'));
+  });
+
+  it('conserva la selección y permite reintentar tras un error de carga', async () => {
+    api.importDocumentBatch.mockRejectedValueOnce(new Error('El archivo supera el límite permitido de 50 MB.'));
+    const changed = vi.fn();
+    const { container } = render(<DocumentsTab expediente={expediente} onChanged={changed} />);
+    await screen.findByText('Pre-firma · Organización editable');
+    const file = new File(['%PDF-1.7 QA'], 'qa-documento.pdf', { type: 'application/pdf' });
+    const input = container.querySelector('input[type="file"][multiple]');
+    expect(input).not.toBeNull();
+    fireEvent.change(input!, { target: { files: [file] } });
+    expect(await screen.findByRole('alert')).toHaveTextContent('El archivo supera el límite permitido de 50 MB.');
+    expect(screen.getByText(/1 archivo · .*qa-documento.pdf/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Reintentar carga' }));
+    await waitFor(() => expect(api.importDocumentBatch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('button', { name: 'Reintentar carga' })).not.toBeInTheDocument();
   });
 
   it('protege la firma con la revisión documental previamente consultada', async () => {

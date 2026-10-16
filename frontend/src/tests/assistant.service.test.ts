@@ -40,13 +40,22 @@ describe('assistant service adapter', () => {
   });
 
   it('sube adjuntos temporales como multipart sin forzar Content-Type JSON', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: {
-      id: 'attachment-1', source: 'TEMPORARY_UPLOAD', original_name: 'archivo.pdf', mime_type: 'application/pdf', size_bytes: 7,
-      status: 'AVAILABLE', created_at: '2026-08-17T10:00:00Z',
-    } }), { status: 201, headers: { 'Content-Type': 'application/json' } }));
+    const fetchMock = vi.fn().mockImplementation((input: string) => input === '/api/upload-policy'
+      ? Promise.resolve(new Response(JSON.stringify({
+        standard_file_max_bytes: 50 * 1024 * 1024,
+        fiscal_file_max_bytes: 10 * 1024 * 1024,
+        catalog_import_file_max_bytes: 30 * 1024 * 1024,
+        archive_file_max_bytes: 50 * 1024 * 1024,
+        batch_total_max_bytes: 200 * 1024 * 1024,
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+      : Promise.resolve(new Response(JSON.stringify({ data: {
+        id: 'attachment-1', source: 'TEMPORARY_UPLOAD', original_name: 'archivo.pdf', mime_type: 'application/pdf', size_bytes: 7,
+        status: 'AVAILABLE', created_at: '2026-08-17T10:00:00Z',
+      } }), { status: 201, headers: { 'Content-Type': 'application/json' } })));
     vi.stubGlobal('fetch', fetchMock);
     await assistantService.uploadAttachment('conversation-1', new File(['archivo'], 'archivo.pdf', { type: 'application/pdf' }));
-    const options = fetchMock.mock.calls[0][1];
+    const options = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/conversations/conversation-1/attachments'))?.[1];
+    expect(options).toBeDefined();
     expect(options.body).toBeInstanceOf(FormData);
     expect((options.headers as Headers).has('Content-Type')).toBe(false);
   });

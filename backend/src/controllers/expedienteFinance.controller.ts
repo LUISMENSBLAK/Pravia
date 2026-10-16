@@ -1,11 +1,13 @@
 import type { Request, Response } from 'express';
 import multer from 'multer';
+import { DOCUMENT_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
+import { boundedDocumentBatchStorage } from '../config/documentBatchUpload';
 import prisma from '../config/prisma';
 import { ExpedienteFinanceError, ExpedienteFinanceService } from '../services/expedienteFinance.service';
 import { ExpedienteFinanceValidationError } from '../domain/expedienteFinance';
 
 const service = new ExpedienteFinanceService(prisma);
-export const uploadExp008 = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024, files: 4 } });
+export const uploadExp008 = multer({ storage: boundedDocumentBatchStorage, limits: { fileSize: DOCUMENT_UPLOAD_MAX_BYTES, files: 4 } });
 const actor = (req: Request) => req.user!;
 const fail = (res: Response, error: unknown) => {
   if (error instanceof ExpedienteFinanceError) return res.status(error.status).json({ code: error.code, error: error.message });

@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { calculateFinanceAggregates, calculateReceivable, legacyFinanceAllocations, type EconomicNature } from '../domain/financeCore';
+import { calculateFinanceAggregates, calculateReceivable, legacyFinanceAllocations, moneyToCents, type EconomicNature } from '../domain/financeCore';
 import { FinanceProjectionService } from './financeProjection.service';
 
 export type FinancePeriod = { from: Date; to: Date; key: string; label: string };
@@ -123,7 +123,7 @@ export class FinanceAnalyticsService {
         responsable: { select: { id: true, nombre: true, apellido: true } },
         distribuciones: { where: { movimiento: { estatus: { in: ['APLICADO', 'RECIBIDO', 'VALIDADO'] }, naturaleza: 'INGRESO', ...(input.fecha_hasta ? { fecha_movimiento: { lte: input.fecha_hasta } } : {}) } }, select: { monto: true } },
       },
-      orderBy: { fecha_reconocimiento: 'desc' },
+      orderBy: [{ fecha_reconocimiento: 'desc' }, { id: 'desc' }],
     });
     const items = records.map((item) => ({
       id: item.id,
@@ -136,11 +136,16 @@ export class FinanceAnalyticsService {
       ultimo_pago: null,
       ...calculateReceivable({ generated: Number(item.monto), collected: item.distribuciones.reduce((sum, row) => sum + Number(row.monto), 0), dueDate: item.fecha_vencimiento }),
     })).filter((item) => item.pending > 0);
-    const totals = items.reduce((summary, item) => ({
-      generated: summary.generated + item.generated,
-      collected: summary.collected + item.collected,
-      pending: summary.pending + item.pending,
+    const totalsInCents = items.reduce((summary, item) => ({
+      generated: summary.generated + moneyToCents(item.generated),
+      collected: summary.collected + moneyToCents(item.collected),
+      pending: summary.pending + moneyToCents(item.pending),
     }), { generated: 0, collected: 0, pending: 0 });
+    const totals = {
+      generated: totalsInCents.generated / 100,
+      collected: totalsInCents.collected / 100,
+      pending: totalsInCents.pending / 100,
+    };
     const start = (page - 1) * pageSize;
     return { items: items.slice(start, start + pageSize), meta: { page, pageSize, total: items.length, totalPages: Math.max(1, Math.ceil(items.length / pageSize)), agingAvailable: items.some((item) => item.bucket !== null), totals } };
   }

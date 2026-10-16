@@ -90,6 +90,16 @@ export function resolveAssistantTimeRange(periodValue: unknown, timezoneValue: u
   };
 }
 
+/** Half-open next-calendar-days range, excluding today in the tenant's timezone. */
+export function resolveAssistantUpcomingDayWindow(days: 3 | 7 | 15, timezoneValue: unknown, now = new Date()) {
+  const timezone = safeAssistantTimezone(timezoneValue);
+  const local = zonedParts(now, timezone);
+  const start = addCalendarDays(local.year, local.month, local.day, 1);
+  const end = addCalendarDays(local.year, local.month, local.day, days + 1);
+  return { from: zonedStartOfDay(start.year, start.month, start.day, timezone),
+    to: zonedStartOfDay(end.year, end.month, end.day, timezone), timezone };
+}
+
 export function assistantTemporalReference(timezoneValue: unknown, now = new Date()) {
   const timezone = safeAssistantTimezone(timezoneValue);
   const ranges = (['TODAY', 'TOMORROW', 'THIS_WEEK', 'NEXT_7_DAYS', 'THIS_MONTH'] as AssistantPeriod[])

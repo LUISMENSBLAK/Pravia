@@ -1,0 +1,44 @@
+.backdrop { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 24px; background: rgba(4, 18, 37, .48); }
+.dialog { width: min(760px, 100%); max-height: min(86dvh, 820px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: white; box-shadow: 0 18px 56px rgba(4, 18, 37, .2); }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 20px; border-bottom: 1px solid var(--color-border); }
+.header span { color: var(--color-gold-700); font-size: 10px; font-weight: 800; letter-spacing: .08em; }
+.header h2 { margin: 4px 0 0; color: var(--color-navy-800); font-size: 20px; }
+.header button, .footer button { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: white; color: var(--color-navy-800); cursor: pointer; }
+.header button:focus-visible, .footer button:focus-visible, .list a:focus-visible { outline: 2px solid var(--color-gold-500); outline-offset: 2px; }
+.summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 14px 20px; background: var(--color-surface-subtle); border-bottom: 1px solid var(--color-border); }
+.summary div { min-width: 0; }
+.summary small, .summary strong { display: block; }
+.summary small { color: var(--color-text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.summary strong { margin-top: 4px; overflow-wrap: anywhere; color: var(--color-navy-800); font-size: 14px; }
+.list { min-height: 0; overflow: auto; list-style: none; margin: 0; padding: 0 20px; }
+.list li { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto 44px; align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--color-border); }
+.itemBody { min-width: 0; display: grid; gap: 3px; }
+.itemBody strong, .itemBody span { overflow-wrap: anywhere; }
+.itemBody strong { color: var(--color-navy-800); font-size: 13px; }
+.itemBody span, .itemBody time { color: var(--color-text-secondary); font-size: 11px; }
+.list li > b { color: var(--color-navy-800); font-size: 12px; font-variant-numeric: tabular-nums; }
+.list a { width: 44px; height: 44px; display: grid; place-items: center; border-radius: var(--radius-md); color: var(--color-gold-700); }
+.state, .notice { margin: 20px; padding: 18px; border-radius: var(--radius-md); color: var(--color-text-secondary); text-align: center; }
+.state { border: 1px dashed var(--color-border-strong); }
+.state p { margin: 0 0 10px; }
+.state button { min-height: 44px; padding: 8px 14px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: white; }
+.notice { border: 1px solid var(--color-gold-300); background: var(--color-gold-100); }
+.footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px; border-top: 1px solid var(--color-border); background: white; }
+.footer > span { color: var(--color-text-secondary); font-size: 11px; }
+.footer nav { display: flex; align-items: center; gap: 8px; }
+.footer nav > span { min-width: 90px; color: var(--color-text-secondary); text-align: center; font-size: 11px; }
+.footer button { gap: 5px; padding: 8px 11px; font: inherit; font-size: 11px; }
+.footer button:disabled { opacity: .45; cursor: not-allowed; }
+@media (max-width: 600px) {
+  .backdrop { align-items: end; padding: 0; }
+  .dialog { max-height: 92dvh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+  .header, .summary, .footer { padding-left: 14px; padding-right: 14px; }
+  .summary { grid-template-columns: 1fr; }
+  .list { padding: 0 14px; }
+  .list li { grid-template-columns: minmax(0, 1fr) 44px; }
+  .list li > b { grid-column: 1; }
+  .list a { grid-column: 2; grid-row: 1 / span 2; }
+  .footer { align-items: stretch; flex-direction: column; }
+  .footer nav { display: grid; grid-template-columns: 1fr auto 1fr; }
+  .footer button { width: 100%; }
+}

@@ -205,7 +205,8 @@ export class FinanceLedgerController {
   }
 
   static async expedienteInvoices(req: Request, res: Response) {
-    try { return res.json({ success: true, data: await expedienteFinanceService.listInvoices(req.user!, String(req.query.estado || '')) }); }
+    try { return res.json({ success: true, data: await expedienteFinanceService.listInvoices(req.user!,
+      String(req.query.estado || ''), String(req.query.income_id || '')) }); }
     catch (error) { return failure(res, error, 'No pudimos cargar las facturas de expedientes.'); }
   }
 }

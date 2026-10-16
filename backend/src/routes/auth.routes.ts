@@ -6,6 +6,10 @@ import { runWithPlatformOperation } from '../auth/actorContext';
 const router = Router();
 const platformAuthOperation = (req: any, _res: any, next: any) => runWithPlatformOperation(`AUTH_${req.path}`, () => next());
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+const configuredLoginAttemptLimit = Number.parseInt(process.env.AUTH_LOGIN_RATE_LIMIT_MAX || '', 10);
+const loginAttemptLimit = process.env.NODE_ENV !== 'production'
+  && Number.isInteger(configuredLoginAttemptLimit) && configuredLoginAttemptLimit > 0
+  ? configuredLoginAttemptLimit : 20;
 const limitLogin = (req: any, res: any, next: any) => {
   const key = String(req.ip || req.socket?.remoteAddress || 'unknown');
   const now = Date.now();
@@ -16,7 +20,7 @@ const limitLogin = (req: any, res: any, next: any) => {
   if (loginAttempts.size > 5000) {
     for (const [entry, value] of loginAttempts) if (value.resetAt <= now) loginAttempts.delete(entry);
   }
-  if (state.count > 20) return res.status(429).json({ code: 'AUTH_RATE_LIMITED', error: 'Demasiados intentos. Intenta más tarde.' });
+  if (state.count > loginAttemptLimit) return res.status(429).json({ code: 'AUTH_RATE_LIMITED', error: 'Demasiados intentos. Intenta más tarde.' });
   return next();
 };
 

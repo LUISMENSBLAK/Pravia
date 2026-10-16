@@ -1,0 +1,18 @@
+.panel { min-width: 0; display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: white; }
+.heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.heading h2 { margin: 0; color: var(--color-navy-800); font-size: 17px; }
+.heading p { margin: 5px 0 0; color: var(--color-text-secondary); font-size: 12px; }
+.heading button { min-height: 44px; border: 0; border-radius: var(--radius-md); padding: 8px 13px; color: white; background: var(--color-navy-800); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.heading button:disabled { opacity: .6; cursor: wait; }
+.error { color: var(--color-danger-600); }.saved { color: var(--color-success-700); }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+.card { min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.cardTitle { min-width: 140px; flex: 1 1 180px; display: grid; gap: 2px; }
+.cardTitle strong { color: var(--color-navy-800); font-size: 13px; }.cardTitle small { color: var(--color-text-muted); font-size: 11px; }
+.card label { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; color: var(--color-text-secondary); font-size: 12px; cursor: pointer; }
+.card input[type='checkbox'] { width: 18px; height: 18px; accent-color: var(--color-gold-600); }
+.defaultControls { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; width: 100%; }
+.defaultControls label { margin-right: auto; }.defaultControls select { min-height: 44px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: white; }
+.defaultControls button { display: grid; place-items: center; min-width: 44px; min-height: 44px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: white; cursor: pointer; }
+.defaultControls button:disabled { opacity: .4; cursor: not-allowed; }
+@media (max-width: 767px) { .cards { grid-template-columns: minmax(0, 1fr); } .cardTitle { flex-basis: 100%; } }

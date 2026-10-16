@@ -1,5 +1,6 @@
 import express from 'express';
 import multer from 'multer';
+import { DOCUMENT_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
 import {
   getCotizaciones, 
   getCotizacionById, 
@@ -28,7 +29,7 @@ import { requirePermission } from '../middleware/auth.middleware';
 import { requireCotizacionObjectAccess, requireDocumentoObjectAccess } from '../middleware/objectAccess.middleware';
 
 const router = express.Router();
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: DOCUMENT_UPLOAD_MAX_BYTES, files: 1 } });
 router.param('id', requireCotizacionObjectAccess);
 
 router.get('/', getCotizaciones);

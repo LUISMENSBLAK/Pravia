@@ -42,19 +42,15 @@ test('Archivo local: asignación, resumen, recarga y restricciones físicas', as
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Escritura 23500' })).toBeVisible();
   const appendix = page.getByRole('region', { name: 'Apéndice de la escritura' });
-  const fixtureName = 'apendice-archivo-qa.png';
-  if (!(await appendix.getByText(fixtureName).count())) {
-    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLytQAAAABJRU5ErkJggg==', 'base64');
-    const uploaded = page.waitForResponse((response) => response.url().endsWith(`/expedientes/${caseId}/archivo/apendice`) && response.request().method() === 'POST');
-    await appendix.getByLabel('Agregar documentos').setInputFiles({ name: fixtureName, mimeType: 'image/png', buffer: png });
-    expect((await uploaded).status(), await (await uploaded).text()).toBe(201);
-  }
+  const runId = Date.now();
+  const fixtureName = `apendice-archivo-qa-${runId}.png`;
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLytQAAAABJRU5ErkJggg==', 'base64');
+  const uploaded = page.waitForResponse((response) => response.url().endsWith(`/expedientes/${caseId}/archivo/apendice`) && response.request().method() === 'POST');
+  await appendix.getByLabel('Agregar documentos').setInputFiles({ name: fixtureName, mimeType: 'image/png', buffer: png });
+  expect((await uploaded).status(), await (await uploaded).text()).toBe(201);
   await expect(appendix.getByText(fixtureName)).toBeVisible();
-  const multiNames = ['apendice-archivo-multi-a-qa.png', 'apendice-archivo-multi-b-qa.png'];
-  if (!(await appendix.getByText(multiNames[0]).count())) {
-    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLytQAAAABJRU5ErkJggg==', 'base64');
-    await appendix.getByLabel('Agregar documentos').setInputFiles(multiNames.map((name) => ({ name, mimeType: 'image/png', buffer: png })));
-  }
+  const multiNames = [`apendice-archivo-multi-a-qa-${runId}.png`, `apendice-archivo-multi-b-qa-${runId}.png`];
+  await appendix.getByLabel('Agregar documentos').setInputFiles(multiNames.map((name) => ({ name, mimeType: 'image/png', buffer: png })));
   for (const name of multiNames) await expect(appendix.getByText(name)).toBeVisible();
   await page.reload();
   await expect(page.getByRole('region', { name: 'Apéndice de la escritura' }).getByText(fixtureName)).toBeVisible();

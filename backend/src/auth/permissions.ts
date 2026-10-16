@@ -1,7 +1,7 @@
 import { Role } from '@prisma/client';
 
 export const PERMISSIONS = [
-  'mi_dia.read',
+  'mi_dia.read', 'mi_dia.configure', 'mi_dia.permissions.manage',
   'prospectos.read', 'prospectos.write',
   'cotizaciones.read', 'cotizaciones.write',
   'expedientes.read', 'expedientes.write', 'expedientes.archive',
@@ -35,7 +35,7 @@ const all = [...PERMISSIONS];
 export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   DIRECCION: all,
   ADMINISTRACION: [
-    'mi_dia.read',
+    'mi_dia.read', 'mi_dia.configure', 'mi_dia.permissions.manage',
     'prospectos.read', 'prospectos.write',
     'cotizaciones.read', 'cotizaciones.write',
     'expedientes.read', 'expedientes.write', 'expedientes.deliver', 'expedientes.postfirma.manage', 'expedientes.project.read',

@@ -22,7 +22,7 @@ vi.mock('./expedienteBudget.service', () => ({
 
 import { CotizacionConversionService } from './cotizacionConversion.service';
 
-function database(options: { failAudit?: boolean; prospectAct?: string | null } = {}) {
+function database(options: { failAudit?: boolean; prospectAct?: string | null; canonical?: boolean; inactiveAdditionalAct?: boolean } = {}) {
   const state = { linked: null as any, quoteState: 'ACEPTADA' };
   let transactionTail = Promise.resolve();
   const candidate = () => ({
@@ -30,6 +30,14 @@ function database(options: { failAudit?: boolean; prospectAct?: string | null } 
     prospecto: { id: 'prospect-1', nombre: 'Cliente heredado', tipo_acto: options.prospectAct === undefined ? 'Compraventa' : options.prospectAct }, expediente: state.linked,
     versiones: [{ id: 'version-1', version: 1, aprobada: true, desglose_notaria: { rubros: [{ concepto: 'Honorarios' }] }, total_notaria: 100_000, honorarios_pravia: 25_000, total_cliente: 125_000 }],
     pagos: [{ id: 'payment-1', categoria_ingreso: 'ANTICIPO_NOTARIA', estatus: 'VALIDADO', monto: 30_000 }],
+    ...(options.canonical ? {
+      etapa_contractual: 'ACEPTADA', version_operativa: 3,
+      actos: [
+        { id: 'quote-act-1', tipo_acto_id: 'act-1', confirmed_at: new Date(), tipo_acto: { id: 'act-1', nombre: 'Compraventa' } },
+        ...(options.inactiveAdditionalAct ? [{ id: 'quote-act-2', tipo_acto_id: 'act-2', confirmed_at: new Date(), tipo_acto: { id: 'act-2', nombre: 'Donación' } }] : []),
+      ],
+      solicitante_formal: { id: 'person-1', nombre_busqueda: 'Cliente heredado' },
+    } : {}),
   });
   const tx: any = {
     $executeRaw: vi.fn().mockResolvedValue(1),
@@ -37,8 +45,10 @@ function database(options: { failAudit?: boolean; prospectAct?: string | null } 
       findFirst: vi.fn(async () => candidate()),
       update: vi.fn(async () => { state.quoteState = 'CONVERTIDA_EXPEDIENTE'; return candidate(); }),
     },
+    cotizacionTransicion: { findFirst: vi.fn().mockResolvedValue(null) },
     user: { findFirst: vi.fn(async ({ where }: any) => ({ id: where.id })) },
-    tipoActo: { findFirst: vi.fn().mockResolvedValue({ id: 'act-1', nombre: 'Compraventa' }), findMany: vi.fn() },
+    tipoActo: { findFirst: vi.fn().mockResolvedValue({ id: 'act-1', nombre: 'Compraventa' }), findMany: vi.fn().mockResolvedValue([{ id: 'act-1' }, { id: 'act-2' }]) },
+    tipoActoCaracterCompareciente: { findMany: vi.fn().mockResolvedValue([{ tipo_acto_id: 'act-1', caracter_id: 'char-comprador' }]) },
     documento: { findMany: vi.fn().mockResolvedValue([{ id: 'document-1' }]) },
     prospectoDocumento: { findMany: vi.fn().mockResolvedValue([{ documento_id: 'document-1' }]) },
     cotizacionDocumento: { findMany: vi.fn().mockResolvedValue([{ documento_id: 'document-2' }]) },
@@ -129,5 +139,39 @@ describe('EXP-001 conversión canónica y atómica', () => {
     await expect(new CotizacionConversionService(prisma).convert({ cotizacionId: 'quote-1', actorOrganizationId: 'org-1' })).rejects.toThrow('audit failed');
     expect(state).toEqual({ linked: null, quoteState: 'ACEPTADA' });
     expect(tx.domainEventOutbox.create).not.toHaveBeenCalled();
+  });
+
+  it('no asigna implícitamente Vendedor ni otro carácter al solicitante formal', async () => {
+    const { prisma, tx } = database({ canonical: true });
+    await expect(new CotizacionConversionService(prisma).convert({
+      cotizacionId: 'quote-1', actorOrganizationId: 'org-1', idempotencyKey: 'role-required-qa',
+    })).rejects.toMatchObject({ code: 'FORMAL_APPLICANT_ROLE_REQUIRED', status: 409 });
+    expect(tx.tipoActoCaracterCompareciente.findMany).not.toHaveBeenCalled();
+    expect(dependencies.open).not.toHaveBeenCalled();
+  });
+
+  it('rechaza un carácter ajeno al acto o a la Notaría antes de abrir expediente', async () => {
+    const { prisma, tx } = database({ canonical: true });
+    await expect(new CotizacionConversionService(prisma).convert({
+      cotizacionId: 'quote-1', actorOrganizationId: 'org-1', idempotencyKey: 'role-invalid-qa',
+      solicitanteCaracterPorActo: { 'quote-act-1': 'char-vendedor-no-configurado' },
+    })).rejects.toMatchObject({ code: 'FORMAL_APPLICANT_ROLE_INVALID', status: 409 });
+    expect(tx.tipoActoCaracterCompareciente.findMany).toHaveBeenCalledOnce();
+    expect(dependencies.open).not.toHaveBeenCalled();
+  });
+
+  it('bloquea Donación inactiva aunque sea acto secundario sin crear un expediente parcial', async () => {
+    const { prisma, tx, state } = database({ canonical: true, inactiveAdditionalAct: true });
+    tx.tipoActo.findMany.mockResolvedValue([{ id: 'act-1' }]);
+    await expect(new CotizacionConversionService(prisma).convert({
+      cotizacionId: 'quote-1', actorOrganizationId: 'org-1', idempotencyKey: 'inactive-second-act-qa',
+      solicitanteCaracterPorActo: { 'quote-act-1': 'char-comprador', 'quote-act-2': null },
+    })).rejects.toMatchObject({ code: 'TIPO_ACTO_INACTIVE', status: 409, message: expect.stringContaining('Donación') });
+    expect(tx.tipoActo.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ activo: true, archived_at: null, OR: [{ organization_id: null }, { organization_id: 'org-1' }] }),
+    }));
+    expect(dependencies.open).not.toHaveBeenCalled();
+    expect(state).toEqual({ linked: null, quoteState: 'ACEPTADA' });
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 });

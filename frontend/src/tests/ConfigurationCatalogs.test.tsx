@@ -11,11 +11,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   catalogActs: vi.fn(),
+  actCreationDefaults: vi.fn(),
   catalogAct: vi.fn(),
   catalogSupporting: vi.fn(),
   ensureActConfiguration: vi.fn(),
   createCatalogAct: vi.fn(),
   updateCatalogAct: vi.fn(),
+  addCatalogActCharacter: vi.fn(),
   createCatalogStage: vi.fn(),
   updateCatalogStage: vi.fn(),
   deleteCatalogStage: vi.fn(),
@@ -157,6 +159,11 @@ describe("Catálogos contractuales accesibles", () => {
     api.catalogAct.mockResolvedValue(actDetail);
     api.catalogSupporting.mockResolvedValue(support);
     api.catalogActivityConcepts.mockResolvedValue([]);
+    api.actCreationDefaults.mockResolvedValue({
+      REGISTRABLE: [{ code: 'REVISION_INICIAL', name: 'Revisión de expediente', stage: 'Prefirma', duration: 3, dayType: 'HABILES', nature: 'INTERNA' }],
+      NO_REGISTRABLE: [{ code: 'REVISION_INICIAL', name: 'Revisión de expediente', stage: 'Prefirma', duration: 3, dayType: 'HABILES', nature: 'INTERNA' }],
+      ESPECIAL: [{ code: 'REVISION_INICIAL', name: 'Revisión de expediente', stage: 'Prefirma', duration: 3, dayType: 'HABILES', nature: 'INTERNA' }],
+    });
     api.updateCatalogActivity.mockResolvedValue({});
     api.setCatalogDependencies.mockResolvedValue({});
     api.catalogArtifactRoot.mockResolvedValue({
@@ -317,6 +324,20 @@ describe("Catálogos contractuales accesibles", () => {
         "activity-b",
       ]),
     );
+  });
+
+  it('abre el acto existente desde la cotización y agrega un carácter sin iniciar otra alta', async () => {
+    const user = userEvent.setup();
+    const id = '11111111-1111-4111-8111-111111111111';
+    api.catalogAct.mockResolvedValue({ ...actDetail, id, character_roles: [] });
+    api.addCatalogActCharacter.mockResolvedValue({});
+    render(<MemoryRouter initialEntries={[`/configuracion/actos-tiempos?focusAct=${id}&returnTo=%2Fcotizaciones%2F22222222-2222-4222-8222-222222222222`]}><ActsTimesCatalog /></MemoryRouter>);
+    expect(await screen.findByRole('heading', { name: 'CARACTERES DE COMPARECIENTES' })).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: /nuevo acto/i })).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText('Nuevo carácter de compareciente'), 'Adquirente');
+    await user.click(screen.getByRole('button', { name: 'Agregar carácter' }));
+    await waitFor(() => expect(api.addCatalogActCharacter).toHaveBeenCalledWith(id, { name: 'Adquirente', principal: true }));
+    expect(screen.getByRole('button', { name: 'Volver a la ficha' })).toBeInTheDocument();
   });
 
   it("navega por la Notaría única, carpetas y expone importación/versionado accesibles", async () => {

@@ -5,9 +5,11 @@ import { FinanceFiscalController } from '../controllers/financeFiscal.controller
 import { requirePermission } from '../middleware/auth.middleware';
 import { requireDocumentoObjectAccess } from '../middleware/objectAccess.middleware';
 import multer from 'multer';
+import { FISCAL_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
+import { boundedDocumentBatchStorage } from '../config/documentBatchUpload';
 
 const router = Router();
-const fiscalUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024, files: 2, fields: 10 } });
+const fiscalUpload = multer({ storage: boundedDocumentBatchStorage, limits: { fileSize: FISCAL_UPLOAD_MAX_BYTES, files: 2, fields: 10 } });
 
 // Lecturas canónicas. El router padre ya exige finanzas.read.
 router.get('/resumen', FinanceLedgerController.summary);
@@ -19,8 +21,11 @@ router.get('/cartera', FinanceLedgerController.receivables);
 router.get('/facturacion/estado', FinanceFiscalController.status);
 router.get('/facturacion/expedientes', FinanceLedgerController.expedienteInvoices);
 router.get('/facturacion/entidades', FinanceFiscalController.entities);
+router.get('/facturacion/conceptos', FinanceFiscalController.fiscalConcepts);
+router.get('/facturacion/conceptos/actos', FinanceFiscalController.fiscalActOptions);
 router.get('/facturacion/proveedores', FinanceFiscalController.suppliers);
 router.get('/facturacion/documentos', FinanceFiscalController.documents);
+router.get('/facturacion/ingresos/:incomeId/contexto', FinanceFiscalController.incomeContext);
 router.get('/facturacion/cuentas', FinanceFiscalController.accounts);
 router.get('/facturacion/documentos/:id/archivos/:kind', requirePermission('documentos.read'), FinanceFiscalController.fileUrl);
 router.get('/facturacion/exportar.xlsx', FinanceFiscalController.exportXlsx);
@@ -38,12 +43,15 @@ router.post('/movimientos/:id/cancelar', requirePermission('finanzas.validate'),
 router.post('/movimientos/:id/revertir', requirePermission('finanzas.validate'), FinanceLedgerController.reverseMovement);
 router.post('/cuentas', requirePermission('finanzas.write'), FinanceLedgerController.createAccount);
 router.post('/facturacion/entidades', requirePermission('finanzas.validate'), FinanceFiscalController.createEntity);
+router.post('/facturacion/conceptos', requirePermission('finanzas.validate'), FinanceFiscalController.createFiscalConcept);
 router.patch('/facturacion/entidades/:id', requirePermission('finanzas.validate'), FinanceFiscalController.updateEntity);
-router.post('/facturacion/proveedores', requirePermission('finanzas.write'), FinanceFiscalController.createSupplier);
+router.post('/facturacion/proveedores', requirePermission('finanzas.write'), fiscalUpload.single('csf'), FinanceFiscalController.createSupplier);
 router.patch('/facturacion/proveedores/:id', requirePermission('finanzas.write'), FinanceFiscalController.updateSupplier);
 router.post('/facturacion/proveedores/csf/extraer', requirePermission('finanzas.write'), fiscalUpload.single('file'), FinanceFiscalController.extractCsf);
+router.put('/facturacion/ingresos/:incomeId/receptores/:comparecienteId/perfil', requirePermission('finanzas.write'), FinanceFiscalController.confirmIncomeReceiver);
 router.post('/facturacion/borradores', requirePermission('finanzas.write'), FinanceFiscalController.createDraft);
 router.patch('/facturacion/borradores/:id', requirePermission('finanzas.write'), FinanceFiscalController.updateDraft);
+router.delete('/facturacion/borradores/:id', requirePermission('finanzas.write'), FinanceFiscalController.deleteDraft);
 router.post('/facturacion/manual', requirePermission('finanzas.write'), requirePermission('documentos.write'), fiscalUpload.fields([{ name: 'xml', maxCount: 1 }, { name: 'pdf', maxCount: 1 }]), FinanceFiscalController.uploadManual);
 router.post('/facturacion/documentos/:id/aplicaciones', requirePermission('finanzas.validate'), FinanceFiscalController.applyPayment);
 router.post('/facturacion/documentos/:id/rep/preparar', requirePermission('finanzas.validate'), FinanceFiscalController.prepareRep);

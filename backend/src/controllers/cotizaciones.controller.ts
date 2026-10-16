@@ -68,6 +68,8 @@ const quoteWorkflowError = (res: Response, error: unknown) => {
   if (error instanceof QuoteEmailAIError) return res.status(error.status).json({ error: error.message, code: error.code });
   if (error instanceof QuoteAIError) return res.status(error.status).json({ error: error.message, code: error.code });
   if (error instanceof QuoteContractError) return res.status(error.status).json({ error: error.message, code: error.code });
+  if (error instanceof QuoteBudgetError) return res.status(error.status).json({ error: error.message, code: error.code });
+  if (error instanceof BudgetValidationError) return res.status(400).json({ error: error.message, code: error.code });
   if (error instanceof CotizacionBusinessError) return res.status(error.status).json({ error: error.message, code: error.code });
   if (error instanceof ExpedienteOpeningError) return res.status(error.status).json({ error: error.message, code: error.code });
   console.error('[QUOTE_WORKFLOW_ERROR]', error);
@@ -212,6 +214,36 @@ export const getCotizacionById = async (req: Request, res: Response) => {
 
     if (!cotizacion) return res.status(404).json({ error: 'Cotización no encontrada' });
     const workflow = await cotizacionWorkflowService.read(req.user!, id);
+    const conversion = evaluateConversionEligibility(cotizacion);
+    if (workflow.stage && cotizacion.actos.length) {
+      const actIds = cotizacion.actos.map((item) => item.tipo_acto_id);
+      const [activeActs, configuredCharacters] = await Promise.all([
+        prisma.tipoActo.findMany({
+          where: { id: { in: actIds }, activo: true, archived_at: null, OR: [{ organization_id: null }, { organization_id: req.user!.organizationId }] },
+          select: { id: true },
+        }),
+        prisma.tipoActoCaracterCompareciente.findMany({
+          where: {
+            tipo_acto_id: { in: actIds },
+            caracter: { activo: true, OR: [{ organization_id: null }, { organization_id: req.user!.organizationId }] },
+          },
+          select: { tipo_acto_id: true },
+        }),
+      ]);
+      const activeActIds = new Set(activeActs.map((item) => item.id));
+      const configuredActIds = new Set(configuredCharacters.map((item) => item.tipo_acto_id));
+      for (const item of cotizacion.actos) {
+        if (!activeActIds.has(item.tipo_acto_id)) {
+          conversion.failures.push(`El acto ${item.tipo_acto.nombre} está inactivo o no disponible para esta Notaría.`);
+          conversion.eligible = false;
+          continue;
+        }
+        if (!configuredActIds.has(item.tipo_acto_id)) {
+          conversion.failures.push(`Configura los caracteres de comparecientes del acto ${item.tipo_acto.nombre} antes de convertir.`);
+          conversion.eligible = false;
+        }
+      }
+    }
     const safeCotizacion = {
       ...cotizacion,
       versiones: cotizacion.versiones || [],
@@ -219,7 +251,7 @@ export const getCotizacionById = async (req: Request, res: Response) => {
       pagos: cotizacion.pagos || [],
       fuente_notarial: req.user?.permissions.includes('documentos.read') ? cotizacion.fuente_notarial : null,
       transiciones_permitidas: getAllowedCotizacionTransitions(cotizacion.estado, Boolean(cotizacion.fuente_notarial_id)),
-      conversion: evaluateConversionEligibility(cotizacion),
+      conversion,
       presupuesto: quoteBudgetResponse(cotizacion.conceptos),
       workflow,
     };
@@ -726,7 +758,7 @@ export const validarAnticipo = async (req: Request, res: Response) => {
 export const convertToExpediente = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { tipo_acto_id, abogado_id, expectedVersion, idempotencyKey, confirm, effectiveAt, ...extra } = req.body ?? {};
+    const { tipo_acto_id, abogado_id, expectedVersion, idempotencyKey, confirm, effectiveAt, solicitante_caracter_por_acto, ...extra } = req.body ?? {};
     if (Object.keys(extra).length) {
       return res.status(400).json({ error: 'La solicitud contiene campos no permitidos.', code: 'COT001_FIELDS_DENIED' });
     }
@@ -746,6 +778,7 @@ export const convertToExpediente = async (req: Request, res: Response) => {
       idempotencyKey,
       confirm,
       effectiveAt,
+      solicitanteCaracterPorActo: solicitante_caracter_por_acto,
     });
     res.status(result.alreadyConverted ? 200 : 201).json({
       ...result.expediente,

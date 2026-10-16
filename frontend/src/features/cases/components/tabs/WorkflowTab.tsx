@@ -62,6 +62,13 @@ function CanonicalOperationalFollowup({ expediente }: { expediente: ExpedienteDe
     finally { setLoading(false); }
   }, [expediente.id]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const processId = new URLSearchParams(window.location.search).get('process_id');
+    if (!processId || !data?.procesos.some((item) => item.id === processId)) return;
+    const row = document.getElementById(`seguimiento-actividad-${processId}`);
+    row?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    row?.focus({ preventScroll: true });
+  }, [data]);
   const complete = async (activity: SeguimientoActivity) => {
     setSaving(activity.id); setError('');
     try {
@@ -102,7 +109,7 @@ function CanonicalOperationalFollowup({ expediente }: { expediente: ExpedienteDe
       {processes.map((activity) => {
         const blocked = activity.estado_efectivo === 'BLOQUEADO';
         const completed = activity.estado_operativo === 'COMPLETADO';
-        return <div key={activity.id} className={styles.trackingProcessRow} role="row" data-state={blocked ? 'PENDIENTE' : completed ? 'REALIZADO' : 'REALIZAR'}>
+        return <div key={activity.id} id={`seguimiento-actividad-${activity.id}`} tabIndex={-1} className={styles.trackingProcessRow} role="row" data-state={blocked ? 'PENDIENTE' : completed ? 'REALIZADO' : 'REALIZAR'}>
           <div role="cell" data-label="Proceso"><strong>{activity.actividad_nombre_snapshot}</strong></div>
           <div role="cell" data-label="Días restantes"><span>{activity.dias_restantes?.label || '—'}</span></div>
           <div role="cell" data-label="Fecha de cumplimiento"><span>{dateOnly(activity.fecha_cumplimiento)}</span></div>

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import multer from "multer";
+import { DOCUMENT_UPLOAD_MAX_BYTES } from "../config/uploadLimits";
 import { ComplianceController } from "../controllers/compliance.controller";
 import {
   requireExpedienteAccess,
@@ -10,7 +11,7 @@ import { BeneficialControllerController } from "../controllers/beneficialControl
 const router = Router();
 const signedUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 25 * 1024 * 1024, files: 1 },
+  limits: { fileSize: DOCUMENT_UPLOAD_MAX_BYTES, files: 1 },
 });
 router.get(
   "/expedientes/:expedienteId/revision-asistida",

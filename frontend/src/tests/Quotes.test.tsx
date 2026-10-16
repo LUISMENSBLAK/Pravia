@@ -31,9 +31,16 @@ const mockApi = (options: MockOptions = {}) => {
   const quotes = options.quotes ?? [quote()]; const result = options.listResult ?? list(quotes);
   return vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    if (url.endsWith('/upload-policy')) return response({
+      standard_file_max_bytes: 50 * 1024 * 1024,
+      fiscal_file_max_bytes: 10 * 1024 * 1024,
+      catalog_import_file_max_bytes: 30 * 1024 * 1024,
+      archive_file_max_bytes: 50 * 1024 * 1024,
+      batch_total_max_bytes: 200 * 1024 * 1024,
+    });
     if (url.endsWith('/auth/me')) return response(session(options.permissions));
     if (url.includes('/comparecientes?')) return response({ data: [{ id: 'party-1', nombre: 'CLIENTE FORMAL', tipo_persona: 'FISICA' }], meta: { total: 1 } });
-    if (url.endsWith('/expedientes/tipos-acto')) return response([{ id: 'act-compraventa', nombre: 'Compraventa' }, { id: 'act-donacion', nombre: 'Donación' }]);
+    if (url.endsWith('/expedientes/tipos-acto')) return response([{ id: 'act-compraventa', nombre: 'Compraventa', tipoActoCaracteresCompareciente: [{ caracter_id: 'char-comprador', caracter: { nombre: 'Comprador' } }, { caracter_id: 'char-vendedor', caracter: { nombre: 'Vendedor' } }] }, { id: 'act-donacion', nombre: 'Donación' }]);
     if (url.includes('/prospectos?')) return response({ data: [{ id: 'prospect-2', nombre: 'Nueva Empresa', tipo_acto: 'Hipoteca', email: 'nueva@empresa.mx' }], meta: { total: 1 }, facets: { services: [], sources: [] } });
     if (url.includes('/notarias?')) return response([{ id: 'notary-1', nombre: 'Notaría 12', numero_notaria: '12', municipio: 'Tepic', entidad_federativa: 'Nayarit', activa: true }]);
     if (url.endsWith('/cotizaciones') && init?.method === 'POST') return response(quote({ id: 'created-quote', numero_cotizacion: 'COT-2026-002', prospecto_id: 'prospect-2', prospecto: { nombre: 'Nueva Empresa', tipo_acto: 'Hipoteca' }, versiones: [] }), 201);
@@ -120,6 +127,18 @@ describe('Cotizaciones', () => {
     expect(within(progress).getByText('Etapa persistida: En seguimiento')).toBeInTheDocument();
     expect(within(progress).getByText('En seguimiento').closest('li')).toHaveAttribute('aria-current', 'step');
     expect(within(progress).getByText('Enviada al cliente').closest('li')).toHaveAttribute('data-complete', 'true');
+  });
+
+  it('mantiene una sola acción de avance inmediatamente debajo del stepper', async () => {
+    mockApi({ quotes: [quote({ workflow: workflow('EN_ELABORACION', ['ENVIAR_CLIENTE', 'SUSPENDER', 'CANCELAR']) })] });
+    render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'COT-2026-001' });
+    const progress = screen.getByRole('region', { name: 'Avance operativo de la cotización' });
+    const next = screen.getByLabelText('Siguiente paso de la cotización');
+    expect(progress.nextElementSibling).toBe(next);
+    expect(within(next).getAllByRole('button')).toHaveLength(1);
+    expect(within(next).getByRole('button', { name: 'Registrar envío al cliente' })).toBeInTheDocument();
+    expect(within(screen.getByRole('heading', { name: 'Acciones de negocio' }).closest('section')!).queryByRole('button', { name: 'Registrar envío al cliente' })).not.toBeInTheDocument();
   });
 
   it('muestra subtotales humanos por rubro y el total general', async () => {
@@ -213,7 +232,7 @@ describe('Cotizaciones', () => {
   });
 
   it('registra la aceptación humana sin bloquear la edición inline ni aplicar finanzas', async () => {
-    mockApi({ quotes: [quote({ workflow: workflow('EN_SEGUIMIENTO', ['REENVIAR_CLIENTE', 'ACEPTAR', 'RECHAZAR', 'SUSPENDER', 'CANCELAR'], 2) })] }); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>); await screen.findByRole('heading', { name: 'COT-2026-001' }); await user.click(screen.getByRole('button', { name: 'Registrar aceptación' })); expect(screen.getByText(/actos y el solicitante formal/i)).toBeInTheDocument(); await user.selectOptions(screen.getByLabelText('Solicitante formal'), 'party-1'); await user.click(screen.getByRole('button', { name: 'Confirmar aceptación' }));
+    mockApi({ quotes: [quote({ workflow: workflow('EN_SEGUIMIENTO', ['REENVIAR_CLIENTE', 'ACEPTAR', 'RECHAZAR', 'SUSPENDER', 'CANCELAR'], 2) })] }); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>); await screen.findByRole('heading', { name: 'COT-2026-001' }); await user.click(screen.getByRole('button', { name: 'Marcar como aceptada' })); expect(screen.getByText(/actos y el solicitante formal/i)).toBeInTheDocument(); await user.selectOptions(screen.getByLabelText('Solicitante formal'), 'party-1'); await user.click(screen.getByRole('button', { name: 'Confirmar aceptación' }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/acciones'), expect.objectContaining({ method: 'POST' })));
     const call = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/cotizaciones/quote-1/acciones'));
     expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ action: 'ACEPTAR', expectedVersion: 2, confirm: true, confirmedActIds: ['quote-act-1'], formalApplicantId: 'party-1' });
@@ -225,7 +244,7 @@ describe('Cotizaciones', () => {
     const user = userEvent.setup();
     render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>);
     await screen.findByRole('heading', { name: 'COT-2026-001' });
-    const trigger = screen.getByRole('button', { name: 'Registrar aceptación' });
+    const trigger = screen.getByRole('button', { name: 'Marcar como aceptada' });
     await user.click(trigger);
     const dialog = screen.getByRole('dialog');
     const close = within(dialog).getByRole('button', { name: 'Cerrar' });
@@ -242,9 +261,9 @@ describe('Cotizaciones', () => {
   });
 
   it('confirma y ejecuta conversión idempotente por endpoint real', async () => {
-    const accepted = quote({ estado: 'ACEPTADA', workflow: workflow('ACEPTO_ANTICIPO', ['CONVERTIR'], 3), transiciones_permitidas: [], conversion: { eligible: true, accepted: true, approvedVersion: true, validatedAdvance: false, validatedAdvanceTotal: 0, notConverted: true, linkedProspect: true, failures: [] } }); mockApi({ quotes: [accepted] }); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>); await screen.findByRole('heading', { name: 'COT-2026-001' }); await user.click(screen.getByRole('button', { name: 'Convertir en expediente' })); const dialog = screen.getByRole('dialog'); expect(within(dialog).getByText('Constructora Horizonte')).toBeInTheDocument(); expect(within(dialog).getByText(/sin aplicar movimientos financieros/i)).toBeInTheDocument(); const submit = within(dialog).getByRole('button', { name: 'Convertir en expediente' }); await waitFor(() => expect(submit).toBeEnabled()); await user.click(submit); await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/convertir'), expect.objectContaining({ method: 'POST' })));
+    const accepted = quote({ estado: 'ACEPTADA', workflow: workflow('ACEPTO_ANTICIPO', ['CONVERTIR'], 3), transiciones_permitidas: [], conversion: { eligible: true, accepted: true, approvedVersion: true, validatedAdvance: false, validatedAdvanceTotal: 0, notConverted: true, linkedProspect: true, failures: [] } }); mockApi({ quotes: [accepted] }); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>); await screen.findByRole('heading', { name: 'COT-2026-001' }); await user.click(screen.getByRole('button', { name: 'Convertir en expediente' })); const dialog = screen.getByRole('dialog'); expect(within(dialog).getByText('Constructora Horizonte')).toBeInTheDocument(); expect(within(dialog).getByText(/sin aplicar movimientos financieros/i)).toBeInTheDocument(); const submit = within(dialog).getByRole('button', { name: 'Convertir en expediente' }); await waitFor(() => expect(within(dialog).getByLabelText('Carácter del solicitante en Compraventa')).toBeEnabled()); expect(submit).toBeDisabled(); await user.selectOptions(within(dialog).getByLabelText('Carácter del solicitante en Compraventa'), 'char-comprador'); await waitFor(() => expect(submit).toBeEnabled()); await user.click(submit); await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/convertir'), expect.objectContaining({ method: 'POST' })));
     const call = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/cotizaciones/quote-1/convertir'));
-    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ expectedVersion: 3, confirm: true, tipo_acto_id: 'act-compraventa' });
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ expectedVersion: 3, confirm: true, tipo_acto_id: 'act-compraventa', solicitante_caracter_por_acto: { 'quote-act-1': 'char-comprador' } });
   });
 
   it('bloquea la conversión canónica cuando faltan actos estructurados', async () => {
@@ -256,8 +275,27 @@ describe('Cotizaciones', () => {
     expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/convertir'), expect.anything());
   });
 
+  it('identifica por nombre el acto aceptado que ya no está disponible en el catálogo activo', async () => {
+    const accepted = quote({
+      estado: 'ACEPTADA',
+      workflow: workflow('ACEPTADA', ['CONVERTIR'], 3),
+      actos: [{ id: 'quote-act-donation', tipo_acto_id: 'act-archived', orden: 0, tipo_acto: { id: 'act-archived', nombre: 'Donación' } }],
+      conversion: { eligible: false, accepted: true, approvedVersion: true, validatedAdvance: false, validatedAdvanceTotal: 0, notConverted: true, linkedProspect: true, failures: ['El acto no está disponible.'] },
+    });
+    mockApi({ quotes: [accepted] });
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'COT-2026-001' });
+    await user.click(screen.getByRole('button', { name: 'Convertir en expediente' }));
+    const dialog = screen.getByRole('dialog');
+    await waitFor(() => expect(within(dialog).getByRole('alert')).toHaveTextContent('Donación no está disponible en el catálogo activo'));
+    expect(within(dialog).getByRole('button', { name: 'Convertir en expediente' })).toBeDisabled();
+  });
+
   it('explica humanamente el conflicto de conversión duplicada', async () => {
-    const accepted = quote({ estado: 'ACEPTADA', workflow: workflow('ACEPTO_ANTICIPO', ['CONVERTIR'], 3), transiciones_permitidas: [], conversion: { eligible: true, accepted: true, approvedVersion: true, validatedAdvance: false, validatedAdvanceTotal: 0, notConverted: true, linkedProspect: true, failures: [] } }); mockApi({ quotes: [accepted], convertError: true }); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>); await screen.findByRole('heading', { name: 'COT-2026-001' }); await user.click(screen.getByRole('button', { name: 'Convertir en expediente' })); const dialog = screen.getByRole('dialog'); await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Convertir en expediente' })).toBeEnabled()); await user.click(within(dialog).getByRole('button', { name: 'Convertir en expediente' })); expect(await screen.findByRole('alert')).toHaveTextContent('ya fue convertida');
+    const accepted = quote({ estado: 'ACEPTADA', workflow: workflow('ACEPTO_ANTICIPO', ['CONVERTIR'], 3), transiciones_permitidas: [], conversion: { eligible: true, accepted: true, approvedVersion: true, validatedAdvance: false, validatedAdvanceTotal: 0, notConverted: true, linkedProspect: true, failures: [] } }); mockApi({ quotes: [accepted], convertError: true }); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>); await screen.findByRole('heading', { name: 'COT-2026-001' }); await user.click(screen.getByRole('button', { name: 'Convertir en expediente' })); const dialog = screen.getByRole('dialog'); const role = within(dialog).getByLabelText('Carácter del solicitante en Compraventa'); await waitFor(() => expect(role).toBeEnabled()); await user.selectOptions(role, 'NO_PARTICIPA'); await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Convertir en expediente' })).toBeEnabled()); await user.click(within(dialog).getByRole('button', { name: 'Convertir en expediente' })); expect(await screen.findByRole('alert')).toHaveTextContent('ya fue convertida');
+    const request = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/cotizaciones/quote-1/convertir'));
+    expect(JSON.parse(String(request?.[1]?.body)).solicitante_caracter_por_acto).toEqual({ 'quote-act-1': null });
   });
 
   it('muestra una sola acción cuando la cotización ya tiene expediente', async () => {

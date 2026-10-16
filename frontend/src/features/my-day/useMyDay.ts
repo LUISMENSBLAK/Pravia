@@ -26,7 +26,8 @@ export function useMyDay() {
     } catch (error) {
       if (controller.signal.aborted) return;
       const message = error instanceof Error ? error.message : 'No pudimos cargar el resumen de hoy.';
-      setState((current) => hasData.current ? { ...current, error: message } : { status: 'error', data: null, error: message });
+      hasData.current = false;
+      setState({ status: 'error', data: null, error: message });
     } finally {
       if (activeRequest.current === controller) activeRequest.current = null;
     }

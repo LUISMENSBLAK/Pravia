@@ -20,7 +20,6 @@ async function run() {
   const caseRecord = await prisma.expediente.findUnique({ where: { id: '7a139000-0000-4000-8000-000000000001' }, select: { organization_id: true, notaria_id: true, abogado_id: true } });
   if (!caseRecord?.organization_id) throw new Error('LOCAL_QA_CASE_NOT_FOUND');
   const existing = await prisma.catalogoArtefacto.findFirst({ where: { organization_id: caseRecord.organization_id, codigo_biblioteca: code } });
-  if (existing) { process.stdout.write('LOCAL_ARCHIVO_FORMAT_ALREADY_EXISTS\n'); return; }
   const notaria = caseRecord.notaria_id
     ? await prisma.notaria.findUnique({ where: { id: caseRecord.notaria_id }, select: { id: true } })
     : await prisma.notaria.findFirst({ where: { organization_id: caseRecord.organization_id }, select: { id: true } });
@@ -31,6 +30,23 @@ async function run() {
     new Paragraph('Folios {{archivo.folio_inicio}} a {{archivo.folio_fin}}. Total: {{archivo.numero_folios}}.'),
     new Paragraph('Instrucción revisable: {{archivo.instruccion}}'),
   ] }] }));
+  if (existing) {
+    const version = await prisma.catalogoArtefactoVersion.findFirst({
+      where: { organization_id: caseRecord.organization_id, artefacto_id: existing.id, origen: 'QA_LOCAL_SYNTHETIC' },
+      orderBy: { version: 'desc' },
+    });
+    if (!version?.storage_key) throw new Error('LOCAL_ARCHIVO_FORMAT_VERSION_MISSING');
+    if (await storage.exists(version.storage_key)) { process.stdout.write('LOCAL_ARCHIVO_FORMAT_ALREADY_EXISTS\n'); return; }
+    await storage.upload(buffer, version.storage_key);
+    try {
+      await prisma.catalogoArtefactoVersion.update({
+        where: { id: version.id },
+        data: { size_bytes: buffer.length, checksum_sha256: createHash('sha256').update(buffer).digest('hex') },
+      });
+    } catch (error) { await storage.delete(version.storage_key); throw error; }
+    process.stdout.write('LOCAL_ARCHIVO_FORMAT_STORAGE_RESTORED\n');
+    return;
+  }
   const storageKey = `organizations/${caseRecord.organization_id}/qa/archivo/${randomUUID()}_nota-sintetica.docx`;
   await storage.upload(buffer, storageKey);
   try {
