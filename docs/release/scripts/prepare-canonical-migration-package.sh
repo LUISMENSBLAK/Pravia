@@ -23,6 +23,21 @@ cp "$repo_root/backend/prisma/schema.prisma" "$output_dir/schema.prisma"
 printf 'provider = "postgresql"\n' > "$output_dir/migrations/migration_lock.toml"
 
 migrations=(
+  20260726000000_expedientes_core_engine
+  20260731_comparecientes_alta_session_ia
+  20260731_comparecientes_maestro
+  20260811000000_extend_compareciente_profile_fields
+  20260811010000_extend_operational_agenda_fields
+  20260811011000_extend_agenda_event_types
+  20260811020000_create_ai_usage_logs
+  20260811030000_create_compliance_engine
+  20260811031000_seed_verified_compliance_references
+  20260811040000_create_secure_auth_sessions
+  20260811041000_harden_legacy_public_api
+  20260811042000_define_legacy_data_api_deny_policies
+  20260811050000_add_operational_fk_indexes
+  20260811051000_complete_operational_fk_indexes
+  20260811052000_add_compareciente_link_validation
   20260812000000_canonical_production_baseline
   20260812010000_add_granular_delivery_postfirma
   20260812020000_persist_project_templates
@@ -76,6 +91,43 @@ migrations=(
   20260916010000_corrections003v2_007_expediente_header
   20260919010000_corrections008_009_010_cmp_document_vigencia
   20260920010000_corrections011_012_014
+  20260922015000_exp010_project_idempotency
+  20260923010000_ai2_quote_document_idempotency
+  20260925010000_projection_knowledge_quote_ai_isr_parity
+  20260926010000_postal_code_catalog
+  20260926011000_postal_code_source_keys
+  20260926012000_harden_new_lot_tenant_memberships
+  20260926013000_version_fiscal_export_profiles
+  20260926014500_index_new_lot_foreign_keys
+  20260926020000_correction017_canonical_followup
+  20260927010000_correction015_process_catalog
+  20260927011000_correction015_prospect_quote_acts
+  20260927012000_correction015_act_object_percentage
+  20260927013000_correction015_tenant_party_roles
+  20260927014000_correction015_audit_tenant_backfill
+  20260928010000_act_project_template_correction
+  20260929010000_pravia_ia3_finance_projection
+  20260929020000_predeploy_operational_roles
+  20260929021000_rename_contadora_to_financiero
+  20260929030000_intelligent_notification_center
+  20260929031000_notification_reminder_tenant_fk
+  20260929040000_exp008_invoice_workflow
+  20261005010000_agenda_visibility
+  20261005020000_document_folder_destinations
+  20261005030000_compareciente_document_source
+  20261005040000_prospect_quote_assignee
+  20261005050000_prospect_document_review
+  20261005060000_agenda_creator_membership
+  20261005070000_archivo_canonical_protocol
+  20261005080000_archivo_appendix_integrity
+  20261005090000_archivo_cfg002_destination
+  20261005100000_archivo_notes_integrity
+  20261006010000_finance_cfdi_local_domain
+  20261010010000_act_complete_creation
+  20261011010000_cfdi_income_balance
+  20261011020000_cfdi_receiver_profile
+  20261011030000_cfdi_fiscal_concepts
+  20261012010000_mi_dia_modular
 )
 
 for migration in "${migrations[@]}"; do
