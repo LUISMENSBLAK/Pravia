@@ -128,6 +128,15 @@ migrations=(
   20261011020000_cfdi_receiver_profile
   20261011030000_cfdi_fiscal_concepts
   20261012010000_mi_dia_modular
+  20261016010000_saas_control_plane_foundation
+  20261017120000_ai_billing_classification
+  20261017121000_ai_usage_migration_tenant_fk
+  20261017122000_pricing_override_platform_fk
+  20261018010000_migration_provenance_source_row
+  20261020090000_organization_institutional_profile
+  20261020100000_cfg002_organization_owner_enum
+  20261020101000_cfg002_organization_owner_backfill
+  20261020230000_quote_budget_tax_correction
 )
 
 for migration in "${migrations[@]}"; do
