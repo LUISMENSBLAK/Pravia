@@ -102,13 +102,10 @@ async function ensureArtifact(tx: Db, actor: Actor, key: BankKey) {
     if (!canonical[0].purpose) await tx.catalogoArtefacto.update({ where: { id: canonical[0].id }, data: { purpose: config.purpose, actualizado_por_id: actor.id } });
     return canonical[0];
   }
-  const notaria = await tx.notaria.findFirst({ where: { organization_id: actor.organizationId, activa: true }, orderBy: { created_at: 'asc' } });
-  if (!notaria) throw new ComplianceError('Configura la Notaría antes de administrar preguntas.', 'QUESTIONNAIRE_NOTARY_REQUIRED', 409);
   return tx.catalogoArtefacto.create({ data: {
     organization_id: actor.organizationId,
     tipo: 'FORMATO',
-    propietario_tipo: 'NOTARIA',
-    notaria_id: notaria.id,
+    propietario_tipo: 'ORGANIZACION',
     nombre: `Banco de preguntas — ${config.label}`,
     descripcion: null,
     codigo_biblioteca: config.code,

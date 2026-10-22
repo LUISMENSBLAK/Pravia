@@ -2,6 +2,10 @@ import dotenv from 'dotenv';
 import { extractDocxText } from './docxText';
 import JSZip from 'jszip';
 import path from 'path';
+import { openAiProviderFetch } from '../platform/openaiProvider.adapter';
+import type { ActorContext } from '../auth/actorContext';
+import { aiGateway, type AiGatewayExecutor } from '../platform/aiGateway.runtime';
+import { AI_OPERATION_CODES } from '../platform/aiBillingPolicy';
 dotenv.config();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -306,16 +310,23 @@ export async function planLiteralProjectPatchesWithOpenAI(input: {
   sourceDocuments: Array<{ id: string; name: string; text: string; extracted: Record<string, unknown> }>;
   instructions?: string | null;
   validationFeedback?: { code: string; message: string };
+  economicContext: {
+    actor: ActorContext;
+    idempotencyKey: string;
+    traceId: string;
+    gateway?: AiGatewayExecutor;
+  };
 }): Promise<LiteralProjectPatchPlan> {
-  const apiKey = process.env.OPENAI_API_KEY;
   const model = getOpenAIModelName();
   const startedAt = Date.now();
-  if (!apiKey) throw new Error('La clave de API de OpenAI no está configurada.');
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    signal: AbortSignal.timeout(Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 180000)),
-    body: JSON.stringify({
+  const data: any = await (input.economicContext.gateway || aiGateway).execute<any>({
+    actor: input.economicContext.actor,
+    operationCode: AI_OPERATION_CODES.literalProjectPatches,
+    billingClass: 'CUSTOMER_WALLET',
+    idempotencyKey: input.economicContext.idempotencyKey,
+    traceId: input.economicContext.traceId,
+    timeoutMs: Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 180000),
+    payload: { body: {
       model,
       store: false,
       // This call plans exact, source-backed replacements; it is deliberately
@@ -361,10 +372,8 @@ export async function planLiteralProjectPatchesWithOpenAI(input: {
           }, required: ['value', 'location', 'detail'] } },
         }, required: ['patches', 'missing_fields', 'conflicts', 'possible_residues'],
       } } },
-    }),
+    } },
   });
-  if (!response.ok) throw new Error(`OpenAI respondió HTTP ${response.status}.`);
-  const data: any = await response.json();
   const output = (data.output || []).flatMap((item: any) => item.content || []);
   const refusal = output.find((item: any) => item.type === 'refusal')?.refusal;
   if (refusal) throw new Error('OpenAI rechazó preparar la proyección literal.');
@@ -401,11 +410,15 @@ export async function generateOperationalArtifactWithOpenAI(input: {
   currentPartyDocuments: Array<{ id: string; name: string; text: string }>;
   purpose?: 'OWNERSHIP_PROPOSAL';
   sourceDocument?: DocumentoParaExtraccion;
+  economicContext: {
+    actor: ActorContext;
+    idempotencyKey: string;
+    traceId: string;
+    gateway?: AiGatewayExecutor;
+  };
 }): Promise<OperationalArtifactGenerationResult> {
-  const apiKey = process.env.OPENAI_API_KEY;
   const model = getOpenAIModelName();
   const startedAt = Date.now();
-  if (!apiKey) throw new Error('La clave de API de OpenAI no está configurada.');
   const closedSources = {
     structured_party_data: input.structuredData,
     current_party_documents: input.currentPartyDocuments.map((item) => ({ source_id: item.id, source_name: item.name, text: item.text })),
@@ -423,11 +436,14 @@ export async function generateOperationalArtifactWithOpenAI(input: {
       sourceContent.push({ type: 'input_text', text: source.buffer.toString('utf8') });
     } else throw new Error('Documento no compatible con la propuesta documental.');
   }
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    signal: AbortSignal.timeout(Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000)),
-    body: JSON.stringify({
+  const data: any = await (input.economicContext.gateway || aiGateway).execute<any>({
+    actor: input.economicContext.actor,
+    operationCode: AI_OPERATION_CODES.operationalArtifact,
+    billingClass: 'CUSTOMER_WALLET',
+    idempotencyKey: input.economicContext.idempotencyKey,
+    traceId: input.economicContext.traceId,
+    timeoutMs: Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000),
+    payload: { body: {
       model, store: false, max_output_tokens: 8192,
       reasoning: { effort: getReasoningEffort() },
       input: [{ role: 'user', content: [{ type: 'input_text', text: [
@@ -448,10 +464,8 @@ export async function generateOperationalArtifactWithOpenAI(input: {
           }, required: ['field', 'values', 'sources'] } },
         }, required: ['content', 'missing_fields', 'conflicts'],
       } } },
-    }),
+    } },
   });
-  if (!response.ok) throw new Error(`OpenAI respondió HTTP ${response.status}.`);
-  const data: any = await response.json();
   const output = (data.output || []).flatMap((item: any) => item.content || []);
   const refusal = output.find((item: any) => item.type === 'refusal')?.refusal;
   if (refusal) throw new Error('OpenAI rechazó la generación del formato.');
@@ -643,17 +657,13 @@ export function buildUsageMetrics(
 async function executeDocumentExtraction(
   documentos: DocumentoParaExtraccion[],
   model: string,
-  escalated = false
+  escalated: boolean,
+  economicContext: { actor: ActorContext; idempotencyKey: string; traceId: string; gateway?: AiGatewayExecutor },
 ): Promise<DocumentExtractionResult> {
-  const apiKey = process.env.OPENAI_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('La clave de API de OpenAI no está configurada.');
-  }
-
   if (!documentos || documentos.length === 0) {
     throw new Error('No hay documentos válidos para analizar.');
   }
+  if (!economicContext.idempotencyKey || !economicContext.traceId) throw new Error('La extracción documental requiere trazabilidad e idempotencia.');
 
   const listaDocumentos = documentos
     .map((d, i) => `Documento ${i + 1}: "${d.nombreOriginal}" (Tipo: ${d.tipoDocumento}, ID: ${d.documentoId})`)
@@ -819,7 +829,6 @@ No agregues texto antes ni después del JSON.`;
     }
   }
 
-  const endpoint = 'https://api.openai.com/v1/responses';
   const startedAt = Date.now();
   const responseSchema = {
     type: 'object',
@@ -917,48 +926,19 @@ No agregues texto antes ni después del JSON.`;
     ]
   };
 
-  let response: Response;
-  try {
-    response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`
-      },
-      signal: AbortSignal.timeout(Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000)),
-      body: JSON.stringify({
-        model,
-        store: false,
-        input: [{ role: 'user', content }],
-        reasoning: { effort: getDocumentExtractionReasoningEffort() },
-        max_output_tokens: 16_384,
-        text: {
-          format: {
-            type: 'json_schema',
-            name: 'extraccion_documental_notarial',
-            strict: true,
-            schema: responseSchema
-          }
-        }
-      })
-    });
-  } catch (networkErr: any) {
-    throw new Error(
-      `No fue posible ejecutar la extracción documental con IA. ` +
-      `Error de red: ${networkErr.message}. Los campos permanecen sin cambios.`
-    );
-  }
-
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => 'sin detalle');
-    throw new Error(
-      `No fue posible ejecutar la extracción documental con IA. ` +
-      `OpenAI respondió HTTP ${response.status}: ${errorBody.slice(0, 300)}. ` +
-      `Los campos permanecen sin cambios.`
-    );
-  }
-
-  const data: any = await response.json();
+  const data: any = await (economicContext.gateway || aiGateway).execute<any>({
+    actor: economicContext.actor,
+    operationCode: AI_OPERATION_CODES.documentExtraction,
+    billingClass: 'CUSTOMER_WALLET',
+    idempotencyKey: economicContext.idempotencyKey,
+    traceId: economicContext.traceId,
+    timeoutMs: Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000),
+    payload: { retryHttp: 3, body: {
+      model, store: false, input: [{ role: 'user', content }],
+      reasoning: { effort: getDocumentExtractionReasoningEffort() }, max_output_tokens: 16_384,
+      text: { format: { type: 'json_schema', name: 'extraccion_documental_notarial', strict: true, schema: responseSchema } },
+    } },
+  });
   if (data.status === 'incomplete') {
     throw new Error(
       `OpenAI no completó el análisis: ${data.incomplete_details?.reason || 'causa no especificada'}. ` +
@@ -1040,9 +1020,12 @@ function escalationCandidates(result: DocumentExtractionResult) {
 }
 
 async function extractDocumentBatch(
-  documentos: DocumentoParaExtraccion[]
+  documentos: DocumentoParaExtraccion[],
+  economicContext: { actor: ActorContext; idempotencyKey: string; traceId: string; gateway?: AiGatewayExecutor },
 ): Promise<DocumentExtractionResult> {
-  const primary = await executeDocumentExtraction(documentos, getOpenAIModelName(), false);
+  const primary = await executeDocumentExtraction(documentos, getOpenAIModelName(), false, {
+    ...economicContext, idempotencyKey: `${economicContext.idempotencyKey}:primary`,
+  });
   const escalation = escalationCandidates(primary);
   const escalationEnabled = String(process.env.AI_ESCALATION_ENABLED || 'true').toLowerCase() !== 'false';
   if (!escalation.required || !escalationEnabled) return { ...primary, usos: primary.uso ? [primary.uso] : [] };
@@ -1050,7 +1033,9 @@ async function extractDocumentBatch(
   const selected = escalation.documentIds.length
     ? documentos.filter((document) => escalation.documentIds.includes(document.documentoId)).slice(0, 4)
     : documentos.slice(0, 4);
-  const escalated = await executeDocumentExtraction(selected, getOpenAIEscalationModelName(), true);
+  const escalated = await executeDocumentExtraction(selected, getOpenAIEscalationModelName(), true, {
+    ...economicContext, idempotencyKey: `${economicContext.idempotencyKey}:escalated`,
+  });
   return {
     ...escalated,
     alertas: [
@@ -1067,8 +1052,10 @@ async function extractDocumentBatch(
 }
 
 export async function extraerMultiplesDocumentos(
-  documentos: DocumentoParaExtraccion[]
+  documentos: DocumentoParaExtraccion[],
+  economicContext: { actor: ActorContext; idempotencyKey: string; traceId: string; gateway?: AiGatewayExecutor },
 ): Promise<DocumentExtractionResult> {
+  if (!economicContext?.idempotencyKey || !economicContext.traceId) throw new Error('La extracción documental requiere trazabilidad e idempotencia.');
   const compatibles: Record<string, string> = {
     '.pdf': 'application/pdf', '.doc': 'application/msword', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.xml': 'application/xml',
@@ -1102,7 +1089,9 @@ export async function extraerMultiplesDocumentos(
   );
   if (!batches.length) throw new Error('No hay documentos válidos para analizar.');
   const results: DocumentExtractionResult[] = [];
-  for (const batch of batches) results.push(await extractDocumentBatch(batch));
+  for (const [index, batch] of batches.entries()) results.push(await extractDocumentBatch(batch, {
+    ...economicContext, idempotencyKey: `${economicContext.idempotencyKey}:batch:${index}`,
+  }));
   if (results.length === 1) return results[0];
 
   const usages = results.flatMap((result) => result.usos || (result.uso ? [result.uso] : []));
@@ -1145,11 +1134,11 @@ async function analizarProyectoNotarialBatch(
   documentosSoporte: DocumentoParaExtraccion[],
   contextoEstructurado?: Record<string, unknown>,
   machoteOrigen?: DocumentoParaExtraccion,
+  economicContext?: { actor: ActorContext; idempotencyKey: string; traceId: string; gateway?: AiGatewayExecutor },
 ): Promise<ProyectoAnalysisResult> {
-  const apiKey = process.env.OPENAI_API_KEY;
   const model = getOpenAIEscalationModelName();
   const startedAt = Date.now();
-  if (!apiKey) throw new Error('La clave de API de OpenAI no está configurada.');
+  if (!economicContext?.idempotencyKey || !economicContext.traceId) throw new Error('La revisión de proyecto requiere trazabilidad e idempotencia.');
 
   const content: any[] = [{
     type: 'input_text',
@@ -1249,7 +1238,7 @@ async function analizarProyectoNotarialBatch(
     required: ['resumen_ejecutivo', 'observaciones', 'areas_revision']
   };
 
-  const requestBody = JSON.stringify({
+  const requestBody = {
       model,
       store: false,
       input: [{ role: 'user', content }],
@@ -1263,42 +1252,17 @@ async function analizarProyectoNotarialBatch(
           schema
         }
       }
-    });
-  let response: Response | undefined;
-  let lastFailure = '';
+    };
   const attempts = Math.min(Math.max(Number(process.env.AI_PROJECT_REVIEW_MAX_ATTEMPTS || 2), 1), 3);
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      response = await fetch('https://api.openai.com/v1/responses', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`
-        },
-        signal: AbortSignal.timeout(Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000)),
-        body: requestBody,
-      });
-    } catch (error) {
-      lastFailure = error instanceof Error ? error.message : 'Fallo de transporte al revisar el proyecto.';
-      if (attempt >= attempts || !isRetryableProjectReviewError(error)) throw error;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(500 * (2 ** (attempt - 1)), 2_000)));
-      continue;
-    }
-    if (response.ok) break;
-    const detail = await response.text().catch(() => 'sin detalle');
-    lastFailure = `OpenAI respondió HTTP ${response.status}: ${detail.slice(0, 300)}`;
-    if (attempt >= attempts || !isRetryableProjectReviewStatus(response.status)) {
-      throw new Error(lastFailure);
-    }
-    const retryAfterSeconds = Number(response.headers.get('retry-after'));
-    const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
-      ? Math.min(retryAfterSeconds * 1000, 5_000)
-      : Math.min(500 * (2 ** (attempt - 1)), 2_000);
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-  if (!response?.ok) throw new Error(lastFailure || 'OpenAI no respondió durante la revisión.');
-
-  const data: any = await response.json();
+  const data: any = await (economicContext.gateway || aiGateway).execute<any>({
+    actor: economicContext.actor,
+    operationCode: AI_OPERATION_CODES.projectReview,
+    billingClass: 'CUSTOMER_WALLET',
+    idempotencyKey: economicContext.idempotencyKey,
+    traceId: economicContext.traceId,
+    timeoutMs: Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000),
+    payload: { body: requestBody, retryHttp: attempts },
+  });
   if (data.status === 'incomplete') {
     throw new Error(`OpenAI no completó la revisión: ${data.incomplete_details?.reason || 'causa no especificada'}`);
   }
@@ -1427,12 +1391,18 @@ export async function analizarProyectoNotarialConOpenAI(
   documentosSoporte: DocumentoParaExtraccion[],
   contextoEstructurado?: Record<string, unknown>,
   machoteOrigen?: DocumentoParaExtraccion,
+  economicContext?: { actor: ActorContext; idempotencyKey: string; traceId: string; gateway?: AiGatewayExecutor },
 ): Promise<ProyectoAnalysisResult> {
   const batches = partitionProjectReviewDocuments(documentosSoporte);
-  if (!batches.length) return analizarProyectoNotarialBatch(proyecto, [], contextoEstructurado, machoteOrigen);
+  if (!economicContext?.idempotencyKey) throw new Error('La revisión de proyecto requiere una clave de idempotencia.');
+  if (!batches.length) return analizarProyectoNotarialBatch(proyecto, [], contextoEstructurado, machoteOrigen, {
+    ...economicContext, idempotencyKey: `${economicContext.idempotencyKey}:batch:0`,
+  });
   const results = await mapProjectReviewBatches(
     batches,
-    (batch) => analizarProyectoNotarialBatch(proyecto, batch, contextoEstructurado, machoteOrigen),
+    (batch, index) => analizarProyectoNotarialBatch(proyecto, batch, contextoEstructurado, machoteOrigen, {
+      ...economicContext, idempotencyKey: `${economicContext.idempotencyKey}:batch:${index + 1}`,
+    }),
   );
   const usages = results.flatMap((result) => result.usos || (result.uso ? [result.uso] : []));
   const seen = new Set<string>();
@@ -1485,12 +1455,12 @@ export async function analizarProyectoNotarialConOpenAI(
  * No recibe expediente, otros documentos ni datos maestros y nunca persiste cambios.
  */
 export async function extraerPredioDesdeDocumento(
-  documento: DocumentoParaExtraccion
+  documento: DocumentoParaExtraccion,
+  economicContext: { actor: ActorContext; idempotencyKey: string; traceId: string; gateway?: AiGatewayExecutor },
 ): Promise<PropertyExtractionResult> {
-  const apiKey = process.env.OPENAI_API_KEY;
   const model = getOpenAIModelName();
   const startedAt = Date.now();
-  if (!apiKey) throw new Error('La clave de API de OpenAI no está configurada.');
+  if (!economicContext.idempotencyKey || !economicContext.traceId) throw new Error('La extracción de inmueble requiere trazabilidad e idempotencia.');
 
   const content: any[] = [{
     type: 'input_text',
@@ -1529,20 +1499,18 @@ export async function extraerPredioDesdeDocumento(
     },
     required: ['campos', 'colindancias', 'alertas'],
   };
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    signal: AbortSignal.timeout(Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000)),
-    body: JSON.stringify({
+  const data: any = await (economicContext.gateway || aiGateway).execute<any>({
+    actor: economicContext.actor,
+    operationCode: AI_OPERATION_CODES.propertyExtraction,
+    billingClass: 'CUSTOMER_WALLET',
+    idempotencyKey: economicContext.idempotencyKey,
+    traceId: economicContext.traceId,
+    timeoutMs: Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000),
+    payload: { retryHttp: 3, body: {
       model, store: false, input: [{ role: 'user', content }], reasoning: { effort: getDocumentExtractionReasoningEffort() }, max_output_tokens: 8192,
       text: { format: { type: 'json_schema', name: 'predio_document_proposal', strict: true, schema } },
-    }),
+    } },
   });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => 'sin detalle');
-    throw new Error(`OpenAI respondió HTTP ${response.status}: ${detail.slice(0, 300)}`);
-  }
-  const data: any = await response.json();
   if (data.status === 'incomplete') throw new Error(`OpenAI no completó la extracción: ${data.incomplete_details?.reason || 'causa no especificada'}`);
   const output = (data.output || []).flatMap((item: any) => item.content || []);
   const refusal = output.find((item: any) => item.type === 'refusal')?.refusal;
@@ -1563,11 +1531,15 @@ export async function extraerPredioDesdeDocumento(
  * Extrae una propuesta financiera exclusivamente del documento autorizado que
  * entrega el backend. La salida nunca modifica ni valida registros por sí sola.
  */
-export async function extraerFinanzasDesdeDocumento(documento: DocumentoParaExtraccion, profile: 'EXP008' | 'H5_OPERATION_PAYMENT' = 'EXP008', focus: 'GENERAL' | 'AMOUNT' = 'GENERAL'): Promise<FinancialDocumentExtractionResult> {
-  const apiKey = process.env.OPENAI_API_KEY;
+export async function extraerFinanzasDesdeDocumento(
+  documento: DocumentoParaExtraccion,
+  profile: 'EXP008' | 'H5_OPERATION_PAYMENT' = 'EXP008',
+  focus: 'GENERAL' | 'AMOUNT' = 'GENERAL',
+  economicContext: { actor: ActorContext; idempotencyKey: string; traceId: string; gateway?: AiGatewayExecutor },
+): Promise<FinancialDocumentExtractionResult> {
   const model = getOpenAIModelName();
   const startedAt = Date.now();
-  if (!apiKey) throw new Error('La clave de API de OpenAI no está configurada.');
+  if (!economicContext.idempotencyKey || !economicContext.traceId) throw new Error('La extracción financiera requiere trazabilidad e idempotencia.');
   const fields = profile === 'H5_OPERATION_PAYMENT'
     ? ['monto', 'moneda', 'fecha', 'referencia', 'forma_pago', 'institucion', 'ordenante', 'beneficiario', 'cuenta', 'pagado', 'pendiente']
     : ['monto', 'moneda', 'fecha', 'referencia', 'forma_pago', 'concepto', 'beneficiario', 'dependencia'];
@@ -1592,9 +1564,15 @@ export async function extraerFinanzasDesdeDocumento(documento: DocumentoParaExtr
     faltantes: { type: 'array', items: { type: 'string', enum: fields } },
     conflictos: { type: 'array', items: { type: 'object', additionalProperties: false, properties: conflictProperties, required: Object.keys(conflictProperties) } },
   }, required: ['campos', 'faltantes', 'conflictos'] };
-  const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000)), body: JSON.stringify({ model, store: false, input: [{ role: 'user', content }], reasoning: { effort: getDocumentExtractionReasoningEffort() }, max_output_tokens: 16_384, text: { format: { type: 'json_schema', name: 'exp008_financial_document_proposal', strict: true, schema } } }) });
-  if (!response.ok) { const detail = await response.text().catch(() => 'sin detalle'); throw new Error(`OpenAI respondió HTTP ${response.status}: ${detail.slice(0, 300)}`); }
-  const data: any = await response.json();
+  const data: any = await (economicContext.gateway || aiGateway).execute<any>({
+    actor: economicContext.actor,
+    operationCode: AI_OPERATION_CODES.financialExtraction,
+    billingClass: 'CUSTOMER_WALLET',
+    idempotencyKey: economicContext.idempotencyKey,
+    traceId: economicContext.traceId,
+    timeoutMs: Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000),
+    payload: { retryHttp: 3, body: { model, store: false, input: [{ role: 'user', content }], reasoning: { effort: getDocumentExtractionReasoningEffort() }, max_output_tokens: 16_384, text: { format: { type: 'json_schema', name: 'exp008_financial_document_proposal', strict: true, schema } } } },
+  });
   if (data.status === 'incomplete') throw new Error(`OpenAI no completó la extracción: ${data.incomplete_details?.reason || 'causa no especificada'}`);
   const output = (data.output || []).flatMap((item: any) => item.content || []);
   const refusal = output.find((item: any) => item.type === 'refusal')?.refusal;
@@ -1616,7 +1594,8 @@ export async function extraerFinanzasDesdeDocumento(documento: DocumentoParaExtr
 export async function extraermedianteIA(
   buffer: Buffer,
   mimeType: string,
-  tipoDocumentoHint: string
+  tipoDocumentoHint: string,
+  economicContext: { actor: ActorContext; idempotencyKey: string; traceId: string; gateway?: AiGatewayExecutor },
 ): Promise<DocumentExtractionResult> {
   return extraerMultiplesDocumentos([{
     buffer,
@@ -1624,5 +1603,5 @@ export async function extraermedianteIA(
     tipoDocumento: tipoDocumentoHint,
     documentoId: 'single',
     nombreOriginal: tipoDocumentoHint
-  }]);
+  }], economicContext);
 }

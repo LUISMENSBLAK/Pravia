@@ -5,15 +5,12 @@ import path from 'path';
 import multer from 'multer';
 import { DOCUMENT_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
 import JSZip from 'jszip';
-import mammoth from 'mammoth';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType } from 'docx';
 import Docxtemplater from 'docxtemplater';
 import PizZip from 'pizzip';
 import { Prisma } from '@prisma/client';
 import { deleteFile, downloadFile, getStorageInfo, uploadFile } from '../services/supabase.service';
 import { analizarProyectoNotarialConOpenAI, DocumentoParaExtraccion } from '../services/openaiDocument.service';
-import { getOpenAIEscalationModelName } from '../services/openaiDocument.service';
-import { recordAIFailure, recordAIUsages } from '../services/aiUsage.service';
 import prisma from '../config/prisma';
 import { projectRepository } from '../services/projectRepository.service';
 import { ComplianceH6Service } from '../services/complianceH6.service';
@@ -21,6 +18,7 @@ import { configurationCatalogV4Service } from '../services/configurationCatalogV
 import { isDefaultProjectSource, ProjectGenerationError, projectGenerationService, reviewProjectAgainstTemplate, verifyLiteralProjectTemplateIntegrity } from '../services/projectGeneration.service';
 import { projectInstructionService } from '../services/projectInstruction.service';
 import { INSUFFICIENT_LEGAL_FOUNDATION, knowledgeService } from '../services/knowledge.service';
+import { PlatformDomainError } from '../platform/platform.errors';
 
 function assertPersistentProjectStorage() {
   if (!['cloud', 'local'].includes(getStorageInfo().primary)) {
@@ -51,7 +49,12 @@ export const getProyectoWorkspace = async (req: Request, res: Response) => {
 export const generarProyectoContractual = async (req: Request, res: Response) => {
   try {
     if (!req.user) return res.status(401).json({ error: 'Usuario autenticado requerido.', code: 'AUTH_REQUIRED' });
-    return res.status(201).json(await projectGenerationService.generate(req.user, req.params.id, req.body));
+    const input = {
+      ...(req.body || {}),
+      idempotency_key: req.get('Idempotency-Key') || req.body?.idempotency_key,
+      __trace_id: req.correlationId || req.get('X-Correlation-Id'),
+    };
+    return res.status(201).json(await projectGenerationService.generate(req.user, req.params.id, input));
   } catch (error: any) {
     return res.status(error instanceof ProjectGenerationError ? error.status : Number(error?.status || 500)).json({ error: error?.message || 'No fue posible generar el proyecto.', code: error?.code || 'PROJECT_GENERATION_FAILED' });
   }
@@ -61,7 +64,12 @@ export const generarProyectoDesdeMachoteExcepcional = async (req: Request, res: 
   try {
     if (!req.user) return res.status(401).json({ error: 'Usuario autenticado requerido.', code: 'AUTH_REQUIRED' });
     if (!req.file) return res.status(400).json({ error: 'Carga el machote DOCX.', code: 'PROJECT_TEMPLATE_DOCX_REQUIRED' });
-    const input = typeof req.body?.metadata === 'string' ? JSON.parse(req.body.metadata) : (req.body || {});
+    const metadata = typeof req.body?.metadata === 'string' ? JSON.parse(req.body.metadata) : (req.body || {});
+    const input = {
+      ...metadata,
+      idempotency_key: req.get('Idempotency-Key') || metadata?.idempotency_key,
+      __trace_id: req.correlationId || req.get('X-Correlation-Id'),
+    };
     return res.status(201).json(await projectGenerationService.generateFromManualTemplate(req.user, req.params.id, input, req.file));
   } catch (error: any) {
     return res.status(error instanceof ProjectGenerationError ? error.status : Number(error?.status || 500)).json({ error: error?.message || 'No fue posible generar el proyecto.', code: error?.code || 'PROJECT_GENERATION_FAILED' });
@@ -687,9 +695,6 @@ export const downloadProyectoVersion = async (req: Request, res: Response) => {
 
 // 6. ANALIZAR CON IA & GENERAR REPORTE WORD (.docx)
 export const analizarProyectoConIA = async (req: Request, res: Response) => {
-  const aiStartedAt = Date.now();
-  let aiRequestStarted = false;
-  let usageUserId: string | undefined;
   let uploadedReportKey: string | null = null;
   try {
     const { id } = req.params;
@@ -698,7 +703,7 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
     if (!userId) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
     if (!await hasProjectCaseAccess(req, id)) return res.status(404).json({ error: 'Expediente no encontrado.' });
     const idempotencyKey = String(req.body?.idempotency_key || req.get('Idempotency-Key') || '').trim();
-    if (idempotencyKey.length > 160) return res.status(400).json({ error: 'La clave de idempotencia no es válida.', code: 'PROJECT_REVIEW_IDEMPOTENCY_INVALID' });
+    if (!idempotencyKey || idempotencyKey.length > 140) return res.status(400).json({ error: 'La revisión con IA requiere una clave de idempotencia válida.', code: 'PROJECT_REVIEW_IDEMPOTENCY_INVALID' });
     if (idempotencyKey) {
       const existing = await prisma.expedienteDocumento.findFirst({
         where: { organization_id: req.user!.organizationId, expediente_id: id, tipo_vinculo: 'REPORTE_IA_PROYECTO', idempotency_key: idempotencyKey },
@@ -709,13 +714,6 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
         if (report) return res.status(200).json({ ...report.record, idempotent: true });
       }
     }
-    if (!process.env.OPENAI_API_KEY?.trim()) {
-      return res.status(503).json({
-        error: 'La revisión asistida no está configurada en este entorno.',
-        code: 'AI_PROVIDER_NOT_CONFIGURED',
-      });
-    }
-    usageUserId = userId;
     let userName = 'Usuario no identificado';
 
     if (userId) {
@@ -798,7 +796,6 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
       { id: userId, organizationId: req.user!.organizationId },
       { query: knowledgeQuery, legal_date: new Date().toISOString().slice(0, 10), limit: 8 },
     ).catch(() => ({ status: 'INSUFFICIENT_FOUNDATION', message: INSUFFICIENT_LEGAL_FOUNDATION, evidence: [], internal_reasoning: null }));
-    aiRequestStarted = true;
     const resultadoIA = await analizarProyectoNotarialConOpenAI(
       {
         buffer: projectBuffer,
@@ -839,15 +836,13 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
         documentoId: vigente.template_version_id || 'MACHOTE_ORIGEN',
         nombreOriginal: templateBaseline.name,
       } : undefined,
+      {
+        actor: { userId: req.user!.id, organizationId: req.user!.organizationId, membershipId: req.user!.membershipId,
+          role: req.user!.rol, permissions: req.user!.permissions, scope: req.user!.scope, sessionId: req.user!.sessionId },
+        idempotencyKey: `project-review:${id}:${idempotencyKey}`,
+        traceId: req.correlationId || idempotencyKey,
+      },
     );
-    await recordAIUsages(resultadoIA.usos || (resultadoIA.uso ? [resultadoIA.uso] : []), {
-      operacion: 'REVISION_PROYECTO_ESCRITURA',
-      usuarioId: userId,
-      expedienteId: id,
-      escalamientoMotivo: 'Revisión jurídica documental compleja',
-      metadata: { proyecto_version_id: vigente.id, documentos_fuente: documentosParaIA.map((item) => item.documentoId) },
-    }).catch((usageError) => console.error('[AI usage] No fue posible registrar el consumo:', usageError.message));
-    aiRequestStarted = false;
 
     const deterministicObservations = templateBaseline
       ? await reviewProjectAgainstTemplate(projectBuffer, templateBaseline.buffer, exp.valor_operacion?.toString(), templateBaseline.name, templateBaseline.authorizedTemplateTargets)
@@ -1103,17 +1098,8 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
       error_code: error?.code || 'AI_PROJECT_REVIEW_FAILED',
       error_message: error instanceof Error ? error.message : 'Fallo desconocido en revisión de proyecto',
     }));
-    if (aiRequestStarted) {
-      await recordAIFailure({
-        operacion: 'REVISION_PROYECTO_ESCRITURA',
-        modelo: getOpenAIEscalationModelName(),
-        usuarioId: usageUserId,
-        expedienteId: req.params.id,
-        durationMs: Date.now() - aiStartedAt,
-        errorCode: error.code || 'AI_PROJECT_REVIEW_FAILED',
-      }).catch(() => undefined);
-    }
-    res.status(500).json({ error: 'Error al ejecutar análisis de IA', detail: error.message });
+    const status = error instanceof PlatformDomainError ? error.status : 500;
+    res.status(status).json({ error: status >= 500 ? 'Error al ejecutar análisis de IA' : error.message, detail: error.message, code: error.code || 'AI_PROJECT_REVIEW_FAILED' });
   }
 };
 

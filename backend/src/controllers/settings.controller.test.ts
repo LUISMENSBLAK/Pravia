@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const db = vi.hoisted(() => ({
-  user: { findUnique: vi.fn(), count: vi.fn() }, userPreference: { upsert: vi.fn() },
+  user: { findUnique: vi.fn(), count: vi.fn() }, organization: { findUnique: vi.fn(), update: vi.fn() }, organizationMembership: { count: vi.fn() }, userPreference: { upsert: vi.fn() },
   authSession: { findMany: vi.fn(), findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn(), count: vi.fn() },
   notification: { count: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() }, notaria: { findFirst: vi.fn(), findMany: vi.fn() },
   auditLog: { create: vi.fn(), findMany: vi.fn(), count: vi.fn() }, expediente: { findMany: vi.fn() }, compareciente: { findMany: vi.fn() },
@@ -11,11 +11,38 @@ vi.mock('../config/prisma', () => ({ default: db }));
 
 import { SettingsController } from './settings.controller';
 
-const user: any = { id: '11111111-1111-4111-8111-111111111111', email: 'maria@pravia.mx', nombre: 'María', apellido: 'López', rol: 'DIRECCION', sessionId: '22222222-2222-4222-8222-222222222222', permissions: ['ai.search', 'expedientes.read', 'configuracion.manage'], requiresPasswordChange: false };
+const user: any = { id: '11111111-1111-4111-8111-111111111111', organizationId: '33333333-3333-4333-8333-333333333333', email: 'maria@pravia.mx', nombre: 'María', apellido: 'López', rol: 'DIRECCION', sessionId: '22222222-2222-4222-8222-222222222222', permissions: ['ai.search', 'expedientes.read', 'configuracion.manage'], requiresPasswordChange: false };
 const response = () => { const res: any = {}; res.status = vi.fn(() => res); res.json = vi.fn(() => res); return res; };
 
 describe('Configuración y acceso', () => {
   beforeEach(() => { vi.clearAllMocks(); db.$transaction.mockImplementation(async (callback: any) => callback(db)); });
+
+  it('el resumen consulta exclusivamente el perfil institucional del tenant autenticado', async () => {
+    db.authSession.count.mockResolvedValue(1);
+    db.notification.count.mockResolvedValue(0);
+    db.organization.findUnique.mockResolvedValue({ id: user.organizationId, name: 'Notaría QA' });
+    const res = response(); await SettingsController.overview({ user } as any, res);
+    expect(db.organization.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: user.organizationId } }));
+    expect(db.notaria.findFirst).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].organization.profile.name).toBe('Notaría QA');
+  });
+
+  it('permite actualizar sólo campos institucionales del tenant y audita el cambio', async () => {
+    db.organization.findUnique.mockResolvedValue({ id: user.organizationId, name: 'Notaría anterior' });
+    db.organization.update.mockResolvedValue({ id: user.organizationId, name: 'Notaría QA', notary_number: '19' });
+    const res = response();
+    await SettingsController.updateOrganization({ user, body: { name: 'Notaría QA', notary_number: '19' }, correlationId: 'corr-org' } as any, res);
+    expect(db.organization.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: user.organizationId }, data: { name: 'Notaría QA', notary_number: '19' } }));
+    expect(db.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ organization_id: user.organizationId, accion: 'ORGANIZATION_PROFILE_UPDATED' }) }));
+    expect(res.json.mock.calls[0][0].profile.name).toBe('Notaría QA');
+  });
+
+  it('rechaza intentos de actualizar tenant, logo o estado por mass assignment', async () => {
+    const res = response();
+    await SettingsController.updateOrganization({ user, body: { name: 'Otra', id: 'tenant-b' } } as any, res);
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(db.organization.update).not.toHaveBeenCalled();
+  });
 
   it('expone el perfil propio sin campos de credenciales', async () => {
     db.user.findUnique.mockResolvedValue({ id: user.id, email: user.email, nombre: 'María', apellido: 'López', rol: 'DIRECCION' });
@@ -46,6 +73,13 @@ describe('Configuración y acceso', () => {
     const res = response(); await SettingsController.search({ user, query: { q: 'EXP' } } as any, res);
     expect(db.expediente.findMany).toHaveBeenCalled(); expect(db.compareciente.findMany).not.toHaveBeenCalled(); expect(db.prospecto.findMany).not.toHaveBeenCalled();
     expect(res.json.mock.calls[0][0].data[0]).toEqual(expect.objectContaining({ type: 'EXPEDIENTE', href: '/expedientes/e1' }));
+  });
+
+  it('la búsqueda global no consulta ni expone el catálogo obsoleto de notarías', async () => {
+    const res = response();
+    await SettingsController.search({ user: { ...user, permissions: ['ai.search', 'notarias.read'] }, query: { q: 'Notaría' } } as any, res);
+    expect(db.notaria.findMany).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].data).toEqual([]);
   });
 
   it('auditoría selecciona metadatos y omite valores sensibles', async () => {

@@ -24,6 +24,11 @@ export const updateExpedienteBudget = async (req: Request, res: Response) => {
   catch (error) { return fail(res, error); }
 };
 
+export const previewExpedienteBudget = async (req: Request, res: Response) => {
+  try { return res.json(await service.preview(actor(req), req.params.id, req.body.concepts)); }
+  catch (error) { return fail(res, error); }
+};
+
 export const generateExpedienteBudgetPdf = async (req: Request, res: Response) => {
   try { return res.status(201).json(await service.generatePdf(actor(req), req.params.id, { expected_version: Number(req.body.expected_version), idempotency_key: req.body.idempotency_key, note: req.body.note })); }
   catch (error) { return fail(res, error); }

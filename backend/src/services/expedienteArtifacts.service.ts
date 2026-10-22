@@ -5,12 +5,12 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { assertStrictPartySourceScope, exp006ResolutionRevision, resolveExp006, type Exp006Context, type Exp006Resolution, type Exp006UnresolvedDecision } from '../domain/expedienteArtifacts';
 import { deleteFile, downloadFile, getSignedUrl, uploadFile } from '../storage/storage.service';
-import { generateOperationalArtifactWithOpenAI, getOpenAIModelName, type AIUsageMetrics } from './openaiDocument.service';
-import { recordAIFailure, recordAIUsage, recordAIUsageInDb } from './aiUsage.service';
+import { generateOperationalArtifactWithOpenAI } from './openaiDocument.service';
 import { extractDocxText } from './docxText';
 import { canonicalUploadedDocumentMime } from './documentUploadValidation';
+import { PlatformDomainError } from '../platform/platform.errors';
 
-export type Exp006Actor = { id: string; organizationId: string; sessionId: string; rol: any; permissions: any[] };
+export type Exp006Actor = { id: string; organizationId: string; membershipId: string; sessionId: string; rol: any; permissions: any[]; scope: 'GLOBAL' | 'ASSIGNED_OBJECTS' };
 type Db = PrismaClient | Prisma.TransactionClient;
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 const sha = (value: Buffer | string) => createHash('sha256').update(value).digest('hex');
@@ -103,14 +103,18 @@ export class ExpedienteArtifactsService {
       if (!master || master.artefacto_id !== pending.artefacto_id || master.content_kind !== 'FILE' || !master.storage_key || !master.mime_type || !master.nombre_original) throw new ExpedienteArtifactsError(409, 'EXP006_MASTER_VERSION_UNAVAILABLE', 'La versión maestra de archivo ya no está disponible. Revisa el pendiente.');
       const masterBuffer = await downloadFile(master.storage_key);
       const masterText = await this.readText(masterBuffer, master.mime_type, master.nombre_original);
-      const generation = await generateOperationalArtifactWithOpenAI({ artifactName: master.artefacto.nombre, masterText, structuredData: sources.structuredData, currentPartyDocuments: sources.documents });
+      const generation = await generateOperationalArtifactWithOpenAI({
+        artifactName: master.artefacto.nombre, masterText, structuredData: sources.structuredData,
+        currentPartyDocuments: sources.documents,
+        economicContext: {
+          actor: { userId: actor.id, organizationId: actor.organizationId, membershipId: actor.membershipId,
+            role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId },
+          idempotencyKey: operationId,
+          traceId: operationId,
+        },
+      });
       const currentSources = await this.partySources(this.prisma, actor, pending);
       if (currentSources.revision !== sources.revision) {
-        await recordAIUsage(generation.usage, {
-          organizationId: actor.organizationId, usuarioId: actor.id, expedienteId,
-          operacion: 'EXP006_GENERATE_OPERATIONAL_ARTIFACT_DISCARDED_STALE_SOURCE', operationId,
-          metadata: { pending_id: pending.id, source_manifest: sources.manifest, discarded: true },
-        });
         throw new ExpedienteArtifactsError(409, 'EXP006_GENERATION_SOURCES_CHANGED', 'Las fuentes cambiaron durante la generación. Revisa y vuelve a intentarlo.');
       }
       const paragraphs = [new Paragraph({ text: master.artefacto.nombre, heading: HeadingLevel.TITLE }), ...generation.content.split(/\n+/).filter(Boolean).map((line) => new Paragraph({ children: [new TextRun(line)] }))];
@@ -123,12 +127,11 @@ export class ExpedienteArtifactsService {
         buffer, storageKey, originalName: `${master.artefacto.nombre}.docx`, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         via: 'IA', idempotencyKey: input.idempotency_key, sourceRevision: sources.revision, sourceManifest: sources.manifest,
         review: { missing_fields: generation.missing_fields, conflicts: generation.conflicts, model: generation.model },
-        aiUsage: generation.usage, aiOperationId: operationId,
       });
       return { ...result, idempotent: false, estado: 'PENDIENTE_REVISION', missing: generation.missing_fields, conflicts: generation.conflicts };
     } catch (error: any) {
       if (storageKey) await deleteFile(storageKey).catch(() => undefined);
-      if (!(error instanceof ExpedienteArtifactsError)) await recordAIFailure({ organizationId: actor.organizationId, usuarioId: actor.id, expedienteId, operacion: 'EXP006_GENERATE_OPERATIONAL_ARTIFACT', operationId, modelo: getOpenAIModelName(), errorCode: 'EXP006_AI_GENERATION_FAILED' }).catch(() => undefined);
+      if (error instanceof PlatformDomainError) throw new ExpedienteArtifactsError(error.status, error.code, error.message);
       throw error;
     }
   }
@@ -179,7 +182,7 @@ export class ExpedienteArtifactsService {
     return { url: await getSignedUrl(document.storage_key, 600), expires_in: 600, file_name: document.nombre_original, mime_type: document.mime_type };
   }
 
-  private async persistDocument(actor: Exp006Actor, expedienteId: string, pending: any, file: { buffer: Buffer; storageKey: string; originalName: string; mimeType: string; via: 'IA' | 'CARGA_EXTERNA'; idempotencyKey: string; sourceRevision: string; sourceManifest: unknown; review: unknown; aiUsage?: AIUsageMetrics; aiOperationId?: string }) {
+  private async persistDocument(actor: Exp006Actor, expedienteId: string, pending: any, file: { buffer: Buffer; storageKey: string; originalName: string; mimeType: string; via: 'IA' | 'CARGA_EXTERNA'; idempotencyKey: string; sourceRevision: string; sourceManifest: unknown; review: unknown }) {
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp006-document:${actor.organizationId}:${pending.id}`}))`);
       const current = await this.pending(tx, actor, expedienteId, pending.id);
@@ -206,11 +209,6 @@ export class ExpedienteArtifactsService {
         source_key: `CFG002:ExpedienteArtefactoPendiente:${pending.id}:${document.id}:${file.via}`.slice(0, 320), document_version: sha(file.buffer),
         provenance: json({ source: 'EXP-006', pending_id: pending.id, cfg002_artifact_id: pending.artefacto_id, cfg002_rule_id: pending.regla_id, via: file.via }),
       } });
-      if (file.aiUsage) await recordAIUsageInDb(tx, file.aiUsage, {
-        organizationId: actor.organizationId, usuarioId: actor.id, expedienteId,
-        operacion: 'EXP006_GENERATE_OPERATIONAL_ARTIFACT', operationId: file.aiOperationId,
-        metadata: { pending_id: pending.id, source_manifest: file.sourceManifest, document_id: document.id },
-      });
       await this.audit(tx, actor, file.via === 'IA' ? 'EXP006_GENERATE_AI' : 'EXP006_UPLOAD_EXTERNAL', 'ExpedienteArtefactoPendiente', pending.id, { document_id: document.id, status: 'PENDIENTE_REVISION', auto_validated: false, storage_key: '[PRIVATE]' });
       return { document_id: document.id };
     }, { timeout: 25_000 });
@@ -287,7 +285,7 @@ export class ExpedienteArtifactsService {
     };
     const riskConfirmed = confirmedBoolean('riesgo_confirmado');
     return {
-      expedienteId, notariaId: expediente.notaria_id, institutionIds: institutionIdsFrom(expediente.datos_operacion), currentStageId: currentTracking?.etapa_maestra_id || null,
+      expedienteId, organizationId: actor.organizationId, notariaId: expediente.notaria_id, institutionIds: institutionIdsFrom(expediente.datos_operacion), currentStageId: currentTracking?.etapa_maestra_id || null,
       acts: acts.map((item) => ({ id: item.id, typeId: item.tipo_acto_id, name: item.tipo_acto.nombre })),
       parties: parties.map((item) => ({ relationId: item.id, partyId: item.compareciente_id, actId: item.expediente_acto_id!, personType: item.compareciente.tipo_persona, roleId: item.caracter_id, name: item.compareciente.nombre_busqueda, nationality: item.compareciente.personaFisica?.nacionalidad || item.compareciente.personaMoral?.nacionalidad || null, migrationStatus: item.compareciente.personaFisica?.calidad_migratoria || null })),
       properties: properties.map((item) => ({ relationId: item.id, propertyId: item.predio_id, actIds: item.actos.map((act) => act.expediente_acto_id), name: item.predio.apodo || item.predio.ubicacion_texto || 'Inmueble' })),

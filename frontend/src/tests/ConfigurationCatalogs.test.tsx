@@ -167,7 +167,7 @@ describe("Catálogos contractuales accesibles", () => {
     api.updateCatalogActivity.mockResolvedValue({});
     api.setCatalogDependencies.mockResolvedValue({});
     api.catalogArtifactRoot.mockResolvedValue({
-      notaria: support.notarias[0],
+      organization: { id: "org-a", nombre: "Organización A", activa: true },
       institutions: support.institutions,
     });
     api.functionalDestinations.mockResolvedValue([
@@ -207,8 +207,8 @@ describe("Catálogos contractuales accesibles", () => {
         type: string,
         folderId?: string | null,
       ) => ({
-        owner_type: "NOTARIA",
-        owner_id: "notary-a",
+        owner_type: "ORGANIZACION",
+        owner_id: "org-a",
         type,
         folder: folderId
           ? {
@@ -259,7 +259,7 @@ describe("Catálogos contractuales accesibles", () => {
               {
                 id: "artifact-a",
                 tipo: type,
-                propietario_tipo: "NOTARIA",
+                propietario_tipo: "ORGANIZACION",
                 nombre: "Machote",
                 descripcion: null,
                 activo: true,
@@ -340,16 +340,16 @@ describe("Catálogos contractuales accesibles", () => {
     expect(screen.getByRole('button', { name: 'Volver a la ficha' })).toBeInTheDocument();
   });
 
-  it("navega por la Notaría única, carpetas y expone importación/versionado accesibles", async () => {
+  it("navega por la organización, carpetas y expone importación/versionado accesibles", async () => {
     const user = userEvent.setup();
     render(<TemplatesFormatsCatalog />);
     expect(
-      await screen.findByRole("heading", { name: "Notaría" }),
+      await screen.findByRole("heading", { name: "Organización" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "Notarías" }),
     ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Notaría 45/ }));
+    await user.click(screen.getByRole("button", { name: /Organización A/ }));
     await user.click(screen.getByRole("button", { name: /MACHOTE JURÍDICO/ }));
     await user.click(await screen.findByRole("button", { name: /A Carpeta/ }));
     await user.click(await screen.findByRole("button", { name: /B Carpeta/ }));
@@ -389,7 +389,7 @@ describe("Catálogos contractuales accesibles", () => {
   it("permite que un mismo archivo sea predeterminado para varios destinos independientes", async () => {
     const user = userEvent.setup();
     render(<TemplatesFormatsCatalog />);
-    await user.click(await screen.findByRole("button", { name: /Notaría 45/ }));
+    await user.click(await screen.findByRole("button", { name: /Organización A/ }));
     await user.click(screen.getByRole("button", { name: /MACHOTE JURÍDICO/ }));
     await user.click(await screen.findByRole("button", { name: "Conectar a módulos" }));
     const dialog = screen.getByRole("dialog", { name: "Destinos funcionales · Machote" });
@@ -411,7 +411,7 @@ describe("Catálogos contractuales accesibles", () => {
   it("crea una plantilla contextual en la carpeta actual con destino funcional controlado", async () => {
     const user = userEvent.setup();
     render(<TemplatesFormatsCatalog />);
-    await user.click(await screen.findByRole("button", { name: /Notaría 45/ }));
+    await user.click(await screen.findByRole("button", { name: /Organización A/ }));
     await user.click(screen.getByRole("button", { name: /MACHOTE JURÍDICO/ }));
     await user.click(await screen.findByRole("button", { name: "Agregar machote" }));
     const dialog = screen.getByRole("dialog", { name: "Agregar machote" });
@@ -421,12 +421,12 @@ describe("Catálogos contractuales accesibles", () => {
     await user.selectOptions(within(dialog).getByLabelText("Destino funcional"), "PROYECTO_MACHOTE");
     await user.selectOptions(within(dialog).getByLabelText("Acto para el machote"), "act-a");
     expect(within(dialog).queryByRole("checkbox", { name: "Predeterminado para este destino" })).not.toBeInTheDocument();
-    expect(within(dialog).getByText(/identidad exacta de esta Notaría y este Acto/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/identidad exacta de esta organización y este Acto/)).toBeInTheDocument();
     const saveButton = within(dialog).getByRole("button", { name: "Guardar" });
     expect(saveButton).toBeEnabled();
     fireEvent.submit(saveButton.closest("form")!);
     await waitFor(() => expect(api.createCatalogArtifact).toHaveBeenCalledWith(expect.objectContaining({
-      tipo: "PLANTILLA", propietario_tipo: "NOTARIA", notaria_id: "notary-a", carpeta_id: null,
+      tipo: "PLANTILLA", propietario_tipo: "ORGANIZACION", organization_id: "org-a", carpeta_id: null,
       nombre: "Machote contextual", activo: true, act_ids: ["act-a"], replace_project_template: false,
       destinos_funcionales: [{ destino: "PROYECTO_MACHOTE", activo: true, predeterminado: false }],
     }), file));
@@ -449,7 +449,7 @@ describe("Catálogos contractuales accesibles", () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
     const user = userEvent.setup();
     render(<TemplatesFormatsCatalog />);
-    await user.click(await screen.findByRole("button", { name: /Notaría 45/ }));
+    await user.click(await screen.findByRole("button", { name: /Organización A/ }));
     await user.click(screen.getByRole("button", { name: /MACHOTE JURÍDICO/ }));
     expect(await screen.findByText("Machote de Compraventa · v1")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retirar asignación" }));
@@ -461,7 +461,7 @@ describe("Catálogos contractuales accesibles", () => {
   it("mueve, renombra y desactiva un artefacto sin modificar sus destinos funcionales", async () => {
     const user = userEvent.setup();
     render(<TemplatesFormatsCatalog />);
-    await user.click(await screen.findByRole("button", { name: /Notaría 45/ }));
+    await user.click(await screen.findByRole("button", { name: /Organización A/ }));
     await user.click(screen.getByRole("button", { name: /MACHOTE JURÍDICO/ }));
     await user.click(await screen.findByRole("button", { name: "Organizar" }));
     const dialog = screen.getByRole("dialog", { name: "Organizar · Machote" });
@@ -589,14 +589,14 @@ describe("Catálogos contractuales accesibles", () => {
     ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Reintentar" }));
     expect(
-      await screen.findByRole("heading", { name: "Notaría" }),
+      await screen.findByRole("heading", { name: "Organización" }),
     ).toBeInTheDocument();
   });
 
   it("analiza importación y expone asignación masiva, excepción individual y metadatos jurídicos", async () => {
     const user = userEvent.setup();
     render(<TemplatesFormatsCatalog />);
-    await user.click(await screen.findByRole("button", { name: /Notaría 45/ }));
+    await user.click(await screen.findByRole("button", { name: /Organización A/ }));
     await user.click(screen.getByRole("button", { name: /MACHOTE JURÍDICO/ }));
     await user.click(
       await screen.findByRole("button", { name: "Importar archivos / ZIP" }),
@@ -636,7 +636,7 @@ describe("Catálogos contractuales accesibles", () => {
     );
     const user = userEvent.setup();
     render(<TemplatesFormatsCatalog />);
-    await user.click(await screen.findByRole("button", { name: /Notaría 45/ }));
+    await user.click(await screen.findByRole("button", { name: /Organización A/ }));
     await user.click(screen.getByRole("button", { name: /MACHOTE JURÍDICO/ }));
     await user.click(
       await screen.findByRole("button", { name: "Importar archivos / ZIP" }),
@@ -666,7 +666,7 @@ describe("Catálogos contractuales accesibles", () => {
   it("usa un control de cierre accesible y conserva la navegación profunda etiquetada", async () => {
     const user = userEvent.setup();
     render(<TemplatesFormatsCatalog />);
-    await user.click(await screen.findByRole("button", { name: /Notaría 45/ }));
+    await user.click(await screen.findByRole("button", { name: /Organización A/ }));
     await user.click(screen.getByRole("button", { name: /MACHOTE JURÍDICO/ }));
     await user.click(await screen.findByRole("button", { name: /A Carpeta/ }));
     await user.click(await screen.findByRole("button", { name: /B Carpeta/ }));

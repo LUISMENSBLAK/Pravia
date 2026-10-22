@@ -25,7 +25,7 @@ const checksum = createHash('sha256').update(source).digest('hex');
 const actor: any = { id: id(1), organizationId: id(2), rol: 'ADMINISTRACION', permissions: [
   'ia.execute', 'comparecientes.read', 'comparecientes.write', 'compliance.read', 'compliance.write',
   'documentos.read', 'expedientes.write',
-] };
+], membershipId: id(70), sessionId: id(71), scope: 'GLOBAL' };
 
 function aiDb() {
   const structure = { id: id(4), organization_id: actor.organizationId, persona_moral_id: id(5), root_node_id: id(6), revision: 3, fingerprint: 'a'.repeat(64), incomplete_markers: [] };
@@ -79,10 +79,12 @@ describe('H4 AI proposal lifecycle', () => {
     external.generate.mockResolvedValue({ content: JSON.stringify({ graph: { root_node_id: rootNode.id, nodes: [{
       id: rootNode.id, party_kind: 'PM', identity_mode: 'LINKED', linked_compareciente_id: id(3), metadata: {},
     }], edges: [], controls: [] }, source_pages: [2, 2, 4] }), model: 'synthetic-model', usage: { input_tokens: 1, output_tokens: 1 } });
-    const proposal = await new BeneficialControllerService(db).proposeAi(actor, id(3), { document_id: document.id });
+    const proposal = await new BeneficialControllerService(db).proposeAi(actor, id(3), { document_id: document.id, idempotency_key: 'h4-proposal-qa' });
     expect(proposal).toMatchObject({ status: 'PENDING', base_revision: structure.revision, base_fingerprint: structure.fingerprint,
       source_document_id: document.id, source_document_checksum: checksum, source_pages: [2, 4] });
-    expect(external.usage).toHaveBeenCalledTimes(1);
+    expect(external.generate).toHaveBeenCalledWith(expect.objectContaining({
+      economicContext: expect.objectContaining({ idempotencyKey: 'h4:proposal:h4-proposal-qa', actor: expect.objectContaining({ organizationId: actor.organizationId }) }),
+    }));
     expect(db.personaMoralOwnershipStructure.create).not.toHaveBeenCalled();
     expect(db.personaMoralOwnershipStructure.update).not.toHaveBeenCalled();
   });
@@ -136,7 +138,7 @@ describe('H4 AI proposal lifecycle', () => {
 
   it('denies AI proposal creation to an actor without ia.execute', async () => {
     const { db } = aiDb();
-    await expect(new BeneficialControllerService(db).proposeAi({ ...actor, permissions: actor.permissions.filter((p: string) => p !== 'ia.execute') }, id(3), { document_id: id(9) }))
+    await expect(new BeneficialControllerService(db).proposeAi({ ...actor, permissions: actor.permissions.filter((p: string) => p !== 'ia.execute') }, id(3), { document_id: id(9), idempotency_key: 'denied-qa' }))
       .rejects.toMatchObject({ code: 'BC_PERMISSION_DENIED' });
     expect(external.generate).not.toHaveBeenCalled();
   });

@@ -1,4 +1,4 @@
-import { supabaseProjectRefFromDatabaseUrl, supabaseProjectRefFromStorageUrl } from '../config/runtime';
+import { supabaseProjectRefFromDatabaseUrl, supabaseProjectRefFromStorageUrl, type RuntimeInfrastructureConfig } from '../config/runtime';
 
 type Environment = Record<string, string | undefined>;
 
@@ -90,4 +90,48 @@ export function assertStagingWriteTarget(env: Environment = process.env) {
   }
 
   return { database: staging, storageMode };
+}
+
+export function assertStagingRuntime(config: RuntimeInfrastructureConfig, env: Environment = process.env) {
+  if (env.PRAVIA_ENV !== 'staging') return;
+
+  required(env, 'PRODUCTION_DATABASE_URL');
+  required(env, 'PRODUCTION_SUPABASE_URL');
+  const target = assertStagingWriteTarget(env);
+  const actualDatabaseUrl = required(env, 'STAGING_DATABASE_URL');
+  const expectedDirectUrl = required(env, 'STAGING_DIRECT_URL');
+  if (!config.database.url || !sameDatabase(databaseIdentity(config.database.url), databaseIdentity(actualDatabaseUrl))) {
+    throw new ProductionWriteRefusedError('la conexión DB activa no coincide con STAGING_DATABASE_URL.');
+  }
+  if (!config.database.directUrl || !sameDatabase(databaseIdentity(config.database.directUrl), databaseIdentity(expectedDirectUrl))) {
+    throw new ProductionWriteRefusedError('la conexión DB directa activa no coincide con STAGING_DIRECT_URL.');
+  }
+  const production = databaseIdentity(required(env, 'PRODUCTION_DATABASE_URL'));
+  const stagingDirect = databaseIdentity(expectedDirectUrl);
+  if (sameDatabase(stagingDirect, production) || (stagingDirect.projectRef && production.projectRef === stagingDirect.projectRef)) {
+    throw new ProductionWriteRefusedError('la conexión DB directa de staging coincide con producción.');
+  }
+  if (target.database.projectRef) {
+    if (stagingDirect.projectRef !== target.database.projectRef) {
+      throw new ProductionWriteRefusedError('la conexión DB directa no pertenece al proyecto staging.');
+    }
+  } else if (!sameDatabase(stagingDirect, target.database)) {
+    throw new ProductionWriteRefusedError('la conexión DB directa no pertenece a la base staging.');
+  }
+  if (config.database.mode === 'hybrid' || config.storage.mode === 'hybrid') {
+    throw new ProductionWriteRefusedError('staging no permite modo hybrid sin certificación independiente.');
+  }
+  if (target.storageMode !== config.storage.mode || config.storage.primary !== target.storageMode) {
+    throw new ProductionWriteRefusedError('el modo Storage activo no coincide con staging.');
+  }
+  if (target.storageMode === 'local') {
+    if (config.storage.localPath !== required(env, 'STAGING_LOCAL_STORAGE_PATH')) {
+      throw new ProductionWriteRefusedError('el path Storage activo no coincide con staging.');
+    }
+  } else {
+    const expectedRef = required(env, 'EXPECTED_STAGING_SUPABASE_PROJECT_REF');
+    if (supabaseProjectRefFromStorageUrl(env.SUPABASE_URL) !== expectedRef) {
+      throw new ProductionWriteRefusedError('el Storage cloud activo no coincide con staging.');
+    }
+  }
 }

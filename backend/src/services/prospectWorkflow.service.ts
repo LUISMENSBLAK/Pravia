@@ -11,6 +11,7 @@ import { applyProspectTimingTransition } from './timingPolicy.service';
 import { getQuotationTemplate } from './quotationTemplate.service';
 import { optionalOperationalText, preserveFormatText } from '../utils/operationalText';
 import { roleHasPermission } from '../auth/permissions';
+import { budgetTotals, normalizeEditableBudgetConcepts, withDerivedHonorariosIva } from '../domain/expedienteBudget';
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -310,23 +311,24 @@ export class ProspectWorkflowService {
         }
         const quoteFolio = await this.folio(tx, 'COT', recordedAt);
         const actLabel = p.actos.map((item) => item.tipo_acto.nombre).join(', ');
+        const inheritedConcepts = p.honorarios_estimados != null && p.impuestos_derechos_estimados != null
+          ? withDerivedHonorariosIva(normalizeEditableBudgetConcepts([
+            { concepto: 'Honorarios', categoria: 'HONORARIOS', importe: String(p.honorarios_estimados) },
+            { concepto: 'Impuestos y derechos', categoria: 'IMPUESTOS_DERECHOS', importe: String(p.impuestos_derechos_estimados) },
+          ]))
+          : [];
+        const inheritedTotals = inheritedConcepts.length ? budgetTotals(inheritedConcepts) : null;
         const template = getQuotationTemplate({
           folio: quoteFolio, cliente: p.nombre, acto: actLabel,
           descripcion: p.necesidad || 'Sin descripción adicional', responsable: quoteAssignee?.user.nombre || p.cotizacion_responsable?.user.nombre || p.atendido_por.nombre,
-          fecha: recordedAt, honorarios: p.honorarios_estimados?.toString() ?? null,
-          impuestos_derechos: p.impuestos_derechos_estimados?.toString() ?? null,
-          total: p.total_estimado?.toString() ?? null,
+          fecha: recordedAt, honorarios: inheritedTotals?.subtotal_honorarios ?? null,
+          impuestos_derechos: inheritedTotals?.subtotal_impuestos_derechos ?? null,
+          total: inheritedTotals?.total ?? null,
         });
-        const inheritedConcepts = p.total_estimado && p.honorarios_estimados && p.impuestos_derechos_estimados
-          ? [
-            { concepto: 'Honorarios', categoria: 'HONORARIOS' as const, importe: p.honorarios_estimados, orden: 0 },
-            { concepto: 'Impuestos y derechos', categoria: 'IMPUESTOS_DERECHOS' as const, importe: p.impuestos_derechos_estimados, orden: 1 },
-          ]
-          : [];
         const quote = await tx.cotizacion.create({ data: { organization_id: actor.organizationId, prospecto_id: id, user_id: assignedId,
           numero_cotizacion: quoteFolio, estado: 'BORRADOR', cuerpo_correo_cliente: template.body,
           contexto_operacion: p.contexto_operacion || p.necesidad,
-          honorarios_pravia: null, total_notaria: p.total_estimado, total_cliente: p.total_estimado,
+          honorarios_pravia: null, total_notaria: inheritedTotals?.total ?? p.total_estimado, total_cliente: inheritedTotals?.total ?? p.total_estimado,
         } });
         await tx.cotizacionActo.createMany({ data: p.actos.map((item, orden) => ({
           organization_id: actor.organizationId, cotizacion_id: quote.id, tipo_acto_id: item.tipo_acto_id,
@@ -340,7 +342,7 @@ export class ProspectWorkflowService {
             categoria: concept.categoria,
             importe: concept.importe,
             orden: concept.orden,
-            origen: 'MANUAL',
+            origen: concept.categoria === 'IVA_HONORARIOS' ? 'DERIVADO' : 'MANUAL',
           })) });
         }
         await initializeQuoteContractInTransaction(tx, actor, quote, {

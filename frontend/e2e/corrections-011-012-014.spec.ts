@@ -248,7 +248,7 @@ test('Correcciones 011 + 012 + 014: UAT integrado en Chrome real', async ({ page
 
   await test.step('014 · conexión funcional visible y separada de carpetas/nombre', async () => {
     await open(page, '/configuracion/plantillas-formatos');
-    await page.getByRole('button', { name: /Notaría.*Notaría QA Local/ }).click();
+    await page.getByRole('button', { name: /^Organización / }).click();
     await page.getByRole('button').filter({ has: page.getByRole('heading', { name: 'Plantillas', exact: true }) }).click();
     const artifact = page.locator('article').filter({ has: page.getByRole('heading', { name: 'Machote proyecto notarial QA', exact: true }) });
     await expect(artifact).toBeVisible();

@@ -43,6 +43,17 @@ describe('RBAC de PRAVIA', () => {
     expect(permissionsForRole('CONSULTA').some((item) => item.endsWith('.write') || item.endsWith('.manage'))).toBe(false);
   });
 
+  it('reserva la exportación completa del tenant a Dirección y Administración', () => {
+    for (const role of ['DIRECCION', 'ADMINISTRACION'] as const) {
+      expect(roleHasPermission(role, 'platform.exports.read')).toBe(true);
+      expect(roleHasPermission(role, 'platform.exports.manage')).toBe(true);
+    }
+    for (const role of ['ABOGADO', 'FINANCIERO', 'RECEPCION', 'GESTORIA', 'CONSULTA'] as const) {
+      expect(roleHasPermission(role, 'platform.exports.read')).toBe(false);
+      expect(roleHasPermission(role, 'platform.exports.manage')).toBe(false);
+    }
+  });
+
   it('limita Contadora al área financiera y reportes sin privilegios jurídicos o administrativos', () => {
     expect(roleHasPermission('FINANCIERO', 'finanzas.read')).toBe(true);
     expect(roleHasPermission('FINANCIERO', 'finanzas.write')).toBe(true);

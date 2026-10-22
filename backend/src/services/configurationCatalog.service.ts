@@ -54,6 +54,12 @@ const enumValue = <T extends Record<string, string>>(source: T, value: unknown, 
   if (!Object.values(source).includes(value as T[keyof T])) throw new CatalogConfigurationError(400, 'CATALOG_ENUM_INVALID', `${label} no es válido.`);
   return value as T[keyof T];
 };
+const assertOperationalTimingSelector = (selector: ConfiguracionSelectorExcepcion) => {
+  if (selector === ConfiguracionSelectorExcepcion.NOTARIA) {
+    throw new CatalogConfigurationError(409, 'CFG001_LEGACY_NOTARY_SELECTOR_READ_ONLY', 'Las excepciones históricas por Notaría permanecen visibles, pero los tiempos nuevos se configuran por institución o jurisdicción dentro de la organización activa.');
+  }
+  return selector;
+};
 const booleanValue = (value: unknown, fallback: boolean) => value === undefined ? fallback : Boolean(value);
 const idList = (value: unknown) => Array.from(new Set(Array.isArray(value) ? value.map(String).filter(Boolean) : []));
 
@@ -227,6 +233,12 @@ async function assertMembership(actor: Actor, userId?: string | null) {
 }
 
 async function assertOwner(actor: Actor, ownerType: CatalogoPropietarioTipo, ownerId: string) {
+  if (ownerType === 'ORGANIZACION') {
+    if (ownerId !== actor.organizationId) throw new CatalogConfigurationError(403, 'ORGANIZATION_OUTSIDE_TENANT', 'La organización no coincide con la sesión activa.');
+    const item = await prisma.organization.findUnique({ where: { id: actor.organizationId }, select: { id: true, name: true } });
+    if (!item) throw new CatalogConfigurationError(404, 'ORGANIZATION_NOT_FOUND', 'La organización activa no está disponible.');
+    return item;
+  }
   if (ownerType === 'NOTARIA') {
     const item = await prisma.notaria.findFirst({ where: { id: ownerId, organization_id: actor.organizationId, archived_at: null }, select: { id: true, nombre: true } });
     if (!item) throw new CatalogConfigurationError(400, 'NOTARIA_OUTSIDE_TENANT', 'La Notaría no pertenece a la organización activa.');
@@ -236,6 +248,20 @@ async function assertOwner(actor: Actor, ownerType: CatalogoPropietarioTipo, own
   if (!item) throw new CatalogConfigurationError(400, 'INSTITUTION_OUTSIDE_TENANT', 'La institución no pertenece a la organización activa.');
   return item;
 }
+
+async function assertCatalogOwner(actor: Actor, ownerType: CatalogoPropietarioTipo, ownerId: string) {
+  if (ownerType === 'NOTARIA') throw new CatalogConfigurationError(409, 'CFG002_LEGACY_OWNER_READ_ONLY', 'La titularidad histórica de Notaría ya no admite operaciones nuevas.');
+  return assertOwner(actor, ownerType, ownerId);
+}
+
+const catalogOwnerId = (actor: Actor, ownerType: CatalogoPropietarioTipo, record: { notaria_id: string | null; institucion_id: string | null }) =>
+  ownerType === 'ORGANIZACION' ? actor.organizationId : ownerType === 'NOTARIA' ? record.notaria_id : record.institucion_id;
+
+const catalogOwnerWhere = (ownerType: CatalogoPropietarioTipo, ownerId: string) =>
+  ownerType === 'ORGANIZACION' ? {} : ownerType === 'NOTARIA' ? { notaria_id: ownerId } : { institucion_id: ownerId };
+
+const requestedCatalogOwnerId = (actor: Actor, ownerType: CatalogoPropietarioTipo, input: any) =>
+  requiredText(ownerType === 'ORGANIZACION' ? input.organization_id : ownerType === 'NOTARIA' ? input.notaria_id : input.institucion_id, 'Propietario', 64);
 
 export const actsAndTimesService = {
   async creationDefaults(actor: Actor) {
@@ -369,6 +395,7 @@ export const actsAndTimesService = {
         throw new CatalogConfigurationError(400, 'ACT_PROCESS_DEPENDENCY_INVALID', 'Las dependencias deben referirse a otros procesos seleccionados y no repetirse.');
       }
       for (const exception of process.exceptions) {
+        assertOperationalTimingSelector(exception.selector);
         if (exception.selector === 'JURISDICCION' && !exception.jurisdiction) throw new CatalogConfigurationError(400, 'ACT_EXCEPTION_JURISDICTION_REQUIRED', 'Indica la jurisdicción de la excepción.');
         if (exception.selector !== 'JURISDICCION' && !exception.targetId) throw new CatalogConfigurationError(400, 'ACT_EXCEPTION_TARGET_REQUIRED', 'Selecciona la institución o Notaría de la excepción.');
         if (exception.selector === 'INSTITUCION') await assertOwner(actor, 'INSTITUCION', exception.targetId!);
@@ -689,12 +716,10 @@ export const actsAndTimesService = {
   async createException(actor: Actor, activityId: string, input: any) {
     const activity = await prisma.configuracionActividad.findFirst({ where: { id: activityId, organization_id: actor.organizationId }, include: { etapa: { select: { configuracion_id: true } } } });
     if (!activity) throw new CatalogConfigurationError(404, 'ACTIVITY_NOT_FOUND', 'Actividad no encontrada.');
-    const selector = enumValue(ConfiguracionSelectorExcepcion, input.selector_tipo, 'Tipo de excepción');
+    const selector = assertOperationalTimingSelector(enumValue(ConfiguracionSelectorExcepcion, input.selector_tipo, 'Tipo de excepción'));
     const institutionId = selector === 'INSTITUCION' ? requiredText(input.institucion_id, 'Institución', 64) : null;
-    const notariaId = selector === 'NOTARIA' ? requiredText(input.notaria_id, 'Notaría', 64) : null;
     const jurisdiction = selector === 'JURISDICCION' ? requiredOperationalText(input.jurisdiccion, 'Estado o jurisdicción', 120) : null;
     if (institutionId) await assertOwner(actor, 'INSTITUCION', institutionId);
-    if (notariaId) await assertOwner(actor, 'NOTARIA', notariaId);
     const dependencyIds = idList(input.dependency_ids);
     if (dependencyIds.includes(activityId)) throw new CatalogConfigurationError(400, 'EXCEPTION_DEPENDENCY_SELF_REFERENCE', 'Una excepción no puede agregar la propia actividad como dependencia.');
     if (dependencyIds.length) {
@@ -705,7 +730,7 @@ export const actsAndTimesService = {
     }
     return prisma.$transaction(async (tx) => {
       const exception = await tx.configuracionExcepcion.create({ data: {
-        organization_id: actor.organizationId, actividad_id: activityId, selector_tipo: selector, institucion_id: institutionId, notaria_id: notariaId, jurisdiccion: jurisdiction,
+        organization_id: actor.organizationId, actividad_id: activityId, selector_tipo: selector, institucion_id: institutionId, notaria_id: null, jurisdiccion: jurisdiction,
         duracion: nonNegative(input.duracion, 'Duración'), tipo_dias: enumValue(ConfiguracionTipoDias, input.tipo_dias, 'Tipo de días'), margen_seguridad: nonNegative(input.margen_seguridad ?? 0, 'Margen de seguridad'), activa: booleanValue(input.activa, true),
         dependencias_adicionales: dependencyIds.length ? { create: dependencyIds.map((id) => ({ organization_id: actor.organizationId, depende_actividad_id: id, bloqueante: true })) } : undefined,
       }, include: { dependencias_adicionales: true } });
@@ -769,7 +794,7 @@ const destinationList = (actor: Actor, value: unknown) => {
 async function validateFolder(actor: Actor, folderId: string | null, ownerType: CatalogoPropietarioTipo, ownerId: string, type: CatalogoArtefactoTipo) {
   if (!folderId) return null;
   const folder = await prisma.catalogoCarpeta.findFirst({ where: { id: folderId, organization_id: actor.organizationId, activa: true }, select: { id: true, tipo: true, propietario_tipo: true, notaria_id: true, institucion_id: true } });
-  if (!folder || folder.tipo !== type || folder.propietario_tipo !== ownerType || (ownerType === 'NOTARIA' ? folder.notaria_id : folder.institucion_id) !== ownerId) throw new CatalogConfigurationError(400, 'FOLDER_OWNER_MISMATCH', 'La carpeta no pertenece al propietario y tipo seleccionados.');
+  if (!folder || folder.tipo !== type || folder.propietario_tipo !== ownerType || catalogOwnerId(actor, ownerType, folder) !== ownerId) throw new CatalogConfigurationError(400, 'FOLDER_OWNER_MISMATCH', 'La carpeta no pertenece al propietario y tipo seleccionados.');
   return folder;
 }
 
@@ -814,11 +839,11 @@ const ruleData = (actor: Actor, rule: any) => {
 
 export const templatesAndFormatsService = {
   async root(actor: Actor) {
-    const [notarias, institutions] = await Promise.all([
-      prisma.notaria.findMany({ where: { organization_id: actor.organizationId, archived_at: null }, select: { id: true, nombre: true, numero_notaria: true, activa: true, predeterminada: true, created_at: true }, orderBy: [{ predeterminada: 'desc' }, { activa: 'desc' }, { created_at: 'asc' }] }),
+    const [organization, institutions] = await Promise.all([
+      prisma.organization.findUnique({ where: { id: actor.organizationId }, select: { id: true, name: true, status: true } }),
       prisma.catalogoInstitucion.findMany({ where: { organization_id: actor.organizationId }, select: { id: true, nombre: true, tipo: true, activa: true }, orderBy: { nombre: 'asc' } }),
     ]);
-    return { notaria: notarias[0] || null, institutions, legacy_notaries_hidden: Math.max(0, notarias.length - 1) };
+    return { organization: organization ? { id: organization.id, nombre: organization.name, activa: organization.status === 'ACTIVE' } : null, institutions };
   },
 
   async supportingCatalogs(actor: Actor) {
@@ -858,14 +883,14 @@ export const templatesAndFormatsService = {
   async explorer(actor: Actor, ownerTypeRaw: unknown, ownerIdRaw: unknown, typeRaw: unknown, folderIdRaw?: unknown) {
     const ownerType = enumValue(CatalogoPropietarioTipo, ownerTypeRaw, 'Tipo de propietario');
     const type = enumValue(CatalogoArtefactoTipo, typeRaw, 'Tipo de archivo maestro');
-    if (type === 'PLANTILLA' && ownerType !== 'NOTARIA') throw new CatalogConfigurationError(400, 'BANK_TEMPLATE_FORBIDDEN', 'Las Plantillas pertenecen exclusivamente a una Notaría.');
+    if (type === 'PLANTILLA' && ownerType !== 'ORGANIZACION') throw new CatalogConfigurationError(400, 'BANK_TEMPLATE_FORBIDDEN', 'Las Plantillas pertenecen a la organización activa.');
     const ownerId = requiredText(ownerIdRaw, 'Propietario', 64);
-    await assertOwner(actor, ownerType, ownerId);
+    await assertCatalogOwner(actor, ownerType, ownerId);
     const folderId = optionalText(folderIdRaw, 64);
     const folder = folderId ? await prisma.catalogoCarpeta.findFirst({ where: { id: folderId, organization_id: actor.organizationId }, select: { id: true, nombre: true, parent_id: true, tipo: true, propietario_tipo: true, notaria_id: true, institucion_id: true } }) : null;
     if (folderId && !folder) throw new CatalogConfigurationError(404, 'FOLDER_NOT_FOUND', 'Carpeta no encontrada.');
     await validateFolder(actor, folderId, ownerType, ownerId, type);
-    const ownerWhere = ownerType === 'NOTARIA' ? { notaria_id: ownerId } : { institucion_id: ownerId };
+    const ownerWhere = catalogOwnerWhere(ownerType, ownerId);
     const [folders, allFolders, artifacts] = await Promise.all([
       prisma.catalogoCarpeta.findMany({ where: { organization_id: actor.organizationId, propietario_tipo: ownerType, tipo: type, ...ownerWhere, parent_id: folderId, activa: true }, select: { id: true, tipo: true, nombre: true, parent_id: true, created_at: true }, orderBy: { nombre: 'asc' } }),
       prisma.catalogoCarpeta.findMany({ where: { organization_id: actor.organizationId, propietario_tipo: ownerType, tipo: type, ...ownerWhere, activa: true }, select: { id: true, tipo: true, nombre: true, parent_id: true, created_at: true }, orderBy: { nombre: 'asc' } }),
@@ -877,19 +902,19 @@ export const templatesAndFormatsService = {
     while (current) {
       if (visited.has(current.id)) throw new CatalogConfigurationError(409, 'FOLDER_HIERARCHY_CYCLE', 'La jerarquía de carpetas contiene un ciclo y no puede navegarse.');
       visited.add(current.id);
-      if (current.tipo !== type || current.propietario_tipo !== ownerType || (ownerType === 'NOTARIA' ? current.notaria_id : current.institucion_id) !== ownerId) throw new CatalogConfigurationError(409, 'FOLDER_HIERARCHY_INVALID', 'La jerarquía de carpetas no coincide con el propietario y tipo seleccionados.');
+      if (current.tipo !== type || current.propietario_tipo !== ownerType || catalogOwnerId(actor, ownerType, current) !== ownerId) throw new CatalogConfigurationError(409, 'FOLDER_HIERARCHY_INVALID', 'La jerarquía de carpetas no coincide con el propietario y tipo seleccionados.');
       breadcrumbs.unshift({ id: current.id, name: current.nombre });
       current = current.parent_id ? await prisma.catalogoCarpeta.findFirst({ where: { id: current.parent_id, organization_id: actor.organizationId }, select: { id: true, nombre: true, parent_id: true, tipo: true, propietario_tipo: true, notaria_id: true, institucion_id: true } }) : null;
     }
-    return { owner_type: ownerType, owner_id: ownerId, type, folder, breadcrumbs, folders, all_folders: allFolders, artifacts, allows_templates: ownerType === 'NOTARIA' };
+    return { owner_type: ownerType, owner_id: ownerId, type, folder, breadcrumbs, folders, all_folders: allFolders, artifacts, allows_templates: ownerType === 'ORGANIZACION' };
   },
 
   async createFolder(actor: Actor, input: any) {
     const ownerType = enumValue(CatalogoPropietarioTipo, input.propietario_tipo, 'Tipo de propietario');
     const type = enumValue(CatalogoArtefactoTipo, input.tipo, 'Tipo de archivo maestro');
-    if (type === 'PLANTILLA' && ownerType !== 'NOTARIA') throw new CatalogConfigurationError(400, 'BANK_TEMPLATE_FORBIDDEN', 'Las Plantillas pertenecen exclusivamente a una Notaría.');
-    const ownerId = requiredText(ownerType === 'NOTARIA' ? input.notaria_id : input.institucion_id, 'Propietario', 64);
-    await assertOwner(actor, ownerType, ownerId);
+    if (type === 'PLANTILLA' && ownerType !== 'ORGANIZACION') throw new CatalogConfigurationError(400, 'BANK_TEMPLATE_FORBIDDEN', 'Las Plantillas pertenecen a la organización activa.');
+    const ownerId = requestedCatalogOwnerId(actor, ownerType, input);
+    await assertCatalogOwner(actor, ownerType, ownerId);
     const parentId = optionalText(input.parent_id, 64);
     await validateFolder(actor, parentId, ownerType, ownerId, type);
     const data = { organization_id: actor.organizationId, propietario_tipo: ownerType, tipo: type, notaria_id: ownerType === 'NOTARIA' ? ownerId : null, institucion_id: ownerType === 'INSTITUCION' ? ownerId : null, parent_id: parentId, nombre: requiredOperationalText(input.nombre, 'Nombre de la carpeta'), activa: true };
@@ -899,7 +924,7 @@ export const templatesAndFormatsService = {
   async updateFolder(actor: Actor, folderId: string, input: any) {
     const before = await prisma.catalogoCarpeta.findFirst({ where: { id: folderId, organization_id: actor.organizationId } });
     if (!before) throw new CatalogConfigurationError(404, 'FOLDER_NOT_FOUND', 'Carpeta no encontrada.');
-    const ownerId = before.propietario_tipo === 'NOTARIA' ? before.notaria_id : before.institucion_id;
+    const ownerId = catalogOwnerId(actor, before.propietario_tipo, before);
     if (!ownerId) throw new CatalogConfigurationError(409, 'FOLDER_OWNER_INVALID', 'La carpeta no tiene un propietario válido.');
     let parentId = before.parent_id;
     if (input.parent_id !== undefined) {
@@ -929,9 +954,9 @@ export const templatesAndFormatsService = {
   async createArtifact(actor: Actor, input: any, file: Express.Multer.File) {
     const type = enumValue(CatalogoArtefactoTipo, input.tipo, 'Tipo de archivo maestro');
     const ownerType = enumValue(CatalogoPropietarioTipo, input.propietario_tipo, 'Tipo de propietario');
-    if (type === 'PLANTILLA' && ownerType !== 'NOTARIA') throw new CatalogConfigurationError(400, 'BANK_TEMPLATE_FORBIDDEN', 'Las Plantillas pertenecen exclusivamente a una Notaría.');
-    const ownerId = requiredText(ownerType === 'NOTARIA' ? input.notaria_id : input.institucion_id, 'Propietario', 64);
-    await assertOwner(actor, ownerType, ownerId);
+    if (type === 'PLANTILLA' && ownerType !== 'ORGANIZACION') throw new CatalogConfigurationError(400, 'BANK_TEMPLATE_FORBIDDEN', 'Las Plantillas pertenecen a la organización activa.');
+    const ownerId = requestedCatalogOwnerId(actor, ownerType, input);
+    await assertCatalogOwner(actor, ownerType, ownerId);
     const folderId = optionalText(input.carpeta_id, 64);
     await validateFolder(actor, folderId, ownerType, ownerId, type);
     const actIds = idList(input.act_ids); const rules = Array.isArray(input.rules) ? input.rules : [];
@@ -939,8 +964,8 @@ export const templatesAndFormatsService = {
       destination.destino === 'PROYECTO_MACHOTE' ? { ...destination, predeterminado: false } : destination,
     );
     const projectDestination = destinations.find((destination) => destination.destino === 'PROYECTO_MACHOTE' && destination.activo);
-    if (projectDestination && (type !== 'PLANTILLA' || ownerType !== 'NOTARIA')) {
-      throw new CatalogConfigurationError(400, 'PROJECT_TEMPLATE_TYPE_INVALID', 'Un machote de Proyecto debe ser una Plantilla propia de la Notaría.');
+    if (projectDestination && (type !== 'PLANTILLA' || ownerType !== 'ORGANIZACION')) {
+      throw new CatalogConfigurationError(400, 'PROJECT_TEMPLATE_TYPE_INVALID', 'Un machote de Proyecto debe ser una Plantilla de la organización.');
     }
     if (projectDestination && actIds.length !== 1) {
       throw new CatalogConfigurationError(400, 'PROJECT_TEMPLATE_ACT_REQUIRED', 'Selecciona exactamente un Acto para el machote de Proyecto.');
@@ -1057,11 +1082,12 @@ export const templatesAndFormatsService = {
     let folderId = before.carpeta_id;
     if (input.carpeta_id !== undefined) {
       folderId = optionalText(input.carpeta_id, 64);
-      const ownerId = before.propietario_tipo === 'NOTARIA' ? before.notaria_id : before.institucion_id;
+      const ownerId = catalogOwnerId(actor, before.propietario_tipo, before);
       if (!ownerId) throw new CatalogConfigurationError(409, 'ARTIFACT_OWNER_INVALID', 'El archivo maestro no tiene un propietario válido.');
       await validateFolder(actor, folderId, before.propietario_tipo, ownerId, before.tipo);
     }
     return prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`cfg002:artifact:${actor.organizationId}:${artifactId}`}))`);
       await tx.catalogoArtefacto.update({ where: { id: artifactId }, data: { ...(input.nombre !== undefined ? { nombre: requiredOperationalText(input.nombre, 'Nombre') } : {}), ...(input.descripcion !== undefined ? { descripcion: normalizeOptionalOperationalText(input.descripcion) } : {}), ...(input.activo !== undefined ? { activo: Boolean(input.activo) } : {}), ...(input.carpeta_id !== undefined ? { carpeta_id: folderId } : {}), actualizado_por_id: actor.id } });
       if (input.act_ids !== undefined) { await tx.catalogoArtefactoActo.deleteMany({ where: { artefacto_id: artifactId } }); await tx.catalogoArtefactoActo.createMany({ data: actIds.map((id) => ({ organization_id: actor.organizationId, artefacto_id: artifactId, tipo_acto_id: id })) }); }
       if (rules !== null) { await tx.catalogoArtefactoRegla.deleteMany({ where: { artefacto_id: artifactId } }); if (rules.length) await tx.catalogoArtefactoRegla.createMany({ data: rules.map((rule: any) => ({ artefacto_id: artifactId, ...ruleData(actor, rule) })) }); }

@@ -57,13 +57,11 @@ export class ReportingService {
     const lawyerId = global && query.abogado_id && query.abogado_id !== 'TODOS'
       ? query.abogado_id
       : user.rol === 'ABOGADO' ? user.id : undefined;
-    const notariaId = global && query.notaria_id && query.notaria_id !== 'TODOS' ? query.notaria_id : undefined;
     return {
       period,
       scope: {
         mode: global ? 'GLOBAL' : user.rol === 'ABOGADO' ? 'PROPIO' : 'OPERATIVO',
         lawyerId,
-        notariaId,
         financial,
       },
     };
@@ -73,7 +71,6 @@ export class ReportingService {
     return {
       estado: { not: 'CANCELADO' as const },
       ...(ctx.scope.lawyerId ? { responsable_id: ctx.scope.lawyerId } : {}),
-      ...(ctx.scope.notariaId ? { notaria_id: ctx.scope.notariaId } : {}),
       ...(range.from || range.to ? {
         fecha_reconocimiento: {
           ...(range.from ? { gte: range.from } : {}),
@@ -88,7 +85,6 @@ export class ReportingService {
       estatus: { in: applied as any },
       fecha_movimiento: { gte: range.from, lte: range.to },
       ...(ctx.scope.lawyerId ? { responsable_id: ctx.scope.lawyerId } : {}),
-      ...(ctx.scope.notariaId ? { notaria_id: ctx.scope.notariaId } : {}),
     };
   }
 
@@ -97,7 +93,6 @@ export class ReportingService {
       archived_at: null,
       ...expedienteAccessWhere(user),
       ...(ctx.scope.lawyerId ? { abogado_id: ctx.scope.lawyerId } : {}),
-      ...(ctx.scope.notariaId ? { notaria_id: ctx.scope.notariaId } : {}),
     };
   }
 
@@ -111,7 +106,6 @@ export class ReportingService {
           fecha_reconocimiento: true,
           fecha_vencimiento: true,
           responsable: { select: { id: true, nombre: true, apellido: true } },
-          notaria: { select: { id: true, nombre: true } },
           expediente: {
             select: {
               id: true,
@@ -120,7 +114,6 @@ export class ReportingService {
               estatus: true,
               fecha_estimada_firma: true,
               abogado: { select: { id: true, nombre: true, apellido: true } },
-              notaria: { select: { id: true, nombre: true } },
             },
           },
           cotizacion: {
@@ -158,7 +151,6 @@ export class ReportingService {
       const generated = money(n(fee.monto));
       const collected = money(Math.min(generated, (fee.distribuciones || []).reduce((sum: number, item: any) => sum + n(item.monto), 0)));
       const responsible = fee.responsable || fee.expediente?.abogado;
-      const notaria = fee.notaria || fee.expediente?.notaria;
       return {
         ...fee,
         generated,
@@ -166,8 +158,6 @@ export class ReportingService {
         pending: money(Math.max(0, generated - collected)),
         responsibleId: responsible?.id || 'SIN_RESPONSABLE',
         responsibleName: person(responsible),
-        notariaId: notaria?.id || 'SIN_NOTARIA',
-        notariaName: notaria?.nombre || 'Sin notaría',
       };
     });
     const canonicalMovements = movements.map((movement: any): CanonicalMovement => ({
@@ -187,11 +177,11 @@ export class ReportingService {
     return { totals, rows };
   }
 
-  private groupFees(rows: any[], key: 'responsible' | 'notaria') {
+  private groupFees(rows: any[]) {
     const grouped = new Map<string, any>();
     for (const row of rows) {
-      const id = key === 'responsible' ? row.responsibleId : row.notariaId;
-      const name = key === 'responsible' ? row.responsibleName : row.notariaName;
+      const id = row.responsibleId;
+      const name = row.responsibleName;
       const current = grouped.get(id) || { id, nombre: name, generated: 0, collected: 0, pending: 0, expedientes: new Set<string>() };
       current.generated = money(current.generated + row.generated);
       current.collected = money(current.collected + row.collected);
@@ -239,21 +229,14 @@ export class ReportingService {
 
   async catalogs(user: AuthUser) {
     const global = user.permissions.includes('reportes.global.read');
-    const [users, notarias] = await Promise.all([
-      this.db.user.findMany({
-        where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(user.organizationId, ['DIRECCION', 'ADMINISTRACION', 'ABOGADO']) }, ...(!global ? { id: user.id } : {}) },
-        select: { id: true, nombre: true, apellido: true, ...organizationMembershipRoleSelect(user.organizationId) },
-        orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }],
-      }),
-      global ? this.db.notaria.findMany({
-        where: { activa: true, archived_at: null },
-        select: { id: true, nombre: true, numero_notaria: true },
-        orderBy: { nombre: 'asc' },
-      }) : Promise.resolve([]),
-    ]);
+    const users = await this.db.user.findMany({
+      where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(user.organizationId, ['DIRECCION', 'ADMINISTRACION', 'ABOGADO']) }, ...(!global ? { id: user.id } : {}) },
+      select: { id: true, nombre: true, apellido: true, ...organizationMembershipRoleSelect(user.organizationId) },
+      orderBy: [{ nombre: 'asc' }, { apellido: 'asc' }],
+    });
     return {
       usuarios: usersWithEffectiveMembershipRoles(users),
-      notarias,
+      notarias: [], // compatibility field for existing report consumers; no operational selector
       scope: {
         global,
         financial: user.permissions.includes('reportes.financial.read'),
@@ -337,7 +320,6 @@ export class ReportingService {
         where: {
           created_at: { gte: ctx.period.from, lte: ctx.period.to },
           ...(ctx.scope.lawyerId ? { user_id: ctx.scope.lawyerId } : {}),
-          ...(ctx.scope.notariaId ? { notaria_id: ctx.scope.notariaId } : {}),
         },
         select: { id: true, total_cliente: true, fecha_aceptacion_cliente: true },
       }),
@@ -348,7 +330,6 @@ export class ReportingService {
             is: {
               fecha_aceptacion_cliente: { gte: ctx.period.from, lte: ctx.period.to },
               ...(ctx.scope.lawyerId ? { user_id: ctx.scope.lawyerId } : {}),
-              ...(ctx.scope.notariaId ? { notaria_id: ctx.scope.notariaId } : {}),
             },
           },
         },
@@ -395,7 +376,7 @@ export class ReportingService {
         orderBy: { periodo_inicio: 'desc' },
       }),
     ]);
-    const byLawyer = this.groupFees(snapshot.rows, 'responsible');
+    const byLawyer = this.groupFees(snapshot.rows);
     const targetByLawyer = new Map<string, any>();
     for (const item of lawyerTargets) if (item.usuario_id && !targetByLawyer.has(item.usuario_id)) targetByLawyer.set(item.usuario_id, item);
     return {
@@ -410,7 +391,6 @@ export class ReportingService {
           goal: item ? targetProgress({ amount: n(item.importe), base: item.base }, { honorarios_generados: row.generated, honorarios_cobrados: row.collected }) : null,
         };
       }),
-      byNotaria: this.groupFees(snapshot.rows, 'notaria'),
       goal: target ? targetProgress({ amount: n(target.importe), base: target.base }, snapshot.totals) : null,
     };
   }
@@ -427,8 +407,6 @@ export class ReportingService {
       cliente: row.expediente?.cliente_alias || row.cotizacion?.prospecto?.nombre || 'Sin cliente',
       abogado_id: row.responsibleId,
       abogado: row.responsibleName,
-      notaria_id: row.notariaId,
-      notaria: row.notariaName,
       generated: row.generated,
       collected: row.collected,
       pending: row.pending,
@@ -436,11 +414,11 @@ export class ReportingService {
       overdue: Boolean(row.fecha_vencimiento && row.fecha_vencimiento < asOf && row.pending > 0),
       link: row.expediente ? `/expedientes/${row.expediente.id}` : `/cotizaciones/${row.cotizacion.id}`,
     }));
-    const group = (key: 'abogado' | 'notaria', idKey: 'abogado_id' | 'notaria_id') => {
+    const group = () => {
       const map = new Map<string, any>();
       for (const row of allRows) {
-        const id = row[idKey];
-        const current = map.get(id) || { id, nombre: row[key], generated: 0, collected: 0, pending: 0, overdue: 0, expedientes: 0 };
+        const id = row.abogado_id;
+        const current = map.get(id) || { id, nombre: row.abogado, generated: 0, collected: 0, pending: 0, overdue: 0, expedientes: 0 };
         current.generated = money(current.generated + row.generated);
         current.collected = money(current.collected + row.collected);
         current.pending = money(current.pending + row.pending);
@@ -464,8 +442,7 @@ export class ReportingService {
         pending: allRows.reduce((sum, row) => money(sum + row.pending), 0),
         overdue: allRows.filter((row) => row.overdue).reduce((sum, row) => money(sum + row.pending), 0),
       },
-      byLawyer: group('abogado', 'abogado_id'),
-      byNotaria: group('notaria', 'notaria_id'),
+      byLawyer: group(),
       tendency,
       dueBreakdown: {
         overdue: allRows.filter((row) => row.overdue).reduce((sum, row) => money(sum + row.pending), 0),
@@ -499,7 +476,7 @@ export class ReportingService {
     ]);
     const targetByLawyer = new Map<string, any>();
     for (const target of targets) if (target.usuario_id && !targetByLawyer.has(target.usuario_id)) targetByLawyer.set(target.usuario_id, target);
-    const feesByLawyer = new Map(this.groupFees(snapshot?.rows || [], 'responsible').map((row) => [row.id, row]));
+    const feesByLawyer = new Map(this.groupFees(snapshot?.rows || []).map((row) => [row.id, row]));
     const rows = users.map((lawyer) => {
       const lawyerExps = expedientes.filter((expediente) => expediente.abogado_id === lawyer.id);
       const finances = feesByLawyer.get(lawyer.id) || { generated: 0, collected: 0, pending: 0 };
@@ -736,7 +713,6 @@ export class ReportingService {
       expediente: null,
       estado: { notIn: ['ACEPTADA', 'RECHAZADA', 'VENCIDA', 'CONVERTIDA_EXPEDIENTE'] },
       ...(ctx.scope.lawyerId ? { user_id: ctx.scope.lawyerId } : {}),
-      ...(ctx.scope.notariaId ? { notaria_id: ctx.scope.notariaId } : {}),
     };
     const [quotes, total, aggregate] = await Promise.all([
       this.db.cotizacion.findMany({

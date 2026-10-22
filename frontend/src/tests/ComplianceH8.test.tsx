@@ -78,14 +78,12 @@ describe('H8 CUM-001 central panel', () => {
     });
   });
 
-  it('shows Notaría only when the accessible scope is genuinely multi-notary', async () => {
-    mockApi(); renderPanel(); await screen.findByText('EXP-0042-2026');
+  it('does not expose the retired internal Notaría selector or forward a forged legacy filter', async () => {
+    mockApi(); renderPanel('/cumplimiento?notaria_id=not-2'); await screen.findByText('EXP-0042-2026');
     fireEvent.click(screen.getByText('Más filtros'));
-    expect(screen.getByLabelText('Notaría')).toBeInTheDocument();
-    vi.restoreAllMocks(); mockApi({ ...panel, filters: { ...panel.filters, notaries: panel.filters.notaries.slice(0, 1), show_notaria: false } });
-    const second = renderPanel(); await screen.findAllByText('EXP-0042-2026');
-    const details = second.container.querySelectorAll('details'); fireEvent.click(details[details.length - 1].querySelector('summary')!);
-    expect(second.container.querySelector('select[aria-label="Notaría"]')).toBeNull();
+    expect(screen.queryByLabelText('Notaría')).not.toBeInTheDocument();
+    expect(screen.queryByText('Notaría 12')).not.toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes('/cumplimiento/panel?')).every(([url]) => !String(url).includes('notaria_id='))).toBe(true);
   });
 
   it('reuses free H3 lookup for PF/PM and marks approximate results for human review', async () => {

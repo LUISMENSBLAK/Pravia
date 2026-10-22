@@ -31,10 +31,9 @@ import { ComplianceDocumentService } from "./complianceDocument.service";
 import { recordComplianceActivityTx } from "./complianceH7.service";
 import {
   extraerFinanzasDesdeDocumento,
-  getOpenAIModelName,
   type FinancialDocumentExtractionResult,
 } from "./openaiDocument.service";
-import { recordAIFailure, recordAIUsages } from "./aiUsage.service";
+import { PlatformDomainError } from "../platform/platform.errors";
 import { ExpedientePartiesService } from "./expedienteParties.service";
 
 type User = NonNullable<Request["user"]>;
@@ -1927,9 +1926,8 @@ export class ComplianceH5Service {
       : null;
     if (body.payment_id && !base)
       throw new ComplianceError("El pago no está disponible.", "H5_PAYMENT_NOT_FOUND", 404);
-    const startedAt = Date.now();
     const extractions: FinancialDocumentExtractionResult[] = [];
-    const usageOperationId = `h5:${user.organizationId}:${review.id}:${operationId}:${randomUUID()}`;
+    const usageOperationId = `h5:${user.organizationId}:${review.id}:${operationId}`;
     try {
       for (const document of documents) {
         const extraction = await extraerFinanzasDesdeDocumento({
@@ -1938,26 +1936,16 @@ export class ComplianceH5Service {
             tipoDocumento: document.tipo,
             documentoId: document.id,
             nombreOriginal: document.nombre_original,
-          }, "H5_OPERATION_PAYMENT");
+          }, "H5_OPERATION_PAYMENT", "GENERAL", {
+            actor: { userId: user.id, organizationId: user.organizationId, membershipId: user.membershipId,
+              role: user.rol, permissions: user.permissions, scope: user.scope, sessionId: user.sessionId },
+            idempotencyKey: `${usageOperationId}:document:${document.id}`,
+            traceId: correlationId || usageOperationId,
+          });
         extractions.push(extraction);
-        await recordAIUsages([extraction.uso], {
-          organizationId: user.organizationId, usuarioId: user.id, expedienteId: review.expediente_id,
-          operacion: "H5_PAYMENT_DOCUMENT_EXTRACTION", operationId: `${usageOperationId}:${document.id}`,
-          metadata: { source_count: 1, questionnaire_answers_sent: false, auto_write: false },
-        });
       }
     } catch (error) {
-      await recordAIFailure({
-        organizationId: user.organizationId,
-        usuarioId: user.id,
-        expedienteId: review.expediente_id,
-        operacion: "H5_PAYMENT_DOCUMENT_EXTRACTION",
-        operationId: `${usageOperationId}:failure`,
-        modelo: getOpenAIModelName(),
-        durationMs: Date.now() - startedAt,
-        errorCode: "H5_PAYMENT_AI_FAILED",
-        metadata: { source_count: documents.length },
-      }).catch(() => undefined);
+      if (error instanceof PlatformDomainError) throw new ComplianceError(error.message, error.code, error.status);
       throw new ComplianceError(
         "No fue posible preparar la propuesta. Los pagos permanecen sin cambios.",
         "H5_PAYMENT_AI_FAILED",

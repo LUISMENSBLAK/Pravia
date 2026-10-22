@@ -96,7 +96,10 @@ export const prospectsService = {
     return apiRequest<ProspectDocumentReview>(`/prospectos/${encodeURIComponent(id)}/revision-documental-ia`, { signal });
   },
   runDocumentReview(id: string): Promise<ProspectDocumentReview> {
-    return apiRequest<ProspectDocumentReview>(`/prospectos/${encodeURIComponent(id)}/revision-documental-ia`, { method: 'POST' });
+    const key = crypto.randomUUID();
+    return apiRequest<ProspectDocumentReview>(`/prospectos/${encodeURIComponent(id)}/revision-documental-ia`, {
+      method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify({ idempotency_key: key }),
+    });
   },
   async create(input: NewProspectInput, idempotencyKey = crypto.randomUUID()): Promise<Prospect> {
     return apiRequest<Prospect>('/prospectos', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(input) });

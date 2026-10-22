@@ -4,8 +4,8 @@ import type { Request } from 'express';
 import { predioObjectWhere, canAccessDocumento } from './objectAccess.service';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { downloadFile } from './supabase.service';
-import { extraerPredioDesdeDocumento, getOpenAIModelName } from './openaiDocument.service';
-import { recordAIFailure, recordAIUsage } from './aiUsage.service';
+import { extraerPredioDesdeDocumento } from './openaiDocument.service';
+import { PlatformDomainError } from '../platform/platform.errors';
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -263,17 +263,25 @@ export class PrediosService {
     }, { timeout: 20_000 });
   }
 
-  async proposeFromDocument(actor: Actor, predioId: string, documentoIds: string[]) {
-    const started = Date.now();
+  async proposeFromDocument(actor: Actor, predioId: string, documentoIds: string[], idempotencyKey: string) {
     const current = await this.get(actor, predioId);
     const ids = [...new Set(documentoIds.filter(Boolean))];
     if (!ids.length) throw new PredioError(400, 'PREDIO_AI_SOURCE_REQUIRED', 'Selecciona al menos un documento vigente.');
+    if (!idempotencyKey) throw new PredioError(400, 'PREDIO_AI_IDEMPOTENCY_REQUIRED', 'La extracción requiere una clave de idempotencia.');
     const links = current.documentos.filter((item) => ids.includes(item.documento_id) && item.estatus === 'ACTIVO' && item.vigencia === 'VIGENTE');
     if (links.length !== ids.length || !(await Promise.all(ids.map((id) => canAccessDocumento(actor, id)))).every(Boolean)) throw new PredioError(403, 'PREDIO_AI_SOURCE_DENIED', 'Selecciona únicamente documentos vigentes, autorizados y vinculados a este inmueble.');
     try {
       const attempted = await Promise.allSettled(links.map(async (link) => ({
         link,
-        result: await extraerPredioDesdeDocumento({ buffer: await downloadFile(link.documento.storage_key), mimeType: link.documento.mime_type, tipoDocumento: link.tipo_vinculo, documentoId: link.documento_id, nombreOriginal: link.documento.nombre_original }),
+        result: await extraerPredioDesdeDocumento(
+          { buffer: await downloadFile(link.documento.storage_key), mimeType: link.documento.mime_type, tipoDocumento: link.tipo_vinculo, documentoId: link.documento_id, nombreOriginal: link.documento.nombre_original },
+          {
+            actor: { userId: actor.id, organizationId: actor.organizationId, membershipId: actor.membershipId,
+              role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId },
+            idempotencyKey: `${idempotencyKey}:document:${link.documento_id}`,
+            traceId: idempotencyKey,
+          },
+        ),
       })));
       const succeeded = attempted.filter((entry): entry is PromiseFulfilledResult<{ link: typeof links[number]; result: Awaited<ReturnType<typeof extraerPredioDesdeDocumento>> }> => entry.status === 'fulfilled').map((entry) => entry.value);
       const extractionErrors = attempted.flatMap((entry, index) => entry.status === 'rejected' ? [{ documento_id: links[index].documento_id, nombre: links[index].documento.nombre_original, error: entry.reason instanceof Error ? entry.reason.message : 'No fue posible procesar el documento.' }] : []);
@@ -305,10 +313,9 @@ export class PrediosService {
           correlation_id: crypto.randomUUID(), session_id: actor.sessionId,
         } });
       });
-      for (const result of results) await recordAIUsage(result.uso, { operacion: 'PROPERTY_DOCUMENT_EXTRACTION', usuarioId: actor.id, metadata: { predio_id: predioId, documento_ids: ids, source_count: ids.length } });
       return { extraccion_id: extractionId, documentos: links.map((link) => ({ id: link.documento_id, nombre: link.documento.nombre_original })), propuestas: proposals, faltantes, errores: extractionErrors, alertas: [...new Set(results.flatMap((result) => result.alertas))], conflictos: proposals.filter((item) => item.conflicto).map((item) => ({ campo: item.campo, fuentes: item.fuentes })), persisted_master: false };
     } catch (error) {
-      await recordAIFailure({ operacion: 'PROPERTY_DOCUMENT_EXTRACTION', usuarioId: actor.id, modelo: getOpenAIModelName(), durationMs: Date.now() - started, metadata: { predio_id: predioId, documento_ids: ids } });
+      if (error instanceof PlatformDomainError) throw new PredioError(error.status, error.code, error.message);
       throw error;
     }
   }

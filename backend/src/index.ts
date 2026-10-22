@@ -9,7 +9,6 @@ import { getOpenAIEscalationModelName, getOpenAIModelName } from './services/ope
 
 import prospectosRoutes from './routes/prospectos.routes';
 import documentosRoutes from './routes/documentos.routes';
-import notariasRoutes from './routes/notarias.routes';
 import cotizacionesRoutes from './routes/cotizaciones.routes';
 import expedientesRoutes from './routes/expedientes.routes';
 import archivoRoutes from './routes/archivo.routes';
@@ -30,10 +29,13 @@ import configurationCatalogRoutes from './routes/configurationCatalog.routes';
 import knowledgeRoutes from './routes/knowledge.routes';
 import prediosRoutes from './routes/predios.routes';
 import { timingSourceRoutes } from './routes/timingPolicy.routes';
+import platformRoutes from './routes/platform.routes';
+import { PlatformDomainError } from './platform/platform.errors';
 import { authenticate, authorizeByMethod, authorizeExpedienteRequest, requirePasswordReady, requirePermission } from './middleware/auth.middleware';
 import { errorLogLevel, normalizeErrorBody } from './utils/httpError';
 import { getStorageCompensationHealth, storageCompensationWorker } from './workers/storageCompensation.worker';
 import { resolveRuntimeConfig, validateRuntimeConfig } from './config/runtime';
+import { assertStagingRuntime } from './safety/stagingGuard';
 import { validateJwtSecret } from './auth/authTokens';
 import './events/screeningEventHandlers';
 import './events/beneficialControllerEventHandlers';
@@ -42,7 +44,9 @@ import { DomainEventOutboxService } from './services/domainEventOutbox.service';
 import { CATALOG_IMPORT_MAX_BYTES, DOCUMENT_ARCHIVE_MAX_BYTES, DOCUMENT_BATCH_MAX_BYTES, DOCUMENT_UPLOAD_MAX_BYTES, FISCAL_UPLOAD_MAX_BYTES, uploadLimitForPath, uploadLimitLabel } from './config/uploadLimits';
 import { DocumentBatchUploadError } from './config/documentBatchUpload';
 
-const startupErrors = validateRuntimeConfig(resolveRuntimeConfig());
+const runtimeConfig = resolveRuntimeConfig();
+const startupErrors = validateRuntimeConfig(runtimeConfig);
+assertStagingRuntime(runtimeConfig);
 const jwtSecretError = validateJwtSecret(process.env.AUTH_JWT_SECRET);
 if (jwtSecretError) startupErrors.push(jwtSecretError);
 if (process.env.NODE_ENV === 'production') {
@@ -70,7 +74,7 @@ const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || 'http://localhost:51
 app.use(cors({
   origin: allowedOrigins,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-ID', 'Idempotency-Key'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Correlation-ID', 'Idempotency-Key', 'X-Content-SHA256'],
   credentials: true,
 }));
 app.use(express.json());
@@ -204,35 +208,20 @@ app.get('/api/comparecientes/ia/status', authenticate, requirePermission('ia.rea
   });
 });
 
-if (process.env.NODE_ENV !== 'production') app.get('/api/debug/openai', authenticate, requirePermission('ia.read'), async (_req: Request, res: Response) => {
+if (process.env.NODE_ENV !== 'production') app.get('/api/debug/openai', authenticate, requirePermission('ia.read'), (_req: Request, res: Response) => {
   const apiKey = (process.env.OPENAI_API_KEY || '').trim();
   const model = getOpenAIModelName();
-
-  if (!apiKey) {
-    return res.status(503).json({
-      success: false,
-      provider: 'OPENAI',
-      model,
-      error: 'La variable OPENAI_API_KEY no está configurada.'
-    });
-  }
-
-  try {
-    const response = await fetch(`https://api.openai.com/v1/models/${encodeURIComponent(model)}`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(15000)
-    });
-    const detail = response.ok ? null : (await response.text()).slice(0, 300);
-    return res.status(response.ok ? 200 : response.status).json({
-      success: response.ok,
-      provider: 'OPENAI',
-      model,
-      api_key_configured: true,
-      detail
-    });
-  } catch (error: any) {
-    return res.status(503).json({ success: false, provider: 'OPENAI', model, error: error.message });
-  }
+  const configured = Boolean(apiKey && model?.trim());
+  return res.status(configured ? 200 : 503).json({
+    success: configured,
+    provider: 'OPENAI',
+    model,
+    api_key_configured: Boolean(apiKey),
+    provider_probe_executed: false,
+    detail: configured
+      ? 'Configuración local presente. Las llamadas externas se validan exclusivamente mediante AI Gateway.'
+      : 'La configuración local del proveedor IA está incompleta.',
+  });
 });
 
 // ══════════════════════════════════════
@@ -252,9 +241,9 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/settings/catalogs', configurationCatalogRoutes);
 app.use('/api/settings/knowledge', knowledgeRoutes);
 app.use('/api/timing', timingSourceRoutes);
+app.use('/api/platform', platformRoutes);
 app.use('/api/prospectos', authorizeByMethod('prospectos.read', 'prospectos.write'), prospectosRoutes);
 app.use('/api/documentos', authorizeByMethod('documentos.read', 'documentos.write'), documentosRoutes);
-app.use('/api/notarias', authorizeByMethod('notarias.read', 'notarias.write'), notariasRoutes);
 app.use('/api/cotizaciones', authorizeByMethod('cotizaciones.read', 'cotizaciones.write'), cotizacionesRoutes);
 app.use('/api/expedientes', authorizeExpedienteRequest, expedientesRoutes);
 app.use('/api/archivo', archivoRoutes);
@@ -283,6 +272,9 @@ app.use((req: Request, res: Response) => {
 // Error final: captura fallos no controlados sin exponer stack, secretos o datos del usuario.
 app.use((error: unknown, req: Request, res: Response, _next: NextFunction) => {
   const correlationId = req.correlationId || randomUUID();
+  if (error instanceof PlatformDomainError) {
+    return res.status(error.status).json({ code: error.code, error: error.message, details: error.details, correlation_id: correlationId });
+  }
   if (error instanceof DocumentBatchUploadError) {
     return res.status(413).json({ code: error.code, error: error.message, max_batch_size_bytes: DOCUMENT_BATCH_MAX_BYTES });
   }

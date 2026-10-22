@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => {
     catalogoArtefactoDestino: { deleteMany: vi.fn(), createMany: vi.fn() },
     projectTemplateAssignment: { findUnique: vi.fn(), upsert: vi.fn() },
     organizationMembership: { findFirst: vi.fn() },
+    organization: { findUnique: vi.fn() },
     notaria: { findFirst: vi.fn(), findMany: vi.fn() },
     user: { findMany: vi.fn() },
     caracterCompareciente: { findMany: vi.fn() },
@@ -229,7 +230,7 @@ describe('CFG-002 forensic behavior', () => {
     mocks.db.$transaction.mockImplementation(async (callback: any) => callback(mocks.db));
     mocks.db.auditLog.create.mockResolvedValue({ id: 'audit' });
     mocks.deleteFile.mockResolvedValue(undefined);
-    mocks.db.notaria.findFirst.mockResolvedValue({ id: 'notary-a', nombre: 'Notaría A' });
+    mocks.db.organization.findUnique.mockResolvedValue({ id: actor.organizationId, name: 'Organización A' });
     mocks.db.catalogoInstitucion.findFirst.mockResolvedValue({ id: 'bank-a', nombre: 'Banco A', tipo: 'BANCO' });
   });
 
@@ -241,36 +242,36 @@ describe('CFG-002 forensic behavior', () => {
 
   it('separa físicamente carpetas de Plantillas y Formatos en cada consulta', async () => {
     mocks.db.catalogoCarpeta.findMany.mockResolvedValue([]); mocks.db.catalogoArtefacto.findMany.mockResolvedValue([]);
-    await templatesAndFormatsService.explorer(actor, 'NOTARIA', 'notary-a', 'PLANTILLA');
+    await templatesAndFormatsService.explorer(actor, 'ORGANIZACION', actor.organizationId, 'PLANTILLA');
     expect(mocks.db.catalogoCarpeta.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tipo: 'PLANTILLA', organization_id: actor.organizationId }) }));
     expect(mocks.db.catalogoArtefacto.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ tipo: 'PLANTILLA', organization_id: actor.organizationId }) }));
   });
 
   it('rechaza parent inexistente o de otro tenant/tipo', async () => {
     mocks.db.catalogoCarpeta.findFirst.mockResolvedValue(null);
-    await expect(templatesAndFormatsService.createFolder(actor, { propietario_tipo: 'NOTARIA', tipo: 'PLANTILLA', notaria_id: 'notary-a', parent_id: 'folder-org-b', nombre: 'Hijas' }))
+    await expect(templatesAndFormatsService.createFolder(actor, { propietario_tipo: 'ORGANIZACION', tipo: 'PLANTILLA', organization_id: actor.organizationId, parent_id: 'folder-org-b', nombre: 'Hijas' }))
       .rejects.toMatchObject({ code: 'FOLDER_OWNER_MISMATCH' });
   });
 
   it('detecta un ciclo incluso si encuentra datos corruptos durante el breadcrumb', async () => {
-    const c = { id: 'c', nombre: 'C', parent_id: 'b', tipo: 'FORMATO', propietario_tipo: 'NOTARIA', notaria_id: 'notary-a', institucion_id: null };
+    const c = { id: 'c', nombre: 'C', parent_id: 'b', tipo: 'FORMATO', propietario_tipo: 'ORGANIZACION', notaria_id: null, institucion_id: null };
     const b = { ...c, id: 'b', nombre: 'B', parent_id: 'c' };
     mocks.db.catalogoCarpeta.findFirst.mockResolvedValueOnce(c).mockResolvedValueOnce(c).mockResolvedValueOnce(b).mockResolvedValueOnce(c);
     mocks.db.catalogoCarpeta.findMany.mockResolvedValue([]); mocks.db.catalogoArtefacto.findMany.mockResolvedValue([]);
-    await expect(templatesAndFormatsService.explorer(actor, 'NOTARIA', 'notary-a', 'FORMATO', 'c')).rejects.toMatchObject({ code: 'FOLDER_HIERARCHY_CYCLE' });
+    await expect(templatesAndFormatsService.explorer(actor, 'ORGANIZACION', actor.organizationId, 'FORMATO', 'c')).rejects.toMatchObject({ code: 'FOLDER_HIERARCHY_CYCLE' });
   });
 
   it('produce breadcrumb root/A/B/C en orden navegable', async () => {
-    const c = { id: 'c', nombre: 'C', parent_id: 'b', tipo: 'FORMATO', propietario_tipo: 'NOTARIA', notaria_id: 'notary-a', institucion_id: null };
+    const c = { id: 'c', nombre: 'C', parent_id: 'b', tipo: 'FORMATO', propietario_tipo: 'ORGANIZACION', notaria_id: null, institucion_id: null };
     const b = { ...c, id: 'b', nombre: 'B', parent_id: 'a' }; const a = { ...c, id: 'a', nombre: 'A', parent_id: null };
     mocks.db.catalogoCarpeta.findFirst.mockResolvedValueOnce(c).mockResolvedValueOnce(c).mockResolvedValueOnce(b).mockResolvedValueOnce(a);
     mocks.db.catalogoCarpeta.findMany.mockResolvedValue([]); mocks.db.catalogoArtefacto.findMany.mockResolvedValue([]);
-    const result = await templatesAndFormatsService.explorer(actor, 'NOTARIA', 'notary-a', 'FORMATO', 'c');
+    const result = await templatesAndFormatsService.explorer(actor, 'ORGANIZACION', actor.organizationId, 'FORMATO', 'c');
     expect(result.breadcrumbs.map((item) => item.name)).toEqual(['A', 'B', 'C']);
   });
 
   it('renombra una carpeta sin tocar destinos y bloquea ciclos al moverla', async () => {
-    const folder = { id: 'folder-a', organization_id: actor.organizationId, nombre: 'Antes', parent_id: null, tipo: 'FORMATO', propietario_tipo: 'NOTARIA', notaria_id: 'notary-a', institucion_id: null };
+    const folder = { id: 'folder-a', organization_id: actor.organizationId, nombre: 'Antes', parent_id: null, tipo: 'FORMATO', propietario_tipo: 'ORGANIZACION', notaria_id: null, institucion_id: null };
     mocks.db.catalogoCarpeta.findFirst.mockResolvedValueOnce(folder);
     mocks.db.catalogoCarpeta.update.mockResolvedValue({ ...folder, nombre: 'Después' });
     await templatesAndFormatsService.updateFolder(actor, 'folder-a', { nombre: 'Después' });
@@ -301,7 +302,7 @@ describe('CFG-002 forensic behavior', () => {
     mocks.db.catalogoArtefacto.create.mockImplementation(async ({ data }: any) => ({ id: 'artifact-a', ...data }));
     mocks.db.catalogoArtefactoVersion.create.mockResolvedValue({ id: 'v1' });
     mocks.db.catalogoArtefacto.findUniqueOrThrow.mockResolvedValue({ id: 'artifact-a', versiones: [{ id: 'v1', storage_key: 'private/v1' }], actos: [{ tipo_acto_id: 'A' }], reglas: [], destinosFuncionales: [] });
-    await templatesAndFormatsService.createArtifact(actor, { tipo: 'FORMATO', propietario_tipo: 'NOTARIA', notaria_id: 'notary-a', nombre: 'Formato', act_ids: ['A'], rules: [] }, artifactFile);
+    await templatesAndFormatsService.createArtifact(actor, { tipo: 'FORMATO', propietario_tipo: 'ORGANIZACION', organization_id: actor.organizationId, nombre: 'Formato', act_ids: ['A'], rules: [] }, artifactFile);
     const auditCall = mocks.db.auditLog.create.mock.calls.at(-1)?.[0]?.data;
     expect(auditCall.accion).toBe('CFG_ARTIFACT_CREATED');
     expect(auditCall.valores_nuevos.versiones[0].storage_key).toBe('[PRIVATE]');
@@ -309,13 +310,13 @@ describe('CFG-002 forensic behavior', () => {
 
   it('exige un único Acto exacto antes de cargar un machote Project a Storage', async () => {
     await expect(templatesAndFormatsService.createArtifact(actor, {
-      tipo: 'PLANTILLA', propietario_tipo: 'NOTARIA', notaria_id: 'notary-a', nombre: 'Machote',
+      tipo: 'PLANTILLA', propietario_tipo: 'ORGANIZACION', organization_id: actor.organizationId, nombre: 'Machote',
       act_ids: [], destinos_funcionales: [{ destino: 'PROYECTO_MACHOTE', activo: true, predeterminado: true }],
     }, artifactFile)).rejects.toMatchObject({ code: 'PROJECT_TEMPLATE_ACT_REQUIRED' });
     expect(mocks.uploadFile).not.toHaveBeenCalled();
   });
 
-  it('crea atómicamente el machote CFG-002 y su asignación estructurada Notaría + Acto', async () => {
+  it('crea atómicamente el machote CFG-002 y su asignación estructurada Organización + Acto', async () => {
     mocks.db.tipoActo.findMany.mockResolvedValue([{ id: 'A' }]);
     mocks.db.projectTemplateAssignment.findUnique.mockResolvedValue(null);
     mocks.db.projectTemplateAssignment.upsert.mockResolvedValue({ id: 'assignment-a', active: true });
@@ -328,7 +329,7 @@ describe('CFG-002 forensic behavior', () => {
       destinosFuncionales: [{ destino: 'PROYECTO_MACHOTE', predeterminado: false }],
     });
     await templatesAndFormatsService.createArtifact(actor, {
-      tipo: 'PLANTILLA', propietario_tipo: 'NOTARIA', notaria_id: 'notary-a', nombre: 'Machote',
+      tipo: 'PLANTILLA', propietario_tipo: 'ORGANIZACION', organization_id: actor.organizationId, nombre: 'Machote',
       act_ids: ['A'], destinos_funcionales: [{ destino: 'PROYECTO_MACHOTE', activo: true, predeterminado: true }],
     }, artifactFile);
     expect(mocks.db.$executeRaw).toHaveBeenCalledOnce();
@@ -350,7 +351,7 @@ describe('CFG-002 forensic behavior', () => {
     mocks.db.projectTemplateAssignment.findUnique.mockResolvedValue({ id: 'assignment-old', active: true, artefacto_id: 'old', version_id: 'old-v1' });
     mocks.uploadFile.mockResolvedValue(undefined);
     await expect(templatesAndFormatsService.createArtifact(actor, {
-      tipo: 'PLANTILLA', propietario_tipo: 'NOTARIA', notaria_id: 'notary-a', nombre: 'Machote nuevo',
+      tipo: 'PLANTILLA', propietario_tipo: 'ORGANIZACION', organization_id: actor.organizationId, nombre: 'Machote nuevo',
       act_ids: ['A'], destinos_funcionales: [{ destino: 'PROYECTO_MACHOTE', activo: true }],
     }, artifactFile)).rejects.toMatchObject({ code: 'PROJECT_TEMPLATE_CONFLICT' });
     expect(mocks.db.catalogoArtefacto.create).not.toHaveBeenCalled();
@@ -360,7 +361,7 @@ describe('CFG-002 forensic behavior', () => {
   it('valida Actos de machote sólo en el tenant actual o en el catálogo global', async () => {
     mocks.db.tipoActo.findMany.mockResolvedValue([]);
     await expect(templatesAndFormatsService.createArtifact(actor, {
-      tipo: 'PLANTILLA', propietario_tipo: 'NOTARIA', notaria_id: 'notary-a', nombre: 'Machote',
+      tipo: 'PLANTILLA', propietario_tipo: 'ORGANIZACION', organization_id: actor.organizationId, nombre: 'Machote',
       act_ids: ['ACT-ORG-B'], destinos_funcionales: [{ destino: 'PROYECTO_MACHOTE', activo: true }],
     }, artifactFile)).rejects.toMatchObject({ code: 'ARTIFACT_ACT_INVALID' });
     expect(mocks.db.tipoActo.findMany).toHaveBeenCalledWith({ where: expect.objectContaining({
@@ -397,7 +398,7 @@ describe('CFG-002 forensic behavior', () => {
   it('compensa el blob si falla la transacción de alta', async () => {
     mocks.db.tipoActo.findMany.mockResolvedValue([{ id: 'A' }]); mocks.uploadFile.mockResolvedValue(undefined);
     mocks.db.$transaction.mockRejectedValue(new Error('db failed'));
-    await expect(templatesAndFormatsService.createArtifact(actor, { tipo: 'FORMATO', propietario_tipo: 'NOTARIA', notaria_id: 'notary-a', nombre: 'Formato', act_ids: ['A'], rules: [] }, artifactFile)).rejects.toThrow('db failed');
+    await expect(templatesAndFormatsService.createArtifact(actor, { tipo: 'FORMATO', propietario_tipo: 'ORGANIZACION', organization_id: actor.organizationId, nombre: 'Formato', act_ids: ['A'], rules: [] }, artifactFile)).rejects.toThrow('db failed');
     expect(mocks.deleteFile).toHaveBeenCalledOnce();
   });
 

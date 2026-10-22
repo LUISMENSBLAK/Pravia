@@ -26,6 +26,10 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    // PDF.js API and worker must resolve from the same installed package.
+    // Prebundling can retain an older API after dependency updates while the
+    // worker URL points to the new version, making every PDF preview fail.
+    optimizeDeps: { exclude: ['pdfjs-dist'] },
     server: {
       host: '127.0.0.1',
       port: 4173,

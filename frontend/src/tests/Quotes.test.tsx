@@ -187,7 +187,7 @@ describe('Cotizaciones', () => {
     await user.click(screen.getByRole('button', { name: 'Guardar cambios' }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/presupuesto'), expect.objectContaining({ method: 'PUT' })));
     const call = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/cotizaciones/quote-1/presupuesto'));
-    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ origin: 'IMPORTADO', concepts: [{ categoria: 'IMPUESTOS_DERECHOS', concepto: 'Derecho registral corregido', importe: 8500 }] });
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ origin: 'IMPORTADO', concepts: [{ categoria: 'IMPUESTOS_DERECHOS', concepto: 'Derecho registral corregido', importe: '8500' }] });
   });
 
   it('genera el documento desde el endpoint canónico de CFG-002', async () => {

@@ -20,6 +20,8 @@ const OPTIONAL_MODEL_ENV = [
 describe('routing canónico de modelos PRAVIA IA', () => {
   const previous = new Map<string, string | undefined>();
   const previousKey = process.env.OPENAI_API_KEY;
+  const actor = { userId: 'user-test', organizationId: 'org-test', membershipId: 'membership-test', role: 'ABOGADO' as const,
+    permissions: ['ia.execute' as const], scope: 'ASSIGNED_OBJECTS' as const, sessionId: 'session-test' };
 
   beforeEach(() => {
     for (const key of OPTIONAL_MODEL_ENV) {
@@ -71,10 +73,9 @@ describe('routing canónico de modelos PRAVIA IA', () => {
       }) }] }],
       usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
     });
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify(responseBody('LECTURA_DUDOSA')), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify(responseBody('LECTURA_CLARA')), { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
+    const execute = vi.fn()
+      .mockResolvedValueOnce(responseBody('LECTURA_DUDOSA'))
+      .mockResolvedValueOnce(responseBody('LECTURA_CLARA'));
 
     const result = await extraerMultiplesDocumentos([{
       documentoId: 'doc-1',
@@ -82,9 +83,9 @@ describe('routing canónico de modelos PRAVIA IA', () => {
       tipoDocumento: 'OTRO',
       mimeType: 'application/pdf',
       buffer: Buffer.from('%PDF-1.4 contenido sintético'),
-    }]);
+    }], { actor, idempotencyKey: 'routing-extract', traceId: 'routing-extract', gateway: { execute } });
 
-    const models = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)).model);
+    const models = execute.mock.calls.map((call) => call[0].payload.body.model);
     expect(models).toEqual(['gpt-5.4-nano', 'gpt-5.4-mini']);
     expect(result.modelo).toBe('gpt-5.4-mini');
     expect(result.usos).toEqual([
@@ -101,7 +102,7 @@ describe('routing canónico de modelos PRAVIA IA', () => {
 
   it('trata el MIME OpenXML de DOCX como Word y no como XML plano', async () => {
     process.env.OPENAI_API_KEY = 'test-key-never-sent';
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    const gatewayResponse = {
       status: 'completed',
       output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({
         tipo_persona_detectado: 'FISICA', resumen_ejecutivo: 'Documento Word leído.', alertas: [],
@@ -115,16 +116,16 @@ describe('routing canónico de modelos PRAVIA IA', () => {
         estructura_persona_moral: { accionistas: [], administracion: [], beneficiarios_controladores: [], personas_por_identificar: [], cadena_incompleta: false, faltantes: [] },
       }) }] }],
       usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
-    }), { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
+    };
+    const execute = vi.fn().mockResolvedValue(gatewayResponse);
     const buffer = await Packer.toBuffer(new Document({ sections: [{ children: [new Paragraph('Nombre: Persona QA')] }] }));
 
     const result = await extraerMultiplesDocumentos([{
       documentoId: 'doc-word', nombreOriginal: 'ficha.docx', tipoDocumento: 'GENERALES',
       mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buffer,
-    }]);
+    }], { actor, idempotencyKey: 'routing-docx', traceId: 'routing-docx', gateway: { execute } });
 
-    const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    const request = execute.mock.calls[0][0].payload.body;
     expect(request.input[0].content).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: 'input_text', text: expect.stringContaining('[DOCUMENTO WORD "ficha.docx"') }),
     ]));

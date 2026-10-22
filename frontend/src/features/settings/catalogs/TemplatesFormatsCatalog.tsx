@@ -94,9 +94,9 @@ export function TemplatesFormatsCatalog() {
     user?.permissions?.includes("configuracion.plantillas_formatos.manage"),
   );
   const [root, setRoot] = useState<{
-    notaria: CatalogOwner | null;
+    organization: CatalogOwner | null;
     institutions: CatalogOwner[];
-  }>({ notaria: null, institutions: [] });
+  }>({ organization: null, institutions: [] });
   const [support, setSupport] = useState<SupportingCatalogs | null>(null);
   const [destinationCatalog, setDestinationCatalog] = useState<FunctionalDestinationOption[]>([]);
   const [projectAssignments, setProjectAssignments] = useState<ProjectTemplateAssignment[]>([]);
@@ -179,7 +179,7 @@ export function TemplatesFormatsCatalog() {
           next.kind,
           next.folderId,
         ),
-        next.kind === "PLANTILLA" && next.ownerType === "NOTARIA"
+        next.kind === "PLANTILLA" && next.ownerType === "ORGANIZACION"
           ? settingsService.projectTemplateAssignments()
           : Promise.resolve([]),
       ]);
@@ -243,8 +243,7 @@ export function TemplatesFormatsCatalog() {
         settingsService.createCatalogFolder({
           propietario_tipo: selection.ownerType,
           tipo: selection.kind,
-          notaria_id:
-            selection.ownerType === "NOTARIA" ? selection.owner.id : null,
+          organization_id: selection.ownerType === "ORGANIZACION" ? selection.owner.id : null,
           institucion_id:
             selection.ownerType === "INSTITUCION" ? selection.owner.id : null,
           parent_id: selection.folderId || null,
@@ -275,7 +274,7 @@ export function TemplatesFormatsCatalog() {
       () => settingsService.createCatalogArtifact({
         tipo: selection.kind,
         propietario_tipo: selection.ownerType,
-        notaria_id: selection.ownerType === "NOTARIA" ? selection.owner.id : null,
+        organization_id: selection.ownerType === "ORGANIZACION" ? selection.owner.id : null,
         institucion_id: selection.ownerType === "INSTITUCION" ? selection.owner.id : null,
         carpeta_id: selection.folderId || null,
         nombre: quickName.trim(),
@@ -445,7 +444,7 @@ export function TemplatesFormatsCatalog() {
             <span>Repositorio maestro privado</span>
             <h2>Plantillas y formatos</h2>
             <p>
-              Una biblioteca documental de la Notaría y los Formatos propios de
+              Una biblioteca documental de la organización y los Formatos propios de
               Bancos o Fiduciarias.
             </p>
           </div>
@@ -486,18 +485,18 @@ export function TemplatesFormatsCatalog() {
               <header>
                 <Building2 />
                 <div>
-                  <h3>Notaría</h3>
+                  <h3>Organización</h3>
                   <p>Plantillas y Formatos</p>
                 </div>
               </header>
-              {root.notaria ? (
+              {root.organization ? (
                 <div className={styles.ownerGrid}>
                   <button
                     type="button"
                     onClick={() =>
                       setSelection({
-                        ownerType: "NOTARIA",
-                        owner: root.notaria!,
+                        ownerType: "ORGANIZACION",
+                        owner: root.organization!,
                         folderId: null,
                       })
                     }
@@ -506,8 +505,8 @@ export function TemplatesFormatsCatalog() {
                       <Building2 />
                     </span>
                     <div>
-                      <strong>Notaría</strong>
-                      <small>{ownerLabel(root.notaria)}</small>
+                      <strong>Organización</strong>
+                      <small>{ownerLabel(root.organization)}</small>
                     </div>
                     <ChevronRight />
                   </button>
@@ -515,16 +514,10 @@ export function TemplatesFormatsCatalog() {
               ) : (
                 <div className={styles.sectionEmpty}>
                   <Building2 />
-                  <strong>Biblioteca aún no inicializada</strong>
+                  <strong>Organización no disponible</strong>
                   <p>
-                    Inicializa la biblioteca estándar para crear la referencia
-                    técnica canónica.
+                    Revisa la organización activa antes de administrar la biblioteca.
                   </p>
-                  {canManage && (
-                    <button type="button" onClick={bootstrap}>
-                      Inicializar ahora
-                    </button>
-                  )}
                 </div>
               )}
             </section>
@@ -644,8 +637,8 @@ export function TemplatesFormatsCatalog() {
         <header className={styles.catalogHeader}>
           <div>
             <span>
-              {selection!.ownerType === "NOTARIA"
-                ? "Notaría"
+              {selection!.ownerType === "ORGANIZACION"
+                ? "Organización"
                 : "Banco / Fiduciaria"}
             </span>
             <h2>{title}</h2>
@@ -653,7 +646,7 @@ export function TemplatesFormatsCatalog() {
           </div>
         </header>
         <section className={styles.kindGrid}>
-          {selection!.ownerType === "NOTARIA" && (
+          {selection!.ownerType === "ORGANIZACION" && (
             <button
               type="button"
               onClick={() => setSelection({ ...selection!, kind: "PLANTILLA" })}
@@ -664,7 +657,7 @@ export function TemplatesFormatsCatalog() {
               <div>
                 <small>MACHOTE JURÍDICO</small>
                 <h3>Plantillas</h3>
-                <p>Proyectos y machotes propios de la Notaría.</p>
+                <p>Proyectos y machotes propios de la organización.</p>
               </div>
               <ChevronRight />
             </button>
@@ -689,7 +682,7 @@ export function TemplatesFormatsCatalog() {
             <Landmark />
             <div>
               <strong>Las instituciones sólo contienen Formatos</strong>
-              <p>Las Plantillas pertenecen exclusivamente a la Notaría.</p>
+              <p>Las Plantillas pertenecen a la organización activa.</p>
             </div>
           </div>
         )}
@@ -713,7 +706,7 @@ export function TemplatesFormatsCatalog() {
               setSelection({ ...current, kind: undefined, folderId: null })
             }
           >
-            {current.ownerType === "NOTARIA" ? "Notaría" : title}
+            {current.ownerType === "ORGANIZACION" ? "Organización" : title}
           </button>
           <ChevronRight />
           <button
@@ -984,7 +977,7 @@ export function TemplatesFormatsCatalog() {
             <label>Destino funcional<select required value={quickDestination} onChange={(event) => { const destination = event.target.value as FunctionalDestination; setQuickDestination(destination); if (destination !== "PROYECTO_MACHOTE") { setQuickActId(""); setQuickReplaceProjectTemplate(false); } }}><option value="">Selecciona un punto de uso</option>{destinationCatalog.filter((item) => item.artifactTypes.includes(current.kind!)).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
             {quickDestination === "PROYECTO_MACHOTE" && <>
               <label>Acto<select required aria-label="Acto para el machote" value={quickActId} onChange={(event) => setQuickActId(event.target.value)}><option value="">Selecciona el Acto exacto</option>{support?.acts.map((act) => <option key={act.id} value={act.id}>{act.nombre}</option>)}</select></label>
-              <p className={styles.definitionNote}>La asignación se guardará por la identidad exacta de esta Notaría y este Acto; el nombre del archivo no participa en la resolución.</p>
+              <p className={styles.definitionNote}>La asignación se guardará por la identidad exacta de esta organización y este Acto; el nombre del archivo no participa en la resolución.</p>
               <label><input type="checkbox" checked={quickReplaceProjectTemplate} onChange={(event) => setQuickReplaceProjectTemplate(event.target.checked)} />Reemplazar el machote maestro actual de este Acto, si existe</label>
             </>}
             <label><input type="checkbox" checked={quickActive} onChange={(event) => setQuickActive(event.target.checked)} />Activo</label>

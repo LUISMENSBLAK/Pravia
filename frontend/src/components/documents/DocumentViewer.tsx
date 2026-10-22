@@ -121,42 +121,117 @@ function PdfPreview({ url, name, onDownload }: { url: string; name: string; onDo
 function PdfCanvas({ page, number, total, name, zoom, container }: { page: any; number: number; total: number; name: string; zoom: number; container: HTMLDivElement | null }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     let active = true; let task: { promise: Promise<void>; cancel(): void } | undefined;
     const render = async () => {
+      setReady(false);
+      setFailed(false);
       const canvas = ref.current; if (!canvas) return;
-      const base = page.getViewport({ scale: 1 });
-      const available = Math.max(280, (container?.clientWidth || 860) - 64);
-      const viewport = page.getViewport({ scale: Math.min(1.7, available / base.width) * zoom });
-      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2); const context = canvas.getContext('2d', { alpha: false }); if (!context) return;
-      canvas.width = Math.floor(viewport.width * pixelRatio); canvas.height = Math.floor(viewport.height * pixelRatio); canvas.style.width = `${Math.floor(viewport.width)}px`; canvas.style.height = `${Math.floor(viewport.height)}px`;
-      const renderTask = page.render({ canvas, canvasContext: context, viewport, transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0] });
-      task = renderTask;
-      await renderTask.promise; if (active) setReady(true);
+      try {
+        const base = page.getViewport({ scale: 1 });
+        const available = Math.max(280, (container?.clientWidth || 860) - 64);
+        const viewport = page.getViewport({ scale: Math.min(1.7, available / base.width) * zoom });
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 2); const context = canvas.getContext('2d', { alpha: false }); if (!context) return;
+        canvas.width = Math.floor(viewport.width * pixelRatio); canvas.height = Math.floor(viewport.height * pixelRatio); canvas.style.width = `${Math.floor(viewport.width)}px`; canvas.style.height = `${Math.floor(viewport.height)}px`;
+        const renderTask = page.render({ canvas, canvasContext: context, viewport, transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0] });
+        task = renderTask;
+        await renderTask.promise;
+        if (active) setReady(true);
+      } catch (error) {
+        if (active && !(error instanceof Error && error.name === 'RenderingCancelledException')) setFailed(true);
+      }
     };
     void render(); return () => { active = false; task?.cancel(); };
   }, [page, zoom, container]);
-  return <figure data-pdf-page={number}><canvas ref={ref} data-preview-loaded={ready ? 'true' : 'false'} aria-label={`Página ${number} de ${name}`} /><figcaption>Página {number} de {total}</figcaption></figure>;
+  return <figure data-pdf-page={number}><canvas ref={ref} data-preview-loaded={ready ? 'true' : 'false'} aria-label={`Página ${number} de ${name}`} />{failed && <p role="alert">No se pudo dibujar esta página.</p>}<figcaption>Página {number} de {total}</figcaption></figure>;
 }
 
-const sanitizeDocx = (html: string) => {
-  const document = new DOMParser().parseFromString(html, 'text/html');
-  document.querySelectorAll('script,iframe,object,embed,form').forEach((node) => node.remove());
-  document.querySelectorAll('*').forEach((node) => [...node.attributes].forEach((attribute) => {
-    if (attribute.name.toLowerCase().startsWith('on') || (/^(href|src)$/i.test(attribute.name) && /^javascript:/i.test(attribute.value))) node.removeAttribute(attribute.name);
+const sanitizeDocxPreview = (root: HTMLElement) => {
+  root.querySelectorAll('script,iframe,object,embed,form,meta,link').forEach((node) => node.remove());
+  root.querySelectorAll('*').forEach((node) => [...node.attributes].forEach((attribute) => {
+    const name = attribute.name.toLowerCase();
+    const value = attribute.value.trim();
+    if (name.startsWith('on') || name === 'contenteditable'
+      || (/^(href|src|xlink:href)$/i.test(name) && !/^(#|blob:|data:image\/|data:font\/)/i.test(value))) {
+      node.removeAttribute(attribute.name);
+    }
   }));
-  return document.body.innerHTML;
 };
 
 function DocxPreview({ url, name, onDownload }: { url: string; name: string; onDownload?: () => void }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const stylesRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [html, setHtml] = useState('');
-  const [zoom, setZoom] = useState(1);
-  useEffect(() => { let active = true; const load = async () => { try { const [response, mammoth] = await Promise.all([fetch(url), import('mammoth')]); if (!response.ok) throw new Error('download failed'); const result = await mammoth.convertToHtml({ arrayBuffer: await response.arrayBuffer() }); if (active) { setHtml(sanitizeDocx(result.value)); setState('ready'); } } catch { if (active) setState('error'); } }; void load(); return () => { active = false; }; }, [url]);
-  return <div className={styles.docxPreview} aria-label={`Vista previa de ${name}`}>
-    {state === 'loading' && <p className={styles.previewLoading} role="status"><LoaderCircle aria-hidden="true" />Interpretando documento Word…</p>}
+  const [pageWidth, setPageWidth] = useState(816);
+  const [viewportWidth, setViewportWidth] = useState(1100);
+  const [zoom, setZoom] = useState<number | null>(null);
+  const fitZoom = Math.min(1, Math.max(.25, (viewportWidth - 56) / pageWidth));
+  const effectiveZoom = zoom ?? fitZoom;
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const update = () => setViewportWidth(container.clientWidth || 1100);
+    update();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    observer?.observe(container);
+    return () => observer?.disconnect();
+  }, []);
+  useEffect(() => {
+    let active = true;
+    const objectUrls: string[] = [];
+    const load = async () => {
+      setState('loading');
+      setZoom(null);
+      try {
+        const [response, { renderAsync }] = await Promise.all([fetch(url), import('docx-preview')]);
+        if (!response.ok) throw new Error('download failed');
+        const body = document.createElement('div');
+        const styles = document.createElement('div');
+        await renderAsync(await response.arrayBuffer(), body, styles, {
+          breakPages: true,
+          ignoreLastRenderedPageBreak: false,
+          renderHeaders: true,
+          renderFooters: true,
+          renderFootnotes: true,
+          renderEndnotes: true,
+          renderAltChunks: false,
+          className: 'pravia-docx',
+        });
+        sanitizeDocxPreview(body);
+        sanitizeDocxPreview(styles);
+        if (!active) return;
+        const firstPage = body.querySelector<HTMLElement>('section.pravia-docx');
+        if (!firstPage) throw new Error('no pages');
+        body.querySelectorAll<HTMLElement>('[src], [href]').forEach((element) => {
+          for (const attribute of ['src', 'href']) {
+            const value = element.getAttribute(attribute);
+            if (value?.startsWith('blob:')) objectUrls.push(value);
+          }
+        });
+        contentRef.current?.replaceChildren(...Array.from(body.childNodes));
+        stylesRef.current?.replaceChildren(...Array.from(styles.childNodes));
+        setPageWidth(firstPage.offsetWidth || 816);
+        setState('ready');
+      } catch {
+        if (active) setState('error');
+      }
+    };
+    void load();
+    return () => {
+      active = false;
+      objectUrls.forEach((value) => URL.revokeObjectURL(value));
+      contentRef.current?.replaceChildren();
+      stylesRef.current?.replaceChildren();
+    };
+  }, [url]);
+  return <div ref={containerRef} className={styles.docxPreview} aria-label={`Vista previa de ${name}`}>
+    {state === 'loading' && <p className={styles.previewLoading} role="status"><LoaderCircle aria-hidden="true" />Maquetando páginas de Word…</p>}
     {state === 'error' && <PreviewFallback onDownload={onDownload} />}
-    {state === 'ready' && <><div className={styles.zoomToolbar} aria-label="Controles de zoom"><button type="button" aria-label="Ajustar a página" onClick={() => setZoom(1)}><Maximize2 /></button><button type="button" aria-label="Reducir zoom" onClick={() => setZoom((value) => Math.max(.7, value - .1))}><ZoomOut /></button><span>{Math.round(zoom * 100)}%</span><button type="button" aria-label="Aumentar zoom" onClick={() => setZoom((value) => Math.min(1.6, value + .1))}><ZoomIn /></button></div><article className={styles.docxPage} style={{ zoom }} data-preview-loaded="true" dangerouslySetInnerHTML={{ __html: html }} /></>}
+    {state === 'ready' && <><div className={styles.zoomToolbar} aria-label="Controles de zoom"><button type="button" aria-label="Ajustar al ancho" onClick={() => setZoom(null)}><Maximize2 /></button><button type="button" aria-label="Reducir zoom" onClick={() => setZoom((value) => Math.max(.25, (value ?? fitZoom) - .1))}><ZoomOut /></button><span>{Math.round(effectiveZoom * 100)}%</span><button type="button" aria-label="Aumentar zoom" onClick={() => setZoom((value) => Math.min(1.6, (value ?? fitZoom) + .1))}><ZoomIn /></button></div><p className={styles.docxPageCount}>Vista maquetada · la paginación puede variar respecto a Word</p></>}
+    <div ref={stylesRef} hidden aria-hidden="true" />
+    <div ref={contentRef} className={styles.docxContent} style={{ zoom: effectiveZoom }} data-preview-loaded={state === 'ready' ? 'true' : 'false'} onClick={(event) => { if ((event.target as Element).closest('a')) event.preventDefault(); }} />
   </div>;
 }
 

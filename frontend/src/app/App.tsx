@@ -18,8 +18,6 @@ const ExpedienteWorkspace = lazy(() => import('../features/cases/ExpedienteWorks
 const ArchivePage = lazy(() => import('../features/archive/ArchivePage').then((module) => ({ default: module.ArchivePage })));
 const ComparecientesPage = lazy(() => import('../features/comparecientes/ComparecientesPage').then((module) => ({ default: module.ComparecientesPage })));
 const ComparecienteWorkspace = lazy(() => import('../features/comparecientes/ComparecienteWorkspace').then((module) => ({ default: module.ComparecienteWorkspace })));
-const NotariasPage = lazy(() => import('../features/notarias/NotariasPage').then((module) => ({ default: module.NotariasPage })));
-const NotariaWorkspace = lazy(() => import('../features/notarias/NotariaWorkspace').then((module) => ({ default: module.NotariaWorkspace })));
 const AgendaPage = lazy(() => import('../features/agenda/AgendaPage').then((module) => ({ default: module.AgendaPage })));
 const FinancePage = lazy(() => import('../features/finance/FinancePage').then((module) => ({ default: module.FinancePage })));
 const ReportsPage = lazy(() => import('../features/reports/ReportsPage').then((module) => ({ default: module.ReportsPage })));
@@ -32,6 +30,7 @@ const UserDetailPage = lazy(() => import('../features/settings/UserDetailPage').
 const PropertyWorkspace = lazy(() => import('../features/properties/PropertyWorkspace').then((module) => ({ default: module.PropertyWorkspace })));
 const PropertiesPage = lazy(() => import('../features/properties/PropertiesPage').then((module) => ({ default: module.PropertiesPage })));
 const ActivationPage = lazy(() => import('../features/settings/ActivationPage').then((module) => ({ default: module.ActivationPage })));
+const PlatformOperationsPage = lazy(() => import('../features/settings/PlatformOperationsPage').then((module) => ({ default: module.PlatformOperationsPage })));
 
 export function TenantScopedShell() {
   const { user } = useAuth();
@@ -62,8 +61,8 @@ export function App() {
               <Route path="/predios/:id" element={<PropertyWorkspace />} />
               <Route path="/comparecientes" element={<ComparecientesPage />} />
               <Route path="/comparecientes/:id" element={<ComparecienteWorkspace />} />
-              <Route path="/notarias" element={<NotariasPage />} />
-              <Route path="/notarias/:id" element={<NotariaWorkspace />} />
+              <Route path="/notarias" element={<Navigate to="/configuracion/organizacion" replace />} />
+              <Route path="/notarias/:id" element={<Navigate to="/configuracion/organizacion" replace />} />
               <Route path="/agenda" element={<AgendaPage />} />
               <Route path="/finanzas" element={<FinancePage />} />
               <Route path="/reportes" element={<ReportsPage />} />
@@ -75,6 +74,7 @@ export function App() {
               <Route path="/configuracion" element={<SettingsPage />} />
               <Route path="/configuracion/:section" element={<SettingsPage />} />
               <Route path="/configuracion/usuarios/:id" element={<UserDetailPage />} />
+              <Route path="/plataforma" element={<PlatformOperationsPage />} />
             </Route>
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

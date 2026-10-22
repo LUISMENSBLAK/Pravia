@@ -22,12 +22,16 @@ export type QuoteWorkflow = {
   provenance?: string | null; events?: QuoteWorkflowEvent[];
 };
 
-export type QuoteConceptCategory = 'HONORARIOS' | 'IVA_HONORARIOS' | 'IMPUESTOS_DERECHOS' | 'OTROS';
+export type QuoteConceptCategory = 'HONORARIOS' | 'IVA_HONORARIOS' | 'IMPUESTOS_DERECHOS' | 'OTRO_GASTO' | 'OTROS';
 export type QuoteConcept = { categoria: QuoteConceptCategory; concepto: string; monto: number };
-export type QuoteBudgetConcept = { id?: string; categoria: QuoteConceptCategory; concepto: string; importe: number | string; orden: number; origen?: 'MANUAL' | 'IMPORTADO' | 'IA_PROPUESTA' };
+export type QuoteBudgetConcept = { id?: string; categoria: QuoteConceptCategory; concepto: string; importe: number | string; orden: number;
+  origen?: 'MANUAL' | 'IMPORTADO' | 'IA_PROPUESTA' | 'DERIVADO';
+  tratamiento_iva?: 'SIN_IMPUESTO' | 'GRAVADO' | 'EXENTO' | 'NO_OBJETO' | 'REQUIERE_REVISION' | null;
+  iva_tasa?: string | null; regla_fiscal_fuente?: string | null; regla_fiscal_version?: string | null };
 export type QuoteBudget = {
   concepts: QuoteBudgetConcept[];
-  totals: { honorarios: string; iva_honorarios: string; subtotal_honorarios: string; impuestos_derechos: string; total: string };
+  totals: { honorarios: string; iva_honorarios: string; subtotal_honorarios: string; impuestos_derechos: string;
+    otros_gastos?: string; iva_otros_gastos?: string; subtotal_otros_gastos?: string; requires_review?: boolean; total: string };
 };
 
 export type QuoteVersion = {

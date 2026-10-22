@@ -333,9 +333,10 @@ export const complianceService = {
       { method: "POST", body: JSON.stringify({ reason }) },
     ),
   evidenceBlob: async (id: string, evidenceId: string) => {
+    const token = tokenStore.get();
     const response = await fetch(
-      `/api/cumplimiento/revisiones/${encodeURIComponent(id)}/evidencias/${encodeURIComponent(evidenceId)}/archivo`,
-      { credentials: "include" },
+      apiUrl(`/cumplimiento/revisiones/${encodeURIComponent(id)}/evidencias/${encodeURIComponent(evidenceId)}/archivo`),
+      { credentials: "include", headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) } },
     );
     if (!response.ok)
       throw new Error("No fue posible preparar la vista previa protegida.");

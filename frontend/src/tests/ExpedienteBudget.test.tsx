@@ -5,7 +5,7 @@ import { BudgetTab } from '../features/cases/components/tabs/BudgetTab';
 import type { ExpedienteBudget } from '../features/cases/expedientes.types';
 
 const api = vi.hoisted(() => ({
-  budget: vi.fn(), saveBudget: vi.fn(), generateBudgetPdf: vi.fn(), budgetPdfUrl: vi.fn(), deleteBudgetPdf: vi.fn(),
+  budget: vi.fn(), previewBudget: vi.fn(), saveBudget: vi.fn(), generateBudgetPdf: vi.fn(), budgetPdfUrl: vi.fn(), deleteBudgetPdf: vi.fn(),
 }));
 vi.mock('../features/cases/expedientes.service', () => ({ expedientesService: api }));
 
@@ -17,7 +17,7 @@ const fixture = (overrides: Partial<ExpedienteBudget> = {}): ExpedienteBudget =>
     { id: 'concept-2', concepto: 'IVA de honorarios', categoria: 'IVA_HONORARIOS', importe: '160.00', orden: 1 },
     { id: 'concept-3', concepto: 'Derechos registrales', categoria: 'IMPUESTOS_DERECHOS', importe: '340.00', orden: 2 },
   ],
-  totals: { honorarios: '1000.00', iva_honorarios: '160.00', subtotal_honorarios: '1160.00', subtotal_impuestos_derechos: '340.00', total: '1500.00' },
+  totals: { honorarios: '1000.00', iva_honorarios: '160.00', subtotal_honorarios: '1160.00', subtotal_impuestos_derechos: '340.00', otros_gastos: '0.00', iva_otros_gastos: '0.00', subtotal_otros_gastos: '0.00', requires_review: false, total: '1500.00' },
   internal_distribution: {
     pravia: { honorarios: '600.00', honorarios_porcentaje: '60.0000', iva: '96.00', iva_porcentaje: '60.0000' },
     notaria: { honorarios: '400.00', honorarios_porcentaje: '40.0000', iva: '64.00', iva_porcentaje: '40.0000' },
@@ -34,6 +34,7 @@ describe('EXP-007 · Presupuesto operativo UI', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     api.budget.mockResolvedValue(fixture()); api.saveBudget.mockResolvedValue(fixture({ version: 2 }));
+    api.previewBudget.mockResolvedValue({ totals: fixture().totals });
     api.generateBudgetPdf.mockResolvedValue({ item: {}, idempotent: false });
     api.budgetPdfUrl.mockResolvedValue({ url: 'https://signed.invalid/budget.docx', expires_in: 600, file_name: 'Presupuesto.docx', mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
     api.deleteBudgetPdf.mockResolvedValue({ deleted: true, idempotent: false });
@@ -45,8 +46,28 @@ describe('EXP-007 · Presupuesto operativo UI', () => {
     render(<BudgetTab expedienteId="exp-1" />);
     expect(await screen.findByRole('heading', { name: 'Presupuesto' })).toBeInTheDocument();
     expect(screen.getByDisplayValue('Honorarios profesionales')).toBeInTheDocument();
-    expect(screen.getAllByText('IVA de honorarios').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('IVA de honorarios (automático)').length).toBeGreaterThan(0);
+    expect(screen.queryByDisplayValue('IVA de honorarios')).not.toBeInTheDocument();
     expect(screen.getAllByText('$1,500.00').length).toBeGreaterThan(0);
+  });
+
+  it('no deja visible el total anterior mientras un importe editado es inválido', async () => {
+    render(<BudgetTab expedienteId="exp-1" />);
+    const amount = await screen.findByLabelText('Importe de Honorarios profesionales');
+    fireEvent.change(amount, { target: { value: 'importe inválido' } });
+    const totalRow = screen.getByText('Total del presupuesto').closest('div');
+    expect(totalRow).not.toBeNull();
+    expect(within(totalRow!).getByText('—')).toBeInTheDocument();
+    expect(screen.getByText(/Completa cada concepto con un nombre y un importe válido/)).toBeInTheDocument();
+  });
+
+  it('preserva el importe histórico ambiguo, lo señala y bloquea la generación', async () => {
+    api.budget.mockResolvedValueOnce(fixture({ totals: { ...fixture().totals, iva_honorarios: '0.00', subtotal_honorarios: '1000.00', total: '1340.00', requires_review: true } }));
+    render(<BudgetTab expedienteId="exp-1" />);
+    expect(await screen.findByText('Revisión de datos históricos requerida')).toBeInTheDocument();
+    expect(screen.getByText('Total provisional · requiere revisión')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Generar con ADM-001' })).toBeDisabled();
+    expect(api.saveBudget).not.toHaveBeenCalled();
   });
 
   it('no expone participación ni distribución interna en Presupuesto', async () => {
@@ -68,9 +89,9 @@ describe('EXP-007 · Presupuesto operativo UI', () => {
   it('agrega y elimina conceptos sin modal ni wizard', async () => {
     render(<BudgetTab expedienteId="exp-1" />); await screen.findByDisplayValue('Honorarios profesionales');
     const groups = screen.getAllByRole('article'); await userEvent.click(within(groups[0]).getByRole('button', { name: 'Agregar concepto' }));
-    expect(screen.getByLabelText('Importe de concepto 4')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Eliminar concepto 4' }));
-    expect(screen.queryByLabelText('Importe de concepto 4')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Importe de concepto 3')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Eliminar concepto 3' }));
+    expect(screen.queryByLabelText('Importe de concepto 3')).not.toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 

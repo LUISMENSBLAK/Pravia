@@ -71,9 +71,7 @@ export class QuestionnaireCatalogService {
     const definition = validateQuestionnaireDefinition(input.definition);
     const links = await this.validateLinks(actor, definition);
     return prisma.$transaction(async (tx) => {
-      const notaria = await tx.notaria.findFirst({ where: { organization_id: actor.organizationId, activa: true }, orderBy: { created_at: 'asc' } });
-      if (!notaria) throw new QuestionnaireError(409, 'QUESTIONNAIRE_NOTARY_REQUIRED', 'Configura la Notaría antes de crear cuestionarios.');
-      const artifact = await tx.catalogoArtefacto.create({ data: { organization_id: actor.organizationId, tipo: 'FORMATO', propietario_tipo: 'NOTARIA', notaria_id: notaria.id, nombre: definition.title.trim(), descripcion: definition.description?.trim() || null, purpose: 'QUESTIONNAIRE', activo: true, creado_por_id: actor.id, actualizado_por_id: actor.id } });
+      const artifact = await tx.catalogoArtefacto.create({ data: { organization_id: actor.organizationId, tipo: 'FORMATO', propietario_tipo: 'ORGANIZACION', nombre: definition.title.trim(), descripcion: definition.description?.trim() || null, purpose: 'QUESTIONNAIRE', activo: true, creado_por_id: actor.id, actualizado_por_id: actor.id } });
       const version = await tx.catalogoArtefactoVersion.create({ data: { organization_id: actor.organizationId, artefacto_id: artifact.id, version: 1, origen: 'QUESTIONNAIRE_EDITOR', content_kind: 'STRUCTURED_QUESTIONNAIRE', definition_json: json(definition), definition_checksum: questionnaireChecksum(definition), schema_version: 1, creado_por_id: actor.id } });
       await this.syncLinks(tx, actor, artifact.id, definition, links.actIds);
       await audit(tx, actor, 'QUESTIONNAIRE_CREATED', 'CatalogoArtefacto', artifact.id, undefined, { version: 1, checksum: version.definition_checksum, definition });

@@ -201,6 +201,21 @@ describe('EXP-007 — 51 casos forenses contractuales', () => {
     const result = await new ExpedienteBudgetService(prisma).generatePdf(actor(), 'exp-a', { expected_version: 1, idempotency_key: 'retry-a' });
     expect(result).toMatchObject({ idempotent: true, item: { id: 'history-a' } }); expect(storage.upload).not.toHaveBeenCalled();
   });
+  it('AL2. Presupuesto legacy sin IVA verificable no genera documento ni sube archivo', async () => {
+    const budget = { id: 'budget-a', version: 1, requiere_clasificacion: false, conceptos: [
+      { concepto: 'Honorarios históricos', categoria: 'HONORARIOS', importe: '1234.56', tratamiento_iva: null, iva_tasa: null },
+    ], total: '1234.56' };
+    const prisma: any = {
+      expediente: { findFirst: vi.fn().mockResolvedValue({ id: 'exp-a' }) },
+      expedientePresupuestoDocumento: { findFirst: vi.fn().mockResolvedValue(null) },
+      expedientePresupuesto: { findFirst: vi.fn().mockResolvedValue(budget) },
+      catalogoArtefactoDestino: { findMany: vi.fn() },
+    };
+    await expect(new ExpedienteBudgetService(prisma).generatePdf(actor(), 'exp-a', { expected_version: 1, idempotency_key: 'legacy-a' }))
+      .rejects.toMatchObject({ status: 409, code: 'EXP007_TAX_REVIEW_REQUIRED' });
+    expect(prisma.catalogoArtefactoDestino.findMany).not.toHaveBeenCalled();
+    expect(storage.upload).not.toHaveBeenCalled();
+  });
   it('AM. Sin ADM-001 falla claramente y no usa fallback ni Storage', async () => {
     const budget = { id: 'budget-a', version: 1, requiere_clasificacion: false, conceptos: [], subtotal_honorarios: '0.00', subtotal_impuestos_derechos: '0.00', total: '0.00' };
     const prisma: any = {

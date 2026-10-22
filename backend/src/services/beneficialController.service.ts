@@ -9,15 +9,19 @@ import { canAccessDocumento, comparecienteObjectWhere } from './objectAccess.ser
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { downloadFile } from '../storage/storage.service';
 import { generateOperationalArtifactWithOpenAI } from './openaiDocument.service';
-import { recordAIUsageInDb } from './aiUsage.service';
 import { ComparecienteService } from './compareciente.service';
 import { selectEffectiveRuleRevisions } from '../domain/complianceLegalEngine';
+import { PlatformDomainError } from '../platform/platform.errors';
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
 type BcTargetPlan = { personaMoralId: string; actId: string | null; structure: any; graph: BcGraphInput | null; fingerprint: string | null };
 type BcReviewPlan = { targets: BcTargetPlan[]; identity: unknown };
 const asJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+const deterministicUuid = (value: string) => {
+  const hex = createHash('sha256').update(value).digest('hex').slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20)}`;
+};
 
 export class BeneficialControllerError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
@@ -410,6 +414,8 @@ export class BeneficialControllerService {
 
   async proposeAi(actor: Actor, comparecienteId: string, body: any) {
     need(actor, 'ia.execute'); need(actor, 'comparecientes.write'); need(actor, 'compliance.write');
+    const idempotencyKey = String(body?.idempotency_key || '').trim();
+    if (!idempotencyKey || idempotencyKey.length > 160) throw new BeneficialControllerError(400, 'AI_IDEMPOTENCY_CONTEXT_REQUIRED', 'La propuesta con IA requiere una clave de idempotencia válida.');
     const root = await this.root(actor, comparecienteId);
     const structure = await this.db.personaMoralOwnershipStructure.findFirst({ where: { organization_id: actor.organizationId, persona_moral_id: root.personaMoral!.id } });
     if (!structure) throw new BeneficialControllerError(409, 'BC_STRUCTURE_REQUIRED', 'Guarda la estructura inicial antes de preparar una propuesta.');
@@ -417,15 +423,25 @@ export class BeneficialControllerService {
     const buffer = await downloadFile(document.storage_key);
     if (createHash('sha256').update(buffer).digest('hex') !== document.checksum_sha256) throw new BeneficialControllerError(409, 'BC_SOURCE_CHANGED', 'El archivo no coincide con la versión documental registrada.');
     const base = await this.graph(this.db, actor, structure);
-    const proposalId = randomUUID();
-    const generated = await generateOperationalArtifactWithOpenAI({ purpose: 'OWNERSHIP_PROPOSAL', artifactName: 'Propuesta de estructura',
+    const proposalId = deterministicUuid(`H4:OWNERSHIP:${actor.organizationId}:${comparecienteId}:${idempotencyKey}`);
+    const existing = await this.db.complianceBcAiProposal.findFirst({ where: { id: proposalId, organization_id: actor.organizationId } });
+    if (existing) return this.readAi(actor, comparecienteId, proposalId);
+    let generated;
+    try {
+      generated = await generateOperationalArtifactWithOpenAI({ purpose: 'OWNERSHIP_PROPOSAL', artifactName: 'Propuesta de estructura',
       masterText: 'Devuelve en content un JSON con graph (root_node_id, nodes, edges, controls) y source_pages. Conserva raíz e IDs existentes. Nuevos nodos: UUID, party_kind PF/PM, identity_mode STRUCTURED_ONLY, display_name. No crees vínculos a comparecientes. Porcentajes como strings, desconocidos null; no normalices ni supongas porcentajes. Controles VOTE/APPOINTMENT/MANAGEMENT/AGREEMENT/OTHER. Incluye sólo hechos expresos. source_pages: páginas enteras positivas comprobadas o []. Nunca inventes páginas, identidades o hechos.',
       structuredData: { current_graph: canonicalBcGraph(base as any) }, currentPartyDocuments: [],
       sourceDocument: { buffer, mimeType: document.mime_type, documentoId: document.id, nombreOriginal: document.nombre_original, tipoDocumento: document.tipo },
+      economicContext: {
+        actor: { userId: actor.id, organizationId: actor.organizationId, membershipId: actor.membershipId,
+          role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId },
+        idempotencyKey: `h4:proposal:${idempotencyKey}`, traceId: `h4:proposal:${proposalId}`,
+      },
     });
-    // Charge tracking survives a rejected/malformed proposal; no second ledger.
-    await recordAIUsageInDb(this.db, generated.usage, { organizationId: actor.organizationId, usuarioId: actor.id,
-      operacion: 'H4_OWNERSHIP_PROPOSAL', operationId: `h4:proposal:${proposalId}`, metadata: { source_document_id: document.id, structure_id: structure.id } });
+    } catch (error) {
+      if (error instanceof PlatformDomainError) throw new BeneficialControllerError(error.status, error.code, error.message);
+      throw error;
+    }
     let parsed: any;
     try { parsed = JSON.parse(generated.content); } catch { throw new BeneficialControllerError(422, 'BC_AI_PROPOSAL_INVALID', 'La propuesta no tiene un formato revisable.'); }
     const graph = this.normalize(parsed.graph);

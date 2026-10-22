@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = vi.hoisted(() => ({
-  overview: vi.fn(), profile: vi.fn(), updateProfile: vi.fn(), preferences: vi.fn(), updatePreferences: vi.fn(), sessions: vi.fn(), revokeSession: vi.fn(), revokeOtherSessions: vi.fn(), changePassword: vi.fn(),
+  overview: vi.fn(), organization: vi.fn(), updateOrganization: vi.fn(), profile: vi.fn(), updateProfile: vi.fn(), preferences: vi.fn(), updatePreferences: vi.fn(), sessions: vi.fn(), revokeSession: vi.fn(), revokeOtherSessions: vi.fn(), changePassword: vi.fn(),
   users: vi.fn(), user: vi.fn(), userImpact: vi.fn(), updateUser: vi.fn(), invitations: vi.fn(), invite: vi.fn(), revokeInvitation: vi.fn(), roles: vi.fn(), audit: vi.fn(), aiDashboard: vi.fn(), notifications: vi.fn(), readNotification: vi.fn(), readAllNotifications: vi.fn(), dismissNotification: vi.fn(), markNotificationNotApplicable: vi.fn(), search: vi.fn(),
   knowledgeSources: vi.fn(), knowledgeCriteria: vi.fn(), retrieveKnowledge: vi.fn(),
 }));
@@ -21,7 +21,8 @@ describe('Configuración, usuarios y accesos', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     auth.user.permissions = ['usuarios.read', 'usuarios.manage', 'configuracion.manage', 'configuracion.catalogos.read', 'ai.admin.read'];
-    api.overview.mockResolvedValue({ profile: { nombre: 'María', apellido: 'López', email: 'maria@pravia.mx', rol: 'DIRECCION' }, metrics: { active_sessions: 2, unread_notifications: 3, active_users: 8 }, organization: { primary_notary: { nombre: 'Notaría 45', ciudad: 'Tepic', entidad_federativa: 'Nayarit' }, scope: 'GLOBAL' }, access: { permissions: ['usuarios.manage'] } });
+    api.overview.mockResolvedValue({ profile: { nombre: 'María', apellido: 'López', email: 'maria@pravia.mx', rol: 'DIRECCION' }, metrics: { active_sessions: 2, unread_notifications: 3, active_users: 8 }, organization: { profile: { name: 'Notaría 45' }, scope: 'GLOBAL' }, access: { permissions: ['usuarios.manage'] } });
+    api.organization.mockResolvedValue({ profile: { id: 'org-1', name: 'Notaría 45', notary_number: '45', notary_holder: 'Lic. María López', state: 'Nayarit', municipality: 'Tepic', address: 'Av. México 100', postal_code: '63000', phone: null, email: null, logo_storage_key: null, institutional_header: null, updated_at: '2026-10-20T00:00:00Z' } });
     api.profile.mockResolvedValue({ user: { nombre: 'María', apellido: 'López', email: 'maria@pravia.mx', telefono: '311 100 2000', rol: 'DIRECCION', last_login_at: '2026-08-13T12:00:00Z' }, scope: 'GLOBAL' });
     api.sessions.mockResolvedValue({ sessions: [{ id: 's1', device: 'Safari en macOS', ip_approximate: '192.168.1.…', current: true, created_at: '2026-08-12T12:00:00Z', last_used_at: '2026-08-13T12:00:00Z', expires_at: '2026-09-13T12:00:00Z' }] });
     api.users.mockResolvedValue({ data: [{ id: 'u2', nombre: 'Carlos', apellido: 'Ruiz', email: 'carlos@pravia.mx', rol: 'ABOGADO', activo: true, status: 'ACTIVO', created_at: '2026-08-01T12:00:00Z', last_login_at: '2026-08-12T12:00:00Z' }], metrics: { active: 8, suspended: 1, pending_invitations: 2 }, meta: { total: 1 } });

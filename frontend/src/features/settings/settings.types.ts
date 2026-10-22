@@ -24,6 +24,13 @@ export type UserPreferences = {
   notifications_enabled: boolean; assistant_suggestions_enabled: boolean; updated_at?: string;
 };
 
+export type OrganizationProfile = {
+  id: string; name: string; notary_number: string | null; notary_holder: string | null;
+  state: string | null; municipality: string | null; address: string | null;
+  postal_code: string | null; phone: string | null; email: string | null;
+  logo_storage_key: string | null; institutional_header: string | null; updated_at: string;
+};
+
 export type Session = {
   id: string; device: string; ip_approximate: string; expires_at: string; last_used_at: string;
   created_at: string; current: boolean;

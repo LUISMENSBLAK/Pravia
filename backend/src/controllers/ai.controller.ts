@@ -94,7 +94,7 @@ export class AIController {
       }
       const [history, attachmentData] = await Promise.all([
         assistantConversationService.history(req.user, conversation.id, userMessage.message.id),
-        prepareAssistantAttachmentContext(req.user, conversation.id, req.body?.attachmentIds),
+        prepareAssistantAttachmentContext(req.user, conversation.id, req.body?.attachmentIds, `assistant-attachment:${userMessage.message.id}`),
       ]);
       const actionState = await assistantConversationService.actionState(req.user, conversation.id);
       const preferenceReader = (prisma as any).userPreference?.findUnique;
@@ -250,23 +250,26 @@ export class AIController {
       if (!req.user) return res.status(401).json({ success: false, code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
       const { attachment, buffer } = await assistantConversationService.attachmentBuffer(req.user, req.params.conversationId, req.params.attachmentId);
       if (!attachment.mime_type.startsWith('audio/')) return res.status(415).json({ success: false, code: 'ASSISTANT_AUDIO_REQUIRED', error: 'El adjunto seleccionado no es audio.' });
-      const result = await transcribeAssistantAudio({ buffer, mimeType: attachment.mime_type, filename: attachment.original_name });
+      if (attachment.transcription) return res.json({ success: true, data: { attachmentId: attachment.id, transcript: attachment.transcription }, idempotent: true });
+      const requestKey = String(req.header('Idempotency-Key') || req.body?.idempotency_key || '').trim();
+      if (!requestKey) return res.status(400).json({ success: false, code: 'AI_IDEMPOTENCY_CONTEXT_REQUIRED', error: 'La transcripción requiere una clave de idempotencia.' });
+      const operationId = `assistant-transcription:${req.user.organizationId}:${attachment.id}:${requestKey}`;
+      const result = await transcribeAssistantAudio({ buffer, mimeType: attachment.mime_type, filename: attachment.original_name,
+        actor: { userId: req.user.id, organizationId: req.user.organizationId, membershipId: req.user.membershipId,
+          role: req.user.rol, permissions: req.user.permissions, scope: req.user.scope, sessionId: req.user.sessionId },
+        idempotencyKey: operationId, traceId: req.correlationId || operationId });
+      const usage = await prisma.aiUsageEvent.findUnique({ where: {
+        organization_id_idempotency_key: { organization_id: req.user.organizationId, idempotency_key: operationId },
+      }, select: { model_code: true } });
       await prisma.assistantAttachment.update({ where: { id: attachment.id }, data: {
-        transcription: result.text, transcription_model: result.model, transcribed_at: new Date(),
+        transcription: result.text, transcription_model: usage?.model_code || null, transcribed_at: new Date(),
       } });
-      await Promise.all([
-        recordAIUsages([result.usage], { operacion: 'ASSISTANT_TRANSCRIPTION', usuarioId: req.user.id, assistantConversationId: req.params.conversationId,
-          organizationId: req.user.organizationId, operationId: `assistant-transcription:${attachment.id}:${result.model}:${req.correlationId || crypto.randomUUID()}` }),
-        logAudit(req.user.id, 'AI_AUDIO_TRANSCRIBED', 'AssistantConversation', req.params.conversationId, { attachment_id: attachment.id, model: result.model }),
-      ]);
+      await logAudit(req.user.id, 'AI_AUDIO_TRANSCRIBED', 'AssistantConversation', req.params.conversationId, {
+        attachment_id: attachment.id, operation_code: 'ASSISTANT_TRANSCRIPTION',
+        model: usage?.model_code || null, trace_id: req.correlationId || operationId,
+      });
       return res.json({ success: true, data: { attachmentId: attachment.id, transcript: result.text } });
     } catch (error: any) {
-      if (req.user && error instanceof AssistantTranscriptionError) await recordAIFailure({
-        operacion: 'ASSISTANT_TRANSCRIPTION', usuarioId: req.user.id, assistantConversationId: req.params.conversationId,
-        organizationId: req.user.organizationId, operationId: `assistant-transcription-failure:${req.params.attachmentId}:${req.correlationId || 'request'}`,
-        modelo: process.env.OPENAI_TRANSCRIPTION_MODEL || 'gpt-4o-mini-transcribe', errorCode: error?.code || 'AI_TRANSCRIPTION_FAILED',
-        metadata: { correlation_id: req.correlationId },
-      }).catch(() => undefined);
       if (error instanceof AssistantTranscriptionError) return res.status(error.status).json({ success: false, code: error.code, error: error.message });
       return AIController.conversationError(res, error);
     }

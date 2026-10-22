@@ -1070,6 +1070,9 @@ export class ProjectGenerationService {
     const baseValues = buildProjectTemplateData(expediente, confirmedValues);
     const documentContext = await buildProjectDocumentContext(source, selectedSources, baseValues, input?.transcription_sources);
     const literalMode = documentContext.fields.length === 0;
+    if (literalMode && !idempotencyKey) {
+      throw new ProjectGenerationError(400, 'AI_IDEMPOTENCY_CONTEXT_REQUIRED', 'La proyección literal con IA requiere una clave de idempotencia.');
+    }
     const literalSegments = literalMode ? await docxLiteralSegments(source) : [];
     const literalSources = literalMode
       ? await buildLiteralProjectSources(selectedSources)
@@ -1086,6 +1089,14 @@ export class ProjectGenerationService {
           sourceDocuments: literalSources.sources,
           instructions,
           validationFeedback,
+          economicContext: {
+            actor: {
+              userId: actor.id, organizationId: actor.organizationId, membershipId: actor.membershipId,
+              role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId,
+            },
+            idempotencyKey: `${idempotencyKey}:literal-plan:${attempt}`,
+            traceId: text(input?.__trace_id) || idempotencyKey!,
+          },
         });
         const completed = completeLiteralProjectPatchPlan(planned, literalSegments);
         try {

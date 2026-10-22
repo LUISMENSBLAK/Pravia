@@ -1,9 +1,9 @@
 import { Prisma, PrismaClient, TipoPersona, TipoDocumentoCompareciente } from '@prisma/client';
+import type { Request } from 'express';
 import * as crypto from 'crypto';
 import { validateCurp, validateOptionalDate, validateRfc } from '../domain/mexicanIdentity';
 import { consolidateExtractedFields } from '../domain/documentExtraction';
 import { extraerMultiplesDocumentos, missingApplicableComparecienteFields, type DocumentoParaExtraccion } from './openaiDocument.service';
-import { recordAIFailure, recordAIUsages } from './aiUsage.service';
 import { requireActorContext } from '../auth/actorContext';
 import { ComplianceDocumentService } from './complianceDocument.service';
 import { enqueueComparecienteCreatedTx, loadScreeningIdentity, queueMasterScreeningTx } from './complianceScreening.service';
@@ -12,6 +12,7 @@ import { normalizeOperationalText, optionalOperationalText, preserveFormatText }
 
 type IdentityState = 'VERIFICADA' | 'PENDIENTE' | 'OBSERVACION';
 type HealthState = 'COMPLETO' | 'PENDIENTE' | 'OBSERVACION' | 'NO_APLICA' | 'NO_CONFIGURADO';
+type ComparecienteActor = NonNullable<Request['user']>;
 
 const VERIFIED_IDENTIFICATION = {
   archived_at: null,
@@ -1255,7 +1256,10 @@ export class ComparecienteService {
    * Analiza todos los documentos activos de una ficha. Devuelve un borrador;
    * nunca modifica los datos maestros hasta que una persona guarda el formulario.
    */
-  public async extraerDocumentosExistentesConIA(comparecienteId: string, actorUserId: string, actorOrganizationId: string) {
+  public async extraerDocumentosExistentesConIA(comparecienteId: string, actor: ComparecienteActor, requestKey: string) {
+    const actorUserId = actor.id;
+    const actorOrganizationId = actor.organizationId;
+    if (!requestKey.trim()) throw new Error('La extracción requiere una clave de idempotencia.');
     const [links, compareciente] = await Promise.all([
       this.prisma.comparecienteDocumento.findMany({
         where: { organization_id: actorOrganizationId, compareciente_id: comparecienteId, archived_at: null, estatus: 'ACTIVO', vigencia: 'VIGENTE' },
@@ -1279,9 +1283,13 @@ export class ComparecienteService {
       }
     }
     if (!readable.length) throw new Error('No fue posible leer los documentos disponibles.');
-    const started = Date.now();
     try {
-      const extraction = await extraerMultiplesDocumentos(readable);
+      const operationId = `compareciente-extraction:${actorOrganizationId}:${comparecienteId}:${requestKey}`;
+      const extraction = await extraerMultiplesDocumentos(readable, {
+        actor: { userId: actor.id, organizationId: actor.organizationId, membershipId: actor.membershipId,
+          role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId },
+        idempotencyKey: operationId, traceId: operationId,
+      });
       const ineIdentifiers = {
         cic: extraction.identificadores_ine?.cic
           ? (extraction.identificadores_ine.cic.toUpperCase().startsWith('IDMEX') ? extraction.identificadores_ine.cic.toUpperCase() : `IDMEX${extraction.identificadores_ine.cic.toUpperCase()}`)
@@ -1296,10 +1304,6 @@ export class ComparecienteService {
       if (consolidated.values.email && !consolidated.values.correo) consolidated.values.correo = consolidated.values.email;
       if (consolidated.values.celular && !consolidated.values.telefono) consolidated.values.telefono = consolidated.values.celular;
       const faltantes = missingApplicableComparecienteFields(extraction, compareciente.tipo_persona as 'FISICA' | 'MORAL');
-      await recordAIUsages(extraction.usos || (extraction.uso ? [extraction.uso] : []), {
-        operacion: 'COMPARECIENTE_DOCUMENT_EXTRACTION', usuarioId: actorUserId,
-        metadata: { compareciente_id: comparecienteId, documentos: readable.length, omitidos: skipped.length },
-      });
       await this.prisma.$transaction(async (tx) => {
         for (const [field, proposal] of Object.entries(consolidated.proposals)) {
           const alternatives = proposal.estado === 'EN_CONFLICTO' ? proposal.alternativas : [proposal];
@@ -1336,9 +1340,6 @@ export class ComparecienteService {
         alertas: extraction.alertas || [],
         estructura_persona_moral: compareciente.tipo_persona === 'MORAL' ? extraction.estructura_persona_moral : undefined,
       };
-    } catch (error) {
-      await recordAIFailure({ operacion: 'COMPARECIENTE_DOCUMENT_EXTRACTION', usuarioId: actorUserId, modelo: process.env.OPENAI_DOCUMENT_MODEL || 'configured-document-model', durationMs: Date.now() - started, metadata: { compareciente_id: comparecienteId } });
-      throw error;
-    }
+    } catch (error) { throw error; }
   }
 }

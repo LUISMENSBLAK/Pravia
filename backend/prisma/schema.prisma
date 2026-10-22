@@ -11,6 +11,16 @@ datasource db {
 model Organization {
   id                                String                                       @id @default(uuid()) @db.Uuid
   name                              String
+  notary_number                     String?
+  notary_holder                     String?
+  state                             String?
+  municipality                      String?
+  address                           String?
+  postal_code                       String?
+  phone                             String?
+  email                             String?
+  logo_storage_key                  String?
+  institutional_header              String?
   status                            String                                       @default("ACTIVE")
   created_at                        DateTime                                     @default(now())
   updated_at                        DateTime                                     @updatedAt
@@ -31,7 +41,7 @@ model Organization {
   presupuestoDocumentos             ExpedientePresupuestoDocumento[]
   expedienteActividades             ExpedienteActividad[]
   prospectoTransiciones             ProspectoTransicion[]
-  prospectoRevisionesDocumentales    ProspectoRevisionDocumental[]
+  prospectoRevisionesDocumentales   ProspectoRevisionDocumental[]
   prospectoFuentes                  ProspectoFuenteNotarial[]
   prospectoActos                    ProspectoActo[]
   cotizacionTransiciones            CotizacionTransicion[]
@@ -98,85 +108,85 @@ model Organization {
   cuentasPorPagarCfdi               CuentaPorPagarCfdi[]
   aplicacionesPagoCfdi              AplicacionPagoCfdi[]
   transferenciasInternas            TransferenciaInterna[]
-  miDiaConfig                      MiDiaTenantConfig?
-  miDiaLayouts                     MiDiaUserLayout[]
-  miDiaCardPermissions             MiDiaCardPermission[]
-  miDiaPersonalTasks               MiDiaPersonalTask[]
+  miDiaConfig                       MiDiaTenantConfig?
+  miDiaLayouts                      MiDiaUserLayout[]
+  miDiaCardPermissions              MiDiaCardPermission[]
+  miDiaPersonalTasks                MiDiaPersonalTask[]
 
   @@index([status])
   @@map("organizations")
 }
 
 model OrganizationMembership {
-  id                                      String                                      @id @default(uuid()) @db.Uuid
-  organization_id                         String                                      @db.Uuid
-  user_id                                 String                                      @db.Uuid
-  rol                                     Role
-  status                                  String                                      @default("ACTIVE")
-  created_at                              DateTime                                    @default(now())
-  updated_at                              DateTime                                    @updatedAt
-  organization                            Organization                                @relation(fields: [organization_id], references: [id], onDelete: Restrict)
-  user                                    User                                        @relation(fields: [user_id], references: [id], onDelete: Restrict)
-  sessions                                AuthSession[]
-  prospectoTransiciones                   ProspectoTransicion[]
-  prospectoRevisionesDocumentales         ProspectoRevisionDocumental[]
-  prospectoFuentes                        ProspectoFuenteNotarial[]
-  cotizacionTransiciones                  CotizacionTransicion[]
-  complianceLegalRulesCreated             ComplianceLegalRule[]                       @relation("ComplianceLegalRuleCreatorMembership")
-  complianceRuleRevisionsCreated          ComplianceLegalRuleRevision[]               @relation("ComplianceRuleRevisionCreatorMembership")
-  complianceRuleRevisionsVerified         ComplianceLegalRuleRevision[]               @relation("ComplianceRuleRevisionVerifierMembership")
-  complianceRuleRevisionsActivated        ComplianceLegalRuleRevision[]               @relation("ComplianceRuleRevisionActivatorMembership")
-  expedienteComplianceStatesUpdated       ExpedienteComplianceState[]                 @relation("ExpedienteComplianceStateUpdaterMembership")
-  complianceAlertLeadsCreated             ComplianceAlertLeadRevision[]               @relation("ComplianceAlertLeadCreatorMembership")
-  complianceAlertsResponsible             ComplianceAlert[]                           @relation("ComplianceAlertResponsibleMembership")
-  complianceAlertsResolved                ComplianceAlert[]                           @relation("ComplianceAlertResolverMembership")
-  bcStructuresCreated                     PersonaMoralOwnershipStructure[]            @relation("BcStructureCreatorMembership")
-  bcStructuresUpdated                     PersonaMoralOwnershipStructure[]            @relation("BcStructureUpdaterMembership")
-  bcEdgesConfirmed                        PersonaMoralOwnershipEdge[]                 @relation("BcEdgeConfirmerMembership")
-  bcControlsConfirmed                     PersonaMoralControlFact[]                   @relation("BcControlConfirmerMembership")
-  bcReconciliationsDecided                PersonaMoralStructureReconciliation[]       @relation("BcReconciliationDeciderMembership")
-  bcSnapshotsCaptured                     ComplianceBcStructureSnapshot[]             @relation("BcSnapshotActorMembership")
-  bcEvaluationsCreated                    ComplianceBcEvaluation[]                    @relation("BcEvaluationActorMembership")
-  bcAiProposalsCreated                    ComplianceBcAiProposal[]                    @relation("BcAiProposalCreatorMembership")
-  bcAiProposalsDecided                    ComplianceBcAiProposal[]                    @relation("BcAiProposalDeciderMembership")
-  bcFormatMappingsCreated                 ComplianceBcFormatMapping[]                 @relation("BcFormatCreatorMembership")
-  bcFormatMappingsUpdated                 ComplianceBcFormatMapping[]                 @relation("BcFormatUpdaterMembership")
-  complianceExceptionsAuthorized          ComplianceRequirementException[]            @relation("ComplianceExceptionAuthorizerMembership")
-  bcSocietyTargetsCreated                 ExpedienteSocietyTarget[]                   @relation("BcSocietyTargetCreatorMembership")
-  questionnaireAssessmentsCreated         ComplianceQuestionnaireAssessment[]         @relation("QuestionnaireAssessmentCreatorMembership")
-  questionnaireRevisionsCreated           ComplianceQuestionnaireAssessmentRevision[] @relation("QuestionnaireRevisionCreatorMembership")
-  questionnaireRevisionsFinalized         ComplianceQuestionnaireAssessmentRevision[] @relation("QuestionnaireRevisionFinalizerMembership")
-  riskMethodologiesCreated                ComplianceRiskMethodology[]                 @relation("RiskMethodologyCreatorMembership")
-  riskMethodologyRevisionsCreated         ComplianceRiskMethodologyRevision[]         @relation("RiskMethodologyRevisionCreatorMembership")
-  riskMethodologyRevisionsVerified        ComplianceRiskMethodologyRevision[]         @relation("RiskMethodologyRevisionVerifierMembership")
-  riskMethodologyRevisionsActivated       ComplianceRiskMethodologyRevision[]         @relation("RiskMethodologyRevisionActivatorMembership")
-  operationPaymentsCreated                ComplianceOperationPayment[]                @relation("OperationPaymentCreatorMembership")
-  operationPaymentRevisionsCreated        ComplianceOperationPaymentRevision[]        @relation("OperationPaymentRevisionCreatorMembership")
-  operationPaymentRevisionsConfirmed      ComplianceOperationPaymentRevision[]        @relation("OperationPaymentRevisionConfirmerMembership")
-  operationPaymentVerificationsCreated    ComplianceOperationPaymentVerification[]    @relation("OperationPaymentVerificationCreatorMembership")
-  operationPaymentVerificationsConfirmed  ComplianceOperationPaymentVerification[]    @relation("OperationPaymentVerificationConfirmerMembership")
-  complianceOfficialActivationsCreated    ComplianceOfficialDefinitionActivation[]    @relation("H6OfficialActivationActor")
-  complianceFicheRevisionsCreated         ComplianceNoticeFicheRevision[]             @relation("H6FicheRevisionActor")
-  complianceOfficialProductsCreated       ComplianceOfficialProduct[]                 @relation("H6OfficialProductActor")
-  complianceNoticePresentationsCreated    ComplianceNoticePresentation[]              @relation("H6NoticePresentationActor")
-  complianceNoticeAcknowledgementsCreated ComplianceNoticeAcknowledgement[]           @relation("H6NoticeAcknowledgementActor")
-  complianceAssistedReviewsExecuted       ComplianceAssistedReview[]                  @relation("H9AssistedReviewActor")
-  configuracionConceptosResponsable       ConfiguracionConceptoActividad[]            @relation("CfgConceptResponsibleMembership")
-  seguimientoActividadesCompletadas       ExpedienteSeguimientoActividad[]            @relation("SeguimientoCompletedByMembership")
-  agendaParticipations                    EventoAgendaParticipante[]                  @relation("EventoAgendaParticipanteMembership")
-  prospectosCotizacionAsignada            Prospecto[]                                 @relation("ProspectQuoteAssigneeMembership")
-  entidadesFiscalesCfdiCreadas           EntidadFiscalCfdi[]                         @relation("EntidadFiscalCfdiCreadorMembership")
-  perfilesFiscalesComparecientesConfirmados ComparecienteFiscalProfile[]             @relation("ComparecienteFiscalProfileConfirmer")
-  conceptosFiscalesCfdiCreados          ConceptoFiscalCfdi[]                          @relation("ConceptoFiscalCfdiCreadorMembership")
-  proveedoresFiscalesCreados             ProveedorFiscal[]                           @relation("ProveedorFiscalCreadorMembership")
-  documentosCfdiCreados                  DocumentoCfdi[]                             @relation("DocumentoCfdiCreadorMembership")
-  cuentasPorCobrarCfdiCreadas            CuentaPorCobrarCfdi[]                       @relation("CuentaPorCobrarCfdiCreadorMembership")
-  cuentasPorPagarCfdiCreadas             CuentaPorPagarCfdi[]                        @relation("CuentaPorPagarCfdiCreadorMembership")
-  aplicacionesPagoCfdiCreadas            AplicacionPagoCfdi[]                        @relation("AplicacionPagoCfdiCreadorMembership")
-  transferenciasInternasCreadas          TransferenciaInterna[]                      @relation("TransferenciaInternaCreadorMembership")
-  miDiaLayouts                           MiDiaUserLayout[]
-  miDiaCardPermissions                   MiDiaCardPermission[]
-  miDiaPersonalTasks                     MiDiaPersonalTask[]
+  id                                        String                                      @id @default(uuid()) @db.Uuid
+  organization_id                           String                                      @db.Uuid
+  user_id                                   String                                      @db.Uuid
+  rol                                       Role
+  status                                    String                                      @default("ACTIVE")
+  created_at                                DateTime                                    @default(now())
+  updated_at                                DateTime                                    @updatedAt
+  organization                              Organization                                @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  user                                      User                                        @relation(fields: [user_id], references: [id], onDelete: Restrict)
+  sessions                                  AuthSession[]
+  prospectoTransiciones                     ProspectoTransicion[]
+  prospectoRevisionesDocumentales           ProspectoRevisionDocumental[]
+  prospectoFuentes                          ProspectoFuenteNotarial[]
+  cotizacionTransiciones                    CotizacionTransicion[]
+  complianceLegalRulesCreated               ComplianceLegalRule[]                       @relation("ComplianceLegalRuleCreatorMembership")
+  complianceRuleRevisionsCreated            ComplianceLegalRuleRevision[]               @relation("ComplianceRuleRevisionCreatorMembership")
+  complianceRuleRevisionsVerified           ComplianceLegalRuleRevision[]               @relation("ComplianceRuleRevisionVerifierMembership")
+  complianceRuleRevisionsActivated          ComplianceLegalRuleRevision[]               @relation("ComplianceRuleRevisionActivatorMembership")
+  expedienteComplianceStatesUpdated         ExpedienteComplianceState[]                 @relation("ExpedienteComplianceStateUpdaterMembership")
+  complianceAlertLeadsCreated               ComplianceAlertLeadRevision[]               @relation("ComplianceAlertLeadCreatorMembership")
+  complianceAlertsResponsible               ComplianceAlert[]                           @relation("ComplianceAlertResponsibleMembership")
+  complianceAlertsResolved                  ComplianceAlert[]                           @relation("ComplianceAlertResolverMembership")
+  bcStructuresCreated                       PersonaMoralOwnershipStructure[]            @relation("BcStructureCreatorMembership")
+  bcStructuresUpdated                       PersonaMoralOwnershipStructure[]            @relation("BcStructureUpdaterMembership")
+  bcEdgesConfirmed                          PersonaMoralOwnershipEdge[]                 @relation("BcEdgeConfirmerMembership")
+  bcControlsConfirmed                       PersonaMoralControlFact[]                   @relation("BcControlConfirmerMembership")
+  bcReconciliationsDecided                  PersonaMoralStructureReconciliation[]       @relation("BcReconciliationDeciderMembership")
+  bcSnapshotsCaptured                       ComplianceBcStructureSnapshot[]             @relation("BcSnapshotActorMembership")
+  bcEvaluationsCreated                      ComplianceBcEvaluation[]                    @relation("BcEvaluationActorMembership")
+  bcAiProposalsCreated                      ComplianceBcAiProposal[]                    @relation("BcAiProposalCreatorMembership")
+  bcAiProposalsDecided                      ComplianceBcAiProposal[]                    @relation("BcAiProposalDeciderMembership")
+  bcFormatMappingsCreated                   ComplianceBcFormatMapping[]                 @relation("BcFormatCreatorMembership")
+  bcFormatMappingsUpdated                   ComplianceBcFormatMapping[]                 @relation("BcFormatUpdaterMembership")
+  complianceExceptionsAuthorized            ComplianceRequirementException[]            @relation("ComplianceExceptionAuthorizerMembership")
+  bcSocietyTargetsCreated                   ExpedienteSocietyTarget[]                   @relation("BcSocietyTargetCreatorMembership")
+  questionnaireAssessmentsCreated           ComplianceQuestionnaireAssessment[]         @relation("QuestionnaireAssessmentCreatorMembership")
+  questionnaireRevisionsCreated             ComplianceQuestionnaireAssessmentRevision[] @relation("QuestionnaireRevisionCreatorMembership")
+  questionnaireRevisionsFinalized           ComplianceQuestionnaireAssessmentRevision[] @relation("QuestionnaireRevisionFinalizerMembership")
+  riskMethodologiesCreated                  ComplianceRiskMethodology[]                 @relation("RiskMethodologyCreatorMembership")
+  riskMethodologyRevisionsCreated           ComplianceRiskMethodologyRevision[]         @relation("RiskMethodologyRevisionCreatorMembership")
+  riskMethodologyRevisionsVerified          ComplianceRiskMethodologyRevision[]         @relation("RiskMethodologyRevisionVerifierMembership")
+  riskMethodologyRevisionsActivated         ComplianceRiskMethodologyRevision[]         @relation("RiskMethodologyRevisionActivatorMembership")
+  operationPaymentsCreated                  ComplianceOperationPayment[]                @relation("OperationPaymentCreatorMembership")
+  operationPaymentRevisionsCreated          ComplianceOperationPaymentRevision[]        @relation("OperationPaymentRevisionCreatorMembership")
+  operationPaymentRevisionsConfirmed        ComplianceOperationPaymentRevision[]        @relation("OperationPaymentRevisionConfirmerMembership")
+  operationPaymentVerificationsCreated      ComplianceOperationPaymentVerification[]    @relation("OperationPaymentVerificationCreatorMembership")
+  operationPaymentVerificationsConfirmed    ComplianceOperationPaymentVerification[]    @relation("OperationPaymentVerificationConfirmerMembership")
+  complianceOfficialActivationsCreated      ComplianceOfficialDefinitionActivation[]    @relation("H6OfficialActivationActor")
+  complianceFicheRevisionsCreated           ComplianceNoticeFicheRevision[]             @relation("H6FicheRevisionActor")
+  complianceOfficialProductsCreated         ComplianceOfficialProduct[]                 @relation("H6OfficialProductActor")
+  complianceNoticePresentationsCreated      ComplianceNoticePresentation[]              @relation("H6NoticePresentationActor")
+  complianceNoticeAcknowledgementsCreated   ComplianceNoticeAcknowledgement[]           @relation("H6NoticeAcknowledgementActor")
+  complianceAssistedReviewsExecuted         ComplianceAssistedReview[]                  @relation("H9AssistedReviewActor")
+  configuracionConceptosResponsable         ConfiguracionConceptoActividad[]            @relation("CfgConceptResponsibleMembership")
+  seguimientoActividadesCompletadas         ExpedienteSeguimientoActividad[]            @relation("SeguimientoCompletedByMembership")
+  agendaParticipations                      EventoAgendaParticipante[]                  @relation("EventoAgendaParticipanteMembership")
+  prospectosCotizacionAsignada              Prospecto[]                                 @relation("ProspectQuoteAssigneeMembership")
+  entidadesFiscalesCfdiCreadas              EntidadFiscalCfdi[]                         @relation("EntidadFiscalCfdiCreadorMembership")
+  perfilesFiscalesComparecientesConfirmados ComparecienteFiscalProfile[]                @relation("ComparecienteFiscalProfileConfirmer")
+  conceptosFiscalesCfdiCreados              ConceptoFiscalCfdi[]                        @relation("ConceptoFiscalCfdiCreadorMembership")
+  proveedoresFiscalesCreados                ProveedorFiscal[]                           @relation("ProveedorFiscalCreadorMembership")
+  documentosCfdiCreados                     DocumentoCfdi[]                             @relation("DocumentoCfdiCreadorMembership")
+  cuentasPorCobrarCfdiCreadas               CuentaPorCobrarCfdi[]                       @relation("CuentaPorCobrarCfdiCreadorMembership")
+  cuentasPorPagarCfdiCreadas                CuentaPorPagarCfdi[]                        @relation("CuentaPorPagarCfdiCreadorMembership")
+  aplicacionesPagoCfdiCreadas               AplicacionPagoCfdi[]                        @relation("AplicacionPagoCfdiCreadorMembership")
+  transferenciasInternasCreadas             TransferenciaInterna[]                      @relation("TransferenciaInternaCreadorMembership")
+  miDiaLayouts                              MiDiaUserLayout[]
+  miDiaCardPermissions                      MiDiaCardPermission[]
+  miDiaPersonalTasks                        MiDiaPersonalTask[]
 
   @@unique([organization_id, user_id])
   @@index([user_id, status])
@@ -554,8 +564,8 @@ model NotificationReminder {
 }
 
 model Prospecto {
-  id                           String                     @id @default(uuid()) @db.Uuid
-  organization_id              String?                    @db.Uuid
+  id                           String                        @id @default(uuid()) @db.Uuid
+  organization_id              String?                       @db.Uuid
   nombre                       String
   telefono                     String?
   email                        String?
@@ -565,46 +575,46 @@ model Prospecto {
   documentos_disponibles       String?
   tiene_antecedente            Boolean?
   tiene_predial                Boolean?
-  honorarios_estimados         Decimal?                   @db.Decimal(14, 2)
-  impuestos_derechos_estimados Decimal?                   @db.Decimal(14, 2)
-  total_estimado               Decimal?                   @db.Decimal(14, 2)
+  honorarios_estimados         Decimal?                      @db.Decimal(14, 2)
+  impuestos_derechos_estimados Decimal?                      @db.Decimal(14, 2)
+  total_estimado               Decimal?                      @db.Decimal(14, 2)
   puede_compartir_docs         Boolean?
   tiempo_estimado              String?
-  estado                       ProspectoEstado            @default(NUEVO)
-  user_id                      String                     @db.Uuid
-  cotizacion_responsable_id    String?                    @db.Uuid
-  created_at                   DateTime                   @default(now())
-  updated_at                   DateTime                   @updatedAt
+  estado                       ProspectoEstado               @default(NUEVO)
+  user_id                      String                        @db.Uuid
+  cotizacion_responsable_id    String?                       @db.Uuid
+  created_at                   DateTime                      @default(now())
+  updated_at                   DateTime                      @updatedAt
   archived_at                  DateTime?
-  archived_by                  String?                    @db.Uuid
+  archived_by                  String?                       @db.Uuid
   ciudad                       String?
   fuente                       String?
   motivo_archivo               String?
-  prioridad                    ProspectoPrioridad         @default(MEDIA)
+  prioridad                    ProspectoPrioridad            @default(MEDIA)
   etapa_operativa_codigo       String?
   servicio_catalogo_codigo     String?
-  folio                        String?                    @unique
-  notaria_id                   String?                    @db.Uuid
+  folio                        String?                       @unique
+  notaria_id                   String?                       @db.Uuid
   etapa_contractual            ProspectoEtapaContractual?
-  version_operativa            Int                        @default(0)
-  transicion_actual_id         String?                    @db.Uuid
-  creation_key                 String?                    @db.VarChar(120)
-  creation_hash                String?                    @db.VarChar(64)
-  notaria                      Notaria?                   @relation(fields: [notaria_id], references: [id], onDelete: Restrict)
-  transicion_actual            ProspectoTransicion?       @relation("ProspectoCurrentTransition", fields: [transicion_actual_id], references: [id], onDelete: Restrict)
-  transiciones                 ProspectoTransicion[]      @relation("ProspectoTransitions")
+  version_operativa            Int                           @default(0)
+  transicion_actual_id         String?                       @db.Uuid
+  creation_key                 String?                       @db.VarChar(120)
+  creation_hash                String?                       @db.VarChar(64)
+  notaria                      Notaria?                      @relation(fields: [notaria_id], references: [id], onDelete: Restrict)
+  transicion_actual            ProspectoTransicion?          @relation("ProspectoCurrentTransition", fields: [transicion_actual_id], references: [id], onDelete: Restrict)
+  transiciones                 ProspectoTransicion[]         @relation("ProspectoTransitions")
   fuentes_notariales           ProspectoFuenteNotarial[]
-  revisiones_documentales       ProspectoRevisionDocumental[]
+  revisiones_documentales      ProspectoRevisionDocumental[]
   cotizacion                   Cotizacion?
   documentos                   Documento[]
   prospectoDocumentos          ProspectoDocumento[]
   seguimientos                 ProspectoSeguimiento[]
   actos                        ProspectoActo[]
-  archived_by_user             User?                      @relation("ProspectoArchivedBy", fields: [archived_by], references: [id])
-  atendido_por                 User                       @relation(fields: [user_id], references: [id])
-  cotizacion_responsable       OrganizationMembership?    @relation("ProspectQuoteAssigneeMembership", fields: [organization_id, cotizacion_responsable_id], references: [organization_id, user_id], onDelete: Restrict, map: "prospecto_quote_assignee_membership_fkey")
-  etapa_operativa              ProspectoEtapaCatalogo?    @relation(fields: [etapa_operativa_codigo], references: [codigo])
-  servicio_catalogo            ProspectoServicioCatalogo? @relation(fields: [servicio_catalogo_codigo], references: [codigo])
+  archived_by_user             User?                         @relation("ProspectoArchivedBy", fields: [archived_by], references: [id])
+  atendido_por                 User                          @relation(fields: [user_id], references: [id])
+  cotizacion_responsable       OrganizationMembership?       @relation("ProspectQuoteAssigneeMembership", fields: [organization_id, cotizacion_responsable_id], references: [organization_id, user_id], onDelete: Restrict, map: "prospecto_quote_assignee_membership_fkey")
+  etapa_operativa              ProspectoEtapaCatalogo?       @relation(fields: [etapa_operativa_codigo], references: [codigo])
+  servicio_catalogo            ProspectoServicioCatalogo?    @relation(fields: [servicio_catalogo_codigo], references: [codigo])
 
   @@unique([organization_id, creation_key], map: "uq_prospecto_creation_key")
   @@unique([id, organization_id], map: "uq_prospectos_id_org")
@@ -688,20 +698,20 @@ model ProspectoTransicion {
 
 /// Revisión preliminar append-only: el análisis nunca modifica datos ni documentos.
 model ProspectoRevisionDocumental {
-  id                  String                 @id @default(uuid()) @db.Uuid
-  organization_id     String                 @db.Uuid
-  prospecto_id        String                 @db.Uuid
-  actor_id            String                 @db.Uuid
-  act_snapshot        Json
-  document_snapshot   Json
-  resumen             String                 @db.Text
-  hallazgos           Json
+  id                   String                 @id @default(uuid()) @db.Uuid
+  organization_id      String                 @db.Uuid
+  prospecto_id         String                 @db.Uuid
+  actor_id             String                 @db.Uuid
+  act_snapshot         Json
+  document_snapshot    Json
+  resumen              String                 @db.Text
+  hallazgos            Json
   documentos_no_leidos Json
-  modelo              String                 @db.VarChar(120)
-  created_at          DateTime               @default(now())
-  organization        Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "prospect_review_org_fkey")
-  prospecto           Prospecto              @relation(fields: [prospecto_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "prospect_review_prospect_tenant_fkey")
-  actor               OrganizationMembership @relation(fields: [organization_id, actor_id], references: [organization_id, user_id], onDelete: Restrict, map: "prospect_review_actor_tenant_fkey")
+  modelo               String                 @db.VarChar(120)
+  created_at           DateTime               @default(now())
+  organization         Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, map: "prospect_review_org_fkey")
+  prospecto            Prospecto              @relation(fields: [prospecto_id, organization_id], references: [id, organization_id], onDelete: Restrict, map: "prospect_review_prospect_tenant_fkey")
+  actor                OrganizationMembership @relation(fields: [organization_id, actor_id], references: [organization_id, user_id], onDelete: Restrict, map: "prospect_review_actor_tenant_fkey")
 
   @@index([organization_id, prospecto_id, created_at], map: "idx_prospect_review_org_prospect_created")
   @@map("prospecto_revisiones_documentales")
@@ -1028,6 +1038,10 @@ model CotizacionConcepto {
   concepto        String                       @db.VarChar(240)
   categoria       PresupuestoConceptoCategoria
   importe         Decimal                      @db.Decimal(16, 2)
+  tratamiento_iva PresupuestoTratamientoIva?
+  iva_tasa        Decimal?                     @db.Decimal(9, 6)
+  regla_fiscal_fuente String?                  @db.VarChar(240)
+  regla_fiscal_version String?                 @db.VarChar(80)
   orden           Int                          @default(0)
   origen          CotizacionConceptoOrigen     @default(MANUAL)
   created_at      DateTime                     @default(now())
@@ -1049,6 +1063,10 @@ model CotizacionVersionConcepto {
   concepto              String                       @db.VarChar(240)
   categoria             PresupuestoConceptoCategoria
   importe               Decimal                      @db.Decimal(16, 2)
+  tratamiento_iva       PresupuestoTratamientoIva?
+  iva_tasa              Decimal?                     @db.Decimal(9, 6)
+  regla_fiscal_fuente   String?                      @db.VarChar(240)
+  regla_fiscal_version  String?                      @db.VarChar(80)
   orden                 Int                          @default(0)
   origen                CotizacionConceptoOrigen     @default(MANUAL)
   created_at            DateTime                     @default(now())
@@ -1816,7 +1834,7 @@ model Expediente {
   cuestionarios              ExpedienteCuestionarioRespuesta[]
   projectFactSnapshots       ProjectFactSnapshot[]
   projectInstructionApps     ProjectInstructionApplication[]
-  archivoRegistro             ArchivoRegistro?
+  archivoRegistro            ArchivoRegistro?
   documentosCfdi             DocumentoCfdi[]
   cuentasPorCobrarCfdi       CuentaPorCobrarCfdi[]
   cuentasPorPagarCfdi        CuentaPorPagarCfdi[]
@@ -1837,23 +1855,23 @@ model Expediente {
 /// Un solo consumo canónico del protocolo: instrumento o folios inutilizados.
 /// Los campos legacy de Expediente son únicamente un reflejo de un instrumento.
 model ArchivoRegistro {
-  id                 String       @id @default(uuid()) @db.Uuid
-  organization_id    String       @db.Uuid
-  expediente_id      String?      @unique @db.Uuid
-  clase              String       @db.VarChar(24)
-  numero_escritura   BigInt?
-  folio_inicio       BigInt
-  folio_fin          BigInt
-  fecha_instrumento  DateTime     @db.Date
-  libro_tomo         String?      @db.VarChar(80)
-  no_paso            Boolean      @default(false)
-  motivo             String?      @db.VarChar(500)
-  created_by_id      String       @db.Uuid
-  updated_by_id      String       @db.Uuid
-  created_at         DateTime     @default(now())
-  updated_at         DateTime     @updatedAt
-  organization       Organization @relation(fields: [organization_id], references: [id], onDelete: Restrict)
-  expediente         Expediente?  @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict)
+  id                String       @id @default(uuid()) @db.Uuid
+  organization_id   String       @db.Uuid
+  expediente_id     String?      @unique @db.Uuid
+  clase             String       @db.VarChar(24)
+  numero_escritura  BigInt?
+  folio_inicio      BigInt
+  folio_fin         BigInt
+  fecha_instrumento DateTime     @db.Date
+  libro_tomo        String?      @db.VarChar(80)
+  no_paso           Boolean      @default(false)
+  motivo            String?      @db.VarChar(500)
+  created_by_id     String       @db.Uuid
+  updated_by_id     String       @db.Uuid
+  created_at        DateTime     @default(now())
+  updated_at        DateTime     @updatedAt
+  organization      Organization @relation(fields: [organization_id], references: [id], onDelete: Restrict)
+  expediente        Expediente?  @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict)
 
   @@unique([organization_id, numero_escritura], map: "uq_archivo_numero_tenant")
   @@unique([expediente_id, organization_id], map: "uq_archivo_exp_tenant")
@@ -1904,6 +1922,10 @@ model ExpedientePresupuestoConcepto {
   concepto        String                       @db.VarChar(240)
   categoria       PresupuestoConceptoCategoria
   importe         Decimal                      @db.Decimal(16, 2)
+  tratamiento_iva PresupuestoTratamientoIva?
+  iva_tasa        Decimal?                     @db.Decimal(9, 6)
+  regla_fiscal_fuente String?                  @db.VarChar(240)
+  regla_fiscal_version String?                 @db.VarChar(80)
   orden           Int                          @default(0)
   created_at      DateTime                     @default(now())
   updated_at      DateTime                     @default(now()) @updatedAt
@@ -2558,8 +2580,8 @@ model Documento {
   operationPaymentVerifications    ComplianceOperationPaymentVerification[]
   complianceOfficialProducts       ComplianceOfficialProduct[]
   complianceNoticeAcknowledgements ComplianceNoticeAcknowledgement[]
-  documentosCfdiXml                DocumentoCfdi[]                           @relation("DocumentoCfdiXml")
-  documentosCfdiPdf                DocumentoCfdi[]                           @relation("DocumentoCfdiPdf")
+  documentosCfdiXml                DocumentoCfdi[]                          @relation("DocumentoCfdiXml")
+  documentosCfdiPdf                DocumentoCfdi[]                          @relation("DocumentoCfdiPdf")
 
   @@unique([id, organization_id], map: "h2_documentos_id_tenant_key")
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
@@ -3352,8 +3374,8 @@ model MovimientoFinanciero {
   solicitudPagoExp008     ExpedienteSolicitudPago?
   finanzaDocumentosExp008 ExpedienteFinanzaDocumento[]
   aplicacionesPagoCfdi    AplicacionPagoCfdi[]
-  transferenciasOrigen    TransferenciaInterna[]           @relation("TransferenciaMovimientoOrigen")
-  transferenciasDestino   TransferenciaInterna[]           @relation("TransferenciaMovimientoDestino")
+  transferenciasOrigen    TransferenciaInterna[]       @relation("TransferenciaMovimientoOrigen")
+  transferenciasDestino   TransferenciaInterna[]       @relation("TransferenciaMovimientoDestino")
   aplicado_por            User?                        @relation("MovimientoAplicado", fields: [aplicado_por_id], references: [id])
   cancelado_por           User?                        @relation("MovimientoCancelado", fields: [cancelado_por_id], references: [id])
   capturado_por           User                         @relation("MovimientoCapturado", fields: [capturado_por_id], references: [id])
@@ -3368,6 +3390,7 @@ model MovimientoFinanciero {
   revertido_por           User?                        @relation("MovimientoRevertido", fields: [revertido_por_id], references: [id])
   validado_por            User?                        @relation("MovimientoValidado", fields: [validado_por_id], references: [id])
 
+  @@unique([id, organization_id], map: "uq_movimientos_id_org_exp008")
   @@index([fecha_movimiento, estatus])
   @@index([naturaleza, estatus])
   @@index([expediente_id, fecha_movimiento])
@@ -3383,7 +3406,6 @@ model MovimientoFinanciero {
   @@index([movimiento_origen_id], map: "idx_movimientos_origen_fk")
   @@index([revertido_por_id], map: "idx_movimientos_revertido_por_fk")
   @@index([validado_por_id], map: "idx_movimientos_validado_por_fk")
-  @@unique([id, organization_id], map: "uq_movimientos_id_org_exp008")
   @@map("movimientos_financieros")
 }
 
@@ -3425,13 +3447,13 @@ model CuentaFinanciera {
   ingresosReportadosExp008 ExpedienteIngresoReportado[]
   solicitudesPagoExp008    ExpedienteSolicitudPago[]
   entidadesFiscales        EntidadFiscalCuenta[]
-  transferenciasOrigen     TransferenciaInterna[]           @relation("TransferenciaCuentaOrigen")
-  transferenciasDestino    TransferenciaInterna[]           @relation("TransferenciaCuentaDestino")
+  transferenciasOrigen     TransferenciaInterna[]       @relation("TransferenciaCuentaOrigen")
+  transferenciasDestino    TransferenciaInterna[]       @relation("TransferenciaCuentaDestino")
 
   @@unique([organization_id, institucion, alias], map: "uq_cuentas_financieras_org_institucion_alias")
+  @@unique([id, organization_id], map: "uq_cuentas_id_org_exp008")
   @@index([activa, predeterminada])
   @@index([creada_por_id], map: "idx_cuentas_financieras_creada_por_fk")
-  @@unique([id, organization_id], map: "uq_cuentas_id_org_exp008")
   @@map("cuentas_financieras")
 }
 
@@ -3588,7 +3610,7 @@ model ExpedienteIngresoReportado {
   facturarAVinculo             ExpedienteCompareciente?         @relation("Exp008IngresoFacturarAVinculo", fields: [facturar_a_vinculo_id, organization_id, expediente_id, facturar_a_compareciente_id], references: [id, organization_id, expediente_id, compareciente_id], onDelete: Restrict, onUpdate: NoAction)
   documentos                   ExpedienteFinanzaDocumento[]
   propuestasIA                 ExpedienteFinanzaPropuestaIA[]
-  documentosCfdi               DocumentoCfdi[]                @relation("DocumentoCfdiIngresoReportado")
+  documentosCfdi               DocumentoCfdi[]                  @relation("DocumentoCfdiIngresoReportado")
 
   @@unique([id, organization_id, expediente_id], map: "uq_exp008_ingreso_cfdi_scope")
   @@unique([organization_id, expediente_id, idempotency_key], map: "uq_exp008_ingreso_idempotency")
@@ -7411,6 +7433,7 @@ enum CatalogoInstitucionTipo {
 enum CatalogoPropietarioTipo {
   NOTARIA
   INSTITUCION
+  ORGANIZACION
 }
 
 enum CatalogoArtefactoTipo {
@@ -7444,12 +7467,22 @@ enum PresupuestoConceptoCategoria {
   HONORARIOS
   IVA_HONORARIOS
   IMPUESTOS_DERECHOS
+  OTRO_GASTO
+}
+
+enum PresupuestoTratamientoIva {
+  SIN_IMPUESTO
+  GRAVADO
+  EXENTO
+  NO_OBJETO
+  REQUIERE_REVISION
 }
 
 enum CotizacionConceptoOrigen {
   MANUAL
   IMPORTADO
   IA_PROPUESTA
+  DERIVADO
 }
 
 enum CuestionarioRespuestaEstado {
@@ -7842,19 +7875,19 @@ model ExpedienteSocietyTarget {
 /// Perfil fiscal confirmado por una persona; una extracción de CSF nunca lo
 /// modifica automáticamente. Una sola fuente fiscal por compareciente/tenant.
 model ComparecienteFiscalProfile {
-  id                 String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id    String          @db.Uuid
-  compareciente_id   String          @db.Uuid
-  rfc                String          @db.VarChar(13)
-  razon_social       String          @db.VarChar(300)
-  regimen_fiscal     String          @db.VarChar(8)
-  codigo_postal      String          @db.VarChar(5)
-  csf_documento_id   String?         @db.Uuid
-  confirmed_by_id    String          @db.Uuid
-  confirmed_at       DateTime        @default(now()) @db.Timestamptz(6)
-  version            Int             @default(1)
-  compareciente      Compareciente   @relation(fields: [compareciente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_profile_compareciente_fkey")
-  confirmedBy        OrganizationMembership @relation("ComparecienteFiscalProfileConfirmer", fields: [organization_id, confirmed_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_profile_confirmer_fkey")
+  id               String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String                 @db.Uuid
+  compareciente_id String                 @db.Uuid
+  rfc              String                 @db.VarChar(13)
+  razon_social     String                 @db.VarChar(300)
+  regimen_fiscal   String                 @db.VarChar(8)
+  codigo_postal    String                 @db.VarChar(5)
+  csf_documento_id String?                @db.Uuid
+  confirmed_by_id  String                 @db.Uuid
+  confirmed_at     DateTime               @default(now()) @db.Timestamptz(6)
+  version          Int                    @default(1)
+  compareciente    Compareciente          @relation(fields: [compareciente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_profile_compareciente_fkey")
+  confirmedBy      OrganizationMembership @relation("ComparecienteFiscalProfileConfirmer", fields: [organization_id, confirmed_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_profile_confirmer_fkey")
 
   @@unique([compareciente_id, organization_id], map: "uq_cfdi_profile_compareciente_org")
   @@index([organization_id, rfc], map: "idx_cfdi_profile_org_rfc")
@@ -7887,8 +7920,8 @@ model EntidadFiscalCfdi {
   organization            Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_org_fkey")
   createdBy               OrganizationMembership @relation("EntidadFiscalCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_creator_fkey")
   cuentas                 EntidadFiscalCuenta[]
-  documentosCfdi         DocumentoCfdi[]
-  conceptosFiscales      ConceptoFiscalCfdi[]
+  documentosCfdi          DocumentoCfdi[]
+  conceptosFiscales       ConceptoFiscalCfdi[]
 
   @@unique([organization_id, rfc], map: "uq_entidades_fiscales_cfdi_org_rfc")
   @@unique([id, organization_id], map: "uq_entidades_fiscales_cfdi_id_org")
@@ -7898,14 +7931,14 @@ model EntidadFiscalCfdi {
 }
 
 model EntidadFiscalCuenta {
-  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id    String             @db.Uuid
-  entidad_fiscal_id  String             @db.Uuid
-  cuenta_id          String             @db.Uuid
-  predeterminada     Boolean            @default(false)
-  created_at         DateTime           @default(now()) @db.Timestamptz(6)
-  entidadFiscal      EntidadFiscalCfdi  @relation(fields: [entidad_fiscal_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_cuenta_entidad_fkey")
-  cuenta             CuentaFinanciera   @relation(fields: [cuenta_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_cuenta_cuenta_fkey")
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id   String            @db.Uuid
+  entidad_fiscal_id String            @db.Uuid
+  cuenta_id         String            @db.Uuid
+  predeterminada    Boolean           @default(false)
+  created_at        DateTime          @default(now()) @db.Timestamptz(6)
+  entidadFiscal     EntidadFiscalCfdi @relation(fields: [entidad_fiscal_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_cuenta_entidad_fkey")
+  cuenta            CuentaFinanciera  @relation(fields: [cuenta_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_cuenta_cuenta_fkey")
 
   @@unique([organization_id, entidad_fiscal_id, cuenta_id], map: "uq_entidad_fiscal_cuenta")
   @@index([cuenta_id, organization_id], map: "idx_entidad_fiscal_cuenta_cuenta")
@@ -7915,49 +7948,49 @@ model EntidadFiscalCuenta {
 /// Fiscal mapping configured by the tenant for an issuer and (optionally) act.
 /// No tax rate or SAT code is inferred from generic labels.
 model ConceptoFiscalCfdi {
-  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id      String                 @db.Uuid
-  entidad_fiscal_id    String                 @db.Uuid
-  tipo_acto_id         String?                @db.Uuid
-  descripcion          String                 @db.VarChar(500)
-  clave_prod_serv      String                 @db.VarChar(8)
-  clave_unidad         String                 @db.VarChar(8)
-  objeto_impuesto      String                 @db.VarChar(2)
-  iva_tasa             Decimal                @db.Decimal(9, 6)
-  iva_retencion_tasa   Decimal                @db.Decimal(9, 6)
-  isr_retencion_tasa   Decimal                @db.Decimal(9, 6)
-  activo               Boolean                @default(true)
-  created_by_id        String                 @db.Uuid
-  created_at           DateTime               @default(now()) @db.Timestamptz(6)
-  updated_at           DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
-  entidadFiscal        EntidadFiscalCfdi      @relation(fields: [entidad_fiscal_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_concepto_entidad_fkey")
-  tipoActo             TipoActo?              @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_concepto_acto_fkey")
-  createdBy            OrganizationMembership @relation("ConceptoFiscalCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_concepto_creator_fkey")
+  id                 String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id    String                 @db.Uuid
+  entidad_fiscal_id  String                 @db.Uuid
+  tipo_acto_id       String?                @db.Uuid
+  descripcion        String                 @db.VarChar(500)
+  clave_prod_serv    String                 @db.VarChar(8)
+  clave_unidad       String                 @db.VarChar(8)
+  objeto_impuesto    String                 @db.VarChar(2)
+  iva_tasa           Decimal                @db.Decimal(9, 6)
+  iva_retencion_tasa Decimal                @db.Decimal(9, 6)
+  isr_retencion_tasa Decimal                @db.Decimal(9, 6)
+  activo             Boolean                @default(true)
+  created_by_id      String                 @db.Uuid
+  created_at         DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  entidadFiscal      EntidadFiscalCfdi      @relation(fields: [entidad_fiscal_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_concepto_entidad_fkey")
+  tipoActo           TipoActo?              @relation(fields: [tipo_acto_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_concepto_acto_fkey")
+  createdBy          OrganizationMembership @relation("ConceptoFiscalCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_concepto_creator_fkey")
 
   @@index([organization_id, entidad_fiscal_id, tipo_acto_id, activo], map: "idx_cfdi_concepto_contexto")
   @@map("conceptos_fiscales_cfdi")
 }
 
 model ProveedorFiscal {
-  id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id       String                 @db.Uuid
-  razon_social          String                 @db.VarChar(300)
-  rfc                   String                 @db.VarChar(13)
-  tipo_persona          String?                @db.VarChar(20)
-  codigo_postal         String?                @db.VarChar(5)
-  regimenes_fiscales    Json?
-  correo                String?                @db.VarChar(254)
-  telefono              String?                @db.VarChar(40)
-  datos_bancarios       Json?
-  csf_documento_id      String?                @db.Uuid
-  activo                Boolean                @default(true)
-  created_by_id         String                 @db.Uuid
-  created_at            DateTime               @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
-  organization          Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_proveedor_org_fkey")
-  createdBy             OrganizationMembership @relation("ProveedorFiscalCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_proveedor_creator_fkey")
-  documentosCfdi       DocumentoCfdi[]
-  cuentasPorPagar      CuentaPorPagarCfdi[]
+  id                 String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id    String                 @db.Uuid
+  razon_social       String                 @db.VarChar(300)
+  rfc                String                 @db.VarChar(13)
+  tipo_persona       String?                @db.VarChar(20)
+  codigo_postal      String?                @db.VarChar(5)
+  regimenes_fiscales Json?
+  correo             String?                @db.VarChar(254)
+  telefono           String?                @db.VarChar(40)
+  datos_bancarios    Json?
+  csf_documento_id   String?                @db.Uuid
+  activo             Boolean                @default(true)
+  created_by_id      String                 @db.Uuid
+  created_at         DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  organization       Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_proveedor_org_fkey")
+  createdBy          OrganizationMembership @relation("ProveedorFiscalCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_proveedor_creator_fkey")
+  documentosCfdi     DocumentoCfdi[]
+  cuentasPorPagar    CuentaPorPagarCfdi[]
 
   @@unique([organization_id, rfc], map: "uq_proveedores_fiscales_org_rfc")
   @@unique([id, organization_id], map: "uq_proveedores_fiscales_id_org")
@@ -7969,60 +8002,60 @@ model ProveedorFiscal {
 /// Documento fiscal separado del movimiento financiero y de la cuenta por
 /// cobrar/pagar. DRAFT nunca se presenta como timbrado.
 model DocumentoCfdi {
-  id                       String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id          String                 @db.Uuid
-  direccion                String                 @db.VarChar(16)
-  tipo                     String                 @db.VarChar(8)
-  estado                   String                 @default("DRAFT") @db.VarChar(32)
-  version                  String                 @default("4.0") @db.VarChar(8)
-  source                   String                 @default("LOCAL_DRAFT") @db.VarChar(32)
-  uuid_fiscal              String?                @db.VarChar(36)
-  serie                    String?                @db.VarChar(25)
-  folio                    String?                @db.VarChar(60)
-  entidad_fiscal_id        String?                @db.Uuid
-  proveedor_id             String?                @db.Uuid
-  expediente_id            String?                @db.Uuid
-  ingreso_reportado_id     String?                @db.Uuid
-  receptor_compareciente_id String?               @db.Uuid
-  movimiento_id            String?                @db.Uuid
-  emisor_rfc               String                 @db.VarChar(13)
-  emisor_nombre            String                 @db.VarChar(300)
-  receptor_rfc             String                 @db.VarChar(13)
-  receptor_nombre          String                 @db.VarChar(300)
-  receptor_regimen         String?                @db.VarChar(8)
-  receptor_codigo_postal   String?                @db.VarChar(5)
-  uso_cfdi                 String?                @db.VarChar(8)
-  metodo_pago              String?                @db.VarChar(3)
-  forma_pago               String?                @db.VarChar(3)
-  moneda                   String                 @default("MXN") @db.VarChar(8)
-  subtotal                 Decimal                @db.Decimal(14, 2)
-  impuestos_trasladados    Decimal                @default(0) @db.Decimal(14, 2)
-  impuestos_retenidos      Decimal                @default(0) @db.Decimal(14, 2)
-  total                    Decimal                @db.Decimal(14, 2)
-  saldo                    Decimal                @db.Decimal(14, 2)
-  fecha_emision            DateTime?              @db.Timestamptz(6)
-  fecha_timbrado           DateTime?              @db.Timestamptz(6)
-  draft_payload            Json
-  provider                 String?                @db.VarChar(80)
-  provider_reference       String?                @db.VarChar(180)
-  xml_documento_id         String?                @db.Uuid
-  pdf_documento_id         String?                @db.Uuid
-  idempotency_key          String                 @db.VarChar(180)
-  created_by_id            String                 @db.Uuid
-  created_at               DateTime               @default(now()) @db.Timestamptz(6)
-  updated_at               DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
-  organization             Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_org_fkey")
-  createdBy                OrganizationMembership @relation("DocumentoCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_creator_fkey")
-  entidadFiscal            EntidadFiscalCfdi?      @relation(fields: [entidad_fiscal_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_entidad_fkey")
-  proveedor                ProveedorFiscal?        @relation(fields: [proveedor_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_proveedor_fkey")
-  expediente               Expediente?             @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_expediente_fkey")
-  ingresoReportado         ExpedienteIngresoReportado? @relation("DocumentoCfdiIngresoReportado", fields: [ingreso_reportado_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_ingreso_fkey")
-  receptor                 Compareciente?          @relation("DocumentoCfdiReceptor", fields: [receptor_compareciente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_receptor_fkey")
-  xmlDocumento             Documento?              @relation("DocumentoCfdiXml", fields: [xml_documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_xml_fkey")
-  pdfDocumento             Documento?              @relation("DocumentoCfdiPdf", fields: [pdf_documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_pdf_fkey")
-  aplicacionesPago        AplicacionPagoCfdi[]
-  cuentaPorCobrar         CuentaPorCobrarCfdi?
-  cuentaPorPagar          CuentaPorPagarCfdi?
+  id                        String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id           String                      @db.Uuid
+  direccion                 String                      @db.VarChar(16)
+  tipo                      String                      @db.VarChar(8)
+  estado                    String                      @default("DRAFT") @db.VarChar(32)
+  version                   String                      @default("4.0") @db.VarChar(8)
+  source                    String                      @default("LOCAL_DRAFT") @db.VarChar(32)
+  uuid_fiscal               String?                     @db.VarChar(36)
+  serie                     String?                     @db.VarChar(25)
+  folio                     String?                     @db.VarChar(60)
+  entidad_fiscal_id         String?                     @db.Uuid
+  proveedor_id              String?                     @db.Uuid
+  expediente_id             String?                     @db.Uuid
+  ingreso_reportado_id      String?                     @db.Uuid
+  receptor_compareciente_id String?                     @db.Uuid
+  movimiento_id             String?                     @db.Uuid
+  emisor_rfc                String                      @db.VarChar(13)
+  emisor_nombre             String                      @db.VarChar(300)
+  receptor_rfc              String                      @db.VarChar(13)
+  receptor_nombre           String                      @db.VarChar(300)
+  receptor_regimen          String?                     @db.VarChar(8)
+  receptor_codigo_postal    String?                     @db.VarChar(5)
+  uso_cfdi                  String?                     @db.VarChar(8)
+  metodo_pago               String?                     @db.VarChar(3)
+  forma_pago                String?                     @db.VarChar(3)
+  moneda                    String                      @default("MXN") @db.VarChar(8)
+  subtotal                  Decimal                     @db.Decimal(14, 2)
+  impuestos_trasladados     Decimal                     @default(0) @db.Decimal(14, 2)
+  impuestos_retenidos       Decimal                     @default(0) @db.Decimal(14, 2)
+  total                     Decimal                     @db.Decimal(14, 2)
+  saldo                     Decimal                     @db.Decimal(14, 2)
+  fecha_emision             DateTime?                   @db.Timestamptz(6)
+  fecha_timbrado            DateTime?                   @db.Timestamptz(6)
+  draft_payload             Json
+  provider                  String?                     @db.VarChar(80)
+  provider_reference        String?                     @db.VarChar(180)
+  xml_documento_id          String?                     @db.Uuid
+  pdf_documento_id          String?                     @db.Uuid
+  idempotency_key           String                      @db.VarChar(180)
+  created_by_id             String                      @db.Uuid
+  created_at                DateTime                    @default(now()) @db.Timestamptz(6)
+  updated_at                DateTime                    @default(now()) @updatedAt @db.Timestamptz(6)
+  organization              Organization                @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_org_fkey")
+  createdBy                 OrganizationMembership      @relation("DocumentoCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_creator_fkey")
+  entidadFiscal             EntidadFiscalCfdi?          @relation(fields: [entidad_fiscal_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_entidad_fkey")
+  proveedor                 ProveedorFiscal?            @relation(fields: [proveedor_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_proveedor_fkey")
+  expediente                Expediente?                 @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_expediente_fkey")
+  ingresoReportado          ExpedienteIngresoReportado? @relation("DocumentoCfdiIngresoReportado", fields: [ingreso_reportado_id, organization_id, expediente_id], references: [id, organization_id, expediente_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_ingreso_fkey")
+  receptor                  Compareciente?              @relation("DocumentoCfdiReceptor", fields: [receptor_compareciente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_receptor_fkey")
+  xmlDocumento              Documento?                  @relation("DocumentoCfdiXml", fields: [xml_documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_xml_fkey")
+  pdfDocumento              Documento?                  @relation("DocumentoCfdiPdf", fields: [pdf_documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_documento_pdf_fkey")
+  aplicacionesPago          AplicacionPagoCfdi[]
+  cuentaPorCobrar           CuentaPorCobrarCfdi?
+  cuentaPorPagar            CuentaPorPagarCfdi?
 
   @@unique([organization_id, idempotency_key], map: "uq_documentos_cfdi_idempotency")
   @@unique([id, organization_id], map: "uq_documentos_cfdi_id_org")
@@ -8035,24 +8068,24 @@ model DocumentoCfdi {
 }
 
 model CuentaPorCobrarCfdi {
-  id                 String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id    String                 @db.Uuid
-  cfdi_id            String?                @db.Uuid
-  expediente_id      String?                @db.Uuid
-  concepto           String                 @db.VarChar(500)
-  monto_total        Decimal                @db.Decimal(14, 2)
-  monto_cobrado      Decimal                @default(0) @db.Decimal(14, 2)
-  saldo              Decimal                @db.Decimal(14, 2)
-  fecha_vencimiento  DateTime?              @db.Date
-  estado             String                 @default("PENDIENTE") @db.VarChar(24)
-  created_by_id      String                 @db.Uuid
-  created_at         DateTime               @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
-  organization       Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxc_org_fkey")
-  createdBy          OrganizationMembership @relation("CuentaPorCobrarCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxc_creator_fkey")
-  cfdi               DocumentoCfdi?         @relation(fields: [cfdi_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxc_cfdi_fkey")
-  expediente         Expediente?            @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxc_expediente_fkey")
-  aplicaciones       AplicacionPagoCfdi[]
+  id                String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id   String                 @db.Uuid
+  cfdi_id           String?                @db.Uuid
+  expediente_id     String?                @db.Uuid
+  concepto          String                 @db.VarChar(500)
+  monto_total       Decimal                @db.Decimal(14, 2)
+  monto_cobrado     Decimal                @default(0) @db.Decimal(14, 2)
+  saldo             Decimal                @db.Decimal(14, 2)
+  fecha_vencimiento DateTime?              @db.Date
+  estado            String                 @default("PENDIENTE") @db.VarChar(24)
+  created_by_id     String                 @db.Uuid
+  created_at        DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  organization      Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxc_org_fkey")
+  createdBy         OrganizationMembership @relation("CuentaPorCobrarCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxc_creator_fkey")
+  cfdi              DocumentoCfdi?         @relation(fields: [cfdi_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxc_cfdi_fkey")
+  expediente        Expediente?            @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxc_expediente_fkey")
+  aplicaciones      AplicacionPagoCfdi[]
 
   @@unique([id, organization_id], map: "uq_cuentas_cobrar_cfdi_id_org")
   @@unique([cfdi_id, organization_id], map: "uq_cuentas_cobrar_cfdi_documento")
@@ -8062,26 +8095,26 @@ model CuentaPorCobrarCfdi {
 }
 
 model CuentaPorPagarCfdi {
-  id                 String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id    String                 @db.Uuid
-  cfdi_id            String?                @db.Uuid
-  proveedor_id       String?                @db.Uuid
-  expediente_id      String?                @db.Uuid
-  concepto           String                 @db.VarChar(500)
-  monto_total        Decimal                @db.Decimal(14, 2)
-  monto_pagado       Decimal                @default(0) @db.Decimal(14, 2)
-  saldo              Decimal                @db.Decimal(14, 2)
-  fecha_vencimiento  DateTime?              @db.Date
-  estado             String                 @default("PENDIENTE") @db.VarChar(24)
-  created_by_id      String                 @db.Uuid
-  created_at         DateTime               @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
-  organization       Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxp_org_fkey")
-  createdBy          OrganizationMembership @relation("CuentaPorPagarCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxp_creator_fkey")
-  cfdi               DocumentoCfdi?         @relation(fields: [cfdi_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxp_cfdi_fkey")
-  proveedor          ProveedorFiscal?       @relation(fields: [proveedor_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxp_proveedor_fkey")
-  expediente         Expediente?            @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxp_expediente_fkey")
-  aplicaciones       AplicacionPagoCfdi[]
+  id                String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id   String                 @db.Uuid
+  cfdi_id           String?                @db.Uuid
+  proveedor_id      String?                @db.Uuid
+  expediente_id     String?                @db.Uuid
+  concepto          String                 @db.VarChar(500)
+  monto_total       Decimal                @db.Decimal(14, 2)
+  monto_pagado      Decimal                @default(0) @db.Decimal(14, 2)
+  saldo             Decimal                @db.Decimal(14, 2)
+  fecha_vencimiento DateTime?              @db.Date
+  estado            String                 @default("PENDIENTE") @db.VarChar(24)
+  created_by_id     String                 @db.Uuid
+  created_at        DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
+  organization      Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxp_org_fkey")
+  createdBy         OrganizationMembership @relation("CuentaPorPagarCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxp_creator_fkey")
+  cfdi              DocumentoCfdi?         @relation(fields: [cfdi_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxp_cfdi_fkey")
+  proveedor         ProveedorFiscal?       @relation(fields: [proveedor_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxp_proveedor_fkey")
+  expediente        Expediente?            @relation(fields: [expediente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_cxp_expediente_fkey")
+  aplicaciones      AplicacionPagoCfdi[]
 
   @@unique([id, organization_id], map: "uq_cuentas_pagar_cfdi_id_org")
   @@unique([cfdi_id, organization_id], map: "uq_cuentas_pagar_cfdi_documento")
@@ -8145,4 +8178,865 @@ model TransferenciaInterna {
   @@index([cuenta_origen_id, organization_id], map: "idx_transferencias_internas_origen")
   @@index([cuenta_destino_id, organization_id], map: "idx_transferencias_internas_destino")
   @@map("transferencias_internas")
+}
+
+// =============================================================================
+// PRAVIA SaaS control plane
+// Organization remains the canonical tenant identity. These models deliberately
+// do not introduce a second Tenant aggregate or add shard_id to domain tables.
+// =============================================================================
+
+model PlatformShard {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                  String   @unique @db.VarChar(80)
+  provider_type         String   @db.VarChar(40)
+  region                String   @db.VarChar(80)
+  status                String   @default("ACTIVE") @db.VarChar(24)
+  capacity_class        String   @default("SHARED") @db.VarChar(32)
+  connection_secret_ref String   @db.VarChar(240)
+  created_at            DateTime @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([status, capacity_class], map: "idx_platform_shards_status")
+  @@map("platform_shards")
+}
+
+model TenantPlacement {
+  organization_id   String    @id @db.Uuid
+  shard_id          String    @db.Uuid
+  deployment_type   String    @default("SHARED") @db.VarChar(32)
+  region            String    @db.VarChar(80)
+  placement_version Int       @default(1)
+  status            String    @default("ACTIVE") @db.VarChar(24)
+  moved_at          DateTime? @db.Timestamptz(6)
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([shard_id, status], map: "idx_tenant_placements_shard")
+  @@map("tenant_placements")
+}
+
+model PlanVersion {
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  plan_code              String    @db.VarChar(80)
+  version                Int
+  name                   String    @db.VarChar(160)
+  monthly_price_minor    BigInt?   @db.BigInt
+  currency               String    @default("MXN") @db.VarChar(3)
+  included_storage_bytes BigInt    @db.BigInt
+  included_users         Int?
+  features_json          Json      @default("{}")
+  effective_from         DateTime  @db.Timestamptz(6)
+  effective_to           DateTime? @db.Timestamptz(6)
+  active                 Boolean   @default(true)
+  created_at             DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([plan_code, version], map: "uq_plan_versions_code_version")
+  @@index([active, effective_from, effective_to], map: "idx_plan_versions_effective")
+  @@map("plan_versions")
+}
+
+model TenantSubscription {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id      String    @db.Uuid
+  plan_version_id      String    @db.Uuid
+  status               String    @default("TRIAL") @db.VarChar(24)
+  billing_cycle_anchor DateTime? @db.Timestamptz(6)
+  current_period_start DateTime? @db.Timestamptz(6)
+  current_period_end   DateTime? @db.Timestamptz(6)
+  cancel_at_period_end Boolean   @default(false)
+  provider_reference   String?   @db.VarChar(240)
+  idempotency_key      String    @db.VarChar(180)
+  created_at           DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([organization_id, idempotency_key], map: "uq_tenant_subscriptions_idempotency")
+  @@index([organization_id, status], map: "idx_tenant_subscriptions_org_status")
+  @@map("tenant_subscriptions")
+}
+
+model TenantEntitlement {
+  organization_id              String   @id @db.Uuid
+  included_storage_bytes       BigInt   @db.BigInt
+  addon_storage_bytes          BigInt   @default(0) @db.BigInt
+  total_storage_capacity_bytes BigInt   @db.BigInt
+  included_users               Int?
+  max_users                    Int?
+  features_json                Json     @default("{}")
+  version                      Int      @default(1)
+  updated_at                   DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("tenant_entitlements")
+}
+
+model StorageAddonVersion {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sku                 String    @db.VarChar(80)
+  version             Int
+  capacity_bytes      BigInt    @db.BigInt
+  monthly_price_minor BigInt?   @db.BigInt
+  currency            String    @default("MXN") @db.VarChar(3)
+  effective_from      DateTime  @db.Timestamptz(6)
+  effective_to        DateTime? @db.Timestamptz(6)
+  active              Boolean   @default(true)
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([sku, version], map: "uq_storage_addon_versions_sku_version")
+  @@index([active, effective_from, effective_to], map: "idx_storage_addon_versions_effective")
+  @@map("storage_addon_versions")
+}
+
+model TenantStorageAddon {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id      String    @db.Uuid
+  addon_version_id     String    @db.Uuid
+  quantity             Int
+  status               String    @default("ACTIVE") @db.VarChar(24)
+  effective_from       DateTime  @db.Timestamptz(6)
+  effective_to         DateTime? @db.Timestamptz(6)
+  cancel_at_period_end Boolean   @default(false)
+  price_snapshot_minor BigInt?   @db.BigInt
+  currency             String    @default("MXN") @db.VarChar(3)
+  idempotency_key      String    @db.VarChar(180)
+  created_at           DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([organization_id, idempotency_key], map: "uq_tenant_storage_addons_idempotency")
+  @@index([organization_id, status, effective_from], map: "idx_tenant_storage_addons_active")
+  @@map("tenant_storage_addons")
+}
+
+model TenantStorageUsage {
+  organization_id    String    @id @db.Uuid
+  production_bytes   BigInt    @default(0) @db.BigInt
+  temporary_bytes    BigInt    @default(0) @db.BigInt
+  reserved_bytes     BigInt    @default(0) @db.BigInt
+  last_reconciled_at DateTime? @db.Timestamptz(6)
+  version            Int       @default(1)
+  updated_at         DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("tenant_storage_usage")
+}
+
+model StorageReservation {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String    @db.Uuid
+  bytes           BigInt    @db.BigInt
+  status          String    @default("RESERVED") @db.VarChar(24)
+  storage_class   String    @default("PRODUCTION") @db.VarChar(24)
+  idempotency_key String    @db.VarChar(180)
+  expires_at      DateTime  @db.Timestamptz(6)
+  committed_at    DateTime? @db.Timestamptz(6)
+  released_at     DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([organization_id, idempotency_key], map: "uq_storage_reservations_idempotency")
+  @@index([organization_id, status, expires_at], map: "idx_storage_reservations_expiry")
+  @@map("storage_reservations")
+}
+
+model UsageAlertState {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String    @db.Uuid
+  resource_type    String    @db.VarChar(40)
+  threshold        Int
+  crossed_at       DateTime  @db.Timestamptz(6)
+  resolved_at      DateTime? @db.Timestamptz(6)
+  last_notified_at DateTime? @db.Timestamptz(6)
+
+  @@unique([organization_id, resource_type, threshold], map: "uq_usage_alert_states_threshold")
+  @@index([organization_id, resource_type, resolved_at], map: "idx_usage_alert_states_active")
+  @@map("usage_alert_states")
+}
+
+model StorageLedgerEvent {
+  id                     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id        String   @db.Uuid
+  blob_id                String?  @db.Uuid
+  event_type             String   @db.VarChar(40)
+  production_delta_bytes BigInt   @default(0) @db.BigInt
+  temporary_delta_bytes  BigInt   @default(0) @db.BigInt
+  reserved_delta_bytes   BigInt   @default(0) @db.BigInt
+  source_type            String   @db.VarChar(80)
+  source_id              String?  @db.VarChar(180)
+  idempotency_key        String   @db.VarChar(180)
+  occurred_at            DateTime @default(now()) @db.Timestamptz(6)
+  created_at             DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([organization_id, idempotency_key], map: "uq_storage_ledger_events_idempotency")
+  @@index([organization_id, occurred_at], map: "idx_storage_ledger_events_timeline")
+  @@index([organization_id, blob_id], map: "idx_storage_ledger_events_blob")
+  @@map("storage_ledger_events")
+}
+
+model StorageProviderRecord {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code              String   @unique @db.VarChar(80)
+  provider_type     String   @db.VarChar(40)
+  region            String?  @db.VarChar(80)
+  secret_ref        String?  @db.VarChar(240)
+  capabilities_json Json     @default("{}")
+  status            String   @default("ACTIVE") @db.VarChar(24)
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("storage_provider_records")
+}
+
+model StorageBlob {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id   String    @db.Uuid
+  sha256            String?   @db.Char(64)
+  size_bytes        BigInt    @db.BigInt
+  mime_type         String    @db.VarChar(255)
+  original_filename String    @db.VarChar(500)
+  immutable         Boolean   @default(true)
+  source            String    @default("APPLICATION_UPLOAD") @db.VarChar(80)
+  provenance_json   Json      @default("{}")
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  deleted_at        DateTime? @db.Timestamptz(6)
+
+  @@unique([organization_id, sha256, size_bytes], map: "uq_storage_blobs_tenant_hash_size")
+  @@unique([id, organization_id], map: "uq_storage_blobs_id_org")
+  @@index([organization_id, created_at], map: "idx_storage_blobs_tenant_created")
+  @@map("storage_blobs")
+}
+
+model StorageBlobLocation {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  blob_id          String    @db.Uuid
+  organization_id  String    @db.Uuid
+  provider_id      String    @db.Uuid
+  location_role    String    @default("PRIMARY") @db.VarChar(24)
+  object_key       String    @db.VarChar(1024)
+  storage_class    String    @default("STANDARD") @db.VarChar(24)
+  status           String    @default("AVAILABLE") @db.VarChar(24)
+  last_verified_at DateTime? @db.Timestamptz(6)
+  last_accessed_at DateTime? @db.Timestamptz(6)
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([provider_id, object_key], map: "uq_storage_blob_locations_provider_key")
+  @@index([organization_id, blob_id, status], map: "idx_storage_blob_locations_blob")
+  @@map("storage_blob_locations")
+}
+
+model StorageBlobReference {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id     String   @db.Uuid
+  blob_id             String   @db.Uuid
+  owner_type          String   @db.VarChar(80)
+  owner_id            String   @db.Uuid
+  document_version_id String?  @db.Uuid
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([organization_id, owner_type, owner_id, blob_id], map: "uq_storage_blob_refs_owner_blob")
+  @@index([organization_id, owner_type, owner_id], map: "idx_storage_blob_refs_owner")
+  @@map("storage_blob_refs")
+}
+
+model StorageReconciliationRun {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String?   @db.Uuid
+  provider_id      String    @db.Uuid
+  started_at       DateTime  @db.Timestamptz(6)
+  finished_at      DateTime? @db.Timestamptz(6)
+  expected_bytes   BigInt    @default(0) @db.BigInt
+  physical_bytes   BigInt    @default(0) @db.BigInt
+  difference_bytes BigInt    @default(0) @db.BigInt
+  status           String    @default("RUNNING") @db.VarChar(24)
+  details          Json      @default("{}")
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([id, organization_id], map: "uq_storage_reconciliation_runs_id_org")
+  @@index([organization_id, started_at], map: "idx_storage_reconciliation_runs_org")
+  @@map("storage_reconciliation_runs")
+}
+
+model StorageReconciliationItem {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  run_id           String   @db.Uuid
+  organization_id  String   @db.Uuid
+  object_key       String   @db.VarChar(1024)
+  discrepancy_type String   @db.VarChar(48)
+  expected_bytes   BigInt?  @db.BigInt
+  physical_bytes   BigInt?  @db.BigInt
+  details          Json     @default("{}")
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([run_id, discrepancy_type], map: "idx_storage_reconciliation_items_run")
+  @@index([organization_id, object_key], map: "idx_storage_reconciliation_items_object")
+  @@map("storage_reconciliation_items")
+}
+
+model ResourceCostVersion {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  resource_code  String    @db.VarChar(100)
+  provider_code  String    @db.VarChar(80)
+  unit           String    @db.VarChar(40)
+  cost_amount    Decimal   @db.Decimal(20, 8)
+  currency       String    @db.VarChar(3)
+  effective_from DateTime  @db.Timestamptz(6)
+  effective_to   DateTime? @db.Timestamptz(6)
+  version        Int
+  metadata       Json      @default("{}")
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([resource_code, provider_code, version], map: "uq_resource_cost_versions_identity")
+  @@index([resource_code, effective_from, effective_to], map: "idx_resource_cost_versions_effective")
+  @@map("resource_cost_versions")
+}
+
+model CommercialSkuVersion {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sku                   String    @db.VarChar(100)
+  kind                  String    @db.VarChar(40)
+  quantity              Decimal   @db.Decimal(20, 6)
+  unit                  String    @db.VarChar(40)
+  sale_price_minor      BigInt?   @db.BigInt
+  currency              String    @default("MXN") @db.VarChar(3)
+  min_markup_multiplier Decimal   @default(2) @db.Decimal(8, 4)
+  effective_from        DateTime  @db.Timestamptz(6)
+  effective_to          DateTime? @db.Timestamptz(6)
+  version               Int
+  active                Boolean   @default(true)
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([sku, version], map: "uq_commercial_sku_versions_identity")
+  @@index([kind, active, effective_from], map: "idx_commercial_sku_versions_effective")
+  @@map("commercial_sku_versions")
+}
+
+model PricingOverride {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sku_version_id          String   @db.Uuid
+  organization_id         String?  @db.Uuid
+  old_price_minor         BigInt?  @db.BigInt
+  new_price_minor         BigInt   @db.BigInt
+  calculated_cost_minor   BigInt   @db.BigInt
+  reason                  String   @db.Text
+  approval_metadata       Json     @default("{}")
+  approved_by_platform_id String   @db.Uuid
+  created_at              DateTime @default(now()) @db.Timestamptz(6)
+  approved_by             PlatformAdministrator @relation(fields: [approved_by_platform_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "fk_pricing_overrides_platform_approver")
+
+  @@index([sku_version_id, organization_id, created_at], map: "idx_pricing_overrides_scope")
+  @@map("pricing_overrides")
+}
+
+model AiWallet {
+  organization_id String   @id @db.Uuid
+  currency        String   @default("MXN") @db.VarChar(3)
+  balance_minor   BigInt   @default(0) @db.BigInt
+  status          String   @default("ACTIVE") @db.VarChar(24)
+  version         Int      @default(1)
+  updated_at      DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@map("ai_wallets")
+}
+
+model AiWalletTransaction {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String    @db.Uuid
+  type            String    @db.VarChar(40)
+  amount_minor    BigInt    @db.BigInt
+  usage_event_id  String?   @db.Uuid
+  payment_ref     String?   @db.VarChar(240)
+  idempotency_key String    @db.VarChar(180)
+  expires_at      DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([organization_id, idempotency_key], map: "uq_ai_wallet_transactions_idempotency")
+  @@index([organization_id, created_at], map: "idx_ai_wallet_transactions_timeline")
+  @@map("ai_wallet_transactions")
+}
+
+model AiBalanceReservation {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id            String    @db.Uuid
+  estimated_max_charge_minor BigInt    @db.BigInt
+  status                     String    @default("RESERVED") @db.VarChar(24)
+  expires_at                 DateTime  @db.Timestamptz(6)
+  usage_event_id             String?   @db.Uuid
+  idempotency_key            String    @db.VarChar(180)
+  created_at                 DateTime  @default(now()) @db.Timestamptz(6)
+  settled_at                 DateTime? @db.Timestamptz(6)
+
+  @@unique([organization_id, idempotency_key], map: "uq_ai_balance_reservations_idempotency")
+  @@index([organization_id, status, expires_at], map: "idx_ai_balance_reservations_expiry")
+  @@map("ai_balance_reservations")
+}
+
+model AiUsageEvent {
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id         String   @db.Uuid
+  user_id                 String?  @db.Uuid
+  operation_code          String   @db.VarChar(100)
+  billing_class           String   @default("CUSTOMER_WALLET") @db.VarChar(32)
+  migration_job_id        String?  @db.Uuid
+  cost_center             String?  @db.VarChar(100)
+  provider_code           String   @db.VarChar(80)
+  model_code              String   @db.VarChar(120)
+  input_tokens            Int      @default(0)
+  output_tokens           Int      @default(0)
+  provider_cost_amount    Decimal  @default(0) @db.Decimal(20, 8)
+  provider_cost_currency  String   @db.VarChar(3)
+  fx_rate                 Decimal  @default(1) @db.Decimal(20, 8)
+  fx_snapshot             Json     @default("{}")
+  commercial_charge_minor BigInt   @db.BigInt
+  wallet_debit_minor      BigInt   @default(0) @db.BigInt
+  pricing_version_id      String?  @db.Uuid
+  latency_ms              Int?
+  status                  String   @db.VarChar(24)
+  error_code              String?  @db.VarChar(100)
+  trace_id                String   @db.VarChar(180)
+  idempotency_key         String?  @db.VarChar(180)
+  created_at              DateTime @default(now()) @db.Timestamptz(6)
+  migration_job           MigrationJob? @relation(fields: [migration_job_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "fk_ai_usage_events_migration_tenant")
+
+  @@unique([organization_id, trace_id], map: "uq_ai_usage_events_trace")
+  @@unique([organization_id, idempotency_key], map: "uq_ai_usage_events_idempotency")
+  @@index([organization_id, created_at], map: "idx_ai_usage_events_timeline")
+  @@index([organization_id, user_id, created_at], map: "idx_ai_usage_events_user")
+  @@index([organization_id, operation_code, created_at], map: "idx_ai_usage_events_operation")
+  @@map("ai_usage_events")
+}
+
+model AiOperationCatalog {
+  operation_code      String  @id @db.VarChar(100)
+  billing_class       String? @db.VarChar(32)
+  required_capability String  @db.VarChar(120)
+  quality_tier        String  @db.VarChar(24)
+  max_input           Int
+  max_output          Int
+  max_charge_minor    BigInt? @db.BigInt
+  allow_fallback      Boolean @default(false)
+  active              Boolean @default(true)
+
+  @@map("ai_operation_catalog")
+}
+
+model AiModelRegistry {
+  id                String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider_code     String  @db.VarChar(80)
+  model_code        String  @db.VarChar(120)
+  capabilities      Json    @default("[]")
+  quality_tier      String  @db.VarChar(24)
+  pricing_reference String? @db.VarChar(240)
+  enabled           Boolean @default(true)
+
+  @@unique([provider_code, model_code], map: "uq_ai_model_registry_provider_model")
+  @@map("ai_model_registry")
+}
+
+model AiRoutingPolicyVersion {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  operation_code     String   @db.VarChar(100)
+  version            Int
+  routing_rules_json Json
+  effective_from     DateTime @db.Timestamptz(6)
+  active             Boolean  @default(true)
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([operation_code, version], map: "uq_ai_routing_policy_versions_identity")
+  @@index([operation_code, active, effective_from], map: "idx_ai_routing_policy_versions_active")
+  @@map("ai_routing_policy_versions")
+}
+
+model BillingProviderAccount {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id       String   @db.Uuid
+  provider_code         String   @db.VarChar(80)
+  provider_customer_ref String   @db.VarChar(240)
+  status                String   @default("ACTIVE") @db.VarChar(24)
+  created_at            DateTime @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([organization_id, provider_code], map: "uq_billing_provider_accounts_org_provider")
+  @@map("billing_provider_accounts")
+}
+
+model BillingCycle {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id      String   @db.Uuid
+  period_start         DateTime @db.Timestamptz(6)
+  period_end           DateTime @db.Timestamptz(6)
+  subscription_amount  BigInt   @default(0) @db.BigInt
+  storage_addon_amount BigInt   @default(0) @db.BigInt
+  other_addons_amount  BigInt   @default(0) @db.BigInt
+  currency             String   @default("MXN") @db.VarChar(3)
+  status               String   @default("OPEN") @db.VarChar(24)
+  provider_invoice_ref String?  @db.VarChar(240)
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([organization_id, period_start, period_end], map: "uq_billing_cycles_period")
+  @@index([organization_id, status], map: "idx_billing_cycles_org_status")
+  @@map("billing_cycles")
+}
+
+model BillingEvent {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id   String   @db.Uuid
+  provider_code     String   @db.VarChar(80)
+  provider_event_id String   @db.VarChar(240)
+  event_type        String   @db.VarChar(80)
+  status            String   @db.VarChar(24)
+  payload_digest    String?  @db.Char(64)
+  processed_at      DateTime @default(now()) @db.Timestamptz(6)
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([provider_code, provider_event_id], map: "uq_billing_events_provider_event")
+  @@index([organization_id, created_at], map: "idx_billing_events_org")
+  @@map("billing_events")
+}
+
+model BackgroundJob {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String?   @db.Uuid
+  job_type         String    @db.VarChar(80)
+  status           String    @default("PENDING") @db.VarChar(24)
+  priority         Int       @default(100)
+  progress         Int       @default(0)
+  attempts         Int       @default(0)
+  max_attempts     Int       @default(5)
+  idempotency_key  String    @db.VarChar(180)
+  payload_ref      Json      @default("{}")
+  last_error       String?   @db.Text
+  lease_owner      String?   @db.VarChar(180)
+  lease_expires_at DateTime? @db.Timestamptz(6)
+  heartbeat_at     DateTime? @db.Timestamptz(6)
+  scheduled_at     DateTime  @default(now()) @db.Timestamptz(6)
+  started_at       DateTime? @db.Timestamptz(6)
+  finished_at      DateTime? @db.Timestamptz(6)
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([organization_id, idempotency_key], map: "uq_background_jobs_tenant_idempotency")
+  @@index([status, scheduled_at, priority], map: "idx_background_jobs_claim")
+  @@index([organization_id, status, scheduled_at], map: "idx_background_jobs_fairness")
+  @@map("background_jobs")
+}
+
+model MigrationPricingRule {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  min_bytes        BigInt    @db.BigInt
+  max_bytes        BigInt?   @db.BigInt
+  base_price_minor BigInt?   @db.BigInt
+  currency         String    @default("MXN") @db.VarChar(3)
+  effective_from   DateTime  @db.Timestamptz(6)
+  effective_to     DateTime? @db.Timestamptz(6)
+  active           Boolean   @default(true)
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([active, effective_from, effective_to], map: "idx_migration_pricing_rules_effective")
+  @@map("migration_pricing_rules")
+}
+
+model MigrationJob {
+  id                         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id            String    @db.Uuid
+  source_system              String    @db.VarChar(180)
+  status                     String    @default("UPLOADING") @db.VarChar(32)
+  declared_bytes             BigInt    @default(0) @db.BigInt
+  temporary_bytes            BigInt    @default(0) @db.BigInt
+  estimated_production_bytes BigInt    @default(0) @db.BigInt
+  detected_files             Int       @default(0)
+  detected_records           Int       @default(0)
+  duplicate_files            Int       @default(0)
+  corrupt_files              Int       @default(0)
+  dangerous_files            Int       @default(0)
+  quote_id                   String?   @db.Uuid
+  progress                   Int       @default(0)
+  started_at                 DateTime? @db.Timestamptz(6)
+  completed_at               DateTime? @db.Timestamptz(6)
+  created_by                 String    @db.Uuid
+  idempotency_key            String    @db.VarChar(180)
+  approved_by                String?   @db.Uuid
+  approved_at                DateTime? @db.Timestamptz(6)
+  verification_json          Json      @default("{}")
+  created_at                 DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+  ai_usage_events            AiUsageEvent[]
+
+  @@unique([organization_id, idempotency_key], map: "uq_migration_jobs_idempotency")
+  @@unique([id, organization_id], map: "uq_migration_jobs_id_org")
+  @@index([organization_id, status, created_at], map: "idx_migration_jobs_org_status")
+  @@map("migration_jobs")
+}
+
+model MigrationAsset {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String   @db.Uuid
+  migration_job_id String   @db.Uuid
+  entry_index      Int
+  source_path      String   @db.VarChar(2048)
+  source_record_id String?  @db.VarChar(240)
+  size_bytes       BigInt   @db.BigInt
+  sha256           String?  @db.Char(64)
+  mime_type        String?  @db.VarChar(255)
+  scan_status      String   @default("PENDING") @db.VarChar(32)
+  duplicate_of     String?  @db.Uuid
+  final_blob_id    String?  @db.Uuid
+  status           String   @default("UPLOADED") @db.VarChar(32)
+  error_code       String?  @db.VarChar(100)
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([migration_job_id, entry_index], map: "uq_migration_assets_job_entry")
+  @@index([organization_id, migration_job_id, status], map: "idx_migration_assets_job")
+  @@map("migration_assets")
+}
+
+model MigrationMapping {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String    @db.Uuid
+  migration_job_id String    @db.Uuid
+  entity_type      String    @db.VarChar(80)
+  source_field     String    @db.VarChar(240)
+  target_field     String?   @db.VarChar(240)
+  transform        Json      @default("{}")
+  confidence       Decimal?  @db.Decimal(6, 5)
+  status           String    @default("NEEDS_REVIEW") @db.VarChar(32)
+  approved_by      String?   @db.Uuid
+  approved_at      DateTime? @db.Timestamptz(6)
+
+  @@unique([migration_job_id, entity_type, source_field], map: "uq_migration_mappings_source")
+  @@index([organization_id, migration_job_id, status], map: "idx_migration_mappings_review")
+  @@map("migration_mappings")
+}
+
+model MigrationConflict {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String    @db.Uuid
+  migration_job_id String    @db.Uuid
+  conflict_type    String    @db.VarChar(80)
+  source_ref       String    @db.VarChar(500)
+  candidate_ref    String?   @db.VarChar(500)
+  resolution       Json?
+  resolved_by      String?   @db.Uuid
+  resolved_at      DateTime? @db.Timestamptz(6)
+
+  @@index([organization_id, migration_job_id, resolved_at], map: "idx_migration_conflicts_open")
+  @@map("migration_conflicts")
+}
+
+model MigrationProvenance {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String   @db.Uuid
+  migration_job_id String   @db.Uuid
+  source_system    String   @db.VarChar(180)
+  source_record_id String   @db.VarChar(240)
+  source_file      String?  @db.VarChar(2048)
+  source_row       Int?
+  target_type      String   @db.VarChar(80)
+  target_id        String   @db.Uuid
+  imported_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([organization_id, migration_job_id, source_system, source_record_id, target_type], map: "uq_migration_provenance_source")
+  @@index([organization_id, target_type, target_id], map: "idx_migration_provenance_target")
+  @@map("migration_provenance")
+}
+
+model ResumableUploadSession {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id    String    @db.Uuid
+  migration_job_id   String    @db.Uuid
+  provider_upload_id String?   @db.VarChar(500)
+  object_key         String    @db.VarChar(1024)
+  declared_bytes     BigInt    @db.BigInt
+  uploaded_bytes     BigInt    @default(0) @db.BigInt
+  part_size_bytes    Int
+  status             String    @default("CREATED") @db.VarChar(24)
+  sha256             String?   @db.Char(64)
+  idempotency_key    String    @db.VarChar(180)
+  expires_at         DateTime  @db.Timestamptz(6)
+  completed_at       DateTime? @db.Timestamptz(6)
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([organization_id, idempotency_key], map: "uq_resumable_upload_sessions_idempotency")
+  @@unique([id, organization_id], map: "uq_resumable_upload_sessions_id_org")
+  @@index([organization_id, status, expires_at], map: "idx_resumable_upload_sessions_open")
+  @@map("resumable_upload_sessions")
+}
+
+model ResumableUploadPart {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id   String   @db.Uuid
+  upload_session_id String   @db.Uuid
+  part_number       Int
+  size_bytes        Int
+  checksum_sha256   String   @db.Char(64)
+  provider_etag     String?  @db.VarChar(240)
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([upload_session_id, part_number], map: "uq_resumable_upload_parts_number")
+  @@index([organization_id, upload_session_id], map: "idx_resumable_upload_parts_session")
+  @@map("resumable_upload_parts")
+}
+
+model ExportJob {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String    @db.Uuid
+  status           String    @default("PENDING") @db.VarChar(24)
+  scope            Json
+  format           String    @db.VarChar(24)
+  progress         Int       @default(0)
+  manifest_blob_id String?   @db.Uuid
+  archive_blob_id  String?   @db.Uuid
+  expires_at       DateTime? @db.Timestamptz(6)
+  created_by       String    @db.Uuid
+  idempotency_key  String    @db.VarChar(180)
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  completed_at     DateTime? @db.Timestamptz(6)
+
+  @@unique([organization_id, idempotency_key], map: "uq_export_jobs_idempotency")
+  @@unique([id, organization_id], map: "uq_export_jobs_id_org")
+  @@index([organization_id, status, created_at], map: "idx_export_jobs_org_status")
+  @@map("export_jobs")
+}
+
+model ExportArtifact {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String    @db.Uuid
+  export_job_id   String    @db.Uuid
+  blob_id         String    @db.Uuid
+  artifact_type   String    @db.VarChar(40)
+  expires_at      DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([organization_id, export_job_id], map: "idx_export_artifacts_job")
+  @@map("export_artifacts")
+}
+
+model BackupRun {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id   String?   @db.Uuid
+  scope             String    @db.VarChar(80)
+  provider          String    @db.VarChar(80)
+  status            String    @default("RUNNING") @db.VarChar(24)
+  started_at        DateTime  @db.Timestamptz(6)
+  completed_at      DateTime? @db.Timestamptz(6)
+  bytes             BigInt    @default(0) @db.BigInt
+  manifest_ref      String?   @db.VarChar(1024)
+  restore_point_ref String?   @db.VarChar(1024)
+  checksum_sha256   String?   @db.Char(64)
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([organization_id, started_at], map: "idx_backup_runs_scope")
+  @@map("backup_runs")
+}
+
+model RestoreDrill {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  backup_run_id String   @db.Uuid
+  tested_at     DateTime @db.Timestamptz(6)
+  result        String   @db.VarChar(24)
+  sample_count  Int      @default(0)
+  report_ref    String?  @db.VarChar(1024)
+  details       Json     @default("{}")
+
+  @@index([backup_run_id, tested_at], map: "idx_restore_drills_backup")
+  @@map("restore_drills")
+}
+
+model UsageEvent {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String   @db.Uuid
+  resource_type   String   @db.VarChar(80)
+  quantity        Decimal  @db.Decimal(24, 8)
+  unit            String   @db.VarChar(40)
+  source_type     String   @db.VarChar(80)
+  source_id       String?  @db.VarChar(180)
+  occurred_at     DateTime @default(now()) @db.Timestamptz(6)
+  metadata        Json     @default("{}")
+  idempotency_key String   @db.VarChar(180)
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([organization_id, idempotency_key], map: "uq_usage_events_idempotency")
+  @@index([organization_id, resource_type, occurred_at], map: "idx_usage_events_resource")
+  @@map("usage_events")
+}
+
+model TenantCostSnapshot {
+  id                        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id           String   @db.Uuid
+  period                    DateTime @db.Date
+  storage_cost              Decimal  @default(0) @db.Decimal(20, 6)
+  ai_cost                   Decimal  @default(0) @db.Decimal(20, 6)
+  egress_cost               Decimal  @default(0) @db.Decimal(20, 6)
+  other_cost                Decimal  @default(0) @db.Decimal(20, 6)
+  subscription_revenue      Decimal  @default(0) @db.Decimal(20, 6)
+  storage_revenue           Decimal  @default(0) @db.Decimal(20, 6)
+  ai_sales                  Decimal  @default(0) @db.Decimal(20, 6)
+  commercial_ai_consumption Decimal  @default(0) @db.Decimal(20, 6)
+  gross_margin_estimate     Decimal  @default(0) @db.Decimal(20, 6)
+  currency                  String   @default("MXN") @db.VarChar(3)
+  created_at                DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([organization_id, period], map: "uq_tenant_cost_snapshots_period")
+  @@index([period], map: "idx_tenant_cost_snapshots_period")
+  @@map("tenant_cost_snapshots")
+}
+
+model PlatformAdministrator {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id     String    @db.Uuid
+  status      String    @default("ACTIVE") @db.VarChar(24)
+  permissions Json      @default("[]")
+  created_by  String?   @db.Uuid
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+  revoked_at  DateTime? @db.Timestamptz(6)
+  pricing_overrides PricingOverride[]
+
+  @@unique([user_id], map: "uq_platform_administrators_user")
+  @@index([status], map: "idx_platform_administrators_status")
+  @@map("platform_administrators")
+}
+
+model PlatformAccessGrant {
+  id                        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  platform_administrator_id String    @db.Uuid
+  organization_id           String    @db.Uuid
+  scope                     Json
+  reason                    String    @db.Text
+  approval_metadata         Json      @default("{}")
+  status                    String    @default("ACTIVE") @db.VarChar(24)
+  expires_at                DateTime  @db.Timestamptz(6)
+  revoked_at                DateTime? @db.Timestamptz(6)
+  created_at                DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([platform_administrator_id, status, expires_at], map: "idx_platform_access_grants_admin")
+  @@index([organization_id, status, expires_at], map: "idx_platform_access_grants_tenant")
+  @@map("platform_access_grants")
+}
+
+model PlatformAuditEvent {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  platform_actor_id String?  @db.Uuid
+  organization_id   String?  @db.Uuid
+  action            String   @db.VarChar(120)
+  target_type       String?  @db.VarChar(80)
+  target_id         String?  @db.VarChar(180)
+  reason            String?  @db.Text
+  before_metadata   Json?
+  after_metadata    Json?
+  trace_id          String   @db.VarChar(180)
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([organization_id, created_at], map: "idx_platform_audit_events_tenant")
+  @@index([platform_actor_id, created_at], map: "idx_platform_audit_events_actor")
+  @@map("platform_audit_events")
+}
+
+model PlatformMetricEvent {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String?  @db.Uuid
+  metric_code     String   @db.VarChar(100)
+  value           Decimal  @db.Decimal(24, 8)
+  unit            String   @db.VarChar(40)
+  dimensions      Json     @default("{}")
+  trace_id        String?  @db.VarChar(180)
+  occurred_at     DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([metric_code, occurred_at], map: "idx_platform_metric_events_code")
+  @@index([organization_id, occurred_at], map: "idx_platform_metric_events_tenant")
+  @@map("platform_metric_events")
 }

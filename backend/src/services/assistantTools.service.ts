@@ -122,9 +122,9 @@ const BASE_ASSISTANT_TOOL_REGISTRY: Record<AssistantToolName, BaseToolDefinition
   getISRCalculation: { capability: 'ai.isr.read', systemPermissions: ['isr.read'], objectScope: 'DYNAMIC', resultType: 'SUMMARY', maxResults: 1, sensitivity: 'FINANCIAL', mode: 'READ' },
   getComplianceSummary: { capability: 'ai.cumplimiento.read', systemPermissions: ['expedientes.read'], anySystemPermission: ['compliance.read', 'cumplimiento.read'], objectScope: 'EXPEDIENTE', resultType: 'SUMMARY', maxResults: 25, sensitivity: 'COMPLIANCE', mode: 'READ' },
   getCurrentUserWork: { capability: 'ai.work.read', systemPermissions: ['mi_dia.read'], objectScope: 'USER', resultType: 'SUMMARY', maxResults: 25, sensitivity: 'INTERNAL', mode: 'READ' },
-  globalSearch: { capability: 'ai.search', anySystemPermission: ['expedientes.read', 'comparecientes.read', 'notarias.read'], objectScope: 'DYNAMIC', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'PERSONAL', mode: 'READ' },
+  globalSearch: { capability: 'ai.search', anySystemPermission: ['expedientes.read', 'comparecientes.read'], objectScope: 'DYNAMIC', resultType: 'COLLECTION', maxResults: 25, sensitivity: 'PERSONAL', mode: 'READ' },
   searchLegalKnowledge: { capability: 'ai.search', objectScope: 'DYNAMIC', resultType: 'COLLECTION', maxResults: 20, sensitivity: 'INTERNAL', mode: 'READ' },
-  navigateToEntity: { capability: 'ai.navigate', anySystemPermission: ['expedientes.read', 'comparecientes.read', 'cotizaciones.read', 'notarias.read'], objectScope: 'DYNAMIC', resultType: 'NAVIGATION', maxResults: 1, sensitivity: 'INTERNAL', mode: 'NAVIGATE' },
+  navigateToEntity: { capability: 'ai.navigate', anySystemPermission: ['expedientes.read', 'comparecientes.read', 'cotizaciones.read'], objectScope: 'DYNAMIC', resultType: 'NAVIGATION', maxResults: 1, sensitivity: 'INTERNAL', mode: 'NAVIGATE' },
   prepareTask: { capability: 'ai.actions.prepare', systemPermissions: ['agenda.write'], objectScope: 'USER', resultType: 'PREPARED_ACTION', maxResults: 1, sensitivity: 'INTERNAL', mode: 'PREPARE_ONLY' },
   prepareAppointment: { capability: 'ai.actions.prepare', systemPermissions: ['agenda.write'], objectScope: 'USER', resultType: 'PREPARED_ACTION', maxResults: 1, sensitivity: 'INTERNAL', mode: 'PREPARE_ONLY' },
   prepareFollowUp: { capability: 'ai.actions.prepare', systemPermissions: ['agenda.write'], objectScope: 'USER', resultType: 'PREPARED_ACTION', maxResults: 1, sensitivity: 'INTERNAL', mode: 'PREPARE_ONLY' },
@@ -597,7 +597,31 @@ const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
       truncated: pendingTasks.length === limit || completedTasks.length === limit || events.length === limit,
     };
   },
-  globalSearch: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const query = textArg(args.query, 120); if (query.length < 2) throw new AssistantToolError('Escribe al menos dos caracteres para buscar.', 'AI_SEARCH_QUERY_TOO_SHORT'); const expScope = expedienteAccessWhere(input.user); const [expedientes, comparecientes, notarias] = await Promise.all([input.user.permissions.includes('expedientes.read') ? db.expediente.findMany({ where: { archived_at: null, ...expScope, OR: [{ numero_pravia: { contains: query, mode: 'insensitive' } }, { cliente_alias: { contains: query, mode: 'insensitive' } }] }, select: { id: true, numero_pravia: true, cliente_alias: true }, take: limit }) : [], input.user.permissions.includes('comparecientes.read') ? db.compareciente.findMany({ where: { organization_id: input.user.organizationId, archived_at: null, ...comparecienteObjectWhere(input.user), nombre_busqueda: { contains: query, mode: 'insensitive' } }, select: { id: true, nombre_busqueda: true }, take: limit }) : [], input.user.permissions.includes('notarias.read') ? db.notaria.findMany({ where: { organization_id: input.user.organizationId, archived_at: null, activa: true, OR: [{ nombre: { contains: query, mode: 'insensitive' } }, { numero_notaria: { contains: query, mode: 'insensitive' } }] }, select: { id: true, nombre: true, numero_notaria: true }, take: limit }) : []]); const data = { expedientes, comparecientes, notarias }; return { data, provenance: [...expedientes.map((item) => source('Expediente', item.id, item.numero_pravia, `/expedientes/${item.id}`)), ...comparecientes.map((item) => source('Compareciente', item.id, item.nombre_busqueda, `/comparecientes/${item.id}`)), ...notarias.map((item) => source('Notaria', item.id, item.nombre, '/notarias'))], truncated: [expedientes, comparecientes, notarias].some((items) => items.length === limit) }; },
+  globalSearch: async (db, input) => {
+    const args = input.args || {};
+    const limit = boundedLimit(args.limit);
+    const query = textArg(args.query, 120);
+    if (query.length < 2) throw new AssistantToolError('Escribe al menos dos caracteres para buscar.', 'AI_SEARCH_QUERY_TOO_SHORT');
+    const expScope = expedienteAccessWhere(input.user);
+    const [expedientes, comparecientes] = await Promise.all([
+      input.user.permissions.includes('expedientes.read')
+        ? db.expediente.findMany({ where: { archived_at: null, ...expScope, OR: [{ numero_pravia: { contains: query, mode: 'insensitive' } }, { cliente_alias: { contains: query, mode: 'insensitive' } }] }, select: { id: true, numero_pravia: true, cliente_alias: true }, take: limit })
+        : [],
+      input.user.permissions.includes('comparecientes.read')
+        ? db.compareciente.findMany({ where: { organization_id: input.user.organizationId, archived_at: null, ...comparecienteObjectWhere(input.user), nombre_busqueda: { contains: query, mode: 'insensitive' } }, select: { id: true, nombre_busqueda: true }, take: limit })
+        : [],
+    ]);
+    // Legacy notaría records remain in the database; they are not a search
+    // category or an operational destination for a tenant's users.
+    return {
+      data: { expedientes, comparecientes },
+      provenance: [
+        ...expedientes.map((item) => source('Expediente', item.id, item.numero_pravia, `/expedientes/${item.id}`)),
+        ...comparecientes.map((item) => source('Compareciente', item.id, item.nombre_busqueda, `/comparecientes/${item.id}`)),
+      ],
+      truncated: [expedientes, comparecientes].some((items) => items.length === limit),
+    };
+  },
 };
 
 async function executePreparedTool(db: PrismaClient, input: ToolInput) {
@@ -605,7 +629,7 @@ async function executePreparedTool(db: PrismaClient, input: ToolInput) {
   if (input.tool === 'navigateToEntity') {
     const entity = textArg(args.entity_type, 30) || input.context?.entity_type || '';
     const id = textArg(args.entity_id, 64) || input.context?.entity_id || '';
-    const prefixes: Record<string, string> = { expediente: '/expedientes', compareciente: '/comparecientes', cotizacion: '/cotizaciones', notaria: '/notarias' };
+    const prefixes: Record<string, string> = { expediente: '/expedientes', compareciente: '/comparecientes', cotizacion: '/cotizaciones' };
     if (!prefixes[entity] || !id) throw new AssistantToolError('La entidad de navegación no es válida.', 'AI_NAVIGATION_INVALID');
     if (entity === 'expediente') await findScopedExpediente(db, input.user, id);
     if (entity === 'compareciente') {

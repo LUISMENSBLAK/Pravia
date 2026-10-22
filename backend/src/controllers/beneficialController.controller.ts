@@ -20,7 +20,9 @@ export class BeneficialControllerController {
   static previewLinks = operation(req => service.previewLinks(req.user, req.params.id, req.body));
   static reconcile = operation(req => service.decideReconciliation(req.user, req.params.id, req.params.proposalId, req.body));
   static previewReconciliation = operation(req => service.previewReconciliation(req.user, req.params.id, req.params.proposalId));
-  static proposeAi = operation(req => service.proposeAi(req.user, req.params.id, req.body));
+  static proposeAi = operation(req => service.proposeAi(req.user, req.params.id, {
+    ...(req.body || {}), idempotency_key: req.get('Idempotency-Key') || req.body?.idempotency_key,
+  }));
   static readAi = operation(req => service.readAi(req.user, req.params.id, req.params.proposalId));
   static decideAi = operation(req => service.decideAi(req.user, req.params.id, req.params.proposalId, req.body));
   static ensureSociety = operation(req => service.ensureSociety(req.user, req.params.expedienteId, req.body));

@@ -1,0 +1,86 @@
+.stack { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.hero, .card, .listCard { border: 1px solid var(--color-border); border-radius: 13px; background: #fff; box-shadow: 0 7px 20px rgb(6 23 47 / 4%); }
+.hero { min-height: 128px; display: grid; grid-template-columns: 58px minmax(0, 1fr) auto; align-items: center; gap: 18px; padding: 24px; background: linear-gradient(120deg, #fff 50%, #fbf7ec); }
+.heroIcon { width: 58px; height: 58px; display: grid; place-items: center; border-radius: 14px; color: var(--color-gold-700); background: var(--color-gold-100); }
+.hero span, .card header small { color: var(--color-gold-700); font-size: 10px; font-weight: 800; letter-spacing: .1em; }
+.hero h2 { margin: 5px 0; font-size: 23px; letter-spacing: -.025em; }
+.hero p, .listCard header p { margin: 0; color: var(--color-text-secondary); font-size: 12px; }
+.hero > strong { max-width: 220px; color: var(--color-navy-900); text-align: right; font-size: 17px; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.card { min-width: 0; padding: 21px; }
+.card header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.card header > span { display: flex; align-items: center; gap: 9px; }
+.card header svg { color: var(--color-gold-700); }
+.card header em { padding: 4px 8px; border-radius: 99px; color: var(--color-text-secondary); background: var(--color-surface-subtle); font-size: 11px; font-style: normal; font-weight: 700; }
+.card header em[data-ok="true"] { color: var(--color-success-700); background: var(--color-success-100); }
+.card h3 { margin: 22px 0 12px; font-size: 27px; letter-spacing: -.035em; }
+.card h3 small { color: var(--color-text-secondary); font-size: 12px; font-weight: 550; letter-spacing: 0; }
+.progress { height: 8px; overflow: hidden; border-radius: 99px; background: var(--color-surface-subtle); }
+.progress i { display: block; min-width: 2px; height: 100%; border-radius: inherit; background: var(--color-gold-500); transition: width 220ms ease; }
+.card dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 20px 0 0; }
+.card dl div { min-width: 0; padding: 11px; border: 1px solid var(--color-border); border-radius: 9px; background: #fbfcfe; }
+.card dt { color: var(--color-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.card dd { overflow-wrap: anywhere; margin: 5px 0 0; color: var(--color-text-primary); font-size: 13px; font-weight: 700; }
+.notice { display: flex; align-items: center; gap: 8px; margin: 14px 0 0; padding: 10px; border-radius: 8px; color: var(--color-warning-700); background: var(--color-warning-100); font-size: 12px; }
+.caption { margin: 14px 0 0; color: var(--color-text-muted); font-size: 11px; line-height: 1.5; }
+.listCard { overflow: hidden; }
+.listCard > header { padding: 18px 20px; border-bottom: 1px solid var(--color-border); }
+.listCard header > div { display: flex; align-items: flex-start; gap: 12px; }
+.listCard header svg { color: var(--color-gold-700); }
+.listCard h3 { margin: 0 0 4px; font-size: 16px; }
+.listCard ul { margin: 0; padding: 0; list-style: none; }
+.listCard li { min-height: 62px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 20px; border-top: 1px solid var(--color-border); }
+.listCard li:first-child { border-top: 0; }
+.listCard li span, .empty span { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.listCard li strong, .listCard li b { font-size: 12px; }
+.listCard li small, .empty small { color: var(--color-text-secondary); font-size: 11px; }
+.exportHeader { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.exportHeader > div { min-width: 0; }
+.exportHeader > button { flex: none; }
+.exportRow { flex-wrap: wrap; }
+.exportError { margin: 0; padding: 12px 20px; color: var(--color-danger-700); background: var(--color-danger-100); font-size: 12px; }
+.exportError button { margin-left: 8px; border: 0; background: none; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.downloadLink { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; color: var(--color-navy-900); font-size: 12px; font-weight: 700; text-decoration: underline; }
+.migrationComposer { display: grid; grid-template-columns: minmax(150px, .75fr) minmax(220px, 1.4fr) auto; align-items: end; gap: 12px; padding: 16px 20px; background: #fbfcfe; }
+.migrationComposer label, .mappingGrid label { min-width: 0; display: flex; flex-direction: column; gap: 6px; color: var(--color-text-secondary); font-size: 11px; font-weight: 700; }
+.migrationComposer input, .mappingGrid input, .mappingGrid select { width: 100%; min-height: 42px; box-sizing: border-box; border: 1px solid var(--color-border-strong); border-radius: 8px; padding: 8px 10px; color: var(--color-text-primary); background: #fff; font: inherit; }
+.migrationComposer input[type="file"] { padding: 7px; font-weight: 500; }
+.migrationProgress { position: relative; grid-column: 1 / -1; height: 19px; overflow: hidden; border-radius: 99px; background: var(--color-surface-subtle); }
+.migrationProgress i { display: block; height: 100%; background: var(--color-gold-500); transition: width 180ms ease; }
+.migrationProgress span { position: absolute; inset: 0; display: grid; place-items: center; color: var(--color-navy-900); font-size: 10px; font-weight: 800; }
+.migrationReview { margin: 14px 20px 20px; overflow: hidden; border: 1px solid var(--color-border); border-radius: 11px; background: #fff; }
+.reviewTitle { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--color-border); background: #f8fafc; }
+.reviewTitle > span { display: flex; flex-direction: column; gap: 4px; }
+.reviewTitle strong { font-size: 13px; }
+.reviewTitle small { color: var(--color-text-secondary); font-size: 11px; }
+.reviewTitle button { width: 36px; height: 36px; border: 0; border-radius: 8px; color: var(--color-text-secondary); background: transparent; font-size: 24px; cursor: pointer; }
+.migrationReview dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0; padding: 14px 16px; }
+.migrationReview dl div { min-width: 0; padding: 10px; border: 1px solid var(--color-border); border-radius: 8px; background: #fbfcfe; }
+.migrationReview dt { color: var(--color-text-muted); font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.migrationReview dd { overflow-wrap: anywhere; margin: 5px 0 0; font-size: 12px; font-weight: 700; }
+.assetList { display: grid; gap: 7px; padding: 0 16px 14px; }
+.assetList > span { min-width: 0; display: flex; flex-direction: column; gap: 3px; padding: 9px 10px; border-left: 3px solid var(--color-gold-500); background: #fbfcfe; }
+.assetList strong { overflow-wrap: anywhere; font-size: 11px; }
+.assetList small { color: var(--color-text-secondary); font-size: 10px; }
+.mappingGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: 10px; padding: 14px 16px; border-top: 1px solid var(--color-border); }
+.mappingGrid > button { grid-column: 1 / -1; justify-self: end; }
+.migrationGate { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; margin: 0 16px 14px; padding: 12px; border: 1px solid var(--color-border); border-radius: 9px; background: #fbfcfe; }
+.migrationGate > svg { color: var(--color-gold-700); }
+.migrationGate span { display: flex; flex-direction: column; gap: 3px; }
+.migrationGate strong { font-size: 12px; }
+.migrationGate small { color: var(--color-text-secondary); font-size: 10px; line-height: 1.4; }
+.verification { margin: 0 16px 14px; }
+.verification summary { min-height: 40px; display: flex; align-items: center; cursor: pointer; color: var(--color-text-secondary); font-size: 11px; font-weight: 700; }
+.verification pre { max-height: 240px; overflow: auto; margin: 0; padding: 12px; border-radius: 8px; color: #dbe7f6; background: var(--color-navy-900); font-size: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.empty { min-height: 112px; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 22px; color: var(--color-text-secondary); text-align: left; }
+.empty > svg { color: var(--color-success-700); }
+.state { min-height: 220px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; padding: 28px; border: 1px dashed var(--color-border-strong); border-radius: 13px; color: var(--color-text-secondary); text-align: center; background: #fff; }
+.state > span { width: 26px; height: 26px; border: 2px solid var(--color-border); border-top-color: var(--color-gold-600); border-radius: 50%; animation: spin .8s linear infinite; }
+.state p { margin: 0; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .progress i, .migrationProgress i, .state > span { transition: none; animation: none; } }
+@media (max-width: 840px) { .grid { grid-template-columns: 1fr; } .hero { grid-template-columns: 50px minmax(0, 1fr); } .heroIcon { width: 50px; height: 50px; } .hero > strong { grid-column: 2; max-width: none; text-align: left; } }
+@media (max-width: 420px) { .hero, .card { padding: 17px; } .hero { gap: 12px; } .hero h2 { font-size: 20px; } .card dl { grid-template-columns: 1fr; } .card h3 { font-size: 23px; } }
+@media (max-width: 600px) { .exportHeader { align-items: stretch; flex-direction: column; } .exportRow { align-items: flex-start !important; flex-direction: column; } }
+@media (max-width: 760px) { .migrationComposer { grid-template-columns: 1fr; } .migrationProgress { grid-column: 1; } .migrationReview dl, .mappingGrid { grid-template-columns: 1fr 1fr; } .migrationGate { grid-template-columns: auto minmax(0, 1fr); } .migrationGate > button { grid-column: 1 / -1; width: 100%; } }
+@media (max-width: 420px) { .migrationComposer { padding: 14px; } .migrationReview { margin: 12px; } .migrationReview dl, .mappingGrid { grid-template-columns: 1fr; } .mappingGrid > button { grid-column: 1; width: 100%; } }

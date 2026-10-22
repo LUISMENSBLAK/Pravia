@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import { Navigate, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bell, BookOpenText, Bot, Building2, Check, ChevronRight, ClipboardList, Clock3, Files, KeyRound, LayoutDashboard, LockKeyhole, Mail,
-  MonitorSmartphone, Pencil, Search, ShieldCheck, SlidersHorizontal, Trash2, UserRound, UsersRound, X,
+  MonitorSmartphone, Pencil, Search, ShieldCheck, SlidersHorizontal, Trash2, UserRound, UsersRound, X, Gauge,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PageContainer } from '../../components/layout/PageContainer';
@@ -13,11 +13,12 @@ import { humanizeRole } from '../../lib/formatters';
 import { useAuth } from '../auth/AuthProvider';
 import { settingsService } from './settings.service';
 import { browserNotificationSupport, requestBrowserNotifications } from '../notifications/browserNotifications';
-import { ROLE_LABELS, type ManagedUser, type NotificationItem, type Session, type UserInvitation, type UserPreferences } from './settings.types';
+import { ROLE_LABELS, type ManagedUser, type NotificationItem, type OrganizationProfile, type Session, type UserInvitation, type UserPreferences } from './settings.types';
 import { ActsTimesCatalog } from './catalogs/ActsTimesCatalog';
 import { TemplatesFormatsCatalog } from './catalogs/TemplatesFormatsCatalog';
 import { QuestionnairesCatalog } from './catalogs/QuestionnairesCatalog';
 import { KnowledgeLibrary } from './knowledge/KnowledgeLibrary';
+import { PlanConsumptionSection } from './PlanConsumptionSection';
 import styles from './Settings.module.css';
 
 type AsyncState<T> = { loading: boolean; error: string; data: T | null };
@@ -60,6 +61,7 @@ const personalItems: SettingsNavItem[] = [
   { to: '/configuracion/notificaciones', label: 'Notificaciones', icon: Bell },
 ];
 const adminItems: SettingsNavItem[] = [
+  { to: '/configuracion/plan-consumo', label: 'Plan y consumo', icon: Gauge, permission: 'platform.subscription.read' },
   { to: '/configuracion/usuarios', label: 'Usuarios y accesos', icon: UsersRound, permission: 'usuarios.manage' },
   { to: '/configuracion/roles', label: 'Roles y permisos', icon: ShieldCheck, permission: 'usuarios.read' },
   { to: '/configuracion/inteligencia', label: 'Administración de IA', icon: Bot, permission: 'ai.admin.read' },
@@ -101,7 +103,7 @@ function OverviewSection() {
         <button className={styles.actionCard} onClick={() => navigate('/configuracion/perfil')}><UserRound /><span><strong>Perfil personal</strong><small>Datos de contacto y alcance de acceso</small></span><ChevronRight /></button>
         <button className={styles.actionCard} onClick={() => navigate('/configuracion/seguridad')}><MonitorSmartphone /><span><strong>{resource.data.metrics.active_sessions} sesiones activas</strong><small>Revisa dispositivos y cambia tu contraseña</small></span><ChevronRight /></button>
         <button className={styles.actionCard} onClick={() => navigate('/configuracion/notificaciones')}><Bell /><span><strong>{resource.data.metrics.unread_notifications} notificaciones nuevas</strong><small>Centro de actividad de tu cuenta</small></span><ChevronRight /></button>
-        <button className={styles.actionCard} onClick={() => navigate('/configuracion/organizacion')}><Building2 /><span><strong>{resource.data.organization.primary_notary?.nombre ?? 'Organización PRAVIA'}</strong><small>Ámbito {resource.data.organization.scope === 'GLOBAL' ? 'global' : 'por asignaciones'}</small></span><ChevronRight /></button>
+        <button className={styles.actionCard} onClick={() => navigate('/configuracion/organizacion')}><Building2 /><span><strong>{resource.data.organization.profile?.name ?? 'Organización PRAVIA'}</strong><small>Ámbito {resource.data.organization.scope === 'GLOBAL' ? 'global' : 'por asignaciones'}</small></span><ChevronRight /></button>
       </div>
       <section className={styles.infoCard}><div><ShieldCheck /><span><strong>Acceso basado en rol</strong><small>Tu sesión tiene {resource.data.access.permissions.length} capacidades efectivas. Los permisos no se editan desde el perfil.</small></span></div></section>
     </div>}
@@ -158,8 +160,48 @@ function PreferencesSection() {
 }
 
 function OrganizationSection() {
-  const resource = useResource(settingsService.overview, []);
-  return <StatePanel loading={resource.loading} error={resource.error} onRetry={resource.reload} empty={!resource.data}><div className={styles.sectionStack}>{resource.data && <><section className={styles.formCard}><div className={styles.cardTitle}><Building2 /><div><h2>Organización y ámbito</h2><p>Información operativa tomada del catálogo de notarías; no se duplica aquí.</p></div></div><div className={styles.detailGrid}><span><small>Notaría predeterminada</small><strong>{resource.data.organization.primary_notary?.nombre ?? 'Sin notaría predeterminada'}</strong></span><span><small>Ubicación</small><strong>{[resource.data.organization.primary_notary?.ciudad, resource.data.organization.primary_notary?.entidad_federativa].filter(Boolean).join(', ') || 'Sin registro'}</strong></span><span><small>Tu ámbito</small><strong>{resource.data.organization.scope === 'GLOBAL' ? 'Global' : 'Objetos asignados'}</strong></span><span><small>Zona horaria operativa</small><strong>Definida por preferencia personal</strong></span></div></section><section className={styles.infoCard}><div><LockKeyhole /><span><strong>Administración canónica</strong><small>Los datos de notarías se administran en su módulo para conservar una sola fuente de verdad.</small></span></div></section></>}</div></StatePanel>;
+  const { user } = useAuth();
+  const resource = useResource(settingsService.organization, []);
+  const canEdit = Boolean(user?.permissions?.includes('configuracion.manage'));
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [form, setForm] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!resource.data?.profile) return;
+    const profile = resource.data.profile;
+    setForm(Object.fromEntries((['name', 'notary_number', 'notary_holder', 'state', 'municipality', 'address', 'postal_code', 'phone', 'email', 'institutional_header'] as const)
+      .map((key) => [key, profile[key] || ''])));
+  }, [resource.data]);
+  const fields: Array<{ key: keyof OrganizationProfile; label: string; max: number }> = [
+    { key: 'name', label: 'Denominación', max: 160 },
+    { key: 'notary_number', label: 'Número notarial', max: 40 },
+    { key: 'notary_holder', label: 'Titular', max: 160 },
+    { key: 'state', label: 'Entidad federativa', max: 100 },
+    { key: 'municipality', label: 'Municipio', max: 100 },
+    { key: 'address', label: 'Domicilio institucional', max: 300 },
+    { key: 'postal_code', label: 'Código postal', max: 12 },
+    { key: 'phone', label: 'Teléfono', max: 30 },
+    { key: 'email', label: 'Correo institucional', max: 254 },
+    { key: 'institutional_header', label: 'Encabezado institucional', max: 500 },
+  ];
+  const save = async (event: FormEvent) => {
+    event.preventDefault(); setSaving(true); setMessage('');
+    try {
+      await settingsService.updateOrganization(form);
+      setEditing(false); setMessage('Datos institucionales actualizados.'); resource.reload();
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'No se pudo guardar la organización.'); }
+    finally { setSaving(false); }
+  };
+  return <StatePanel loading={resource.loading} error={resource.error} onRetry={resource.reload} empty={!resource.data}>
+    {resource.data && <form className={styles.formCard} onSubmit={save}>
+      <div className={styles.cardTitle}><Building2 /><div><h2>Ficha de la organización</h2><p>Una ficha institucional por organización. Los emisores fiscales se configuran por separado.</p></div></div>
+      <div className={styles.formGrid}>{fields.map(({ key, label, max }) => <Input key={key} name={key} label={label} maxLength={max} value={form[key] || ''} disabled={!editing} onChange={(event) => setForm((current) => ({ ...current, [key]: event.target.value }))} />)}</div>
+      <div className={styles.readonlyRow}><span><small>Logo institucional</small><strong>{resource.data.profile.logo_storage_key ? 'Archivo privado configurado' : 'Sin logo configurado'}</strong></span><span><small>Actualización</small><strong>{formatDate(resource.data.profile.updated_at)}</strong></span></div>
+      {message && <p className={styles.feedback} role="status">{message}</p>}
+      {canEdit && <div className={styles.formActions}>{editing ? <><Button type="button" variant="secondary" onClick={() => { setEditing(false); resource.reload(); }}>Cancelar</Button><Button type="submit" disabled={saving}>{saving ? 'Guardando…' : 'Guardar organización'}</Button></> : <Button type="button" variant="secondary" onClick={() => setEditing(true)}><Pencil size={16} />Editar organización</Button>}</div>}
+    </form>}
+  </StatePanel>;
 }
 
 function InviteModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
@@ -220,10 +262,10 @@ export function SettingsPage() {
   const segment = location.pathname.split('/')[2] || 'overview';
   if (segment === 'politicas-tiempo') return <Navigate to="/configuracion/actos-tiempos" replace />;
   const titles: Record<string, [string, string]> = {
-    overview: ['Configuración', 'Administra tu cuenta, preferencias y controles de acceso.'], perfil: ['Mi perfil', 'Información personal y alcance operativo.'], seguridad: ['Seguridad y sesiones', 'Contraseña y dispositivos con acceso vigente.'], preferencias: ['Preferencias', 'Personaliza tu experiencia de trabajo.'], organizacion: ['Organización', 'Fuente operativa y ámbito de tu cuenta.'], usuarios: ['Usuarios y accesos', 'Invitaciones, estados, roles y trazabilidad.'], roles: ['Roles y permisos', 'Matriz efectiva definida por la política del servidor.'], inteligencia: ['Administración de IA', 'Estado técnico, política y consumo real.'], auditoria: ['Auditoría', 'Trazabilidad de acciones administrativas.'], notificaciones: ['Notificaciones', 'Actividad relevante de tu cuenta.'], 'actos-tiempos': ['Actos y tiempos', 'Catálogo canónico y configuración operativa privada.'], 'plantillas-formatos': ['Plantillas y formatos', 'Repositorio maestro privado por Notaría, banco o fiduciaria.'], cuestionarios: ['Cuestionarios', 'Captura estructurada, reutilizable y versionada para expedientes y formatos.'], 'biblioteca-conocimiento': ['Biblioteca de conocimiento', 'Fuentes jurídicas versionadas, evidencia y criterios internos separados.'],
+    overview: ['Configuración', 'Administra tu cuenta, preferencias y controles de acceso.'], perfil: ['Mi perfil', 'Información personal y alcance operativo.'], seguridad: ['Seguridad y sesiones', 'Contraseña y dispositivos con acceso vigente.'], preferencias: ['Preferencias', 'Personaliza tu experiencia de trabajo.'], organizacion: ['Organización', 'Ficha institucional del tenant actual.'], 'plan-consumo': ['Plan y consumo', 'Suscripción, almacenamiento, saldo IA y migraciones de esta organización.'], usuarios: ['Usuarios y accesos', 'Invitaciones, estados, roles y trazabilidad.'], roles: ['Roles y permisos', 'Matriz efectiva definida por la política del servidor.'], inteligencia: ['Administración de IA', 'Estado técnico, política y consumo real.'], auditoria: ['Auditoría', 'Trazabilidad de acciones administrativas.'], notificaciones: ['Notificaciones', 'Actividad relevante de tu cuenta.'], 'actos-tiempos': ['Actos y tiempos', 'Catálogo canónico y configuración operativa privada.'], 'plantillas-formatos': ['Plantillas y formatos', 'Repositorio maestro privado de formatos y plantillas.'], cuestionarios: ['Cuestionarios', 'Captura estructurada, reutilizable y versionada para expedientes y formatos.'], 'biblioteca-conocimiento': ['Biblioteca de conocimiento', 'Fuentes jurídicas versionadas, evidencia y criterios internos separados.'],
   };
-  const denied = (segment === 'usuarios' && !user?.permissions?.includes('usuarios.manage')) || (segment === 'auditoria' && !user?.permissions?.includes('configuracion.manage')) || (segment === 'inteligencia' && !user?.permissions?.includes('ai.admin.read')) || (['actos-tiempos', 'plantillas-formatos', 'cuestionarios', 'biblioteca-conocimiento'].includes(segment) && !user?.permissions?.includes('configuracion.catalogos.read'));
-  const section = denied ? <div className={styles.state} role="alert"><LockKeyhole /><strong>Acceso restringido</strong><span>Tu rol no incluye esta sección administrativa.</span></div> : segment === 'perfil' ? <ProfileSection /> : segment === 'seguridad' ? <SecuritySection /> : segment === 'preferencias' ? <PreferencesSection /> : segment === 'organizacion' ? <OrganizationSection /> : segment === 'usuarios' ? <UsersSection /> : segment === 'roles' ? <RolesSection /> : segment === 'inteligencia' ? <AISection /> : segment === 'auditoria' ? <AuditSection /> : segment === 'notificaciones' ? <NotificationsSection /> : segment === 'actos-tiempos' ? <ActsTimesCatalog /> : segment === 'plantillas-formatos' ? <TemplatesFormatsCatalog /> : segment === 'cuestionarios' ? <QuestionnairesCatalog /> : segment === 'biblioteca-conocimiento' ? <KnowledgeLibrary /> : <OverviewSection />;
+  const denied = (segment === 'usuarios' && !user?.permissions?.includes('usuarios.manage')) || (segment === 'plan-consumo' && !user?.permissions?.includes('platform.subscription.read')) || (segment === 'auditoria' && !user?.permissions?.includes('configuracion.manage')) || (segment === 'inteligencia' && !user?.permissions?.includes('ai.admin.read')) || (['actos-tiempos', 'plantillas-formatos', 'cuestionarios', 'biblioteca-conocimiento'].includes(segment) && !user?.permissions?.includes('configuracion.catalogos.read'));
+  const section = denied ? <div className={styles.state} role="alert"><LockKeyhole /><strong>Acceso restringido</strong><span>Tu rol no incluye esta sección administrativa.</span></div> : segment === 'perfil' ? <ProfileSection /> : segment === 'seguridad' ? <SecuritySection /> : segment === 'preferencias' ? <PreferencesSection /> : segment === 'organizacion' ? <OrganizationSection /> : segment === 'plan-consumo' ? <PlanConsumptionSection canReadExports={Boolean(user?.permissions?.includes('platform.exports.read'))} canManageExports={Boolean(user?.permissions?.includes('platform.exports.manage'))} canReadMigrations={Boolean(user?.permissions?.includes('platform.migrations.read'))} canManageMigrations={Boolean(user?.permissions?.includes('platform.migrations.manage'))} /> : segment === 'usuarios' ? <UsersSection /> : segment === 'roles' ? <RolesSection /> : segment === 'inteligencia' ? <AISection /> : segment === 'auditoria' ? <AuditSection /> : segment === 'notificaciones' ? <NotificationsSection /> : segment === 'actos-tiempos' ? <ActsTimesCatalog /> : segment === 'plantillas-formatos' ? <TemplatesFormatsCatalog /> : segment === 'cuestionarios' ? <QuestionnairesCatalog /> : segment === 'biblioteca-conocimiento' ? <KnowledgeLibrary /> : <OverviewSection />;
   const [title, subtitle] = titles[segment] || titles.overview;
   return <PageContainer title={title} subtitle={subtitle}><div className={styles.layout}><SettingsNavigation /><div className={styles.content}>{section}</div></div></PageContainer>;
 }

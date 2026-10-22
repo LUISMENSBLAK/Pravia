@@ -4,14 +4,16 @@ import prisma from '../config/prisma';
 import { prospectoObjectWhere } from './objectAccess.service';
 import { downloadFile } from './supabase.service';
 import { extractDocxText } from './docxText';
-import { buildUsageMetrics, getOpenAIModelName } from './openaiDocument.service';
-import { recordAIUsageInDb } from './aiUsage.service';
+import { getOpenAIModelName } from './openaiDocument.service';
+import { aiGateway, type AiGatewayExecutor } from '../platform/aiGateway.runtime';
+import { AI_OPERATION_CODES } from '../platform/aiBillingPolicy';
+import { PlatformDomainError } from '../platform/platform.errors';
 
 type Actor = NonNullable<Request['user']>;
 type ReviewDocument = { id: string; nombre_original: string; mime_type: string; storage_key: string; size_bytes: number; checksum_sha256: string | null; fecha_carga: Date };
 type Source = { id: string; name: string; mime: string; buffer: Buffer; text?: string };
 type Finding = { detail: string; document_ids: string[] };
-type ProviderResult = { summary: string; findings: Finding[]; model: string; usage: ReturnType<typeof buildUsageMetrics> };
+type ProviderResult = { summary: string; findings: Finding[]; model: string };
 
 export class ProspectDocumentReviewError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
@@ -41,10 +43,10 @@ export function reviewIsCurrent(review: { act_snapshot: unknown; document_snapsh
 }
 
 export async function requestProspectDocumentReview(input: {
-  acts: string[]; documents: Source[]; configuredContext: string[]; fetchImpl?: typeof fetch;
+  actor: Actor; acts: string[]; documents: Source[]; configuredContext: string[];
+  idempotencyKey: string; traceId: string; gateway?: AiGatewayExecutor;
 }): Promise<ProviderResult> {
-  const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
-  if (!apiKey) return fail(503, 'PROSPECT_REVIEW_AI_UNAVAILABLE', 'La revisión documental con IA no está disponible ahora. Puedes continuar sin revisión.');
+  if (!input.idempotencyKey.trim()) return fail(400, 'AI_IDEMPOTENCY_CONTEXT_REQUIRED', 'La revisión con IA requiere una clave de idempotencia.');
   const model = getOpenAIModelName();
   const content: Array<Record<string, unknown>> = [{ type: 'input_text', text: [
     'Realiza sólo una revisión preliminar y MUY BREVE de consistencia documental para los actos indicados.',
@@ -72,13 +74,16 @@ export async function requestProspectDocumentReview(input: {
     }
   }
   if (content.length === 1) return fail(422, 'PROSPECT_REVIEW_NO_READABLE_SOURCE', 'Los documentos no contienen contenido legible para revisión automática. Puedes revisarlos manualmente.');
-  const startedAt = Date.now();
-  let response: Response;
+  let data: any;
   try {
-    response = await (input.fetchImpl || fetch)('https://api.openai.com/v1/responses', {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120_000)),
-      body: JSON.stringify({ model, store: false, max_output_tokens: 1_600,
+    data = await (input.gateway || aiGateway).execute<any>({
+      actor: { userId: input.actor.id, organizationId: input.actor.organizationId,
+        membershipId: input.actor.membershipId, role: input.actor.rol, permissions: input.actor.permissions,
+        scope: input.actor.scope, sessionId: input.actor.sessionId },
+      operationCode: AI_OPERATION_CODES.prospectDocumentReview,
+      billingClass: 'CUSTOMER_WALLET', idempotencyKey: input.idempotencyKey, traceId: input.traceId,
+      timeoutMs: Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120_000),
+      payload: { body: { model, store: false, max_output_tokens: 1_600,
         input: [{ role: 'user', content }],
         text: { format: { type: 'json_schema', name: 'prospect_document_review', strict: true, schema: {
           type: 'object', additionalProperties: false,
@@ -89,11 +94,12 @@ export async function requestProspectDocumentReview(input: {
               required: ['detail', 'document_ids'] } },
           }, required: ['summary', 'findings'],
         } } },
-      }),
+      } },
     });
-  } catch { return fail(503, 'PROSPECT_REVIEW_PROVIDER_UNAVAILABLE', 'No pudimos contactar al proveedor de IA. No se guardó ninguna revisión.'); }
-  if (!response.ok) return fail(503, 'PROSPECT_REVIEW_PROVIDER_ERROR', 'La revisión con IA no se completó. No se guardó ninguna revisión.');
-  const data: any = await response.json();
+  } catch (error) {
+    if (error instanceof PlatformDomainError) return fail(error.status, error.code, error.message);
+    return fail(503, 'PROSPECT_REVIEW_PROVIDER_UNAVAILABLE', 'No pudimos contactar al proveedor de IA. No se guardó ninguna revisión.');
+  }
   if (data.status === 'incomplete' || (data.output || []).some((item: any) => (item.content || []).some((part: any) => part.type === 'refusal'))) {
     return fail(503, 'PROSPECT_REVIEW_INCOMPLETE', 'La revisión con IA no se completó. No se guardó ninguna revisión.');
   }
@@ -108,7 +114,7 @@ export async function requestProspectDocumentReview(input: {
   }
   return { summary: parsed.summary.trim().slice(0, 1_000), findings: parsed.findings.slice(0, 8).map((finding: Finding) => ({
     detail: finding.detail.trim().slice(0, 500), document_ids: [...new Set(finding.document_ids)],
-  })), model, usage: buildUsageMetrics(data, model, startedAt, input.documents.length) };
+  })), model };
 }
 
 export class ProspectDocumentReviewService {
@@ -144,10 +150,10 @@ export class ProspectDocumentReviewService {
         documents: review.document_snapshot, acts: review.act_snapshot, reviewedAt: review.created_at, model: review.modelo } : null };
   }
 
-  async run(actor: Actor, prospectId: string) {
+  async run(actor: Actor, prospectId: string, idempotencyKey: string, traceId: string) {
     if (!actor.permissions.includes('prospectos.write') || !actor.permissions.includes('documentos.read')
       || !actor.permissions.includes('ia.execute')) return fail(403, 'PROSPECT_REVIEW_DENIED', 'No tienes permiso para revisar estos documentos con IA.');
-    if (!String(process.env.OPENAI_API_KEY || '').trim()) return fail(503, 'PROSPECT_REVIEW_AI_UNAVAILABLE', 'La revisión documental con IA no está disponible ahora. Puedes continuar sin revisión.');
+    if (!idempotencyKey.trim()) return fail(400, 'AI_IDEMPOTENCY_CONTEXT_REQUIRED', 'La revisión con IA requiere una clave de idempotencia.');
     const initial = await this.sources(actor, prospectId);
     if (!initial.actSnapshot.length) return fail(409, 'PROSPECT_REVIEW_ACT_REQUIRED', 'Selecciona un acto antes de revisar los documentos.');
     if (!initial.documents.length) return fail(409, 'PROSPECT_REVIEW_DOCUMENT_REQUIRED', 'Carga al menos un documento antes de pedir la revisión.');
@@ -175,7 +181,8 @@ export class ProspectDocumentReviewService {
     }
     const configs = await this.db.configuracionActo.findMany({ where: { organization_id: actor.organizationId, activa: true,
       tipo_acto_id: { in: initial.actSnapshot.map((item) => item.id) } }, select: { nombre_personalizado: true, descripcion_personalizada: true } });
-    const result = await this.provider({ acts: initial.actSnapshot.map((item) => item.name), documents: readable,
+    const result = await this.provider({ actor, idempotencyKey, traceId,
+      acts: initial.actSnapshot.map((item) => item.name), documents: readable,
       configuredContext: configs.map((item) => [item.nombre_personalizado, item.descripcion_personalizada].filter(Boolean).join(': ')).filter(Boolean) });
     const current = await this.sources(actor, prospectId);
     if (!reviewIsCurrent({ act_snapshot: initial.actSnapshot, document_snapshot: initial.documentSnapshot }, current.actSnapshot, current.documentSnapshot)) {
@@ -187,8 +194,6 @@ export class ProspectDocumentReviewService {
         resumen: result.summary, hallazgos: json(result.findings), documentos_no_leidos: json(unreadable), modelo: result.model } });
       await tx.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: 'PROSPECT_DOCUMENT_REVIEW_AI',
         entidad: 'Prospecto', entidad_id: prospectId, valores_nuevos: json({ reviewId: review.id, documentIds: readable.map((doc) => doc.id), unreadableIds: unreadable.map((doc) => doc.id) }) } });
-      await recordAIUsageInDb(tx, result.usage, { organizationId: actor.organizationId, usuarioId: actor.id,
-        operacion: 'PROSPECT_DOCUMENT_REVIEW', operationId: `prospect-review:${review.id}`, metadata: { prospectId, reviewId: review.id } });
       return review;
     });
     return { current: true, review: { id: created.id, summary: created.resumen, findings: result.findings, unreadable,

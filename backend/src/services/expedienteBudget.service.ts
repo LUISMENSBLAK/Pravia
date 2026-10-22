@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'crypto';
 import { CatalogoDestinoFuncional, Prisma, PrismaClient } from '@prisma/client';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import {
-  budgetTotals, calculateDistribution, centsToMoney, moneyToCents, normalizeBudgetConcepts,
+  budgetTotals, calculateDistribution, centsToMoney, moneyToCents, normalizeBudgetConcepts, normalizeEditableBudgetConcepts, withDerivedHonorariosIva,
   percentageFromCents, quoteCategoryToBudget, type BudgetCategory,
   type DistributionInput,
 } from '../domain/expedienteBudget';
@@ -35,12 +35,27 @@ export class ExpedienteBudgetService {
     return this.response(actor, budget);
   }
 
+  async preview(actor: BudgetActor, expedienteId: string, rawConcepts: unknown) {
+    if (!can(actor, 'expedientes.read')) throw new ExpedienteBudgetError(403, 'EXP007_READ_DENIED', 'No tienes permiso para consultar el presupuesto.');
+    await this.assertExpediente(this.prisma, actor, expedienteId);
+    const concepts = withDerivedHonorariosIva(normalizeEditableBudgetConcepts(rawConcepts));
+    const totals = budgetTotals(concepts);
+    return { totals: {
+      honorarios: totals.honorarios,
+      iva_honorarios: totals.iva_honorarios,
+      subtotal_honorarios: totals.subtotal_honorarios,
+      subtotal_impuestos_derechos: totals.subtotal_impuestos_derechos,
+      otros_gastos: totals.otros_gastos,
+      iva_otros_gastos: totals.iva_otros_gastos,
+      subtotal_otros_gastos: totals.subtotal_otros_gastos,
+      requires_review: totals.requiresReview,
+      total: totals.total,
+    } };
+  }
+
   async save(actor: BudgetActor, expedienteId: string, input: { expected_version: number; concepts: unknown; distribution?: DistributionInput }) {
     if (!can(actor, 'expedientes.write')) throw new ExpedienteBudgetError(403, 'EXP007_WRITE_DENIED', 'No tienes permiso para modificar el presupuesto.');
-    const concepts = normalizeBudgetConcepts(input.concepts);
-    const totals = budgetTotals(concepts);
     if (input.distribution && !can(actor, 'finanzas.write')) throw new ExpedienteBudgetError(403, 'EXP007_DISTRIBUTION_WRITE_DENIED', 'No tienes permiso para modificar la distribución interna.');
-    const calculatedDistribution = input.distribution ? calculateDistribution(totals, input.distribution) : null;
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp007-budget:${actor.organizationId}:${expedienteId}`}))`);
       await this.assertExpediente(tx, actor, expedienteId);
@@ -48,11 +63,16 @@ export class ExpedienteBudgetService {
       if (!Number.isInteger(input.expected_version) || input.expected_version !== current.version) {
         throw new ExpedienteBudgetError(409, 'EXP007_STALE_BUDGET', 'El presupuesto cambió en otra sesión. Recarga antes de guardar.');
       }
+      const concepts = withDerivedHonorariosIva(normalizeEditableBudgetConcepts(input.concepts));
+      const totals = budgetTotals(concepts);
+      const calculatedDistribution = input.distribution ? calculateDistribution(totals, input.distribution) : null;
       const previous = this.auditSnapshot(current);
       await tx.expedientePresupuestoConcepto.deleteMany({ where: { organization_id: actor.organizationId, presupuesto_id: current.id } });
       await tx.expedientePresupuestoConcepto.createMany({ data: concepts.map((item) => ({
         organization_id: actor.organizationId, presupuesto_id: current.id, concepto: item.concepto,
         categoria: item.categoria, importe: item.importe, orden: item.orden,
+        tratamiento_iva: item.tratamiento_iva, iva_tasa: item.iva_tasa,
+        regla_fiscal_fuente: item.regla_fiscal_fuente, regla_fiscal_version: item.regla_fiscal_version,
       })) });
       if (calculatedDistribution) {
         await tx.expedientePresupuestoDistribucion.upsert({ where: { presupuesto_id: current.id }, update: {
@@ -103,6 +123,8 @@ export class ExpedienteBudgetService {
     const budget = await this.budget(this.prisma, actor, expedienteId);
     if (budget.version !== input.expected_version) throw new ExpedienteBudgetError(409, 'EXP007_STALE_BUDGET', 'El presupuesto cambió. Recarga antes de generar el PDF.');
     if (budget.requiere_clasificacion) throw new ExpedienteBudgetError(409, 'EXP007_LEGACY_CLASSIFICATION_REQUIRED', 'Clasifica los conceptos históricos antes de generar un nuevo presupuesto.');
+    const currentTotals = budgetTotals(budget.conceptos.map((item) => ({ categoria: item.categoria, importeCents: moneyToCents(String(item.importe)), tratamiento_iva: item.tratamiento_iva, iva_tasa: item.iva_tasa == null ? null : String(item.iva_tasa) })));
+    if (currentTotals.requiresReview) throw new ExpedienteBudgetError(409, 'EXP007_TAX_REVIEW_REQUIRED', 'Revisa el tratamiento fiscal y el IVA histórico antes de generar un total definitivo.');
     let resolvedTemplate: Awaited<ReturnType<typeof resolveAdministrativeQuoteTemplate>>;
     try { resolvedTemplate = await resolveAdministrativeQuoteTemplate(this.prisma, actor.organizationId, CatalogoDestinoFuncional.EXPEDIENTE_PRESUPUESTO); }
     catch (error) {
@@ -120,11 +142,16 @@ export class ExpedienteBudgetService {
         concepto: item.concepto,
         categoria: item.categoria,
         importeCents: moneyToCents(String(item.importe)),
+        tratamiento_iva: item.tratamiento_iva,
+        iva_tasa: item.iva_tasa == null ? null : String(item.iva_tasa),
       })),
       validatedAdvanceCents: 0n,
     });
     let buffer: Buffer;
-    try { buffer = renderQuoteTemplate(resolvedTemplate.source, templateData); }
+    try { buffer = renderQuoteTemplate(resolvedTemplate.source, templateData, budget.conceptos.map((item) => ({
+      concepto: item.concepto, categoria: item.categoria, importeCents: moneyToCents(String(item.importe)),
+      tratamiento_iva: item.tratamiento_iva, iva_tasa: item.iva_tasa == null ? null : String(item.iva_tasa),
+    }))); }
     catch { throw new ExpedienteBudgetError(422, 'EXP007_TEMPLATE_RENDER_FAILED', 'El formato configurado para Presupuesto no pudo combinarse con los datos estructurados.'); }
     const fileName = `Presupuesto_${safeName(expediente.numero_pravia)}_${generatedAt.toISOString().slice(0, 10)}.docx`;
     const storageKey = `organizations/${actor.organizationId}/expedientes/${expedienteId}/presupuestos/${randomUUID()}_${fileName}`;
@@ -196,23 +223,27 @@ export class ExpedienteBudgetService {
     const { actor, expedienteId, quoteVersion } = input;
     const structured = Array.isArray(quoteVersion?.conceptos) ? quoteVersion.conceptos : [];
     const rawConcepts = structured.length
-      ? structured.map((item: any) => ({ concepto: item.concepto, categoria: item.categoria, importe: item.importe }))
+      ? structured.map((item: any) => ({ concepto: item.concepto, categoria: item.categoria, importe: item.importe,
+        tratamiento_iva: item.tratamiento_iva, iva_tasa: item.iva_tasa, regla_fiscal_fuente: item.regla_fiscal_fuente, regla_fiscal_version: item.regla_fiscal_version }))
       : Array.isArray(quoteVersion?.desglose_notaria?.rubros) ? quoteVersion.desglose_notaria.rubros : [];
     const normalized = rawConcepts.map((item: any) => ({
       concepto: String(item?.concepto || '').trim(),
       categoria: structured.length ? item.categoria : quoteCategoryToBudget(item?.categoria, item?.concepto),
       importe: String(item?.importe ?? item?.monto ?? '0'),
+      tratamiento_iva: item?.tratamiento_iva, iva_tasa: item?.iva_tasa,
+      regla_fiscal_fuente: item?.regla_fiscal_fuente, regla_fiscal_version: item?.regla_fiscal_version,
     })).filter((item: any) => item.concepto);
     const concepts = normalized.length ? normalizeBudgetConcepts(normalized) : [];
     const totals = budgetTotals(concepts);
     const totalFallback = money(quoteVersion.total_cliente);
+    const exactMatch = concepts.length > 0 && totals.total === totalFallback;
     const praviaTotal = moneyToCents(String(quoteVersion.honorarios_pravia ?? 0));
     const budget = await tx.expedientePresupuesto.create({ data: {
       organization_id: actor.organizationId, expediente_id: expedienteId, cotizacion_version_origen_id: quoteVersion.id,
       origen: 'COTIZACION_ESTRUCTURADA', subtotal_honorarios: concepts.length ? totals.subtotal_honorarios : '0.00',
       subtotal_impuestos_derechos: concepts.length ? totals.subtotal_impuestos_derechos : totalFallback,
-      total: concepts.length ? totals.total : totalFallback, requiere_clasificacion: !concepts.length,
-      distribucion_requiere_revision: !concepts.length && praviaTotal > 0n,
+      total: exactMatch ? totals.total : totalFallback, requiere_clasificacion: !exactMatch || totals.requiresReview,
+      distribucion_requiere_revision: !exactMatch && praviaTotal > 0n,
       creado_por_id: actor.id, actualizado_por_id: actor.id,
     } });
     if (concepts.length) {
@@ -223,6 +254,8 @@ export class ExpedienteBudgetService {
         categoria: item.categoria,
         importe: item.importe,
         orden: item.orden,
+        tratamiento_iva: item.tratamiento_iva, iva_tasa: item.iva_tasa,
+        regla_fiscal_fuente: item.regla_fiscal_fuente, regla_fiscal_version: item.regla_fiscal_version,
       })) });
     }
     const praviaHonorarios = praviaTotal > totals.honorariosCents ? totals.honorariosCents : praviaTotal;
@@ -257,14 +290,17 @@ export class ExpedienteBudgetService {
   }; }
 
   private response(actor: BudgetActor, budget: any) {
-    const normalized = budget.conceptos.map((item: any, orden: number) => ({ id: item.id, concepto: item.concepto, categoria: item.categoria as BudgetCategory, importe: money(item.importe), importeCents: moneyToCents(String(item.importe)), orden }));
+    const normalized = budget.conceptos.map((item: any, orden: number) => ({ id: item.id, concepto: item.concepto, categoria: item.categoria as BudgetCategory, importe: money(item.importe), importeCents: moneyToCents(String(item.importe)), orden,
+      tratamiento_iva: item.tratamiento_iva ?? null, iva_tasa: item.iva_tasa == null ? null : String(item.iva_tasa),
+      regla_fiscal_fuente: item.regla_fiscal_fuente ?? null, regla_fiscal_version: item.regla_fiscal_version ?? null }));
     const totals = budgetTotals(normalized);
     const internal = budget.distribucion && can(actor, 'finanzas.read') ? this.distributionResponse(budget.distribucion, totals) : null;
     return {
       id: budget.id, version: budget.version, origin: budget.origen,
       quote_origin: budget.cotizacionVersionOrigen ? { quote_id: budget.cotizacionVersionOrigen.cotizacion_id, quote_version_id: budget.cotizacionVersionOrigen.id, quote_version: budget.cotizacionVersionOrigen.version, immutable: true } : null,
       concepts: normalized.map(({ importeCents: _ignore, ...item }: any) => item),
-      totals: { honorarios: totals.honorarios, iva_honorarios: totals.iva_honorarios, subtotal_honorarios: money(budget.subtotal_honorarios), subtotal_impuestos_derechos: money(budget.subtotal_impuestos_derechos), total: money(budget.total) },
+      totals: { honorarios: totals.honorarios, iva_honorarios: totals.iva_honorarios, subtotal_honorarios: money(budget.subtotal_honorarios), subtotal_impuestos_derechos: money(budget.subtotal_impuestos_derechos),
+        otros_gastos: totals.otros_gastos, iva_otros_gastos: totals.iva_otros_gastos, subtotal_otros_gastos: totals.subtotal_otros_gastos, requires_review: totals.requiresReview, total: money(budget.total) },
       internal_distribution: internal, requires_classification: budget.requiere_clasificacion,
       distribution_requires_review: budget.distribucion_requiere_revision,
       pdf_history: budget.documentos.map((item: any) => this.pdfItem(item)),

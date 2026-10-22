@@ -9,7 +9,11 @@ vi.mock('pdfjs-dist', () => ({
   getDocument: (...args: unknown[]) => getDocument(...args),
 }));
 vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: '/pdf.worker.min.mjs' }));
-vi.mock('mammoth', () => ({ convertToHtml: vi.fn().mockResolvedValue({ value: '<h1>Contrato de prueba</h1><p>Contenido Word visible.</p>' }) }));
+const renderDocx = vi.fn(async (_data: ArrayBuffer, body: HTMLElement, styles: HTMLElement) => {
+  styles.innerHTML = '<style>.pravia-docx { color: #111; }</style>';
+  body.innerHTML = '<section class="pravia-docx"><h1>Contrato de prueba</h1><p>Contenido Word visible.</p></section><section class="pravia-docx"><p>Segunda página.</p></section>';
+});
+vi.mock('docx-preview', () => ({ renderAsync: (...args: unknown[]) => renderDocx(...args as [ArrayBuffer, HTMLElement, HTMLElement]) }));
 
 const successfulPdf = () => ({
   promise: Promise.resolve({
@@ -85,13 +89,48 @@ describe('Shared DocumentViewer', () => {
     expect(screen.queryByText(/invalid pdf|blob:broken/i)).not.toBeInTheDocument();
   });
 
-  it('renderiza DOCX dentro de PRAVIA sin descargarlo', async () => {
+  it('informa cuando una página PDF falla al dibujarse sin dejar un rechazo sin manejar', async () => {
+    getDocument.mockReturnValueOnce({
+      promise: Promise.resolve({
+        numPages: 1,
+        getPage: vi.fn().mockResolvedValue({
+          getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: 792 * scale }),
+          render: vi.fn(() => ({ promise: Promise.reject(new Error('canvas failure')), cancel: vi.fn() })),
+        }),
+      }),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    });
+    render(<DocumentViewer open name="pagina.pdf" mimeType="application/pdf" url="blob:page-error" onClose={vi.fn()} />);
+    expect(await screen.findByRole('alert', { name: '' })).toHaveTextContent('No se pudo dibujar esta página.');
+  });
+
+  it('maqueta DOCX por páginas con cabeceras y saltos conservados', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(new Uint8Array([80, 75]), { status: 200 })));
     render(<DocumentViewer open name="contrato.docx" mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" url="blob:docx" onClose={vi.fn()} onDownload={vi.fn()} />);
     expect(await screen.findByRole('heading', { name: 'Contrato de prueba' })).toBeInTheDocument();
     expect(screen.getByText('Contenido Word visible.')).toBeInTheDocument();
+    expect(screen.getByText('Vista maquetada · la paginación puede variar respecto a Word')).toBeInTheDocument();
+    expect(renderDocx).toHaveBeenCalledWith(expect.any(ArrayBuffer), expect.any(HTMLElement), expect.any(HTMLElement), expect.objectContaining({
+      breakPages: true,
+      ignoreLastRenderedPageBreak: false,
+      renderHeaders: true,
+      renderFooters: true,
+      renderAltChunks: false,
+    }));
     expect(screen.getByText('100%')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /Descargar/ }).length).toBeGreaterThan(0);
+  });
+
+  it('descarta scripts y enlaces externos del Word antes de mostrarlo', async () => {
+    renderDocx.mockImplementationOnce(async (_data, body) => {
+      body.innerHTML = '<section class="pravia-docx"><script>alert(1)</script><a href="https://externo.test" onclick="alert(1)">Enlace</a></section>';
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(new Uint8Array([80, 75]), { status: 200 })));
+    render(<DocumentViewer open name="externo.docx" url="blob:externo" onClose={vi.fn()} />);
+    const link = await screen.findByText('Enlace');
+    expect(link).not.toHaveAttribute('href');
+    expect(link).not.toHaveAttribute('onclick');
+    expect(screen.queryByText('alert(1)')).not.toBeInTheDocument();
   });
 
   it('detecta .DOC antiguo sin intentar una conversión silenciosa', () => {

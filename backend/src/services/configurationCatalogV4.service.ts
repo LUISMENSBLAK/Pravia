@@ -56,20 +56,6 @@ async function readLibrary() {
   return buffer;
 }
 
-async function canonicalNotary(actor: Actor, createIfMissing = false) {
-  const records = await prisma.notaria.findMany({
-    where: { organization_id: actor.organizationId, archived_at: null },
-    select: { id: true, nombre: true, numero_notaria: true, activa: true, predeterminada: true, created_at: true },
-    orderBy: [{ predeterminada: 'desc' }, { activa: 'desc' }, { created_at: 'asc' }],
-  });
-  if (records[0] || !createIfMissing) return { notary: records[0] || null, legacyCount: Math.max(0, records.length - 1) };
-  const organization = await prisma.organization.findUnique({ where: { id: actor.organizationId }, select: { name: true } });
-  const created = await prisma.notaria.create({ data: {
-    organization_id: actor.organizationId, nombre: organization?.name || 'Notaría', predeterminada: true, activa: true,
-  }, select: { id: true, nombre: true, numero_notaria: true, activa: true, predeterminada: true, created_at: true } });
-  return { notary: created, legacyCount: 0 };
-}
-
 function normativeData(actor: Actor, artifactId: string, code: string, input?: Partial<LegalMetadata>) {
   const standard = standardLegalMetadata(code);
   const merged = { ...standard, ...input, condiciones: { ...(standard.condiciones || {}), ...(input?.condiciones || {}) } };
@@ -141,7 +127,11 @@ async function persistFiles(input: {
           if (folderCache.has(cacheKey)) { parentId = folderCache.get(cacheKey)!; continue; }
           const existing = code
             ? await tx.catalogoCarpeta.findFirst({ where: { organization_id: actor.organizationId, codigo_biblioteca: code } })
-            : await tx.catalogoCarpeta.findFirst({ where: { organization_id: actor.organizationId, propietario_tipo: ownerType, tipo: artifactType, notaria_id: ownerType === 'NOTARIA' ? ownerId : null, institucion_id: ownerType === 'INSTITUCION' ? ownerId : null, parent_id: parentId, nombre: segment, activa: true } });
+            : await tx.catalogoCarpeta.findFirst({ where: {
+              organization_id: actor.organizationId, propietario_tipo: ownerType, tipo: artifactType,
+              ...(ownerType === 'INSTITUCION' ? { institucion_id: ownerId } : {}),
+              parent_id: parentId, nombre: segment, activa: true,
+            } });
           const folder = existing || await tx.catalogoCarpeta.create({ data: {
             organization_id: actor.organizationId, propietario_tipo: ownerType, tipo: artifactType,
             notaria_id: ownerType === 'NOTARIA' ? ownerId : null, institucion_id: ownerType === 'INSTITUCION' ? ownerId : null,
@@ -229,8 +219,6 @@ async function persistFiles(input: {
 }
 
 export const configurationCatalogV4Service = {
-  canonicalNotary,
-
   async saveProjectAsNotaryTemplate(actor: Actor, expedienteId: string, projectVersionId: string, requestedName?: string, requestedActId?: string, replace = false) {
     const stableCode = `EXP010:${projectVersionId}`;
     const expediente = await prisma.expediente.findFirst({
@@ -251,8 +239,6 @@ export const configurationCatalogV4Service = {
     }
     const project = await prisma.documento.findFirst({ where: { id: projectVersionId, organization_id: actor.organizationId, expediente_id: expedienteId, tipo: 'PROYECTO_ESCRITURA', estatus: { not: 'RECHAZADO' } } });
     if (!project) throw new CatalogConfigurationError(403, 'CFG002_PROJECT_ACCESS_DENIED', 'El proyecto no pertenece a este expediente u organización.');
-    const { notary } = await canonicalNotary(actor, false);
-    if (!notary) throw new CatalogConfigurationError(409, 'CFG002_CANONICAL_NOTARY_UNAVAILABLE', 'Inicializa la biblioteca de la Notaría antes de guardar una plantilla.');
     const buffer = await downloadFile(project.storage_key);
     const storageKey = `organizations/${actor.organizationId}/catalogos/plantillas-formatos/project-promotions/${randomUUID()}_${safeSegment(project.nombre_original)}`;
     await uploadFile(buffer, storageKey, project.mime_type);
@@ -262,7 +248,7 @@ export const configurationCatalogV4Service = {
         const concurrent = await tx.catalogoArtefacto.findFirst({ where: { organization_id: actor.organizationId, codigo_biblioteca: stableCode }, include: { versiones: true } });
         if (concurrent) return { artifact_id: concurrent.id, version_id: concurrent.versiones[0]?.id, idempotent: true };
         const artifact = await tx.catalogoArtefacto.create({ data: {
-          organization_id: actor.organizationId, tipo: 'PLANTILLA', propietario_tipo: 'NOTARIA', notaria_id: notary.id,
+          organization_id: actor.organizationId, tipo: 'PLANTILLA', propietario_tipo: 'ORGANIZACION',
           nombre: requestedName?.trim() || displayName(project.nombre_original), descripcion: `Promovida explícitamente desde el proyecto del expediente ${expedienteId}.`,
           codigo_biblioteca: stableCode, activo: true, creado_por_id: actor.id, actualizado_por_id: actor.id,
         } });
@@ -289,8 +275,6 @@ export const configurationCatalogV4Service = {
   async bootstrap(actor: Actor, idempotencyKey = `${CFG002_LIBRARY_CODE}:${CFG002_LIBRARY_VERSION}`) {
     const previous = await prisma.catalogoBibliotecaImportacion.findFirst({ where: { organization_id: actor.organizationId, codigo_biblioteca: CFG002_LIBRARY_CODE, version_biblioteca: CFG002_LIBRARY_VERSION, source_checksum: CFG002_LIBRARY_SHA256, estado: 'COMPLETED' } });
     if (previous) return { ...(previous.resultado_json as any), idempotent: true };
-    const { notary } = await canonicalNotary(actor, true);
-    if (!notary) throw new CatalogConfigurationError(409, 'CFG002_CANONICAL_NOTARY_UNAVAILABLE', 'No se pudo resolver la Notaría canónica de la organización.');
     const buffer = await readLibrary();
     const directories: string[] = [];
     const packageRoot = 'PRAVIA_OS_CFG-002_Biblioteca_Estandar_v2_LEGAL/';
@@ -310,7 +294,7 @@ export const configurationCatalogV4Service = {
       }
       return [file.path, { act_ids: allActIds, rules: [] }];
     }));
-    return persistFiles({ actor, files, ownerType: 'NOTARIA', ownerId: notary.id, type: 'FORMATO', library: true, idempotencyKey, overrides, directories: directories.filter((item) => item.startsWith(`${packageRoot}NOTARIA`)).map((item) => item.slice(packageRoot.length)) });
+    return persistFiles({ actor, files, ownerType: 'ORGANIZACION', ownerId: actor.organizationId, type: 'FORMATO', library: true, idempotencyKey, overrides, directories: directories.filter((item) => item.startsWith(`${packageRoot}NOTARIA`)).map((item) => item.slice(packageRoot.length)) });
   },
 
   async preview(_actor: Actor, files: Express.Multer.File[]) {
@@ -324,11 +308,11 @@ export const configurationCatalogV4Service = {
     const ownerType = String(metadata.owner_type) as CatalogoPropietarioTipo;
     const type = String(metadata.type) as CatalogoArtefactoTipo;
     if (!Object.values(CatalogoPropietarioTipo).includes(ownerType) || !Object.values(CatalogoArtefactoTipo).includes(type)) throw new CatalogConfigurationError(400, 'CFG002_IMPORT_TARGET_INVALID', 'El destino de importación no es válido.');
+    if (ownerType !== 'ORGANIZACION' && ownerType !== 'INSTITUCION') throw new CatalogConfigurationError(409, 'CFG002_LEGACY_OWNER_READ_ONLY', 'La titularidad histórica de Notaría ya no admite importaciones nuevas.');
     if (ownerType === 'INSTITUCION' && type === 'PLANTILLA') throw new CatalogConfigurationError(400, 'BANK_TEMPLATE_FORBIDDEN', 'Los Bancos y Fiduciarias sólo pueden contener Formatos.');
     const ownerId = String(metadata.owner_id || '');
-    if (ownerType === 'NOTARIA') {
-      const { notary } = await canonicalNotary(actor, false);
-      if (!notary || notary.id !== ownerId) throw new CatalogConfigurationError(403, 'CFG002_CANONICAL_NOTARY_REQUIRED', 'CFG-002 sólo admite la Notaría canónica visible de la organización.');
+    if (ownerType === 'ORGANIZACION') {
+      if (ownerId !== actor.organizationId) throw new CatalogConfigurationError(403, 'CFG002_ORGANIZATION_ACCESS_DENIED', 'La organización no coincide con la sesión activa.');
     } else {
       const institution = await prisma.catalogoInstitucion.findFirst({ where: { id: ownerId, organization_id: actor.organizationId, activa: true } });
       if (!institution) throw new CatalogConfigurationError(403, 'CFG002_INSTITUTION_ACCESS_DENIED', 'La institución no pertenece a esta organización.');

@@ -32,7 +32,7 @@ describe('asignación estructurada de machote Project', () => {
   });
 
   it('obliga a elegir Cancelar o Reemplazar cuando ya existe otro machote', async () => {
-    const tx: any = { $executeRaw: vi.fn(), projectTemplateAssignment: { findUnique: vi.fn().mockResolvedValue({ id: 'old', active: true, artefacto_id: 'old-artifact', version_id: 'old-version', artefacto: { nombre: 'Machote anterior' }, version: { version: 3 } }) } };
+    const tx: any = { $executeRaw: vi.fn(), tipoActo: db.tipoActo, catalogoArtefactoVersion: db.catalogoArtefactoVersion, projectTemplateAssignment: { findUnique: vi.fn().mockResolvedValue({ id: 'old', active: true, artefacto_id: 'old-artifact', version_id: 'old-version', artefacto: { nombre: 'Machote anterior' }, version: { version: 3 } }) } };
     db.$transaction.mockImplementation((callback: any) => callback(tx));
     await expect(projectTemplateAssignmentService.assign(actor, input)).rejects.toMatchObject({ code: 'PROJECT_TEMPLATE_CONFLICT', status: 409 });
   });
@@ -40,6 +40,7 @@ describe('asignación estructurada de machote Project', () => {
   it('reemplaza atómicamente y conserva auditoría cuando se autoriza', async () => {
     const tx: any = {
       $executeRaw: vi.fn(),
+      tipoActo: db.tipoActo, catalogoArtefactoVersion: db.catalogoArtefactoVersion,
       projectTemplateAssignment: {
         findUnique: vi.fn().mockResolvedValue({ id: 'old', active: true, artefacto_id: 'old-artifact', version_id: 'old-version', artefacto: { nombre: 'Machote anterior' }, version: { version: 3 } }),
         upsert: vi.fn().mockResolvedValue({ id: 'assignment-1', ...input }),
@@ -50,6 +51,19 @@ describe('asignación estructurada de machote Project', () => {
     const result = await projectTemplateAssignmentService.assign(actor, { ...input, replace: true });
     expect(result).toMatchObject({ replaced: true, idempotent: false });
     expect(tx.projectTemplateAssignment.upsert).toHaveBeenCalled();
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
     expect(tx.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ accion: 'PROJECT_TEMPLATE_ASSIGNMENT_REPLACED' }) });
+  });
+
+  it('rechaza la asignación si la plantilla fue desactivada antes de validar dentro de la transacción', async () => {
+    db.catalogoArtefactoVersion.findFirst.mockResolvedValue(null);
+    const tx: any = {
+      $executeRaw: vi.fn(), tipoActo: db.tipoActo, catalogoArtefactoVersion: db.catalogoArtefactoVersion,
+      projectTemplateAssignment: { findUnique: vi.fn(), upsert: vi.fn() },
+    };
+    db.$transaction.mockImplementation((callback: any) => callback(tx));
+    await expect(projectTemplateAssignmentService.assign(actor, input)).rejects.toMatchObject({ code: 'PROJECT_TEMPLATE_VERSION_NOT_FOUND', status: 404 });
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+    expect(tx.projectTemplateAssignment.upsert).not.toHaveBeenCalled();
   });
 });

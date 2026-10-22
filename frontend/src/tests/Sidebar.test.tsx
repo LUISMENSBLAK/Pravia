@@ -11,15 +11,16 @@ describe('Sidebar', () => {
       </MemoryRouter>,
     );
 
-    const labels = ['Mi Día', 'Prospectos', 'Cotizaciones', 'Expedientes', 'Notarías', 'Comparecientes', 'Finanzas', 'Agenda', 'Reportes', 'Cumplimiento'];
+    const labels = ['Mi Día', 'Prospectos', 'Cotizaciones', 'Expedientes', 'Comparecientes', 'Finanzas', 'Agenda', 'Reportes', 'Cumplimiento'];
     labels.forEach((label) => expect(screen.getByRole('link', { name: label })).toBeInTheDocument());
     expect(screen.queryByText('Inteligencia')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Notarías' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Mi Día' })).toHaveAttribute('aria-current', 'page');
   });
 
   it('muestra Finanzas y Reportes únicamente cuando la sesión concede sus permisos', () => {
     const { rerender } = render(
-      <MemoryRouter initialEntries={['/notarias']}>
+      <MemoryRouter initialEntries={['/mi-dia']}>
         <Sidebar
           collapsed={false}
           mobileOpen={false}
@@ -34,7 +35,7 @@ describe('Sidebar', () => {
     expect(screen.queryByRole('link', { name: 'Reportes' })).not.toBeInTheDocument();
 
     rerender(
-      <MemoryRouter initialEntries={['/notarias']}>
+      <MemoryRouter initialEntries={['/mi-dia']}>
         <Sidebar
           collapsed={false}
           mobileOpen={false}

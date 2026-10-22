@@ -35,11 +35,12 @@ describe('EXP-008 · prellenado temporal desde comprobante', () => {
     const buffer = Buffer.from(await pdf.save());
     const db = { expediente: { findFirst: vi.fn().mockResolvedValue({ id: 'case-a' }) } };
     ai.extract.mockResolvedValueOnce({ campos: [{ campo: 'monto', valor: '10000.00', confianza: 'LECTURA_CLARA', fragmento: 'Subtotal: $10,000.00 MXN' }], conflictos: [], faltantes: [], uso: usage });
-    const result = await new ExpedienteFinanceService(db as any).previewIncomeAI(actor, 'case-a', { buffer, originalname: 'multi.pdf', mimetype: 'application/pdf', size: buffer.length });
+    const result = await new ExpedienteFinanceService(db as any).previewIncomeAI(actor, 'case-a', { buffer, originalname: 'multi.pdf', mimetype: 'application/pdf', size: buffer.length }, 'prefill-multi');
     expect(result.monto_reportado).toBeNull();
     expect(result.evidencia.some((item) => item.campo === 'monto')).toBe(false);
     expect(ai.extract).toHaveBeenCalledTimes(1);
-    expect(ai.usage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ metadata: expect.objectContaining({ attempts: 1, outcome: 'CONFLICT_OR_CURRENCY', first_pass_reason: 'SOURCE_AMOUNT_CONFLICT', native_amounts_distinct: 3 }) }));
+    expect(ai.usage).not.toHaveBeenCalled();
+    expect(ai.extract).toHaveBeenCalledWith(expect.anything(), 'EXP008', 'GENERAL', expect.objectContaining({ idempotencyKey: 'prefill-multi:general', traceId: 'prefill-multi' }));
   });
 
   it('devuelve sólo sugerencias claras sin persistir ingreso, documento ni movimiento', async () => {
@@ -52,10 +53,10 @@ describe('EXP-008 · prellenado temporal desde comprobante', () => {
       ],
       conflictos: [], faltantes: [], uso: { modelo: 'qa-document-model' }, modelo: 'qa-document-model',
     });
-    const result = await new ExpedienteFinanceService(db as any).previewIncomeAI(actor, 'case-a', file);
+    const result = await new ExpedienteFinanceService(db as any).previewIncomeAI(actor, 'case-a', file, 'prefill-clear');
     expect(result).toMatchObject({ monto_reportado: '250.00', concepto_contexto: 'Anticipo' });
-    expect(ai.extract).toHaveBeenCalledWith(expect.objectContaining({ buffer: file.buffer, mimeType: 'application/pdf', tipoDocumento: 'COMPROBANTE_INGRESO' }));
-    expect(ai.usage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ organizationId: 'org-a', expedienteId: 'case-a', operacion: 'EXP008_INCOME_PREFILL', metadata: expect.objectContaining({ persisted_finance: false }) }));
+    expect(ai.extract).toHaveBeenCalledWith(expect.objectContaining({ buffer: file.buffer, mimeType: 'application/pdf', tipoDocumento: 'COMPROBANTE_INGRESO' }), 'EXP008', 'GENERAL', expect.objectContaining({ idempotencyKey: 'prefill-clear:general' }));
+    expect(ai.usage).not.toHaveBeenCalled();
     expect(findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ organization_id: 'org-a', id: 'case-a' }) }));
     expect(Object.keys(db)).toEqual(['expediente']);
   });
@@ -63,9 +64,9 @@ describe('EXP-008 · prellenado temporal desde comprobante', () => {
   it('informa fallo del proveedor sin éxito simulado ni write financiero', async () => {
     const db = { expediente: { findFirst: vi.fn().mockResolvedValue({ id: 'case-a' }) } };
     ai.extract.mockRejectedValueOnce(new Error('Proveedor no disponible'));
-    await expect(new ExpedienteFinanceService(db as any).previewIncomeAI(actor, 'case-a', file))
+    await expect(new ExpedienteFinanceService(db as any).previewIncomeAI(actor, 'case-a', file, 'prefill-failure'))
       .rejects.toMatchObject({ status: 502, code: 'EXP008_AI_PREFILL_FAILED' });
-    expect(ai.failure).toHaveBeenCalledWith(expect.objectContaining({ operacion: 'EXP008_INCOME_PREFILL', organizationId: 'org-a', expedienteId: 'case-a' }));
+    expect(ai.failure).not.toHaveBeenCalled();
     expect(ai.usage).not.toHaveBeenCalled();
     expect(Object.keys(db)).toEqual(['expediente']);
   });
@@ -74,11 +75,11 @@ describe('EXP-008 · prellenado temporal desde comprobante', () => {
     const db = { expediente: { findFirst: vi.fn().mockResolvedValue({ id: 'case-a' }) } };
     ai.extract.mockResolvedValueOnce({ campos: [], conflictos: [], faltantes: ['monto'], uso: usage })
       .mockResolvedValueOnce({ campos: [{ campo: 'monto', valor: '$ 123.45 MXN', confianza: 'LECTURA_CLARA', pagina: 1, fragmento: 'Total pagado $ 123.45 MXN' }], conflictos: [], faltantes: [], uso: usage });
-    const result = await new ExpedienteFinanceService(db as any).previewIncomeAI(actor, 'case-a', file);
+    const result = await new ExpedienteFinanceService(db as any).previewIncomeAI(actor, 'case-a', file, 'prefill-recovery');
     expect(result.monto_reportado).toBe('123.45');
     expect(ai.extract).toHaveBeenCalledTimes(2);
-    expect(ai.extract).toHaveBeenLastCalledWith(expect.anything(), 'EXP008', 'AMOUNT');
-    expect(ai.usage).toHaveBeenCalledWith(expect.objectContaining({ input_tokens: 20, total_tokens: 30, documentos_enviados: 2 }), expect.objectContaining({ metadata: expect.objectContaining({ attempts: 2, recovery: 'RECOVERED', persisted_finance: false }) }));
+    expect(ai.extract).toHaveBeenLastCalledWith(expect.anything(), 'EXP008', 'AMOUNT', expect.objectContaining({ idempotencyKey: 'prefill-recovery:amount' }));
+    expect(ai.usage).not.toHaveBeenCalled();
     expect(Object.keys(db)).toEqual(['expediente']);
   });
 
@@ -86,10 +87,10 @@ describe('EXP-008 · prellenado temporal desde comprobante', () => {
     const db = { expediente: { findFirst: vi.fn().mockResolvedValue({ id: 'case-a' }) } };
     ai.extract.mockResolvedValueOnce({ campos: [{ campo: 'monto', valor: '100.00', confianza: 'LECTURA_DUDOSA' }], conflictos: [], faltantes: [], uso: usage })
       .mockResolvedValueOnce({ campos: [{ campo: 'monto', valor: '200.00', confianza: 'LECTURA_CLARA' }], conflictos: [], faltantes: [], uso: usage });
-    const result = await new ExpedienteFinanceService(db as any).previewIncomeAI(actor, 'case-a', file);
+    const result = await new ExpedienteFinanceService(db as any).previewIncomeAI(actor, 'case-a', file, 'prefill-disagree');
     expect(result.monto_reportado).toBeNull();
     expect(ai.extract).toHaveBeenCalledTimes(2);
-    expect(ai.usage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ metadata: expect.objectContaining({ attempts: 2, recovery: 'MANUAL_REVIEW', outcome: 'MANUAL_REVIEW' }) }));
+    expect(ai.usage).not.toHaveBeenCalled();
   });
 
   it('no reintenta importes ambiguos ni moneda extranjera', async () => {
@@ -97,8 +98,8 @@ describe('EXP-008 · prellenado temporal desde comprobante', () => {
     ai.extract.mockResolvedValueOnce({ campos: [{ campo: 'monto', valor: '100.00', confianza: 'LECTURA_CLARA' }], conflictos: [{ campo: 'monto', detalle: 'También 200.00' }], faltantes: [], uso: usage })
       .mockResolvedValueOnce({ campos: [{ campo: 'monto', valor: '100.00', confianza: 'LECTURA_CLARA' }, { campo: 'moneda', valor: 'USD', confianza: 'LECTURA_CLARA' }], conflictos: [], faltantes: [], uso: usage });
     const service = new ExpedienteFinanceService(db as any);
-    expect((await service.previewIncomeAI(actor, 'case-a', file)).monto_reportado).toBeNull();
-    expect((await service.previewIncomeAI(actor, 'case-a', file)).monto_reportado).toBeNull();
+    expect((await service.previewIncomeAI(actor, 'case-a', file, 'prefill-ambiguous')).monto_reportado).toBeNull();
+    expect((await service.previewIncomeAI(actor, 'case-a', file, 'prefill-foreign')).monto_reportado).toBeNull();
     expect(ai.extract).toHaveBeenCalledTimes(2);
   });
 });

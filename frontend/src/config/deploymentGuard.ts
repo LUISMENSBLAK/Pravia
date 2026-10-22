@@ -1,6 +1,7 @@
 type DeploymentEnvironment = Record<string, string | undefined>;
 
 const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
+const knownProductionApiHosts = new Set(['pravia-api.onrender.com']);
 
 const absoluteUrl = (value: string) => {
   try {
@@ -17,6 +18,8 @@ export function validateFrontendDeployment(
   const errors: string[] = [];
   const apiBase = String(env.VITE_API_BASE_URL || '').trim();
   const deployEnvironment = String(env.VITE_DEPLOY_ENV || '').trim().toLowerCase();
+  const netlifyContext = String(env.CONTEXT || '').trim().toLowerCase();
+  const isNetlifyPreview = netlifyContext === 'deploy-preview' || netlifyContext === 'branch-deploy';
   const apiUrl = absoluteUrl(apiBase);
 
   if (viteMode === 'production' && apiUrl && localHosts.has(apiUrl.hostname.toLowerCase())) {
@@ -26,7 +29,11 @@ export function validateFrontendDeployment(
     errors.push('VITE_API_BASE_URL debe usar HTTPS en un build de producción.');
   }
 
-  if (deployEnvironment === 'staging') {
+  if (isNetlifyPreview && deployEnvironment !== 'staging') {
+    errors.push('Una preview de Netlify requiere VITE_DEPLOY_ENV=staging.');
+  }
+
+  if (deployEnvironment === 'staging' || isNetlifyPreview) {
     const expectedHost = String(env.VITE_EXPECTED_API_HOST || '').trim().toLowerCase();
     if (!apiUrl || apiUrl.protocol !== 'https:') {
       errors.push('Un deploy staging requiere VITE_API_BASE_URL absoluto con HTTPS.');
@@ -41,7 +48,10 @@ export function validateFrontendDeployment(
       .split(',')
       .map((host) => host.trim().toLowerCase())
       .filter(Boolean);
-    if (apiUrl && productionHosts.includes(apiUrl.hostname.toLowerCase())) {
+    if (!productionHosts.length) {
+      errors.push('Un deploy staging requiere VITE_PRODUCTION_API_HOSTS para bloquear el destino productivo.');
+    }
+    if (apiUrl && (knownProductionApiHosts.has(apiUrl.hostname.toLowerCase()) || productionHosts.includes(apiUrl.hostname.toLowerCase()))) {
       errors.push('Un deploy staging no puede apuntar a un host API de producción.');
     }
   }

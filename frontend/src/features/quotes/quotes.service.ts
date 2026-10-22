@@ -1,5 +1,5 @@
 import { apiBlobRequest, apiRequest } from '../../services/api/client';
-import type { NotaryOption, ProspectCandidate, Quote, QuoteAIProposal, QuoteActTypeOption, QuoteBudget, QuoteBudgetConcept, QuoteBudgetExtraction, QuoteContractAction, QuoteDocument, QuoteFollowUp, QuoteListFilters, QuoteListResult, QuoteState } from './quotes.types';
+import type { ProspectCandidate, Quote, QuoteAIProposal, QuoteActTypeOption, QuoteBudget, QuoteBudgetConcept, QuoteBudgetExtraction, QuoteContractAction, QuoteDocument, QuoteFollowUp, QuoteListFilters, QuoteListResult, QuoteState } from './quotes.types';
 
 const asObject = (value: unknown): Record<string, unknown> | null => value && typeof value === 'object' ? value as Record<string, unknown> : null;
 const queryString = (filters: QuoteListFilters) => {
@@ -44,18 +44,12 @@ export const quotesService = {
     const data = Array.isArray(payload) ? payload : Array.isArray(root?.data) ? root.data : [];
     return data as ProspectCandidate[];
   },
-  async notaries(search = '', signal?: AbortSignal): Promise<NotaryOption[]> {
-    const params = new URLSearchParams({ activa: 'true' });
-    if (search.trim()) params.set('search', search.trim());
-    const payload = await apiRequest<unknown>(`/notarias?${params.toString()}`, { signal });
-    return Array.isArray(payload) ? payload as NotaryOption[] : [];
-  },
   async actTypes(signal?: AbortSignal): Promise<QuoteActTypeOption[]> {
     const payload = await apiRequest<unknown>('/expedientes/tipos-acto', { signal });
     return Array.isArray(payload) ? payload as QuoteActTypeOption[] : [];
   },
-  async create(prospectId: string, notaryId?: string): Promise<Quote> {
-    return apiRequest<Quote>('/cotizaciones', { method: 'POST', body: JSON.stringify({ prospecto_id: prospectId, ...(notaryId ? { notaria_id: notaryId } : {}) }) });
+  async create(prospectId: string): Promise<Quote> {
+    return apiRequest<Quote>('/cotizaciones', { method: 'POST', body: JSON.stringify({ prospecto_id: prospectId }) });
   },
   async extractBudget(file: File): Promise<QuoteBudgetExtraction> {
     const body = new FormData(); body.append('archivo', file);
@@ -64,15 +58,21 @@ export const quotesService = {
   async generateDocument(id: string): Promise<QuoteDocument> {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/generar-documento`, { method: 'POST' });
   },
-  async updateBudget(id: string, input: { concepts: Array<Pick<QuoteBudgetConcept, 'categoria' | 'concepto' | 'importe'>>; origin: 'MANUAL' | 'IMPORTADO'; operationContext: string; expectedUpdatedAt: string }): Promise<{ presupuesto: QuoteBudget; updated_at: string; stage: string | null }> {
+  async updateBudget(id: string, input: { concepts: Array<Pick<QuoteBudgetConcept, 'categoria' | 'concepto' | 'importe' | 'tratamiento_iva' | 'iva_tasa' | 'regla_fiscal_fuente' | 'regla_fiscal_version'>>; origin: 'MANUAL' | 'IMPORTADO'; operationContext: string; expectedUpdatedAt: string }): Promise<{ presupuesto: QuoteBudget; updated_at: string; stage: string | null }> {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/presupuesto`, { method: 'PUT', body: JSON.stringify(input) });
+  },
+  async previewBudget(id: string, concepts: Array<Pick<QuoteBudgetConcept, 'categoria' | 'concepto' | 'importe' | 'tratamiento_iva' | 'iva_tasa' | 'regla_fiscal_fuente' | 'regla_fiscal_version'>>, signal?: AbortSignal): Promise<{ totals: QuoteBudget['totals'] }> {
+    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/presupuesto/vista-previa`, { method: 'POST', body: JSON.stringify({ concepts }), signal });
   },
   async generateAIProposal(id: string): Promise<{ data: QuoteAIProposal; idempotent: boolean }> {
     const key = crypto.randomUUID();
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/propuestas-ia`, { method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify({ idempotency_key: key }) });
   },
   async draftEmailWithAI(id: string): Promise<{ recipient: string; cc: string; subject: string; messageBody: string; provider: 'OPENAI'; model: string; promptVersion: string }> {
-    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/correo-ia`, { method: 'POST' });
+    const key = crypto.randomUUID();
+    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/correo-ia`, {
+      method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify({ idempotency_key: key }),
+    });
   },
   async decideAIProposal(id: string, proposalId: string, action: 'APLICAR' | 'DESCARTAR'): Promise<{ data: QuoteAIProposal; applied: boolean }> {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/propuestas-ia/${encodeURIComponent(proposalId)}`, { method: 'PATCH', body: JSON.stringify({ action }) });

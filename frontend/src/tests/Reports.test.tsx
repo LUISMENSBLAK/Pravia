@@ -61,7 +61,8 @@ describe('Reportes', () => {
     expect(screen.getByRole('note', { name: /Definición de clientes generados: Cotizaciones aceptadas/ })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /Tendencia mensual/ })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /Top cinco abogados/ })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: /Top cinco notarías/ })).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /Top cinco notarías/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Filtrar por notaría')).not.toBeInTheDocument();
     expect(screen.getByRole('table', { name: /Top cinco abogados/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Configurar meta' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /Honorarios generados/ }));
@@ -91,12 +92,12 @@ describe('Reportes', () => {
     expect(screen.getByLabelText('Periodo del reporte')).toHaveValue('ESTE_TRIMESTRE');
   });
 
-  it('Finanzas muestra comparativos por abogado, notaría, evolución y meta', async () => {
+  it('Finanzas muestra comparativo por abogado, evolución y meta sin selector de notaría', async () => {
     mockApi();
     renderReports('/reportes?view=finanzas');
     expect(await screen.findByRole('heading', { name: 'Evolución financiera' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Honorarios por abogado' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Honorarios por notaría' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Honorarios por notaría' })).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Progreso de meta' })).toBeInTheDocument();
     expect(screen.getByText('62.0%')).toBeInTheDocument();
   });
@@ -106,7 +107,7 @@ describe('Reportes', () => {
     renderReports('/reportes?view=cobranza');
     expect(await screen.findByText('Cobrado y aplicado')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Cobranza por abogado' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Cobranza por notaría' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Cobranza por notaría' })).not.toBeInTheDocument();
     const row = screen.getByRole('link', { name: 'EXP-2026-0141' }).closest('tr');
     expect(row && within(row).getByText('Vencido')).toBeInTheDocument();
   });

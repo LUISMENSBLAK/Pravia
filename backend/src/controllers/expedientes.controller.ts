@@ -956,9 +956,9 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
     }
     const cleanAlias = cliente_alias === undefined ? undefined : String(cliente_alias).trim();
     const cleanAbogadoId = abogado_id === undefined ? undefined : String(abogado_id).trim();
-    // Compatibilidad de dominio: la notaría ya no forma parte de la cabecera visual,
-    // pero el writer histórico sigue disponible para integraciones autorizadas.
-    const cleanNotariaId = notaria_id === undefined ? undefined : (notaria_id ? String(notaria_id).trim() : null);
+    if (notaria_id !== undefined) {
+      throw new ExpedienteUpdateError('La notaría activa se obtiene de la organización de tu sesión; no se selecciona en el expediente.', 'EXPEDIENTE_NOTARY_SELECTOR_RETIRED', 409);
+    }
     const cleanNumeroEscritura = numero_escritura === undefined ? undefined : String(numero_escritura).trim();
     const cleanFolioDesde = folio_desde === undefined ? undefined : String(folio_desde).trim();
     const cleanFolioHasta = folio_hasta === undefined ? undefined : String(folio_hasta).trim();
@@ -1027,19 +1027,6 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
         const lawyer = await tx.user.findFirst({ where: { id: cleanAbogadoId, activo: true, organizationMemberships: { some: { organization_id: req.user!.organizationId, status: 'ACTIVE' } } }, select: { id: true } });
         if (!lawyer) throw new ExpedienteUpdateError('El abogado seleccionado no existe o está inactivo.', 'EXPEDIENTE_LAWYER_INVALID');
       }
-      if (cleanNotariaId) {
-        const notary = await tx.notaria.findFirst({
-          where: {
-            id: cleanNotariaId,
-            activa: true,
-            archived_at: null,
-            OR: [{ organization_id: req.user!.organizationId }, { organization_id: null }],
-          },
-          select: { id: true },
-        });
-        if (!notary) throw new ExpedienteUpdateError('La notaría seleccionada no existe o está inactiva.', 'EXPEDIENTE_NOTARY_INVALID');
-      }
-
       const actorId = req.user?.id;
       if (!actorId) throw new ExpedienteUpdateError('Tu sesión no es válida.', 'AUTH_REQUIRED', 401);
       const actor = await tx.user.findFirst({ where: { id: actorId, activo: true }, select: { id: true } });
@@ -1048,7 +1035,6 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
       const changes: string[] = [];
       if (cleanAlias !== undefined && cleanAlias !== currentExp.cliente_alias) changes.push('Alias o identificación');
       if (cleanAbogadoId !== undefined && cleanAbogadoId !== currentExp.abogado_id) changes.push('Abogado encargado');
-      if (cleanNotariaId !== undefined && cleanNotariaId !== currentExp.notaria_id) changes.push('Notaría');
       if (cleanNumeroEscritura !== undefined && cleanNumeroEscritura !== (currentExp.numero_escritura || '')) changes.push('Número de escritura');
       if (cleanFechaFirma !== undefined && cleanFechaFirma?.getTime() !== currentExp.fecha_real_firma?.getTime()) changes.push('Fecha de firma');
       if (cleanFechaEstimadaFirma !== undefined && cleanFechaEstimadaFirma?.getTime() !== currentExp.fecha_estimada_firma?.getTime()) changes.push('Fecha estimada de firma');
@@ -1067,7 +1053,6 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
         data: {
           cliente_alias: cleanAlias,
           abogado_id: cleanAbogadoId,
-          notaria_id: cleanNotariaId,
           numero_escritura: cleanNumeroEscritura === undefined ? undefined : (cleanNumeroEscritura || null),
           fecha_real_firma: cleanFechaFirma,
           fecha_estimada_firma: cleanFechaEstimadaFirma,
@@ -1079,15 +1064,6 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
           version: { increment: 1 },
         },
       });
-
-      if (cleanNotariaId !== undefined && cleanNotariaId !== currentExp.notaria_id) {
-        await new ExpedienteArtifactsService(prisma).reconcileContextChangeInTransaction(
-          tx,
-          req.user!,
-          id,
-          'EXPEDIENTE_NOTARY_CHANGE',
-        );
-      }
 
       if (changes.length > 0) {
         const correlationId = (req as any).correlationId || crypto.randomUUID();

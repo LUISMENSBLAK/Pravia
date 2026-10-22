@@ -76,6 +76,7 @@ export async function prepareAssistantAttachmentContext(
   user: AuthUser,
   conversationId: string,
   rawIds: unknown,
+  operationId: string,
 ): Promise<{ context?: string; usages: AIUsageMetrics[]; facts?: Array<{ field: string; value: string; confidence?: string; attachmentId: string }> }> {
   const ids = [...new Set((Array.isArray(rawIds) ? rawIds : []).map((value) => String(value)).filter(Boolean))].slice(0, 6);
   if (!ids.length) return { usages: [] };
@@ -106,7 +107,12 @@ export async function prepareAssistantAttachmentContext(
             documentoId: attachment.documento_id || attachment.id,
             nombreOriginal: attachment.original_name,
           }];
-        const result = await extraerMultiplesDocumentos(documents);
+        const result = await extraerMultiplesDocumentos(documents, {
+          actor: { userId: user.id, organizationId: user.organizationId, membershipId: user.membershipId,
+            role: user.rol, permissions: user.permissions, scope: user.scope, sessionId: user.sessionId },
+          idempotencyKey: `${operationId}:attachment:${attachment.id}`,
+          traceId: operationId,
+        });
         extraction = storedExtraction(result, {
           attachment_id: attachment.id,
           documento_id: attachment.documento_id || null,
@@ -116,7 +122,6 @@ export async function prepareAssistantAttachmentContext(
           organization_id: user.organizationId,
           files_analyzed: documents.map((item) => item.nombreOriginal),
         });
-        usages.push(...(result.usos || (result.uso ? [result.uso] : [])));
         await prisma.assistantAttachment.update({
           where: { id: attachment.id },
           data: { extraction: extraction as Prisma.InputJsonValue },

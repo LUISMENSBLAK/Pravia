@@ -173,7 +173,9 @@ export class FinancialMovementService {
           expediente_id: null,
           cotizacion_id: input.cotizacion_id || null,
           compareciente_id: input.compareciente_id || null,
-          notaria_id: input.notaria_id || null,
+          // Historical links remain readable; new tenant movements do not
+          // select an internal notary record.
+          notaria_id: null,
           responsable_id: input.responsable_id || null,
           cuenta_id: input.cuenta_id,
           tipo_movimiento: input.tipo_movimiento || (input.naturaleza === 'INGRESO' ? 'ABONO' : 'EGRESO_TERCEROS'),

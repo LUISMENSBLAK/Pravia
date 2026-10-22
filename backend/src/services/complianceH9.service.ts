@@ -9,7 +9,6 @@ import {
   validateH9Result, type H9SourceManifestEntry,
 } from '../domain/complianceH9';
 import { runH9ReviewWithOpenAI, type H9AiAdapter } from './complianceH9.ai';
-import { recordAIUsageInDb, recordAIFailure } from './aiUsage.service';
 import { recordComplianceActivityTx } from './complianceH7.service';
 
 type User = NonNullable<Request['user']>;
@@ -163,15 +162,14 @@ export class ComplianceH9Service {
     let response;
     const operationId = `h9:${user.organizationId}:${expedienteId}:${idempotencyKey}`;
     try {
-      response = await this.ai({ dataset: current.dataset, source_manifest: current.manifest.map((entry) => ({ ...entry, source_ref: sourceRef(entry) })) });
+      response = await this.ai({ actor: user, idempotencyKey: operationId, traceId: correlationId || operationId,
+        dataset: current.dataset, source_manifest: current.manifest.map((entry) => ({ ...entry, source_ref: sourceRef(entry) })) });
     } catch (error) {
-      await recordAlaugFailureSafe(user, expedienteId, operationId, error);
       throw new ComplianceError('No fue posible completar la revisión asistida. Los datos permanecen sin cambios.', 'H9_AI_FAILED', 502);
     }
     let result;
     try { result = validateH9Result(response.result, new Set(current.manifest.map(sourceRef))); }
     catch {
-      await recordAIFailure({ organizationId: user.organizationId, usuarioId: user.id, expedienteId, operacion: 'CUM_AUD_ASSISTED_REVIEW', operationId, modelo: response.model, errorCode: 'H9_AI_OUTPUT_INVALID' }).catch(() => undefined);
       throw new ComplianceError('La respuesta asistida no cumplió el contrato estructurado. Los datos permanecen sin cambios.', 'H9_AI_OUTPUT_INVALID', 502);
     }
     return (this.db as any).$transaction(async (tx: any) => {
@@ -187,16 +185,11 @@ export class ComplianceH9Service {
         result_json: json(result), result_checksum: h9Hash(result), correct_count: result.correct_count,
         observation_count: result.observations.length, critical_count: result.critical_inconsistencies.length,
       } });
-      await recordAIUsageInDb(tx, response.usage, { organizationId: user.organizationId, usuarioId: user.id, expedienteId, operacion: 'CUM_AUD_ASSISTED_REVIEW', operationId, metadata: { assisted_review_id: created.id, prompt_version: response.prompt_version, schema_version: response.schema_version } });
       await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'H9_RUN_ASSISTED_COMPLIANCE_REVIEW', entidad: 'ComplianceAssistedReview', entidad_id: created.id, detalles: json({ expediente_id: expedienteId, compliance_review_id: current.reviewId, dataset_fingerprint: current.fingerprint, result_checksum: created.result_checksum }), correlation_id: correlationId, session_id: user.sessionId } });
       await recordComplianceActivityTx(tx, { organizationId: user.organizationId, expedienteId, actorUserId: user.id, action: 'ASSISTED_COMPLIANCE_REVIEW_COMPLETED', entity: 'ComplianceAssistedReview', entityId: created.id, title: 'Revisión de Cumplimiento ejecutada', description: `${result.correct_count} verificaciones correctas, ${result.observations.length} observaciones y ${result.critical_inconsistencies.length} inconsistencias críticas.`, idempotencyKey: `h9:review:${created.id}`, correlationId, metadata: { source: 'H9-CUM-AUD', assisted_review_id: created.id } });
       return { review: created, idempotent: false };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
-}
-
-async function recordAlaugFailureSafe(user: User, expedienteId: string, operationId: string, error: unknown) {
-  await recordAIFailure({ organizationId: user.organizationId, usuarioId: user.id, expedienteId, operacion: 'CUM_AUD_ASSISTED_REVIEW', operationId, modelo: process.env.OPENAI_ASSISTANT_MODEL || 'gpt-5.4-mini', errorCode: error instanceof Error ? error.message.slice(0, 80) : 'H9_AI_FAILED' }).catch(() => undefined);
 }
 
 export const complianceH9Service = new ComplianceH9Service();

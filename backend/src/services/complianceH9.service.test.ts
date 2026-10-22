@@ -42,7 +42,7 @@ describe('H9 assisted compliance service', () => {
     expect(result.idempotent).toBe(false); expect(db._tx.complianceAssistedReview.create).toHaveBeenCalledTimes(1);
     expect(db._tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ entidad: 'ComplianceAssistedReview' }) }));
     expect(db._tx.expedienteActividad.createMany).toHaveBeenCalledTimes(1);
-    expect(db._tx.aIUsageLog.upsert).toHaveBeenCalledTimes(1);
+    expect(db._tx.aIUsageLog.upsert).not.toHaveBeenCalled();
   });
   it('returns a technical retry without invoking AI or duplicating history/activity', async () => {
     const db = createDb(); db.complianceAssistedReview.findFirst.mockResolvedValue({ id: 'existing' }); const localAi = vi.fn();
@@ -71,7 +71,7 @@ describe('H9 assisted compliance service', () => {
   it('does not persist a clean result when the AI seam fails', async () => {
     const db = createDb(); const failedAi = vi.fn().mockRejectedValue(new Error('network'));
     await expect(new ComplianceH9Service(db, failedAi).run(actor, exp, { idempotency_key: 'manual-run-003' })).rejects.toMatchObject({ code: 'H9_AI_FAILED' });
-    expect(db.$transaction).not.toHaveBeenCalled(); expect(mocks.failure).toHaveBeenCalled();
+    expect(db.$transaction).not.toHaveBeenCalled(); expect(mocks.failure).not.toHaveBeenCalled();
   });
   it('requires both the canonical compliance review and IA execution permissions', async () => {
     const db = createDb();

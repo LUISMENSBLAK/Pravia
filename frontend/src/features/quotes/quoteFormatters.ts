@@ -32,6 +32,7 @@ export const QUOTE_CONCEPT_CATEGORY_LABELS: Record<QuoteConcept['categoria'], st
   HONORARIOS: 'Honorarios',
   IVA_HONORARIOS: 'IVA de honorarios',
   IMPUESTOS_DERECHOS: 'Impuestos y derechos',
+  OTRO_GASTO: 'Otro gasto',
   OTROS: 'Otros',
 };
 export const quoteCategoryLabel = (category: QuoteConcept['categoria']) => QUOTE_CONCEPT_CATEGORY_LABELS[category];
@@ -107,7 +108,7 @@ export const conceptsFromVersion = (version?: QuoteVersion | null): QuoteConcept
     const concepto = typeof row?.concepto === 'string' ? row.concepto : typeof row?.nombre === 'string' ? row.nombre : '';
     const monto = Number(row?.monto ?? row?.importe ?? 0);
     const rawCategory = String(row?.categoria ?? 'OTROS').toUpperCase();
-    const categoria = ['HONORARIOS', 'IVA_HONORARIOS', 'IMPUESTOS_DERECHOS'].includes(rawCategory) ? rawCategory as QuoteConcept['categoria'] : 'OTROS';
+    const categoria = ['HONORARIOS', 'IVA_HONORARIOS', 'IMPUESTOS_DERECHOS', 'OTRO_GASTO'].includes(rawCategory) ? rawCategory as QuoteConcept['categoria'] : 'OTROS';
     return concepto && Number.isFinite(monto) ? [{ categoria, concepto, monto }] : [];
   });
 };

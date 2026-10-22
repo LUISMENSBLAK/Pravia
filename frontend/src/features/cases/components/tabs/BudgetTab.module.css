@@ -18,6 +18,7 @@
 .group > header > strong { white-space: nowrap; color: #243c31; font-size: 18px; }
 .concepts { display: grid; gap: 10px; padding-top: 14px; }
 .conceptRow { display: grid; grid-template-columns: minmax(180px, 1.45fr) minmax(150px, .85fr) minmax(125px, .6fr) auto; align-items: end; gap: 10px; }
+.taxFields { grid-column: 1 / -2; display: grid; grid-template-columns: repeat(4, minmax(140px, 1fr)); gap: 10px; padding: 11px; border-radius: 11px; background: #f8f7f2; border: 1px solid #ece7d8; }
 .conceptRow label, .note { display: grid; gap: 5px; min-width: 0; }
 .conceptRow label > span, .note > span { font-size: 11px; font-weight: 750; color: #667085; }
 .conceptRow input, .conceptRow select, .note textarea { width: 100%; box-sizing: border-box; border: 1px solid #d0d5dd; border-radius: 9px; background: #fff; color: #1f2937; min-height: 42px; padding: 9px 11px; font: inherit; }
@@ -70,6 +71,7 @@
   .headingActions { width: 100%; justify-content: flex-end; }
   .conceptRow { grid-template-columns: 1fr 1fr; }
   .conceptRow label:first-child { grid-column: 1 / -1; }
+  .taxFields { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; }
   .rowActions { justify-self: end; }
   .history { padding: 15px; }
 }
@@ -80,6 +82,8 @@
   .group { padding: 14px; }
   .conceptRow { grid-template-columns: 1fr; }
   .conceptRow label, .rowActions { grid-column: 1; }
+  .taxFields { grid-column: 1; grid-template-columns: 1fr; }
+  .taxFields label { grid-column: 1; }
   .rowActions { justify-self: end; }
   .totals { padding: 14px; }
   .totals > div { align-items: flex-start; flex-direction: column; gap: 3px; }

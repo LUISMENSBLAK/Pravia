@@ -118,15 +118,18 @@ export type ExpedienteQuestionnaireInstance = {
   formats: Array<{ id: string; nombre: string }>;
 };
 
-export type BudgetConceptCategory = 'HONORARIOS' | 'IVA_HONORARIOS' | 'IMPUESTOS_DERECHOS';
-export type ExpedienteBudgetConcept = { id?: string; concepto: string; categoria: BudgetConceptCategory; importe: string; orden: number };
+export type BudgetConceptCategory = 'HONORARIOS' | 'IVA_HONORARIOS' | 'IMPUESTOS_DERECHOS' | 'OTRO_GASTO';
+export type BudgetTaxTreatment = 'SIN_IMPUESTO' | 'GRAVADO' | 'EXENTO' | 'NO_OBJETO' | 'REQUIERE_REVISION';
+export type ExpedienteBudgetConcept = { id?: string; concepto: string; categoria: BudgetConceptCategory; importe: string; orden: number;
+  tratamiento_iva?: BudgetTaxTreatment | null; iva_tasa?: string | null; regla_fiscal_fuente?: string | null; regla_fiscal_version?: string | null };
 export type BudgetDistributionParty = { honorarios: string; honorarios_porcentaje: string; iva: string; iva_porcentaje: string };
 export type ExpedienteBudgetPdf = { id: string; document_id: string; generated_at: string; total: string; budget_version: number; note?: string | null; file_name: string; mime_type: string; immutable: true };
 export type ExpedienteBudget = {
   id: string; version: number; origin: 'COTIZACION_ESTRUCTURADA' | 'LEGACY_JSON' | 'LEGACY_SIN_ESTRUCTURA';
   quote_origin?: { quote_id: string; quote_version_id: string; quote_version: number; immutable: true } | null;
   concepts: ExpedienteBudgetConcept[];
-  totals: { honorarios: string; iva_honorarios: string; subtotal_honorarios: string; subtotal_impuestos_derechos: string; total: string };
+  totals: { honorarios: string; iva_honorarios: string; subtotal_honorarios: string; subtotal_impuestos_derechos: string;
+    otros_gastos: string; iva_otros_gastos: string; subtotal_otros_gastos: string; requires_review: boolean; total: string };
   internal_distribution?: { pravia: BudgetDistributionParty; notaria: BudgetDistributionParty; canonical_values: 'AMOUNTS'; closed: boolean } | null;
   requires_classification: boolean; distribution_requires_review: boolean; pdf_history: ExpedienteBudgetPdf[];
   capabilities: { can_edit: boolean; can_view_internal_distribution: boolean; can_edit_internal_distribution: boolean; can_generate_pdf: boolean; can_view_pdf: boolean; can_delete_pdf: boolean };
@@ -151,7 +154,7 @@ export type ExpedienteListResult = {
   meta: { total: number; page: number; pageSize: number; limit: number; totalPages: number; hasPreviousPage: boolean; hasNextPage: boolean };
   facets: { actTypes: ActTypeOption[]; responsibles: PersonOption[]; notaries: NotaryOption[]; stages: string[] };
 };
-export type ExpedienteListFilters = { search?: string; folio?: string; macrophase?: string; stage?: string; responsible?: string; notary?: string; risk?: string; compliance?: string; dateFrom?: string; dateTo?: string; deedNumber?: string; deedDateFrom?: string; deedDateTo?: string; actType?: string; client?: string; status?: string; page?: number; pageSize?: number; sort?: string };
+export type ExpedienteListFilters = { search?: string; folio?: string; macrophase?: string; stage?: string; responsible?: string; risk?: string; compliance?: string; dateFrom?: string; dateTo?: string; deedNumber?: string; deedDateFrom?: string; deedDateTo?: string; actType?: string; client?: string; status?: string; page?: number; pageSize?: number; sort?: string };
 
 export type EligibleQuoteCandidate = {
   id: string;

@@ -19,8 +19,7 @@ export type FinanceCategory = { id: string; clave: string; nombre: string; natur
 export type FinanceAccount = { id: string; institucion: string; alias: string; tipo: string; ultimos_cuatro?: string|null; moneda: string; activa?: boolean; predeterminada?: boolean; saldo_pravia?: number; saldo_tipo?: string; _count?: { movimientos: number; transaccionesBanco: number } };
 export type FinanceCatalogs = {
   categories: FinanceCategory[]; accounts: FinanceAccount[];
-  expedientes: Array<{id:string;numero_pravia:string;cliente_alias?:string|null;notaria_id?:string|null;abogado_id:string;cotizacion_id?:string|null}>;
-  notarias: Array<{id:string;nombre:string;numero_notaria?:string|null}>;
+  expedientes: Array<{id:string;numero_pravia:string;cliente_alias?:string|null;abogado_id:string;cotizacion_id?:string|null}>;
   responsables: Array<{id:string;nombre:string;apellido:string;rol:string}>;
   permisos: { escribir:boolean; aplicar:boolean; conciliar:boolean; expedientesLeer:boolean; documentosLeer:boolean; documentosEscribir:boolean; documentosEliminar:boolean };
   invoiceIntegration: { configured:boolean;status:string;message:string };
@@ -38,7 +37,7 @@ export type FinanceMovement = {
   distribuciones:MovementAllocation[];comprobanteInterno?:{id:string;folio:string;estado:string}|null;movimientoDocumentos?:FinanceDocumentLink[];
 };
 export type Paginated<T> = { items:T[];meta:{page:number;pageSize:number;total:number;totalPages:number;agingAvailable?:boolean;totals?:{generated:number;collected:number;pending:number}} };
-export type MovementDraft = { naturaleza:'INGRESO'|'EGRESO';monto:number;fecha_movimiento:string;cuenta_id:string;expediente_id?:string;notaria_id?:string;responsable_id?:string;tipo_movimiento:string;concepto:string;descripcion?:string;forma_pago:string;referencia?:string;distribuciones:Array<{categoria_id:string;monto:number}>;idempotency_key:string };
+export type MovementDraft = { naturaleza:'INGRESO'|'EGRESO';monto:number;fecha_movimiento:string;cuenta_id:string;expediente_id?:string;responsable_id?:string;tipo_movimiento:string;concepto:string;descripcion?:string;forma_pago:string;referencia?:string;distribuciones:Array<{categoria_id:string;monto:number}>;idempotency_key:string };
 export type Receipt = { id:string;folio:string;tipo:'INGRESO'|'EGRESO';fecha:string;importe:number|string;concepto:string;persona?:string|null;estado:string;movimiento:FinanceMovement;registrado_por?:{nombre:string;apellido:string} };
 export type Receivable = { id:string;cliente:string;expediente?:{id:string;numero_pravia:string}|null;cotizacion:{numero_cotizacion?:string|null};responsable:string;fecha_reconocimiento:string;fecha_vencimiento?:string|null;generated:number;collected:number;pending:number;bucket?:string|null;ultimo_pago?:string|null };
 export type ReconciliationData = { summary:{conciliados:number;pendientes:number;sinCoincidencia:number};rows:Array<{transaction:{id:string;fecha:string;importe:number|string;descripcion:string;referencia?:string|null;estado:string;cuenta:FinanceAccount};current?:unknown;suggestion?:{score:number;algorithm:string;reasons:string[];movement:FinanceMovement}|null}>;unmatchedMovements:FinanceMovement[] };

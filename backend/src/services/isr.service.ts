@@ -8,7 +8,6 @@ import { extraerMultiplesDocumentos, getOpenAIModelName, type DocumentoParaExtra
 import { calculateISR, ISRCalculationInput, ISRRateBracket, ISRRuleSetSnapshot, ISRValidationError } from '../domain/isrTaxEngine';
 import { buildISRV3RuleSnapshot, calculateISRV3, type ISRV3Input, type ISRV3Result } from '../domain/isrV3Engine';
 import { comparecienteObjectWhere } from './objectAccess.service';
-import { recordAIUsageInDb } from './aiUsage.service';
 import { FunctionalDocumentRenderError, renderConfiguredFunctionalDocument } from './functionalDocumentRenderer.service';
 import { buildFiscalExportPayload, calculateAdditionalTax, calculateReferredValue, calculateSurcharges, validateFiscalExportProfile, type FiscalReferenceSnapshot } from '../domain/isrFiscalUtilities';
 
@@ -645,21 +644,19 @@ export class ISRService {
   async extract(user: AuthUser, id: string, options: { requestKey?: string } = {}) {
     const current = await this.get(user, id);
     const requestKey = String(options.requestKey || '').trim();
-    const operationId = requestKey ? `isr-extraction:${user.organizationId}:${id}:${requestKey}` : '';
-    if (operationId) {
-      const priorUsage = await this.db.aIUsageLog.findFirst({
-        where: { organization_id: user.organizationId, operation_id: { startsWith: `${operationId}:` }, estatus: 'COMPLETADO' },
-        orderBy: { created_at: 'asc' },
-      });
-      if (priorUsage) {
+    if (!requestKey) throw new ISRValidationError('IDEMPOTENCY_REQUIRED', 'La extracción requiere una clave de idempotencia.');
+    const operationId = `isr-extraction:${user.organizationId}:${id}:${requestKey}`;
+    const prior = await this.db.auditLog.findFirst({
+      where: { organization_id: user.organizationId, entidad: 'CalculoISR', entidad_id: id, accion: 'EXTRAER_DATOS_ISR_IA', detalles: { path: ['operation_id'], equals: operationId } },
+    });
+    if (prior) {
         return {
-          provider: priorUsage.provider,
-          model: priorUsage.modelo,
+          provider: 'OpenAI',
+          model: current.propuestas[0]?.model_version || getOpenAIModelName(),
           proposals: current.propuestas.length,
           conflicts: [...new Set(current.propuestas.filter((item) => item.status === 'CONFLICTO').map((item) => item.field_path))],
           idempotent: true,
         };
-      }
     }
     const readable: DocumentoParaExtraccion[] = [];
     for (const link of current.documentos) {
@@ -667,7 +664,11 @@ export class ISRService {
       readable.push({ buffer: file, mimeType: link.documento.mime_type, tipoDocumento: link.documento.tipo, documentoId: link.documento.id, nombreOriginal: link.documento.nombre_original });
     }
     if (!readable.length) throw new ISRValidationError('DOCUMENT_REQUIRED', 'Carga al menos un documento antes de extraer información.');
-    const extraction = await extraerMultiplesDocumentos(readable);
+    const extraction = await extraerMultiplesDocumentos(readable, {
+      actor: { userId: user.id, organizationId: user.organizationId, membershipId: user.membershipId,
+        role: user.rol, permissions: user.permissions, scope: user.scope, sessionId: user.sessionId },
+      idempotencyKey: operationId, traceId: operationId,
+    });
     const groups = new Map<string, typeof extraction.campos>();
     for (const field of extraction.campos) { const list = groups.get(field.campo) || []; list.push(field); groups.set(field.campo, list); }
     const conflicts = new Set<string>();
@@ -678,15 +679,7 @@ export class ISRService {
         const doc = readable.find((item) => item.documentoId === field.documento_id) || readable[0];
         await tx.calculoISRPropuesta.create({ data: { organization_id: user.organizationId, calculo_id: id, field_path: field.campo, proposed_value: json(field.valor), status: conflicts.has(field.campo) ? 'CONFLICTO' : 'PENDIENTE', source_document_id: doc.documentoId, source_document_name: doc.nombreOriginal, source_page: field.pagina, confidence: field.confianza === 'LECTURA_CLARA' ? new Prisma.Decimal('0.95') : field.confianza === 'LECTURA_DUDOSA' ? new Prisma.Decimal('0.65') : new Prisma.Decimal('0.35'), model_version: extraction.modelo || getOpenAIModelName(), source_fragment: field.fragmento?.slice(0, 400), conflict_group: conflicts.has(field.campo) ? field.campo : null } });
       }
-      for (const [index, usage] of (extraction.usos || (extraction.uso ? [extraction.uso] : [])).entries()) {
-        await recordAIUsageInDb(tx, usage, {
-          operacion: 'ISR_DOCUMENT_EXTRACTION', usuarioId: user.id, expedienteId: current.expediente_id,
-          organizationId: user.organizationId, operationId: operationId ? `${operationId}:${index}` : undefined,
-          escalamientoMotivo: usage.escalamiento_utilizado ? 'Datos documentales contradictorios o de baja confianza' : undefined,
-          metadata: { module: 'ISR-001', calculo_isr_id: id, document_count: readable.length, proposal_count: extraction.campos.length },
-        });
-      }
-      await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'EXTRAER_DATOS_ISR_IA', entidad: 'CalculoISR', entidad_id: id, detalles: json({ documentos: readable.length, propuestas: extraction.campos.length, conflictos: conflicts.size, persistencia_input: false }) } });
+      await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'EXTRAER_DATOS_ISR_IA', entidad: 'CalculoISR', entidad_id: id, detalles: json({ operation_id: operationId, documentos: readable.length, propuestas: extraction.campos.length, conflictos: conflicts.size, persistencia_input: false }) } });
     });
     return { provider: extraction.proveedor, model: extraction.modelo, proposals: extraction.campos.length, conflicts: [...conflicts], idempotent: false };
   }

@@ -5,8 +5,8 @@ import type { Request } from 'express';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { hashVerificationToken, moneyDecimal, validateIncomeAllocation } from '../domain/expedienteFinance';
 import { deleteFile, downloadFile, getSignedUrl, uploadFile } from '../storage/storage.service';
-import { extraerFinanzasDesdeDocumento, getOpenAIModelName, type AIUsageMetrics } from './openaiDocument.service';
-import { recordAIFailure, recordAIUsage } from './aiUsage.service';
+import { extraerFinanzasDesdeDocumento } from './openaiDocument.service';
+import { PlatformDomainError } from '../platform/platform.errors';
 import { FinancialMovementService } from './financialMovement.service';
 import { centsToMoney, moneyToCents } from '../domain/expedienteBudget';
 import { legacyFinanceAllocations } from '../domain/financeCore';
@@ -58,20 +58,6 @@ async function nativeIncomeDocumentText(buffer: Buffer, mimeType: string): Promi
       return String((await parser.getText())?.text || '').trim();
     } finally { await parser.destroy(); }
   } catch { return ''; }
-}
-
-function combineAIUsage(first: AIUsageMetrics, second: AIUsageMetrics): AIUsageMetrics {
-  return {
-    ...first,
-    input_tokens: first.input_tokens + second.input_tokens,
-    cached_input_tokens: first.cached_input_tokens + second.cached_input_tokens,
-    output_tokens: first.output_tokens + second.output_tokens,
-    reasoning_tokens: first.reasoning_tokens + second.reasoning_tokens,
-    total_tokens: first.total_tokens + second.total_tokens,
-    duracion_ms: first.duracion_ms + second.duracion_ms,
-    documentos_enviados: first.documentos_enviados + second.documentos_enviados,
-    costo_estimado_usd: first.costo_estimado_usd + second.costo_estimado_usd,
-  };
 }
 
 function incomeProposalOutcomeReason(extraction: { campos: Array<{ campo: string; valor: string; confianza: string }>; conflictos: Array<{ campo: string }> }): string {
@@ -427,10 +413,16 @@ export class ExpedienteFinanceService {
     if (existing) return { item: existing, idempotent: true };
     const link = await this.prisma.expedienteFinanzaDocumento.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, documento_id: input.documento_id, estatus: 'ACTIVO', documento: { estatus: 'VIGENTE' }, ...(input.ingreso_reportado_id ? { ingreso_reportado_id: input.ingreso_reportado_id } : { solicitud_pago_id: input.solicitud_pago_id }) }, include: { documento: true } });
     if (!link) throw new ExpedienteFinanceError(403, 'EXP008_AI_SOURCE_DENIED', 'El documento no está autorizado para este registro financiero.');
-    const started = Date.now();
     try {
       const buffer = await downloadFile(link.documento.storage_key);
-      const extraction = await extraerFinanzasDesdeDocumento({ buffer, mimeType: link.documento.mime_type, tipoDocumento: link.tipo, documentoId: link.documento_id, nombreOriginal: link.documento.nombre_original });
+      const extraction = await extraerFinanzasDesdeDocumento(
+        { buffer, mimeType: link.documento.mime_type, tipoDocumento: link.tipo, documentoId: link.documento_id, nombreOriginal: link.documento.nombre_original },
+        'EXP008', 'GENERAL', {
+          actor: { userId: actor.id, organizationId: actor.organizationId, membershipId: actor.membershipId,
+            role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId },
+          idempotencyKey: operationId, traceId: operationId,
+        },
+      );
       const fields = Object.fromEntries(extraction.campos.map((field) => [field.campo, field.valor]));
       const proposalResult = await this.prisma.$transaction(async (tx) => {
         await this.lock(tx, `ai-proposal:${actor.organizationId}:${operationId}`);
@@ -440,15 +432,14 @@ export class ExpedienteFinanceService {
         await this.record(tx, actor, expedienteId, 'EXP008_PROPOSE_FINANCIAL_FIELDS_AI', created.id, 'Propuesta documental preparada', 'La IA propuso datos; no se aplicó ningún movimiento.', { documento_id: link.documento_id, persisted_finance: false, conflicts: extraction.conflictos.length });
         return { item: created, idempotent: false };
       });
-      await recordAIUsage(extraction.uso, { organizationId: actor.organizationId, usuarioId: actor.id, expedienteId, operacion: 'EXP008_FINANCIAL_DOCUMENT_EXTRACTION', operationId, metadata: { documento_id: link.documento_id, proposal_id: proposalResult.item.id, target: input.ingreso_reportado_id ? 'INGRESO' : 'SOLICITUD', silent_write: false } });
       return proposalResult;
     } catch (error) {
-      await recordAIFailure({ organizationId: actor.organizationId, usuarioId: actor.id, expedienteId, operacion: 'EXP008_FINANCIAL_DOCUMENT_EXTRACTION', operationId, modelo: getOpenAIModelName(), durationMs: Date.now() - started, errorCode: 'EXP008_AI_FAILED', metadata: { documento_id: link.documento_id } }).catch(() => undefined);
+      if (error instanceof PlatformDomainError) throw new ExpedienteFinanceError(error.status, error.code, error.message);
       throw new ExpedienteFinanceError(502, 'EXP008_AI_FAILED', 'No pudimos analizar el documento. Los datos permanecen sin cambios.');
     }
   }
 
-  async previewIncomeAI(actor: ExpedienteFinanceActor, expedienteId: string, file: Upload) {
+  async previewIncomeAI(actor: ExpedienteFinanceActor, expedienteId: string, file: Upload, idempotencyKey: string) {
     this.requireOperationalWrite(actor);
     if (!actor.permissions.includes('ia.execute')) throw new ExpedienteFinanceError(403, 'EXP008_AI_DENIED', 'No tienes permiso para usar la asistencia de IA.');
     await this.assertExpediente(this.prisma, actor, expedienteId);
@@ -458,17 +449,20 @@ export class ExpedienteFinanceService {
     try { mimeType = canonicalUploadedDocumentMime(file); }
     catch (error) { throw new ExpedienteFinanceError(400, 'EXP008_FILE_TYPE_INVALID', error instanceof Error ? error.message : 'El archivo no es compatible.'); }
     if (!incomePrefillMime.has(mimeType)) throw new ExpedienteFinanceError(415, 'EXP008_AI_FILE_UNSUPPORTED', 'La IA sólo puede leer PDF, JPG, PNG o DOCX. Puedes registrar este comprobante manualmente.');
-    const operationId = randomUUID();
-    const started = Date.now();
+    const operationId = this.idempotency(idempotencyKey);
     const documentHash = checksum(file.buffer);
     try {
       const document = { buffer: file.buffer, mimeType, tipoDocumento: 'COMPROBANTE_INGRESO', documentoId: documentHash, nombreOriginal: file.originalname };
-      const extraction = await extraerFinanzasDesdeDocumento(document);
+      const context = {
+        actor: { userId: actor.id, organizationId: actor.organizationId, membershipId: actor.membershipId,
+          role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId },
+        traceId: operationId,
+      };
+      const extraction = await extraerFinanzasDesdeDocumento(document, 'EXP008', 'GENERAL', { ...context, idempotencyKey: `${operationId}:general` });
       let suggestion = incomePrefillSuggestions(extraction);
       const nativeAmounts = nativeIncomeAmountValues(await nativeIncomeDocumentText(file.buffer, mimeType));
       const sourceAmountConflict = nativeAmounts.length > 1 || Boolean(suggestion.monto_reportado && nativeAmounts.length === 1 && nativeAmounts[0] !== suggestion.monto_reportado);
       if (sourceAmountConflict) suggestion = { ...suggestion, monto_reportado: null, evidencia: suggestion.evidencia.filter((item) => item.campo !== 'monto') };
-      let usage = extraction.uso;
       let attempts = 1;
       let recovery = 'NOT_REQUIRED';
       const firstPassReason = sourceAmountConflict ? 'SOURCE_AMOUNT_CONFLICT' : suggestion.monto_reportado ? 'SUGGESTED' : incomeProposalOutcomeReason(extraction);
@@ -477,8 +471,7 @@ export class ExpedienteFinanceService {
       const currencyConflict = extraction.campos.some((item) => item.campo === 'moneda' && !/^(MXN|PESOS? MEXICANOS?|MONEDA NACIONAL)$/i.test(item.valor.trim()));
       if (!suggestion.monto_reportado && !amountConflict && !currencyConflict && firstPassReason !== 'MULTIPLE_DISTINCT_AMOUNTS') {
         attempts = 2;
-        const focused = await extraerFinanzasDesdeDocumento(document, 'EXP008', 'AMOUNT');
-        usage = combineAIUsage(extraction.uso, focused.uso);
+        const focused = await extraerFinanzasDesdeDocumento(document, 'EXP008', 'AMOUNT', { ...context, idempotencyKey: `${operationId}:amount` });
         const focusedSuggestion = incomePrefillSuggestions(focused);
         retryReason = focusedSuggestion.monto_reportado ? 'SUGGESTED' : incomeProposalOutcomeReason(focused);
         const initialReadableAmounts = extraction.campos.filter((item) => item.campo === 'monto').map((item) => normalizeIncomeProposalAmount(item.valor)).filter((item): item is string => Boolean(item));
@@ -488,10 +481,9 @@ export class ExpedienteFinanceService {
         } else recovery = 'MANUAL_REVIEW';
       }
       const outcome = suggestion.monto_reportado ? 'SUGGESTED' : amountConflict || currencyConflict ? 'CONFLICT_OR_CURRENCY' : 'MANUAL_REVIEW';
-      await recordAIUsage(usage, { organizationId: actor.organizationId, usuarioId: actor.id, expedienteId, operacion: 'EXP008_INCOME_PREFILL', operationId, metadata: { source_sha256: documentHash, suggested_fields: Object.entries(suggestion).filter(([name, value]) => name !== 'evidencia' && value !== null).map(([name]) => name), attempts, recovery, outcome, first_pass_reason: firstPassReason, retry_reason: retryReason, native_amounts_distinct: nativeAmounts.length, first_pass_amount_fields: extraction.campos.filter((item) => item.campo === 'monto').length, first_pass_amount_conflicts: extraction.conflictos.filter((item) => item.campo === 'monto').length, persisted_finance: false } });
       return suggestion;
-    } catch {
-      await recordAIFailure({ organizationId: actor.organizationId, usuarioId: actor.id, expedienteId, operacion: 'EXP008_INCOME_PREFILL', operationId, modelo: getOpenAIModelName(), durationMs: Date.now() - started, errorCode: 'EXP008_AI_PREFILL_FAILED', metadata: { source_sha256: documentHash } }).catch(() => undefined);
+    } catch (error) {
+      if (error instanceof PlatformDomainError) throw new ExpedienteFinanceError(error.status, error.code, error.message);
       throw new ExpedienteFinanceError(502, 'EXP008_AI_PREFILL_FAILED', 'No pudimos leer el comprobante con IA. Puedes completar el ingreso manualmente.');
     }
   }

@@ -1,9 +1,18 @@
 import { buildUsageMetrics, getOpenAIAssistantModelName, type AIUsageMetrics } from './openaiDocument.service';
 import { H9_BLOCKS, H9_PROMPT_VERSION, H9_SCHEMA_VERSION, type H9StructuredResult } from '../domain/complianceH9';
+import type { Request } from 'express';
+import { aiGateway, type AiGatewayExecutor } from '../platform/aiGateway.runtime';
+import { AI_OPERATION_CODES } from '../platform/aiBillingPolicy';
+
+type Actor = NonNullable<Request['user']>;
 
 export type H9AiInput = {
   dataset: Record<string, unknown>;
   source_manifest: unknown[];
+  actor: Actor;
+  idempotencyKey: string;
+  traceId: string;
+  gateway?: AiGatewayExecutor;
 };
 
 export type H9AiResponse = {
@@ -40,15 +49,16 @@ export const H9_AI_OUTPUT_SCHEMA = {
 };
 
 export const runH9ReviewWithOpenAI: H9AiAdapter = async (input) => {
-  const apiKey = process.env.OPENAI_API_KEY;
   const model = getOpenAIAssistantModelName();
   const startedAt = Date.now();
-  if (!apiKey) throw new Error('H9_AI_NOT_CONFIGURED');
-  const response = await fetch('https://api.openai.com/v1/responses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    signal: AbortSignal.timeout(Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000)),
-    body: JSON.stringify({
+  const data: any = await (input.gateway || aiGateway).execute<any>({
+    actor: { userId: input.actor.id, organizationId: input.actor.organizationId,
+      membershipId: input.actor.membershipId, role: input.actor.rol, permissions: input.actor.permissions,
+      scope: input.actor.scope, sessionId: input.actor.sessionId },
+    operationCode: AI_OPERATION_CODES.complianceReview,
+    billingClass: 'CUSTOMER_WALLET', idempotencyKey: input.idempotencyKey, traceId: input.traceId,
+    timeoutMs: Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000),
+    payload: { body: {
       model, store: false, max_output_tokens: 8192, reasoning: { effort: 'high' },
       input: [{ role: 'user', content: [{ type: 'input_text', text: [
         'Ejecuta CUM-AUD-001 como revisión asistida factual de consistencias notariales.',
@@ -62,10 +72,8 @@ export const runH9ReviewWithOpenAI: H9AiAdapter = async (input) => {
         `DATASET=${JSON.stringify(input.dataset)}`,
       ].join('\n\n') }] }],
       text: { format: { type: 'json_schema', name: 'cum_aud_assisted_review', strict: true, schema: H9_AI_OUTPUT_SCHEMA } },
-    }),
+    } },
   });
-  if (!response.ok) throw new Error(`H9_AI_HTTP_${response.status}`);
-  const data: any = await response.json();
   const content = (data.output || []).flatMap((item: any) => item.content || []);
   if (content.some((item: any) => item.type === 'refusal')) throw new Error('H9_AI_REFUSAL');
   const text = content.filter((item: any) => item.type === 'output_text').map((item: any) => item.text || '').join('').trim();

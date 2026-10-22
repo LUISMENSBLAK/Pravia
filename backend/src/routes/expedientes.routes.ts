@@ -106,6 +106,7 @@ import {
   generateExpedienteBudgetPdf,
   getExpedienteBudget,
   getExpedienteBudgetPdfUrl,
+  previewExpedienteBudget,
   updateExpedienteBudget,
 } from '../controllers/expedienteBudget.controller';
 import {
@@ -168,6 +169,7 @@ router.post('/:id/plantillas-formatos/:pendingId/upload', requirePermission('doc
 router.post('/:id/plantillas-formatos/:pendingId/validar', requirePermission('documentos.write'), validateExpedienteArtifact);
 router.get('/:id/plantillas-formatos/:pendingId/url', requirePermission('documentos.read'), getExpedienteArtifactUrl);
 router.get('/:id/presupuesto', requirePermission('expedientes.read'), getExpedienteBudget);
+router.post('/:id/presupuesto/vista-previa', requirePermission('expedientes.read'), previewExpedienteBudget);
 router.put('/:id/presupuesto', requirePermission('expedientes.write'), updateExpedienteBudget);
 router.post('/:id/presupuesto/generar', requirePermission('expedientes.write'), requirePermission('documentos.write'), generateExpedienteBudgetPdf);
 router.get('/:id/presupuesto/documentos/:historyId/url', requirePermission('documentos.read'), getExpedienteBudgetPdfUrl);

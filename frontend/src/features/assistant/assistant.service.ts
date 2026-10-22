@@ -148,7 +148,16 @@ export const assistantService: AssistantService = {
     return unwrap(await apiRequest<AssistantAttachment | { data: AssistantAttachment }>(conversationPath(conversationId, `/attachments/${encodeURIComponent(attachmentId)}/archive`), { method: 'POST' }));
   },
   async transcribeAttachment(conversationId, attachmentId, signal) {
-    return unwrap(await apiRequest<{ attachmentId: string; transcript: string } | { data: { attachmentId: string; transcript: string } }>(conversationPath(conversationId, `/attachments/${encodeURIComponent(attachmentId)}/transcribe`), { method: 'POST', signal }));
+    const idempotencyKey = crypto.randomUUID();
+    return unwrap(await apiRequest<
+      { attachmentId: string; transcript: string }
+      | { data: { attachmentId: string; transcript: string } }
+    >(conversationPath(conversationId, `/attachments/${encodeURIComponent(attachmentId)}/transcribe`), {
+      method: 'POST',
+      headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify({ idempotency_key: idempotencyKey }),
+      signal,
+    }));
   },
   async listAlerts() {
     const payload = await apiRequest<AssistantAlert[] | { data: AssistantAlert[] }>('/ia/assistant/alerts');

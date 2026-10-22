@@ -1,5 +1,5 @@
 import { apiRequest } from '../../services/api/client';
-import type { ManagedUser, NotificationFeed, SearchResult, Session, UserPreferences } from './settings.types';
+import type { ManagedUser, NotificationFeed, OrganizationProfile, SearchResult, Session, UserPreferences } from './settings.types';
 import type { ActActivity, ActListPayload, ActivityConcept, CatalogAct, CatalogArtifact, CatalogFolder, CatalogOwner, ExplorerPayload, SupportingCatalogs, CatalogImportPreview, QuestionnaireBanksPayload, QuestionnaireQuestion, FunctionalDestinationOption, ArtifactDestination, ProjectTemplateAssignment } from './catalogs/catalogs.types';
 import type { PublishTimingPolicyInput, TimingPolicyDefinition, TimingPolicyRevision } from './timing/timing.types';
 
@@ -20,6 +20,9 @@ const timingVisualPolicies: TimingPolicyDefinition[] = [
 
 export const settingsService = {
   overview: () => apiRequest<any>('/settings/overview'),
+  organization: () => apiRequest<{ profile: OrganizationProfile }>('/settings/organization'),
+  updateOrganization: (data: Partial<Omit<OrganizationProfile, 'id' | 'logo_storage_key' | 'updated_at'>>) =>
+    apiRequest<{ profile: OrganizationProfile }>('/settings/organization', { method: 'PATCH', body: JSON.stringify(data) }),
   profile: () => apiRequest<any>('/settings/profile'),
   updateProfile: (data: { nombre: string; apellido: string; telefono?: string }) => apiRequest<any>('/settings/profile', { method: 'PATCH', body: JSON.stringify(data) }),
   preferences: () => apiRequest<{ preferences: UserPreferences }>('/settings/preferences'),
@@ -38,6 +41,53 @@ export const settingsService = {
   roles: () => apiRequest<any>('/settings/roles'),
   audit: (params: Record<string, string | number | undefined>) => apiRequest<any>(`/settings/audit?${qs(params)}`),
   aiDashboard: () => apiRequest<any>('/ia/dashboard?periodo=30_DIAS'),
+  planConsumption: () => apiRequest<any>('/platform/consumption'),
+  platformDashboard: () => apiRequest<any>('/platform/admin/dashboard'),
+  platformTenants: () => apiRequest<Array<{
+    id: string; name: string; status: string; created_at: string;
+    storage?: { production_bytes: string; temporary_bytes: string; reserved_bytes: string } | null;
+    aiWallet?: { balance_minor: string; reserved_minor: string; currency: string; status: string } | null;
+  }>>('/platform/admin/tenants'),
+  tenantMigrations: () => apiRequest<{ jobs: Array<{
+    id: string; source_system: string; status: string; progress: number; declared_bytes: string;
+    temporary_bytes: string; estimated_production_bytes: string; detected_files: number;
+    detected_records: number; duplicate_files: number; corrupt_files: number; dangerous_files: number;
+    created_at: string; updated_at: string; completed_at?: string | null;
+  }> }>('/platform/migrations'),
+  tenantExports: () => apiRequest<Array<{ id: string; status: string; progress: number; created_at: string; expires_at: string | null }>>('/platform/exports'),
+  createTenantExport: () => apiRequest<{ id: string }>('/platform/exports', { method: 'POST', body: JSON.stringify({
+    scope: ['TENANT', 'USUARIOS', 'COMPARECIENTES', 'PROSPECTOS', 'COTIZACIONES', 'EXPEDIENTES', 'ACTOS',
+      'PREDIOS', 'ARCHIVO', 'AGENDA', 'FINANZAS', 'DOCUMENTOS', 'RELACIONES',
+      'CUMPLIMIENTO', 'CONOCIMIENTO', 'CONFIGURACION'],
+    format: 'ZIP_CSV', idempotency_key: globalThis.crypto.randomUUID(),
+  }) }),
+  tenantExportDownload: (id: string) => apiRequest<{ url: string; expiresAt: string; sizeBytes: string }>(`/platform/exports/${encodeURIComponent(id)}/download`),
+  createTenantMigration: (data: { source_system: string; declared_bytes: string; idempotency_key: string }) =>
+    apiRequest<any>('/platform/migrations', { method: 'POST', body: JSON.stringify(data) }),
+  createMigrationUpload: (jobId: string, data: { filename: string; declared_bytes: string; part_size_bytes: number; idempotency_key: string }) =>
+    apiRequest<any>(`/platform/migrations/${encodeURIComponent(jobId)}/uploads`, { method: 'POST', body: JSON.stringify(data) }),
+  uploadMigrationPart: (jobId: string, sessionId: string, partNumber: number, part: Blob, checksum: string) => {
+    const body = new FormData();
+    body.append('part', part, `part-${partNumber}.bin`);
+    return apiRequest<any>(`/platform/migrations/${encodeURIComponent(jobId)}/uploads/${encodeURIComponent(sessionId)}/parts/${partNumber}`, {
+      method: 'PUT', headers: { 'X-Content-SHA256': checksum }, body,
+    });
+  },
+  completeMigrationUpload: (jobId: string, sessionId: string) =>
+    apiRequest<any>(`/platform/migrations/${encodeURIComponent(jobId)}/uploads/${encodeURIComponent(sessionId)}/complete`, {
+      method: 'POST', body: JSON.stringify({}),
+    }),
+  migrationPreview: (jobId: string) => apiRequest<any>(`/platform/migrations/${encodeURIComponent(jobId)}/preview`),
+  submitMigrationMapping: (jobId: string, data: { entity_type: string; fields: Array<{ source_field: string; target_field: string | null }> }) =>
+    apiRequest<any>(`/platform/migrations/${encodeURIComponent(jobId)}/mapping`, { method: 'PUT', body: JSON.stringify(data) }),
+  approveMigration: (jobId: string) => apiRequest<any>(`/platform/migrations/${encodeURIComponent(jobId)}/approve`, { method: 'POST', body: JSON.stringify({}) }),
+  executeMigration: (jobId: string, backupRunId: string) => apiRequest<any>(`/platform/migrations/${encodeURIComponent(jobId)}/execute`, {
+    method: 'POST', body: JSON.stringify({ backup_run_id: backupRunId }),
+  }),
+  certifiedMigrationBackups: () => apiRequest<Array<{
+    id: string; scope: string; provider: string; completed_at: string; bytes: string;
+    latestRestoreDrill: { tested_at: string; result: 'PASS'; sample_count: number };
+  }>>('/platform/migrations/backups/certified'),
   notifications: (history = false) => apiRequest<NotificationFeed>(`/settings/notifications${history ? '?history=1' : ''}`),
   readNotification: (id: string) => apiRequest(`/settings/notifications/${id}/read`, { method: 'POST' }),
   readAllNotifications: () => apiRequest('/settings/notifications/read-all', { method: 'POST' }),
@@ -79,7 +129,7 @@ export const settingsService = {
   bootstrapCatalogV2: () => apiRequest('/settings/catalogs/v2/bootstrap', { method: 'POST' }),
   upsertInstitutionResponseTime: (institutionId: string, data: Record<string, unknown>) => apiRequest(`/settings/catalogs/institutions/${institutionId}/response-times`, { method: 'PUT', body: JSON.stringify(data) }),
   createActsCatalogInstitution: (data: Record<string, unknown>) => apiRequest('/settings/catalogs/v2/institutions', { method: 'POST', body: JSON.stringify(data) }),
-  catalogArtifactRoot: () => apiRequest<{ data: { notaria: CatalogOwner | null; institutions: CatalogOwner[]; legacy_notaries_hidden?: number } }>('/settings/catalogs/artifacts/root').then((payload) => payload.data),
+  catalogArtifactRoot: () => apiRequest<{ data: { organization: CatalogOwner | null; institutions: CatalogOwner[] } }>('/settings/catalogs/artifacts/root').then((payload) => payload.data),
   functionalDestinations: () => apiRequest<{ data: FunctionalDestinationOption[] }>('/settings/catalogs/artifacts/functional-destinations').then((payload) => payload.data),
   projectTemplateAssignments: () => apiRequest<{ data: ProjectTemplateAssignment[] }>('/settings/catalogs/artifacts/project-template-assignments').then((payload) => payload.data),
   removeProjectTemplateAssignment: (actId: string) => apiRequest(`/settings/catalogs/artifacts/project-template-assignments/${encodeURIComponent(actId)}`, { method: 'DELETE' }),

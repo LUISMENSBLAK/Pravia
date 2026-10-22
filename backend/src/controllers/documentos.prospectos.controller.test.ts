@@ -19,7 +19,7 @@ const validPdf = (name = 'archivo.pdf') => {
 };
 
 describe('documentos de Prospectos', () => {
-  beforeEach(() => { vi.clearAllMocks(); storage.uploadFile.mockResolvedValue('private/object.pdf'); access.canAttachDocumento.mockResolvedValue(true); audit.logAudit.mockResolvedValue(undefined); });
+  beforeEach(() => { vi.clearAllMocks(); storage.uploadFile.mockResolvedValue('private/object.pdf'); storage.deleteFile.mockResolvedValue(undefined); access.canAttachDocumento.mockResolvedValue(true); audit.logAudit.mockResolvedValue(undefined); });
 
   it.each([
     ['PREDIAL', { tiene_predial: true }],
@@ -30,6 +30,9 @@ describe('documentos de Prospectos', () => {
       prospectoDocumento: { create: vi.fn().mockResolvedValue({}) },
       prospecto: { update: vi.fn().mockResolvedValue({}) },
       cotizacionDocumento: { create: vi.fn() }, expedienteDocumento: { create: vi.fn() }, comparecienteDocumento: { create: vi.fn() },
+      storageProviderRecord: { findUnique: vi.fn().mockResolvedValue({ id: 'provider-1' }) },
+      storageBlobLocation: { findFirst: vi.fn().mockResolvedValue({ blob_id: 'blob-1' }) },
+      storageBlobReference: { create: vi.fn().mockResolvedValue({}) },
     };
     db.$transaction.mockImplementation(async (callback: any) => callback(tx));
     const req: any = { user, file: validPdf(), body: { tipo, prospecto_id: 'prospect-1' } };
@@ -38,6 +41,7 @@ describe('documentos de Prospectos', () => {
     expect(storage.uploadFile).toHaveBeenCalledWith(expect.any(Buffer), expect.stringMatching(/^organizations\/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\/documentos\//), 'application/pdf');
     expect(tx.prospectoDocumento.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ prospecto_id: 'prospect-1', tipo_vinculo: tipo }) }));
     expect(tx.prospecto.update).toHaveBeenCalledWith({ where: { id: 'prospect-1' }, data: expectedFlag });
+    expect(tx.storageBlobReference.create).toHaveBeenCalledWith({ data: expect.objectContaining({ blob_id: 'blob-1', owner_type: 'DOCUMENTO', owner_id: 'doc-1' }) });
     expect(audit.logAudit).toHaveBeenCalledWith('user-1', 'UPLOAD', 'Documento', 'doc-1', expect.objectContaining({ prospecto_id: 'prospect-1', tipo }));
     expect(res.status).toHaveBeenCalledWith(201);
   });
@@ -56,6 +60,9 @@ describe('documentos de Prospectos', () => {
       documento: { create: vi.fn().mockResolvedValue({ id: 'doc-finance' }), findUniqueOrThrow: vi.fn().mockResolvedValue({ id: 'doc-finance', nombre_original: 'comprobante.pdf' }) },
       prospectoDocumento: { create: vi.fn() }, prospecto: { update: vi.fn() }, cotizacionDocumento: { create: vi.fn() },
       expedienteDocumento: { create: vi.fn() }, comparecienteDocumento: { create: vi.fn() }, movimientoDocumento: { create: vi.fn().mockResolvedValue({}) },
+      storageProviderRecord: { findUnique: vi.fn().mockResolvedValue({ id: 'provider-1' }) },
+      storageBlobLocation: { findFirst: vi.fn().mockResolvedValue({ blob_id: 'blob-1' }) },
+      storageBlobReference: { create: vi.fn().mockResolvedValue({}) },
     };
     db.$transaction.mockImplementation(async (callback: any) => callback(tx));
     const req: any = { user: { ...user, permissions: ['documentos.write', 'finanzas.write'] }, file: validPdf('comprobante.pdf'), body: { tipo: 'COMPROBANTE_PAGO', categoria: 'OTROS', movimiento_id: 'movement-1' } };

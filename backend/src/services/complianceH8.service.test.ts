@@ -42,7 +42,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.db.$queryRaw.mockResolvedValueOnce([summary]).mockResolvedValueOnce(ordered);
   mocks.db.expedienteComplianceState.findMany.mockResolvedValue([state]);
-  mocks.db.expediente.findMany.mockResolvedValueOnce([{ abogado: state.expediente.abogado }]).mockResolvedValueOnce([{ notaria: state.expediente.notaria }]);
+  mocks.db.expediente.findMany.mockResolvedValueOnce([{ abogado: state.expediente.abogado }]);
   mocks.db.tipoActo.findMany.mockResolvedValue(state.expediente.actos.map((item) => item.tipo_acto));
 });
 
@@ -74,7 +74,7 @@ describe('H8 central compliance read model', () => {
     await new ComplianceH8Service(mocks.db).panel(actor, query);
     expect(mocks.db.$queryRaw).toHaveBeenCalledTimes(2);
     expect(mocks.db.expedienteComplianceState.findMany).toHaveBeenCalledTimes(1);
-    expect(mocks.db.expediente.findMany).toHaveBeenCalledTimes(2);
+    expect(mocks.db.expediente.findMany).toHaveBeenCalledTimes(1);
     expect(mocks.db.tipoActo.findMany).toHaveBeenCalledTimes(1);
   });
 
@@ -87,6 +87,7 @@ describe('H8 central compliance read model', () => {
 
   it('keeps server-side search, secondary filters, date range and primary filtering in SQL', async () => {
     const filtered = parseH8PanelQuery({ filter: 'VENCIDOS', search: 'EXP-0042', lawyer_id: userId, act_id: '00000000-0000-4000-8000-00000000c803', notaria_id: '00000000-0000-4000-8000-00000000c804', from: '2026-09-01', to: '2026-09-30' });
+    expect('notaryId' in filtered).toBe(false);
     await new ComplianceH8Service(mocks.db).panel(actor, filtered);
     const sql = mocks.db.$queryRaw.mock.calls[1][0].strings.join(' ');
     expect(sql).toContain('numero_pravia ILIKE');
@@ -116,10 +117,9 @@ describe('H8 central compliance read model', () => {
     expect(mocks.db.expedienteComplianceState.findMany).not.toHaveBeenCalled();
   });
 
-  it('shows the Notaría selector only for a real multi-Notaría scope', async () => {
-    mocks.db.expediente.findMany.mockReset().mockResolvedValueOnce([{ abogado: state.expediente.abogado }]).mockResolvedValueOnce([{ notaria: state.expediente.notaria }, { notaria: { id: 'not-2', nombre: 'Otra', numero_notaria: '8' } }]);
+  it('does not expose a legacy internal Notaría selector even when historical records have distinct links', async () => {
     const result = await new ComplianceH8Service(mocks.db).panel(actor, query);
-    expect(result.filters.show_notaria).toBe(true);
-    expect(result.filters.notaries).toHaveLength(2);
+    expect(result.filters).toEqual({ lawyers: [{ id: userId, nombre: 'Andrea Ruiz' }], acts: state.expediente.actos.map((item) => item.tipo_acto) });
+    expect('notaria' in result.rows[0]).toBe(false);
   });
 });

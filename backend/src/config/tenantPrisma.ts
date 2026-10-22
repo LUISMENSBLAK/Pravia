@@ -58,6 +58,15 @@ export const TENANT_SCOPED_MODELS = new Set([
   'CotizacionIAProposal', 'ProjectFactSnapshot', 'ProjectInstructionApplication', 'ProjectTemplateAssignment',
   'ArchivoRegistro',
   'FiscalReferenceRevision', 'FiscalExportProfile',
+  'TenantPlacement', 'TenantSubscription', 'TenantEntitlement', 'TenantStorageAddon',
+  'TenantStorageUsage', 'StorageReservation', 'UsageAlertState', 'StorageLedgerEvent',
+  'StorageBlob', 'StorageBlobLocation', 'StorageBlobReference', 'StorageReconciliationRun',
+  'StorageReconciliationItem', 'PricingOverride', 'AiWallet', 'AiWalletTransaction',
+  'AiBalanceReservation', 'AiUsageEvent', 'BillingProviderAccount', 'BillingCycle',
+  'BillingEvent', 'BackgroundJob', 'MigrationJob', 'MigrationAsset', 'MigrationMapping',
+  'MigrationConflict', 'MigrationProvenance', 'ResumableUploadSession', 'ResumableUploadPart',
+  'ExportJob', 'ExportArtifact', 'BackupRun', 'UsageEvent', 'TenantCostSnapshot',
+  'PlatformAccessGrant', 'PlatformAuditEvent', 'PlatformMetricEvent',
 ]);
 
 const READ_OR_WRITE_WITH_WHERE = new Set([

@@ -103,6 +103,8 @@
 .inlineConceptRows { display: flex; flex-direction: column; gap: 8px; }
 .inlineConceptRow { min-width: 0; }
 .inlineConceptRow label { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.inlineTaxFields { grid-column: 1 / -1; grid-row: 2; display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px; padding: 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-subtle); }
+.inlineTaxFields label > span { display: block; }
 .inlineConceptRow label > span { display: none; color: var(--color-text-muted); font-size: .61rem; font-weight: 700; }
 .inlineConceptRow input, .inlineConceptRow select { width: 100%; min-width: 0; min-height: 44px; padding: 9px 10px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); color: var(--color-text-primary); background: white; font: inherit; font-size: .75rem; }
 .inlineConceptRow input:focus-visible, .inlineConceptRow select:focus-visible, .inlineConceptRow button:focus-visible, .documentActions button:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 2px; }
@@ -135,6 +137,7 @@
   .inlineConceptRow label:nth-child(1), .inlineConceptRow label:nth-child(2), .inlineConceptRow label:nth-child(3) { grid-column: 1 / -1; }
   .inlineConceptRow .conceptOrder { grid-column: 1 / 2; }
   .inlineConceptRow > .iconDangerButton { grid-column: 4; }
+  .inlineTaxFields { grid-row: auto; grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
 
 @media (max-width: 767px) {
@@ -155,6 +158,7 @@
   .inlineConceptRow { grid-template-columns: minmax(0,1fr) minmax(0,1fr) 44px; }
   .inlineConceptRow .conceptOrder { grid-column: 1 / 3; }
   .inlineConceptRow > .iconDangerButton { grid-column: 3; }
+  .inlineTaxFields { grid-column: 1 / -1; grid-template-columns: minmax(0,1fr); }
   .inlineBudgetActions > div { grid-template-columns: 1fr; }
   .documentActions { margin-left: 0; }
 }

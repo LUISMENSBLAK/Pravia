@@ -195,13 +195,13 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
     try {
       const before = await run(primary, () => reviewService.latest(primary, prospect.id));
       expect(before).toMatchObject({ available: true, current: false, review: null });
-      const saved = await run(primary, () => reviewService.run(primary, prospect.id));
+      const saved = await run(primary, () => reviewService.run(primary, prospect.id, 'prospect-review-primary', randomUUID()));
       expect(saved).toMatchObject({ current: true, review: { findings: [{ document_ids: [document.id] }] } });
       expect(await run(primary, () => reviewService.latest(primary, prospect.id))).toMatchObject({ current: true });
       expect(await db.prospectoRevisionDocumental.count({ where: { prospecto_id: prospect.id } })).toBe(1);
       expect(await db.auditLog.count({ where: { entidad: 'Prospecto', entidad_id: prospect.id, accion: 'PROSPECT_DOCUMENT_REVIEW_AI' } })).toBe(1);
       await expect(run(foreign, () => reviewService.latest(foreign, prospect.id))).rejects.toMatchObject({ status: 404 });
-      await expect(run(foreign, () => reviewService.run(foreign, prospect.id))).rejects.toMatchObject({ status: 404 });
+      await expect(run(foreign, () => reviewService.run(foreign, prospect.id, 'prospect-review-foreign', randomUUID()))).rejects.toMatchObject({ status: 404 });
       await db.documento.create({ data: { organization_id: primary.organizationId, nombre_original: 'predial.txt',
         nombre_interno: `${randomUUID()}-predial.txt`, storage_key: `qa/prospect-review/${randomUUID()}`,
         tipo: 'PREDIAL', categoria: 'PROYECTO', mime_type: 'text/plain', size_bytes: 20,
@@ -227,7 +227,7 @@ describe.runIf(process.env.CORRECTION001_RUN_ISOLATED === '1')('Corrección 001 
       expect(await run(primary, () => reviewService.latest(primary, prospect.id))).toMatchObject({
         available: false, requiresManualReview: [{ name: 'acta-antigua.doc' }],
       });
-      await expect(run(primary, () => reviewService.run(primary, prospect.id)))
+      await expect(run(primary, () => reviewService.run(primary, prospect.id, 'prospect-review-doc', randomUUID())))
         .rejects.toMatchObject({ status: 422, code: 'PROSPECT_REVIEW_NO_READABLE_SOURCE' });
       expect(await db.prospectoRevisionDocumental.count({ where: { prospecto_id: prospect.id } })).toBe(0);
     } finally {

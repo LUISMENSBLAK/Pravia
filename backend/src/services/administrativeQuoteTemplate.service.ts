@@ -38,7 +38,12 @@ export async function resolveAdministrativeQuoteTemplate(
     throw new AdministrativeQuoteTemplateError(409, 'ADMINISTRATIVE_QUOTE_TEMPLATE_NOT_CONFIGURED', 'Configura y activa un formato para este destino funcional en Plantillas y formatos.');
   }
 
-  const source = await downloadFile(version.storage_key);
+  let source: Buffer;
+  try {
+    source = await downloadFile(version.storage_key);
+  } catch {
+    throw new AdministrativeQuoteTemplateError(409, 'ADMINISTRATIVE_QUOTE_TEMPLATE_SOURCE_UNAVAILABLE', 'El archivo de la versión activa del formato no está disponible en el almacenamiento configurado. Restáuralo o activa una versión íntegra antes de generar.');
+  }
   if (version.size_bytes != null && source.length !== version.size_bytes) {
     throw new AdministrativeQuoteTemplateError(409, 'ADMINISTRATIVE_QUOTE_TEMPLATE_SIZE_MISMATCH', 'La versión configurada no coincide con su registro.');
   }

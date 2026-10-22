@@ -1,10 +1,13 @@
 import { Prisma, PrismaClient } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import type { Request } from 'express';
 import prisma from '../config/prisma';
 import { cotizacionObjectWhere } from './objectAccess.service';
-import { buildUsageMetrics, getOpenAIAssistantModelName, type AIUsageMetrics } from './openaiDocument.service';
-import { recordAIUsageInDb } from './aiUsage.service';
+import { getOpenAIAssistantModelName } from './openaiDocument.service';
 import { quoteBudgetPayload } from './quoteBudget.service';
+import { aiGateway, type AiGatewayExecutor } from '../platform/aiGateway.runtime';
+import { AI_OPERATION_CODES } from '../platform/aiBillingPolicy';
+import { PlatformDomainError } from '../platform/platform.errors';
 
 type Actor = NonNullable<Request['user']>;
 
@@ -24,8 +27,6 @@ export class QuoteEmailAIError extends Error {
   }
 }
 
-type ProviderFetch = typeof fetch;
-
 const extractOutputText = (data: any) => (data?.output || [])
   .flatMap((item: any) => item?.content || [])
   .filter((item: any) => item?.type === 'output_text')
@@ -33,22 +34,17 @@ const extractOutputText = (data: any) => (data?.output || [])
   .join('')
   .trim();
 
-const safeProviderCode = (status: number) => status === 429
-  ? 'QUOTE_EMAIL_AI_RATE_LIMITED'
-  : status >= 500 ? 'QUOTE_EMAIL_AI_PROVIDER_UNAVAILABLE' : 'QUOTE_EMAIL_AI_PROVIDER_REJECTED';
-
 export class QuoteEmailAIService {
   constructor(
     private readonly db: PrismaClient = prisma,
-    private readonly fetchImpl: ProviderFetch = fetch,
+    private readonly gateway: AiGatewayExecutor = aiGateway,
   ) {}
 
-  async draft(actor: Actor, quoteId: string): Promise<QuoteEmailDraft> {
+  async draft(actor: Actor, quoteId: string, idempotencyKey: string, traceId: string = randomUUID()): Promise<QuoteEmailDraft> {
     if (!actor.permissions.includes('cotizaciones.write') || !actor.permissions.includes('ai.use')) {
       throw new QuoteEmailAIError(403, 'QUOTE_EMAIL_AI_DENIED', 'No tienes permiso para redactar correos asistidos.');
     }
-    const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
-    if (!apiKey) throw new QuoteEmailAIError(503, 'QUOTE_EMAIL_AI_NOT_CONFIGURED', 'La redacción con IA no está disponible en este momento.');
+    if (!idempotencyKey.trim()) throw new QuoteEmailAIError(400, 'AI_IDEMPOTENCY_CONTEXT_REQUIRED', 'La redacción con IA requiere una clave de idempotencia.');
 
     const quote = await this.db.cotizacion.findFirst({
       where: { id: quoteId, ...cotizacionObjectWhere(actor) },
@@ -67,7 +63,6 @@ export class QuoteEmailAIService {
 
     const budget = quoteBudgetPayload(quote.conceptos);
     const model = getOpenAIAssistantModelName();
-    const startedAt = Date.now();
     const promptVersion = 'COT-EMAIL-IA-001-v1' as const;
     const source = {
       folio: quote.numero_cotizacion || quote.numero_solicitud || quote.id,
@@ -80,13 +75,17 @@ export class QuoteEmailAIService {
       asunto_vigente: quote.correo_asunto || '',
       mensaje_vigente: quote.cuerpo_correo_cliente || '',
     };
-    let response: Response;
+    let data: any;
     try {
-      response = await this.fetchImpl('https://api.openai.com/v1/responses', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-        signal: AbortSignal.timeout(Number(process.env.AI_ASSISTANT_TIMEOUT_MS || 60_000)),
-        body: JSON.stringify({
+      data = await this.gateway.execute<any>({
+        actor: {
+          userId: actor.id, organizationId: actor.organizationId, membershipId: actor.membershipId,
+          role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId,
+        },
+        operationCode: AI_OPERATION_CODES.quoteEmailDraft,
+        billingClass: 'CUSTOMER_WALLET', idempotencyKey, traceId,
+        timeoutMs: Number(process.env.AI_ASSISTANT_TIMEOUT_MS || 60_000),
+        payload: { body: {
           model,
           store: false,
           reasoning: { effort: 'low' },
@@ -104,16 +103,12 @@ export class QuoteEmailAIService {
             properties: { subject: { type: 'string' }, message_body: { type: 'string' } },
             required: ['subject', 'message_body'],
           } } },
-        }),
+        } },
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof PlatformDomainError) throw new QuoteEmailAIError(error.status, error.code, error.message);
       throw new QuoteEmailAIError(503, 'QUOTE_EMAIL_AI_NETWORK_ERROR', 'No fue posible comunicarse con el proveedor de IA. Intenta de nuevo.');
     }
-    if (!response.ok) {
-      await response.text().catch(() => undefined);
-      throw new QuoteEmailAIError(response.status === 429 ? 503 : 502, safeProviderCode(response.status), 'La IA no pudo preparar el correo. Intenta de nuevo.');
-    }
-    const data: any = await response.json();
     if (data?.status === 'incomplete') throw new QuoteEmailAIError(502, 'QUOTE_EMAIL_AI_INCOMPLETE', 'La IA no completó el borrador. Intenta de nuevo.');
     const refusal = (data?.output || []).flatMap((item: any) => item?.content || []).some((item: any) => item?.type === 'refusal');
     if (refusal) throw new QuoteEmailAIError(422, 'QUOTE_EMAIL_AI_REFUSAL', 'La IA no pudo preparar este borrador.');
@@ -126,16 +121,7 @@ export class QuoteEmailAIService {
       throw new QuoteEmailAIError(502, 'QUOTE_EMAIL_AI_INVALID_OUTPUT', 'La IA devolvió un borrador no utilizable. Intenta de nuevo.');
     }
 
-    const usage: AIUsageMetrics = buildUsageMetrics(data, model, startedAt, 0);
-    await this.db.$transaction(async (tx) => {
-      await recordAIUsageInDb(tx, usage, {
-        organizationId: actor.organizationId,
-        usuarioId: actor.id,
-        operacion: 'QUOTE_EMAIL_DRAFT',
-        operationId: `quote-email:${actor.organizationId}:${quote.id}:${String(data?.id || crypto.randomUUID())}`,
-        metadata: { cotizacion_id: quote.id, prompt_version: promptVersion, persisted_to_quote: false, sent: false },
-      });
-      await tx.auditLog.create({ data: {
+    await this.db.auditLog.create({ data: {
         organization_id: actor.organizationId,
         user_id: actor.id,
         session_id: actor.sessionId,
@@ -144,7 +130,6 @@ export class QuoteEmailAIService {
         entidad_id: quote.id,
         detalles: { provider: 'OPENAI', model, prompt_version: promptVersion, persisted_to_quote: false, sent: false } as Prisma.InputJsonValue,
       } });
-    });
 
     return {
       recipient: quote.prospecto?.email || '',

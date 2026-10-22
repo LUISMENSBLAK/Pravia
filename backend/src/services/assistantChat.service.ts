@@ -1,5 +1,5 @@
 import type { Request } from 'express';
-import { buildUsageMetrics, getOpenAIAssistantModelName, type AIUsageMetrics } from './openaiDocument.service';
+import { getOpenAIAssistantModelName, type AIUsageMetrics } from './openaiDocument.service';
 import {
   AssistantToolError,
   assistantToolCatalog,
@@ -15,6 +15,9 @@ import {
   prepareOrExecuteAssistantAction,
 } from './assistantActions.service';
 import type { AssistantActionState } from './assistantConversation.service';
+import { aiGateway, type AiGatewayExecutor } from '../platform/aiGateway.runtime';
+import { AI_OPERATION_CODES } from '../platform/aiBillingPolicy';
+import { PlatformDomainError } from '../platform/platform.errors';
 
 type AuthUser = NonNullable<Request['user']>;
 
@@ -75,7 +78,7 @@ type ProviderResponse = {
 };
 
 type ChatDependencies = {
-  fetchImpl?: typeof fetch;
+  gateway?: AiGatewayExecutor;
   executeTool?: typeof executeAssistantTool;
   executeAction?: typeof prepareOrExecuteAssistantAction;
   cancelAction?: typeof cancelPendingAssistantAction;
@@ -408,12 +411,6 @@ function extractText(response: ProviderResponse) {
   return content.filter((item: any) => item.type === 'output_text').map((item: any) => String(item.text || '')).join('').trim();
 }
 
-function safeProviderCode(status: number) {
-  if (status === 401 || status === 403) return 'AI_PROVIDER_AUTH_FAILED';
-  if (status === 429) return 'AI_PROVIDER_RATE_LIMITED';
-  return 'AI_PROVIDER_REQUEST_FAILED';
-}
-
 function sourceFromProvenance(item: any): AssistantSource | null {
   const label = String(item?.label || '').slice(0, 180);
   if (!label) return null;
@@ -527,7 +524,7 @@ function timeoutAfter<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 }
 
 export function createAssistantChatService(dependencies: ChatDependencies = {}) {
-  const fetchImpl = dependencies.fetchImpl || fetch;
+  const gateway = dependencies.gateway || aiGateway;
   const executeTool = dependencies.executeTool || executeAssistantTool;
   const executeAction = dependencies.executeAction || prepareOrExecuteAssistantAction;
   const cancelAction = dependencies.cancelAction || cancelPendingAssistantAction;
@@ -566,43 +563,33 @@ export function createAssistantChatService(dependencies: ChatDependencies = {}) 
         };
       }
     }
-    const apiKey = String(process.env.OPENAI_API_KEY || '').trim();
-    if (!apiKey) throw new AssistantChatError('PRAVIA IA no está disponible en este momento.', 'AI_PROVIDER_NOT_CONFIGURED', 503);
-
     const startedAt = Date.now();
     const model = getOpenAIAssistantModelName();
     const usages: AIUsageMetrics[] = [];
     const configuredTimeout = Number(process.env.AI_ASSISTANT_TIMEOUT_MS || process.env.AI_DOCUMENT_TIMEOUT_MS || MAX_QUERY_TIMEOUT_MS);
     const overallTimeout = Math.min(Math.max(configuredTimeout, 10_000), MAX_QUERY_TIMEOUT_MS);
     const remaining = () => Math.max(1, overallTimeout - (Date.now() - startedAt));
+    let providerSequence = 0;
     const providerRequest = async (body: Record<string, unknown>): Promise<ProviderResponse> => {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const providerStartedAt = Date.now();
-        let response: Response;
-        try {
-          response = await fetchImpl('https://api.openai.com/v1/responses', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(remaining()), body: JSON.stringify(body) });
-        } catch (error: any) {
-          console.error(JSON.stringify({ type: 'ai_provider_error', level: 'error', code: 'AI_PROVIDER_NETWORK_ERROR', correlation_id: correlationId, error_name: error?.name || 'Error' }));
-          throw new AssistantChatError('PRAVIA IA no pudo comunicarse con el proveedor. Intenta de nuevo.', 'AI_PROVIDER_NETWORK_ERROR', 503);
-        }
-        if (!response.ok) {
-          const code = safeProviderCode(response.status);
-          await response.text().catch(() => undefined);
-          console.error(JSON.stringify({ type: 'ai_provider_error', level: 'error', code, provider_status: response.status, correlation_id: correlationId }));
-          throw new AssistantChatError('PRAVIA IA no pudo completar la consulta con el proveedor.', code, response.status === 429 ? 503 : 502);
-        }
-        const providerResponse = await response.json() as ProviderResponse;
+      const sequence = providerSequence++;
+      try {
+        const providerResponse = await gateway.execute<ProviderResponse>({
+          actor: { userId: user.id, organizationId: user.organizationId, membershipId: user.membershipId,
+            role: user.rol, permissions: user.permissions, scope: user.scope, sessionId: user.sessionId },
+          operationCode: AI_OPERATION_CODES.assistantChat, billingClass: 'CUSTOMER_WALLET',
+          idempotencyKey: `assistant-chat:${input.messageId || correlationId}:${sequence}`,
+          traceId: correlationId, timeoutMs: remaining(), payload: { body, retryIncomplete: true },
+        });
         if (providerResponse.status === 'incomplete') {
-          if (attempt === 0 && remaining() > 1_000) {
-            console.warn(JSON.stringify({ type: 'ai_provider_retry', level: 'warn', code: 'AI_PROVIDER_INCOMPLETE', attempt: attempt + 1, correlation_id: correlationId }));
-            continue;
-          }
           throw new AssistantChatError('PRAVIA IA no pudo completar la respuesta. Intenta de nuevo.', 'AI_PROVIDER_INCOMPLETE', 502);
         }
-        usages.push(buildUsageMetrics(providerResponse, String(providerResponse.model || model), providerStartedAt, attempt, attempt > 0));
         return providerResponse;
+      } catch (error: any) {
+        if (error instanceof AssistantChatError) throw error;
+        if (error instanceof PlatformDomainError) throw new AssistantChatError(error.message, error.code, error.status);
+        console.error(JSON.stringify({ type: 'ai_provider_error', level: 'error', code: 'AI_PROVIDER_NETWORK_ERROR', correlation_id: correlationId, error_name: error?.name || 'Error' }));
+        throw new AssistantChatError('PRAVIA IA no pudo comunicarse con el proveedor. Intenta de nuevo.', 'AI_PROVIDER_NETWORK_ERROR', 503);
       }
-      throw new AssistantChatError('PRAVIA IA no pudo completar la respuesta. Intenta de nuevo.', 'AI_PROVIDER_INCOMPLETE', 502);
     };
 
     const tools = buildTools(user);

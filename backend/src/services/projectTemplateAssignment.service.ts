@@ -7,13 +7,13 @@ type AssignInput = { actId: string; artifactId: string; versionId: string; repla
 
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 
-async function validateTarget(actor: Actor, input: AssignInput) {
+async function validateTarget(db: Prisma.TransactionClient, actor: Actor, input: AssignInput) {
   const [act, version] = await Promise.all([
-    prisma.tipoActo.findFirst({
+    db.tipoActo.findFirst({
       where: { id: input.actId, activo: true, archived_at: null, OR: [{ organization_id: actor.organizationId }, { organization_id: null }] },
       select: { id: true, nombre: true },
     }),
-    prisma.catalogoArtefactoVersion.findFirst({
+    db.catalogoArtefactoVersion.findFirst({
       where: {
         id: input.versionId,
         organization_id: actor.organizationId,
@@ -58,9 +58,10 @@ export const projectTemplateAssignmentService = {
   },
 
   async assign(actor: Actor, input: AssignInput) {
-    const target = await validateTarget(actor, input);
     return prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`cfg002:artifact:${actor.organizationId}:${input.artifactId}`}))`);
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`project-template:${actor.organizationId}:${input.actId}`}))`);
+      const target = await validateTarget(tx, actor, input);
       const current = await tx.projectTemplateAssignment.findUnique({
         where: { organization_id_tipo_acto_id: { organization_id: actor.organizationId, tipo_acto_id: input.actId } },
         include: { artefacto: { select: { nombre: true } }, version: { select: { version: true } } },

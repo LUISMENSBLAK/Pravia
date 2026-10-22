@@ -223,7 +223,7 @@ export class ComparecienteController {
       if (!req.user || !await canAccessCompareciente(req.user, req.params.id)) {
         return res.status(404).json({ success: false, error: 'El compareciente no existe o está fuera de tu alcance.' });
       }
-      const data = await comparecienteService.extraerDocumentosExistentesConIA(req.params.id, actor.id, req.user.organizationId);
+      const data = await comparecienteService.extraerDocumentosExistentesConIA(req.params.id, req.user, String(req.header?.('Idempotency-Key') || ''));
       return res.status(200).json({ success: true, data });
     } catch (err: any) {
       return res.status(400).json({ success: false, error: err.message || 'No pudimos extraer la información de los documentos.' });

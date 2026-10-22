@@ -240,7 +240,8 @@ export class ComparecienteAltaSessionController {
       const resultado = await ComparecienteAltaSessionService.extraerDatosConIA(
         sessionId,
         documentoIds,
-        file ? file.buffer : undefined
+        file ? file.buffer : undefined,
+        String(req.header('Idempotency-Key') || req.body?.request_key || ''),
       );
 
       return res.status(200).json({

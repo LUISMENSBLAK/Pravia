@@ -9,6 +9,7 @@ import {
   extractPresupuesto,
   generateCotizacionDocument,
   updateCotizacionPresupuesto,
+  previewCotizacionPresupuesto,
   registrarAnticipo,
   validarAnticipo,
   convertToExpediente,
@@ -38,6 +39,7 @@ router.post('/', createCotizacion);
 router.put('/:id/estado', updateCotizacionEstado);
 router.post('/extraer-presupuesto', upload.single('archivo'), extractPresupuesto);
 router.put('/:id/presupuesto', updateCotizacionPresupuesto);
+router.post('/:id/presupuesto/vista-previa', previewCotizacionPresupuesto);
 router.post('/:id/propuestas-ia', requirePermission('ai.use'), generateCotizacionAIProposal);
 router.patch('/:id/propuestas-ia/:proposalId', decideCotizacionAIProposal);
 router.post('/:id/correo-ia', requirePermission('cotizaciones.write'), requirePermission('ai.use'), draftCotizacionEmailWithAI);

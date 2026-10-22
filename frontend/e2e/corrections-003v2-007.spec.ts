@@ -112,7 +112,7 @@ test('Corrección 003 v2 + 007: recorrido contractual completo en Chrome real', 
     await viewer.getByRole('button', { name: 'Cerrar vista previa' }).click();
 
     await page.goto('/configuracion/plantillas-formatos');
-    await page.getByRole('button', { name: /Notaría.*Notaría QA Local/ }).click();
+    await page.getByRole('button', { name: /^Organización / }).click();
     await page.getByRole('button', { name: /Formatos/ }).click();
     const artifact = page.locator('article').filter({ has: page.getByRole('heading', { name: 'ADM-001 · Cotización QA', exact: true }) });
     await expect(artifact).toBeVisible();

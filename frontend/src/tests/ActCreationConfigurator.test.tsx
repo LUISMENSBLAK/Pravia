@@ -72,6 +72,7 @@ describe('configurador integral de acto', () => {
     await user.click(within(advanced).getByLabelText('Revisión de expediente'));
     fireEvent.change(within(advanced).getByLabelText('Condición de Firma'), { target: { value: '{"op":"exists","field":"expediente.tiene_credito"}' } });
     await user.click(within(advanced).getByRole('button', { name: 'Agregar excepción' }));
+    expect(within(advanced).queryByRole('option', { name: 'Notaría' })).not.toBeInTheDocument();
     await user.type(within(advanced).getByLabelText('Jurisdicción'), 'Jalisco');
     await user.click(screen.getByLabelText('VENDEDOR'));
     await user.click(screen.getByRole('button', { name: 'Guardar acto' }));

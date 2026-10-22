@@ -77,4 +77,15 @@ describe('ADM-001 · resolución canónica compartida', () => {
     });
     expect(storage.downloadFile).not.toHaveBeenCalled();
   });
+
+  it('informa que falta el binario configurado sin simular una cotización generada', async () => {
+    const source = Buffer.from('DOCX-TEMPLATE-A');
+    const db: any = { catalogoArtefactoDestino: { findMany: vi.fn().mockResolvedValue([configuredLink(1, source)]) } };
+    storage.downloadFile.mockRejectedValue(Object.assign(new Error('missing local QA file'), { code: 'ENOENT' }));
+
+    await expect(resolveAdministrativeQuoteTemplate(db, 'org-1')).rejects.toMatchObject<Partial<AdministrativeQuoteTemplateError>>({
+      status: 409,
+      code: 'ADMINISTRATIVE_QUOTE_TEMPLATE_SOURCE_UNAVAILABLE',
+    });
+  });
 });

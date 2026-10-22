@@ -17,6 +17,9 @@ export const getProspectDocumentReview = async (req: Request, res: Response) => 
 
 export const runProspectDocumentReview = async (req: Request, res: Response) => {
   if (!req.user) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
-  try { return res.status(201).json(await service.run(req.user, req.params.id)); }
+  try {
+    const key = String(req.get('Idempotency-Key') || req.body?.idempotency_key || '').trim();
+    return res.status(201).json(await service.run(req.user, req.params.id, key, req.correlationId || crypto.randomUUID()));
+  }
   catch (error) { return failed(res, error); }
 };

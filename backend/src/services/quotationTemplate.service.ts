@@ -7,6 +7,8 @@ export type QuotationTemplateContext = {
   fecha: Date;
   honorarios: string | null;
   impuestos_derechos: string | null;
+  otros_gastos?: string | null;
+  iva_otros_gastos?: string | null;
   total: string | null;
 };
 
@@ -32,6 +34,8 @@ export function getQuotationTemplate(context: QuotationTemplateContext): Quotati
     fecha: new Intl.DateTimeFormat('es-MX', { dateStyle: 'long' }).format(context.fecha),
     honorarios: money(context.honorarios),
     impuestos_derechos: money(context.impuestos_derechos),
+    otros_gastos: money(context.otros_gastos ?? '0.00'),
+    iva_otros_gastos: money(context.iva_otros_gastos ?? '0.00'),
     total: money(context.total),
   };
   return {
@@ -46,6 +50,8 @@ export function getQuotationTemplate(context: QuotationTemplateContext): Quotati
       `Fecha: ${variables.fecha}`,
       `Honorarios: ${variables.honorarios}`,
       `Impuestos y derechos: ${variables.impuestos_derechos}`,
+      ...(Number(context.otros_gastos || 0) > 0 ? [`Otros gastos: ${variables.otros_gastos}`] : []),
+      ...(Number(context.iva_otros_gastos || 0) > 0 ? [`IVA de otros gastos configurados: ${variables.iva_otros_gastos}`] : []),
       `Total: ${variables.total}`,
     ].join('\n'),
   };

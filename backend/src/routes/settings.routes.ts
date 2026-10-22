@@ -4,6 +4,8 @@ import { requirePermission } from '../middleware/auth.middleware';
 
 const router = Router();
 router.get('/overview', SettingsController.overview);
+router.get('/organization', SettingsController.organization);
+router.patch('/organization', requirePermission('configuracion.manage'), SettingsController.updateOrganization);
 router.get('/profile', SettingsController.profile);
 router.patch('/profile', SettingsController.updateProfile);
 router.get('/preferences', SettingsController.preferences);

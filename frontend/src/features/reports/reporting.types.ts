@@ -1,6 +1,6 @@
 export type ReportView = 'resumen' | 'finanzas' | 'cobranza' | 'abogados' | 'firmas' | '80-20' | 'clientes-potenciales';
 export type ReportPeriodKey = 'ESTA_SEMANA' | 'ESTE_MES' | 'MES_ANTERIOR' | 'ESTE_TRIMESTRE' | 'ESTE_ANO' | 'PERSONALIZADO';
-export type ReportScope = { mode: 'GLOBAL' | 'PROPIO' | 'OPERATIVO'; lawyerId?: string; notariaId?: string; financial: boolean };
+export type ReportScope = { mode: 'GLOBAL' | 'PROPIO' | 'OPERATIVO'; lawyerId?: string; financial: boolean };
 export type ReportPeriod = { key: string; label: string; from: string; to: string; timezone: string };
 
 export type ReportingCatalogs = {

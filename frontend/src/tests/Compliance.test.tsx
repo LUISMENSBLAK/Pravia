@@ -53,12 +53,12 @@ const catalogs = {
 const panel = {
   rows: [{ id: "state-1", expediente_id: "fixture-exp-141", expediente: "EXP-2026-0141", escritura: null,
     compareciente_principal: { id: "person-1", nombre: "María Fernanda López" }, abogado: { id: "u1", nombre: "Andrea Ruiz" },
-    notaria: { id: "not-12", nombre: "Notaría 12", numero_notaria: "12" }, actos: [{ id: "act-1", nombre: "Compraventa" }],
+    actos: [{ id: "act-1", nombre: "Compraventa" }],
     cumplimiento: { code: "PENDIENTE", pending_count: 2 }, aviso: { code: "PENDIENTE", label: "Aviso pendiente", count: 1, pending: 1 },
     urgency: "PENDIENTE", next_deadline: null, operational_status: "ENTREGADO", vulnerable: true }],
   metrics: { pendientes: 1, avisos_pendientes: 1, por_vencer: 0, vencidos: 0 },
   meta: { page: 1, page_size: 25, total: 1, total_pages: 1 },
-  filters: { lawyers: [{ id: "u1", nombre: "Andrea Ruiz" }], acts: [{ id: "act-1", nombre: "Compraventa" }], notaries: [{ id: "not-12", nombre: "Notaría 12", numero_notaria: "12" }], show_notaria: false },
+  filters: { lawyers: [{ id: "u1", nombre: "Andrea Ruiz" }], acts: [{ id: "act-1", nombre: "Compraventa" }] },
 };
 
 function mockApi(

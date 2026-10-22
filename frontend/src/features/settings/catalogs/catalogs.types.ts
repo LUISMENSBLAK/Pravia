@@ -1,5 +1,5 @@
 export type DayType = 'HABILES' | 'NATURALES';
-export type OwnerType = 'NOTARIA' | 'INSTITUCION';
+export type OwnerType = 'ORGANIZACION' | 'NOTARIA' | 'INSTITUCION';
 export type ArtifactType = 'PLANTILLA' | 'FORMATO';
 export type FunctionalDestination = 'COTIZACION_SERVICIOS' | 'EXPEDIENTE_PRESUPUESTO' | 'CALCULO_ISR_MEMORIA' | 'FINANZAS_RECIBO_PAGO' | 'FINANZAS_SOLICITUD_PAGO' | 'PROYECTO_MACHOTE' | 'EXPEDIENTE_DOCUMENTO_GENERICO' | 'CUMPLIMIENTO_PLD_UIF';
 export type ArtifactDestination = { id?: string; destino: FunctionalDestination; activo: boolean; predeterminado: boolean; reglas_json?: unknown; mapeo_datos_json?: unknown };

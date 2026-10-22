@@ -116,6 +116,24 @@ export const uploadDocumento = async (req: Request, res: Response) => {
         if (movimiento_id) await tx.movimientoDocumento.create({
           data: { movimiento_id, documento_id: created.id, tipo_vinculo: tipo, creado_por_id: actorUserId, estatus: 'ACTIVO' },
         });
+        const runtimeProvider = await tx.storageProviderRecord.findUnique({ where: { code: 'runtime-primary' } });
+        const physicalLocation = runtimeProvider
+          ? await tx.storageBlobLocation.findFirst({
+            where: {
+              organization_id: req.user!.organizationId,
+              provider_id: runtimeProvider.id,
+              object_key: storage_key,
+              status: 'AVAILABLE',
+            },
+          })
+          : null;
+        if (!physicalLocation) throw new Error('TRACKED_STORAGE_LOCATION_REQUIRED');
+        await tx.storageBlobReference.create({ data: {
+          organization_id: req.user!.organizationId,
+          blob_id: physicalLocation.blob_id,
+          owner_type: 'DOCUMENTO',
+          owner_id: created.id,
+        } });
         return tx.documento.findUniqueOrThrow({
           where: { id: created.id },
           include: { subido_por: { select: { nombre: true } } },

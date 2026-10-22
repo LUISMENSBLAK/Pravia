@@ -85,12 +85,6 @@ const actions: Partial<Record<AssistantModule, AssistantAction[]>> = {
     { id: 'quotes-accepted', label: 'Aceptadas este mes', prompt: 'Muéstrame las cotizaciones aceptadas este mes.' },
     { id: 'quotes-search', label: 'Buscar cotización', prompt: 'Ayúdame a buscar una cotización.' },
   ],
-  notarias: [
-    { id: 'notaries-search', label: 'Buscar notaría', prompt: 'Ayúdame a buscar una notaría.' },
-    { id: 'notaries-active-cases', label: 'Con más expedientes activos', prompt: 'Muéstrame las notarías con más expedientes activos.' },
-    { id: 'notaries-activity', label: 'Actividad reciente', prompt: 'Muéstrame la actividad reciente de notarías.' },
-    { id: 'notaries-contacts', label: 'Contactos pendientes', prompt: 'Muéstrame notarías sin contacto registrado.' },
-  ],
   agenda: [
     { id: 'agenda-today', label: '¿Qué tengo hoy?', prompt: '¿Qué tengo en la agenda hoy?' },
     { id: 'agenda-signatures', label: 'Próximas firmas', prompt: 'Muéstrame las próximas firmas programadas.' },

@@ -1,7 +1,7 @@
 import { Prisma, PrismaClient, PresupuestoConceptoCategoria } from '@prisma/client';
 import type { Request } from 'express';
 import prisma from '../config/prisma';
-import { budgetTotals, normalizeBudgetConcepts } from '../domain/expedienteBudget';
+import { budgetTotals, normalizeEditableBudgetConcepts, withDerivedHonorariosIva } from '../domain/expedienteBudget';
 import { cotizacionObjectWhere } from './objectAccess.service';
 import { INSUFFICIENT_LEGAL_FOUNDATION } from './knowledge.service';
 
@@ -91,7 +91,7 @@ export class QuoteAIProposalService {
       this.db.knowledgeCriterion.findMany({ where: { organization_id: actor.organizationId, active: true }, select: { id: true, code: true, title: true, scope: true }, take: 20 }),
     ]);
     if (!rows.length) throw new QuoteAIError(409, 'QUOTE_AI_FOUNDATION_INSUFFICIENT', INSUFFICIENT_LEGAL_FOUNDATION);
-    const normalized = normalizeBudgetConcepts(rows);
+    const normalized = withDerivedHonorariosIva(normalizeEditableBudgetConcepts(rows));
     const totals = budgetTotals(normalized);
     const evidence = {
       layers: {
@@ -125,10 +125,12 @@ export class QuoteAIProposalService {
       }
       if (quote.etapa_contractual && frozen.has(quote.etapa_contractual)) throw new QuoteAIError(409, 'QUOTE_AI_FROZEN', 'La cotización aceptada conserva su presupuesto histórico.');
       const raw = proposal.proposal as Record<string, unknown>;
-      const concepts = normalizeBudgetConcepts(raw.concepts);
+      const concepts = withDerivedHonorariosIva(normalizeEditableBudgetConcepts(raw.concepts));
       const totals = budgetTotals(concepts);
       await tx.cotizacionConcepto.deleteMany({ where: { organization_id: actor.organizationId, cotizacion_id: quoteId } });
-      await tx.cotizacionConcepto.createMany({ data: concepts.map((row) => ({ organization_id: actor.organizationId, cotizacion_id: quoteId, concepto: row.concepto, categoria: row.categoria, importe: row.importe, orden: row.orden, origen: 'IA_PROPUESTA' })) });
+      await tx.cotizacionConcepto.createMany({ data: concepts.map((row) => ({ organization_id: actor.organizationId, cotizacion_id: quoteId, concepto: row.concepto, categoria: row.categoria, importe: row.importe, orden: row.orden,
+        tratamiento_iva: row.tratamiento_iva, iva_tasa: row.iva_tasa, regla_fiscal_fuente: row.regla_fiscal_fuente, regla_fiscal_version: row.regla_fiscal_version,
+        origen: row.categoria === 'IVA_HONORARIOS' ? 'DERIVADO' : 'IA_PROPUESTA' })) });
       await tx.cotizacion.update({ where: { id: quoteId }, data: { total_notaria: totals.total, total_cliente: totals.total, honorarios_pravia: null } });
       const applied = await tx.cotizacionIAProposal.update({ where: { id: proposal.id }, data: { status: 'APLICADA', decided_by_id: actor.id, decided_at: new Date() } });
       await tx.cotizacionIAProposal.updateMany({ where: { organization_id: actor.organizationId, cotizacion_id: quoteId, status: 'PENDIENTE', id: { not: proposal.id } }, data: { status: 'SUPERADA', decided_by_id: actor.id, decided_at: new Date() } });

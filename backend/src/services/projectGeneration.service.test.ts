@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { Document, Footer, Header, Packer, Paragraph, Table, TableCell, TableRow, TextRun } from 'docx';
 import JSZip from 'jszip';
 import { buildLiteralProjectSources, buildProjectDocumentContext, buildProjectTemplateData, completeLiteralProjectPatchPlan, detectProjectTemplateResidues, docxVisibleText, formatNotarialAmount, isDefaultProjectSource, isRetryableLiteralProjectPlanError, ProjectGenerationError, projectTemplateFields, renderLiteralProjectTemplate, renderProjectTemplate, resolveAssignedProjectVersion, resolveProjectInstructions, reviewProjectAgainstTemplate, validateLiteralProjectPatches, verifyLiteralProjectTemplateIntegrity } from './projectGeneration.service';
-import { canonicalizeLiteralProjectPatchReferences } from './openaiDocument.service';
+import { canonicalizeLiteralProjectPatchReferences, planLiteralProjectPatchesWithOpenAI } from './openaiDocument.service';
 
 async function template() {
   const buffer = await Packer.toBuffer(new Document({
@@ -23,6 +23,40 @@ async function template() {
 }
 
 describe('EXP-010 · motor DOCX sobre machote real', () => {
+  it('enruta el plan literal por el gateway económico con actor, operación e idempotencia', async () => {
+    const requests: any[] = [];
+    const plan = await planLiteralProjectPatchesWithOpenAI({
+      templateName: 'Machote QA.docx',
+      templateSegments: [{ id: 'p-1', text: 'CLIENTE: EJEMPLO', paragraph_index: 1 }],
+      canonicalFacts: { cliente: 'PERSONA QA' },
+      sourceDocuments: [],
+      economicContext: {
+        actor: {
+          userId: 'user-qa', organizationId: 'org-qa', membershipId: 'membership-qa',
+          role: 'DIRECCION', permissions: ['ai.use'], scope: 'GLOBAL', sessionId: 'session-qa',
+        },
+        idempotencyKey: 'project-qa:literal-plan:1', traceId: 'trace-project-qa',
+        gateway: { execute: async (request) => {
+          requests.push(request);
+          return {
+            status: 'completed', usage: { input_tokens: 12, output_tokens: 8, input_tokens_details: { cached_tokens: 2 } },
+            output: [{ content: [{ type: 'output_text', text: JSON.stringify({
+              patches: [{ target_id: 'p-1', replace: 'CLIENTE: PERSONA QA', source_references: ['CANONICAL_FACTS'], reason: 'Hecho canónico', confidence: 'ALTA' }],
+              missing_fields: [], conflicts: [], possible_residues: [],
+            }) }] }],
+          } as any;
+        } },
+      },
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      operationCode: 'PROJECT_LITERAL_PATCH_PLAN', billingClass: 'CUSTOMER_WALLET',
+      idempotencyKey: 'project-qa:literal-plan:1', traceId: 'trace-project-qa',
+      actor: { userId: 'user-qa', organizationId: 'org-qa' },
+    });
+    expect(plan.patches).toEqual([expect.objectContaining({ find: 'CLIENTE: EJEMPLO', replace: 'CLIENTE: PERSONA QA' })]);
+  });
+
   it('reintenta únicamente defectos corregibles del plan IA sin relajar integridad documental', () => {
     expect(isRetryableLiteralProjectPlanError(new ProjectGenerationError(422, 'PROJECT_LITERAL_VALUE_WITHOUT_SOURCE', 'sin fuente'))).toBe(true);
     expect(isRetryableLiteralProjectPlanError(new ProjectGenerationError(422, 'PROJECT_LITERAL_PATCH_NOT_FOUND', 'target inválido'))).toBe(true);

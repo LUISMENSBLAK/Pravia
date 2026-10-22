@@ -185,8 +185,9 @@ describe("H5 frozen 96-atomic contract", () => {
     expect(service).toContain("auditLog.create");
     expect(service).not.toContain("ComplianceH5AiProposal");
     expect(service).toContain("extraerFinanzasDesdeDocumento");
-    expect(service).toContain("recordAIUsages");
-    expect(service).toContain("questionnaire_answers_sent: false");
+    expect(service).toContain("idempotencyKey: `${usageOperationId}:document:${document.id}`");
+    expect(service).toContain("PlatformDomainError");
+    expect(service).not.toContain("recordAIUsages");
   });
 
   it("keeps sensitive H5 reads permission-gated and provider role additive", () => {

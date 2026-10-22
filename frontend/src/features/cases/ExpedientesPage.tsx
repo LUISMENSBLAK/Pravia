@@ -11,7 +11,7 @@ import { EligibleQuoteSelector } from './components/EligibleQuoteSelector';
 import { useExpedientes } from './useExpedientes';
 import styles from './Expedientes.module.css';
 
-const fields = ['search', 'folio', 'macrophase', 'stage', 'responsible', 'notary', 'risk', 'compliance', 'dateFrom', 'dateTo', 'deedNumber', 'deedDateFrom', 'deedDateTo', 'actType', 'client', 'status', 'sort'] as const;
+const fields = ['search', 'folio', 'macrophase', 'stage', 'responsible', 'risk', 'compliance', 'dateFrom', 'dateTo', 'deedNumber', 'deedDateFrom', 'deedDateTo', 'actType', 'client', 'status', 'sort'] as const;
 export function ExpedientesPage() {
   const { user } = useAuth(); const navigate = useNavigate(); const [params, setParams] = useSearchParams(); const [open, setOpen] = useState(params.get('new') === '1'); const [toast, setToast] = useState('');
   const values = Object.fromEntries(fields.map((field) => [field, params.get(field) || ''])) as Record<string, string>; const page = Math.max(1, Number.parseInt(params.get('page') || '1', 10) || 1);

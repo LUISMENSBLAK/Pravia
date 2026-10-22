@@ -15,7 +15,7 @@ const root = (id:string) => `/expedientes/${encodeURIComponent(id)}/finanzas-ope
 export const expedienteFinanceService = {
   read(id:string,signal?:AbortSignal){if(import.meta.env.DEV&&new URLSearchParams(window.location.search).get('fixture')==='exp008')return Promise.resolve(exp008VisualFixture);return apiRequest<Exp008Data>(root(id),{signal});},
   reportIncome(id:string,input:Record<string,unknown>,files:{receipt:File;invoicePdf?:File;invoiceXml?:File}){return apiRequest(`${root(id)}/ingresos`,{method:'POST',body:form(input,{file:files.receipt,invoice_pdf:files.invoicePdf,invoice_xml:files.invoiceXml})});},
-  previewIncomeAI(id:string,file:File){return apiRequest<Exp008IncomePrefill>(`${root(id)}/ingresos/ia/vista-previa`,{method:'POST',body:form({}, {file})});},
+  previewIncomeAI(id:string,file:File){return apiRequest<Exp008IncomePrefill>(`${root(id)}/ingresos/ia/vista-previa`,{method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},body:form({}, {file})});},
   completeInvoice(id:string,incomeId:string,input:Record<string,unknown>,files:{invoicePdf?:File;invoiceXml?:File}){return apiRequest(`${root(id)}/ingresos/${encodeURIComponent(incomeId)}/factura`,{method:'POST',body:form(input,{invoice_pdf:files.invoicePdf,invoice_xml:files.invoiceXml})});},
   createInternalRequest(id:string,input:Record<string,unknown>){return apiRequest(`${root(id)}/solicitudes/interna`,{method:'POST',body:JSON.stringify(input)});},
   createExternalRequest(id:string,input:Record<string,unknown>,file:File){return apiRequest(`${root(id)}/solicitudes/externa`,{method:'POST',body:form(input,{file})});},

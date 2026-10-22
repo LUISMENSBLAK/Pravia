@@ -27,7 +27,7 @@ import { QuoteBudgetService, quoteBudgetPayload } from './quoteBudget.service';
 import { quoteDocumentService } from './quoteDocument.service';
 import { ExpedienteDocumentAppendixService } from './expedienteDocumentAppendix.service';
 import { ISRService } from './isr.service';
-import { budgetTotals, normalizeBudgetConcepts } from '../domain/expedienteBudget';
+import { budgetTotals, normalizeEditableBudgetConcepts, withDerivedHonorariosIva } from '../domain/expedienteBudget';
 import { ProspectWorkflowError } from '../domain/prospectWorkflow';
 import { ComparecienteService } from './compareciente.service';
 import { PrediosService } from './predios.service';
@@ -106,7 +106,7 @@ const displayValue = (value: unknown) => {
   return safeText(value, 120);
 };
 const visibleTotals = (concepts: unknown) => {
-  const totals = budgetTotals(normalizeBudgetConcepts(concepts));
+  const totals = budgetTotals(withDerivedHonorariosIva(normalizeEditableBudgetConcepts(concepts)));
   return { honorarios: totals.honorarios, iva_honorarios: totals.iva_honorarios, subtotal_honorarios: totals.subtotal_honorarios, subtotal_impuestos_derechos: totals.subtotal_impuestos_derechos, total: totals.total };
 };
 
@@ -302,14 +302,20 @@ const definitions: Definition[] = [
     permissions: ['cotizaciones.write'], risk: 'SENSITIVE_WRITE', confirmation: 'REQUIRED',
     fields: {
       quote_id: { type: 'string', required: true, max: 80 }, quote_query: { type: 'string', max: 120 },
-      concepto: { type: 'string', required: true, max: 240 }, categoria: { type: 'string', required: true, enum: ['HONORARIOS','IVA_HONORARIOS','IMPUESTOS_DERECHOS'] },
+      concepto: { type: 'string', required: true, max: 240 }, categoria: { type: 'string', required: true, enum: ['HONORARIOS','IMPUESTOS_DERECHOS','OTRO_GASTO'] },
       importe: { type: 'string', required: true, max: 30 },
+      tratamiento_iva: { type: 'string', enum: ['SIN_IMPUESTO','GRAVADO','EXENTO','NO_OBJETO','REQUIERE_REVISION'] },
+      iva_tasa: { type: 'string', max: 20 }, regla_fiscal_fuente: { type: 'string', max: 240 }, regla_fiscal_version: { type: 'string', max: 80 },
     },
     contextField: 'quote_id', contextTypes: ['cotizacion'],
     async prepare({ actor, args }) {
       const quote = await prisma.cotizacion.findFirst({ where: { id: args.quote_id, ...cotizacionObjectWhere(actor) }, include: { conceptos: { orderBy: { orden: 'asc' } } } });
       if (!quote) throw new AssistantActionError('No tienes acceso a esa cotización.', 'AI_ACTION_TARGET_DENIED', 403);
-      const next = [...quote.conceptos.map((item) => ({ id: item.id, concepto: item.concepto, categoria: item.categoria, importe: String(item.importe) })), { concepto: args.concepto, categoria: args.categoria, importe: args.importe }];
+      const next = [...quote.conceptos.filter((item) => item.categoria !== 'IVA_HONORARIOS').map((item) => ({ id: item.id, concepto: item.concepto, categoria: item.categoria, importe: String(item.importe),
+        tratamiento_iva: item.tratamiento_iva, iva_tasa: item.iva_tasa == null ? null : String(item.iva_tasa), regla_fiscal_fuente: item.regla_fiscal_fuente, regla_fiscal_version: item.regla_fiscal_version })), { concepto: args.concepto, categoria: args.categoria, importe: args.importe,
+          tratamiento_iva: args.categoria === 'OTRO_GASTO' ? args.tratamiento_iva || 'REQUIERE_REVISION' : null,
+          iva_tasa: args.categoria === 'OTRO_GASTO' ? args.iva_tasa : null, regla_fiscal_fuente: args.categoria === 'OTRO_GASTO' ? args.regla_fiscal_fuente : null,
+          regla_fiscal_version: args.categoria === 'OTRO_GASTO' ? args.regla_fiscal_version : null }];
       return {
         object: { type: 'Cotizacion', id: quote.id, label: quote.numero_cotizacion || quote.numero_solicitud || quote.id },
         before: quoteBudgetPayload(quote.conceptos), after: { concepts: next, totals: visibleTotals(next) },
@@ -320,7 +326,12 @@ const definitions: Definition[] = [
     async execute(input) {
       const quote = await prisma.cotizacion.findFirst({ where: { id: input.args.quote_id, ...cotizacionObjectWhere(input.actor) }, include: { conceptos: { orderBy: { orden: 'asc' } } } });
       if (!quote) throw new AssistantActionError('No tienes acceso a esa cotización.', 'AI_ACTION_TARGET_DENIED', 403);
-      const concepts = [...quote.conceptos.map((item) => ({ id: item.id, concepto: item.concepto, categoria: item.categoria, importe: String(item.importe) })), { concepto: input.args.concepto, categoria: input.args.categoria, importe: input.args.importe }];
+      const concepts = [...quote.conceptos.filter((item) => item.categoria !== 'IVA_HONORARIOS').map((item) => ({ id: item.id, concepto: item.concepto, categoria: item.categoria, importe: String(item.importe),
+        tratamiento_iva: item.tratamiento_iva, iva_tasa: item.iva_tasa == null ? null : String(item.iva_tasa), regla_fiscal_fuente: item.regla_fiscal_fuente, regla_fiscal_version: item.regla_fiscal_version })),
+      { concepto: input.args.concepto, categoria: input.args.categoria, importe: input.args.importe,
+        tratamiento_iva: input.args.categoria === 'OTRO_GASTO' ? input.args.tratamiento_iva || 'REQUIERE_REVISION' : null,
+        iva_tasa: input.args.categoria === 'OTRO_GASTO' ? input.args.iva_tasa : null, regla_fiscal_fuente: input.args.categoria === 'OTRO_GASTO' ? input.args.regla_fiscal_fuente : null,
+        regla_fiscal_version: input.args.categoria === 'OTRO_GASTO' ? input.args.regla_fiscal_version : null }];
       const result = await new QuoteBudgetService(prisma).save(input.actor, quote.id, { concepts, origin: 'MANUAL', expectedUpdatedAt: String(input.preview?.guard?.version || '') });
       return { entityType: 'Cotizacion', entityId: quote.id, message: 'El concepto quedó agregado y el total de la cotización fue recalculado.', refresh: 'cotizaciones', details: [{ label: 'Total', value: String(result.presupuesto.totals.total) }] };
     },
@@ -419,7 +430,7 @@ const definitions: Definition[] = [
     },
     async execute(input) {
       if (!(await canAccessCompareciente(input.actor, input.args.compareciente_id))) throw new AssistantActionError('No tienes acceso a ese compareciente.', 'AI_ACTION_TARGET_DENIED', 403);
-      const result = await new ComparecienteService(prisma).extraerDocumentosExistentesConIA(input.args.compareciente_id, input.actor.id, input.actor.organizationId);
+      const result = await new ComparecienteService(prisma).extraerDocumentosExistentesConIA(input.args.compareciente_id, input.actor, input.invocationId);
       return { entityType: 'Compareciente', entityId: input.args.compareciente_id, message: 'La extracción terminó. Revisa y confirma cada propuesta en la ficha; no se modificaron datos maestros.', refresh: 'comparecientes', details: [{ label: 'Propuestas', value: String(Object.keys(result.proposals || {}).length) }, { label: 'Conflictos', value: String(result.conflicts?.length || 0) }] };
     },
   },
@@ -467,7 +478,7 @@ const definitions: Definition[] = [
     async execute(input) {
       const current = await new PrediosService(prisma).get(input.actor, input.args.predio_id);
       if (Number(input.preview?.guard?.version) !== current.version) throw new AssistantActionError('El inmueble cambió desde la vista previa. Actualiza y vuelve a confirmar.', 'AI_ACTION_STALE', 409);
-      const result = await new PrediosService(prisma).proposeFromDocument(input.actor, input.args.predio_id, input.args.document_ids);
+      const result = await new PrediosService(prisma).proposeFromDocument(input.actor, input.args.predio_id, input.args.document_ids, input.invocationId);
       return { entityType: 'Predio', entityId: input.args.predio_id, message: 'La extracción terminó. Revisa y confirma cada propuesta en la ficha; no se modificaron datos maestros.', refresh: 'predios', details: [{ label: 'Propuestas', value: String(result.propuestas.length) }, { label: 'Conflictos', value: String(result.conflictos.length) }] };
     },
   },
@@ -637,13 +648,19 @@ const definitions: Definition[] = [
   {
     key: 'budget.concept.update', domain: 'Presupuesto', description: 'Actualizar un concepto del presupuesto del expediente.',
     permissions: ['expedientes.write'], risk: 'SENSITIVE_WRITE', confirmation: 'REQUIRED',
-    fields: { expediente_id: { type: 'string', required: true, max: 80 }, expediente_query: { type: 'string', max: 120 }, concept_id: { type: 'string', required: true, max: 80 }, importe: { type: 'string', required: true, max: 30 }, concepto: { type: 'string', max: 240 }, categoria: { type: 'string', enum: ['HONORARIOS','IVA_HONORARIOS','IMPUESTOS_DERECHOS'] } },
+    fields: { expediente_id: { type: 'string', required: true, max: 80 }, expediente_query: { type: 'string', max: 120 }, concept_id: { type: 'string', required: true, max: 80 }, importe: { type: 'string', required: true, max: 30 }, concepto: { type: 'string', max: 240 }, categoria: { type: 'string', enum: ['HONORARIOS','IMPUESTOS_DERECHOS','OTRO_GASTO'] },
+      tratamiento_iva: { type: 'string', enum: ['SIN_IMPUESTO','GRAVADO','EXENTO','NO_OBJETO','REQUIERE_REVISION'] }, iva_tasa: { type: 'string', max: 20 }, regla_fiscal_fuente: { type: 'string', max: 240 }, regla_fiscal_version: { type: 'string', max: 80 } },
     contextField: 'expediente_id', contextTypes: ['expediente'],
     async prepare({ actor, args }) {
       const current = await new ExpedienteBudgetService(prisma).read(actor, args.expediente_id);
       const selected = current.concepts.find((item: any) => item.id === args.concept_id);
       if (!selected) throw new AssistantActionError('El concepto no pertenece al presupuesto vigente.', 'AI_ACTION_TARGET_DENIED', 403);
-      const concepts = current.concepts.map((item: any) => item.id === selected.id ? { ...item, concepto: args.concepto || item.concepto, categoria: args.categoria || item.categoria, importe: args.importe } : item);
+      if (selected.categoria === 'IVA_HONORARIOS') throw new AssistantActionError('El IVA de honorarios se calcula automáticamente y no admite edición directa.', 'AI_ACTION_DERIVED_VALUE_DENIED', 409);
+      const concepts = current.concepts.filter((item: any) => item.categoria !== 'IVA_HONORARIOS').map((item: any) => item.id === selected.id ? { ...item, concepto: args.concepto || item.concepto, categoria: args.categoria || item.categoria, importe: args.importe,
+        tratamiento_iva: (args.categoria || item.categoria) === 'OTRO_GASTO' ? args.tratamiento_iva || item.tratamiento_iva || 'REQUIERE_REVISION' : null,
+        iva_tasa: (args.categoria || item.categoria) === 'OTRO_GASTO' ? args.iva_tasa || item.iva_tasa : null,
+        regla_fiscal_fuente: (args.categoria || item.categoria) === 'OTRO_GASTO' ? args.regla_fiscal_fuente || item.regla_fiscal_fuente : null,
+        regla_fiscal_version: (args.categoria || item.categoria) === 'OTRO_GASTO' ? args.regla_fiscal_version || item.regla_fiscal_version : null } : item);
       const totals = visibleTotals(concepts);
       return { object: { type: 'ExpedientePresupuestoConcepto', id: selected.id, label: selected.concepto }, before: { concepto: selected, totals: current.totals }, after: { concepto: concepts.find((item: any) => item.id === selected.id), totals }, impact: 'Actualizará sólo el presupuesto del expediente; la cotización de origen permanecerá inmutable.', guard: { kind: 'BUDGET_VERSION', id: current.id, version: current.version } };
     },
@@ -651,7 +668,12 @@ const definitions: Definition[] = [
       const service = new ExpedienteBudgetService(prisma); const current = await service.read(input.actor, input.args.expediente_id);
       const selected = current.concepts.find((item: any) => item.id === input.args.concept_id);
       if (!selected) throw new AssistantActionError('El concepto no pertenece al presupuesto vigente.', 'AI_ACTION_TARGET_DENIED', 403);
-      const concepts = current.concepts.map((item: any) => item.id === selected.id ? { ...item, concepto: input.args.concepto || item.concepto, categoria: input.args.categoria || item.categoria, importe: input.args.importe } : item);
+      if (selected.categoria === 'IVA_HONORARIOS') throw new AssistantActionError('El IVA de honorarios se calcula automáticamente y no admite edición directa.', 'AI_ACTION_DERIVED_VALUE_DENIED', 409);
+      const concepts = current.concepts.filter((item: any) => item.categoria !== 'IVA_HONORARIOS').map((item: any) => item.id === selected.id ? { ...item, concepto: input.args.concepto || item.concepto, categoria: input.args.categoria || item.categoria, importe: input.args.importe,
+        tratamiento_iva: (input.args.categoria || item.categoria) === 'OTRO_GASTO' ? input.args.tratamiento_iva || item.tratamiento_iva || 'REQUIERE_REVISION' : null,
+        iva_tasa: (input.args.categoria || item.categoria) === 'OTRO_GASTO' ? input.args.iva_tasa || item.iva_tasa : null,
+        regla_fiscal_fuente: (input.args.categoria || item.categoria) === 'OTRO_GASTO' ? input.args.regla_fiscal_fuente || item.regla_fiscal_fuente : null,
+        regla_fiscal_version: (input.args.categoria || item.categoria) === 'OTRO_GASTO' ? input.args.regla_fiscal_version || item.regla_fiscal_version : null } : item);
       const result = await service.save(input.actor, input.args.expediente_id, { expected_version: previewVersion(input, current.version), concepts });
       return { entityType: 'ExpedientePresupuesto', entityId: current.id, message: 'El concepto y el total del presupuesto quedaron actualizados; la cotización de origen no cambió.', refresh: 'presupuesto', details: [{ label: 'Total', value: String(result.totals.total) }] };
     },

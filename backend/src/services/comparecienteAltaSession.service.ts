@@ -9,14 +9,12 @@ import {
   curpToFechaNacimiento,
   extraerFolioIneMrz,
   autoridadPorTipoDocumento,
-  getOpenAIModelName,
   DocumentExtractionResult,
   DomicilioDetectado,
   DocumentoParaExtraccion
 } from './openaiDocument.service';
 import { validateCurp, validateOptionalDate, validateRfc } from '../domain/mexicanIdentity';
 import { consolidateExtractedFields } from '../domain/documentExtraction';
-import { recordAIFailure, recordAIUsages } from './aiUsage.service';
 import { requireActorContext } from '../auth/actorContext';
 import { enqueueComparecienteCreatedTx } from './complianceScreening.service';
 
@@ -298,7 +296,9 @@ export class ComparecienteAltaSessionService {
    * REGLA PRAVIA: Si OpenAI no está disponible o falla, se lanza un error.
    * NO existe fallback local. NO se rellenan campos con datos simulados.
    */
-  static async extraerDatosConIA(sessionId: string, documentoIds: string[], optionalBuffer?: Buffer) {
+  static async extraerDatosConIA(sessionId: string, documentoIds: string[], optionalBuffer?: Buffer, requestKey = '') {
+    const actor = requireActorContext();
+    if (!requestKey.trim()) throw new Error('La extracción requiere una clave de idempotencia.');
     const sesion = await prisma.comparecienteAltaSession.findUnique({ where: { id: sessionId } });
     if (!sesion) throw new Error('Sesión de alta no encontrada');
 
@@ -371,28 +371,14 @@ export class ComparecienteAltaSessionService {
 
     // ── 2. LLAMADA ÚNICA A OPENAI CON TODOS LOS DOCUMENTOS ───────────────────
     // Si falla, el error se propaga sin fallback
-    const aiStartedAt = Date.now();
     let resultadoIA: DocumentExtractionResult;
     try {
-      resultadoIA = await extraerMultiplesDocumentos(documentosParaIA);
-      await recordAIUsages(resultadoIA.usos || (resultadoIA.uso ? [resultadoIA.uso] : []), {
-        operacion: 'EXTRACCION_COMPARECIENTE',
-        usuarioId: sesion.usuario_id,
-        expedienteId: sesion.origen_expediente_id,
-        altaSessionId: sesion.id,
-        escalamientoMotivo: 'Lectura dudosa o contradicción entre documentos',
-        metadata: { documentos_solicitados: documentosParaIA.map((item) => item.documentoId) },
-      }).catch((usageError) => console.error('[AI usage] No fue posible registrar el consumo:', usageError.message));
+      if (actor.userId !== sesion.usuario_id) throw new Error('La sesión de alta no pertenece al usuario autenticado.');
+      const operationId = `compareciente-alta-extraction:${actor.organizationId}:${sesion.id}:${requestKey}`;
+      resultadoIA = await extraerMultiplesDocumentos(documentosParaIA, {
+        actor, idempotencyKey: operationId, traceId: operationId,
+      });
     } catch (error: any) {
-      await recordAIFailure({
-        operacion: 'EXTRACCION_COMPARECIENTE',
-        modelo: getOpenAIModelName(),
-        usuarioId: sesion.usuario_id,
-        expedienteId: sesion.origen_expediente_id,
-        altaSessionId: sesion.id,
-        durationMs: Date.now() - aiStartedAt,
-        errorCode: error.code || 'AI_EXTRACTION_FAILED',
-      }).catch(() => undefined);
       await prisma.comparecienteAltaSession.update({ where: { id: sessionId }, data: { estatus: 'FALLIDO' } });
       throw error;
     }

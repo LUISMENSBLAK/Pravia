@@ -79,7 +79,6 @@ export function ReportsPage() {
       fecha_hasta: params.get('fecha_hasta') || '',
     } : {}),
     abogado_id: params.get('abogado_id') || '',
-    notaria_id: params.get('notaria_id') || '',
     ...(current === 'clientes-potenciales' ? { page: params.get('page') || '1', page_size: '20' } : {}),
   }), [current, params, period]);
 
@@ -193,11 +192,9 @@ export function ReportsPage() {
     </nav>
     {catalogs?.scope.global && <section className={styles.filters} aria-label="Alcance del reporte">
       <label><span>Abogado</span><select aria-label="Filtrar por abogado" value={filters.abogado_id} onChange={(event) => change('abogado_id', event.target.value)}><option value="">Todos</option>{catalogs.usuarios.map((item) => <option key={item.id} value={item.id}>{item.nombre} {item.apellido}</option>)}</select></label>
-      <label><span>Notaría</span><select aria-label="Filtrar por notaría" value={filters.notaria_id} onChange={(event) => change('notaria_id', event.target.value)}><option value="">Todas</option>{catalogs.notarias.map((item) => <option key={item.id} value={item.id}>{item.nombre}</option>)}</select></label>
-      {(filters.abogado_id || filters.notaria_id) && <button type="button" onClick={() => {
+      {filters.abogado_id && <button type="button" onClick={() => {
         const next = new URLSearchParams(params);
         next.delete('abogado_id');
-        next.delete('notaria_id');
         setParams(next, { replace: true });
       }}>Limpiar filtros</button>}
     </section>}

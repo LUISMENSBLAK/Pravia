@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import prisma from '../config/prisma';
 import { PERMISSIONS, ROLE_PERMISSIONS } from '../auth/permissions';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
@@ -37,21 +37,74 @@ const preferenceSelect = {
   notifications_enabled: true, assistant_suggestions_enabled: true, updated_at: true,
 };
 
+const organizationSelect = {
+  id: true, name: true, notary_number: true, notary_holder: true, state: true,
+  municipality: true, address: true, postal_code: true, phone: true, email: true,
+  logo_storage_key: true, institutional_header: true, updated_at: true,
+} as const;
+const organizationEditableFields = {
+  notary_number: 40, notary_holder: 160, state: 100, municipality: 100,
+  address: 300, postal_code: 12, phone: 30, email: 254, institutional_header: 500,
+} as const;
+
 export class SettingsController {
   static async overview(req: Request, res: Response) {
     if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
-    const [sessions, unread, activeUsers, primaryNotary] = await Promise.all([
+    const [sessions, unread, activeUsers, organization] = await Promise.all([
       prisma.authSession.count({ where: { user_id: req.user.id, revoked_at: null, expires_at: { gt: new Date() } } }),
       prisma.notification.count({ where: { organization_id: req.user.organizationId, recipient_id: req.user.id, status: 'ACTIVE', read_at: null } }),
-      req.user.permissions.includes('usuarios.read') ? prisma.user.count({ where: { activo: true } }) : Promise.resolve(0),
-      prisma.notaria.findFirst({ where: { activa: true, predeterminada: true }, select: { id: true, nombre: true, numero_notaria: true, ciudad: true, entidad_federativa: true } }),
+      req.user.permissions.includes('usuarios.read') ? prisma.organizationMembership.count({ where: { organization_id: req.user.organizationId, status: 'ACTIVE', user: { activo: true } } }) : Promise.resolve(0),
+      prisma.organization.findUnique({ where: { id: req.user.organizationId }, select: organizationSelect }),
     ]);
     return res.json({
       profile: { id: req.user.id, nombre: req.user.nombre, apellido: req.user.apellido, email: req.user.email, rol: req.user.rol },
       metrics: { active_sessions: sessions, unread_notifications: unread, active_users: activeUsers },
-      organization: { primary_notary: primaryNotary, scope: ['DIRECCION', 'ADMINISTRACION', 'CONSULTA'].includes(req.user.rol) ? 'GLOBAL' : 'ASSIGNED_OBJECTS' },
+      organization: { profile: organization, scope: ['DIRECCION', 'ADMINISTRACION', 'CONSULTA'].includes(req.user.rol) ? 'GLOBAL' : 'ASSIGNED_OBJECTS' },
       access: { permissions: req.user.permissions },
     });
+  }
+
+  static async organization(req: Request, res: Response) {
+    if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
+    const profile = await prisma.organization.findUnique({ where: { id: req.user.organizationId }, select: organizationSelect });
+    if (!profile) return res.status(404).json({ code: 'ORGANIZATION_NOT_FOUND', error: 'La organización de tu sesión no está disponible.' });
+    return res.json({ profile });
+  }
+
+  static async updateOrganization(req: Request, res: Response) {
+    if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
+    const input = req.body;
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return res.status(400).json({ code: 'ORGANIZATION_INPUT_INVALID', error: 'Envía los campos de la organización que quieres actualizar.' });
+    const allowed = new Set(['name', ...Object.keys(organizationEditableFields)]);
+    const unexpected = Object.keys(input).find((key) => !allowed.has(key));
+    if (unexpected) return res.status(400).json({ code: 'ORGANIZATION_FIELD_FORBIDDEN', error: `El campo ${unexpected} no se puede actualizar desde esta ficha.` });
+    const data: Prisma.OrganizationUpdateInput = {};
+    if ('name' in input) {
+      if (typeof input.name !== 'string' || input.name.trim().length < 2 || input.name.trim().length > 160) return res.status(400).json({ code: 'ORGANIZATION_NAME_INVALID', error: 'La denominación debe tener entre 2 y 160 caracteres.' });
+      data.name = input.name.trim();
+    }
+    for (const [field, max] of Object.entries(organizationEditableFields)) {
+      if (!(field in input)) continue;
+      const raw = input[field];
+      if (raw !== null && (typeof raw !== 'string' || raw.trim().length > max)) return res.status(400).json({ code: 'ORGANIZATION_FIELD_INVALID', error: `El campo ${field} no tiene un formato válido.` });
+      Object.assign(data, { [field]: raw === null ? null : raw.trim() || null });
+    }
+    if ('email' in input && input.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email)) return res.status(400).json({ code: 'ORGANIZATION_EMAIL_INVALID', error: 'El correo institucional no tiene un formato válido.' });
+    if ('postal_code' in input && input.postal_code && !/^\d{5}$/.test(input.postal_code)) return res.status(400).json({ code: 'ORGANIZATION_POSTAL_CODE_INVALID', error: 'El código postal debe contener cinco dígitos.' });
+    if (Object.keys(data).length === 0) return res.status(400).json({ code: 'ORGANIZATION_NO_CHANGES', error: 'Indica al menos un campo para guardar.' });
+    const current = await prisma.organization.findUnique({ where: { id: req.user.organizationId }, select: organizationSelect });
+    if (!current) return res.status(404).json({ code: 'ORGANIZATION_NOT_FOUND', error: 'La organización de tu sesión no está disponible.' });
+    const profile = await prisma.$transaction(async (tx) => {
+      const updated = await tx.organization.update({ where: { id: req.user!.organizationId }, data, select: organizationSelect });
+      await tx.auditLog.create({ data: {
+        organization_id: req.user!.organizationId, user_id: req.user!.id,
+        accion: 'ORGANIZATION_PROFILE_UPDATED', entidad: 'Organization', entidad_id: req.user!.organizationId,
+        valores_anteriores: JSON.parse(JSON.stringify(current)), valores_nuevos: JSON.parse(JSON.stringify(updated)),
+        correlation_id: req.correlationId, session_id: req.user!.sessionId,
+      } });
+      return updated;
+    });
+    return res.json({ profile });
   }
 
   static async profile(req: Request, res: Response) {
@@ -185,19 +238,17 @@ export class SettingsController {
     if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
     const query = text(req.query.q, 120); const limit = Math.min(8, pageSize(req.query.limit, 5));
     if (query.length < 2) return res.json({ data: [], query });
-    const [expedientes, comparecientes, prospectos, cotizaciones, notarias] = await Promise.all([
+    const [expedientes, comparecientes, prospectos, cotizaciones] = await Promise.all([
       req.user.permissions.includes('expedientes.read') ? prisma.expediente.findMany({ where: { archived_at: null, ...expedienteAccessWhere(req.user), OR: [{ numero_pravia: { contains: query, mode: 'insensitive' } }, { cliente_alias: { contains: query, mode: 'insensitive' } }] }, select: { id: true, numero_pravia: true, cliente_alias: true }, take: limit }) : [],
       req.user.permissions.includes('comparecientes.read') ? prisma.compareciente.findMany({ where: { archived_at: null, ...comparecienteObjectWhere(req.user), nombre_busqueda: { contains: query, mode: 'insensitive' } }, select: { id: true, nombre_busqueda: true }, take: limit }) : [],
       req.user.permissions.includes('prospectos.read') ? prisma.prospecto.findMany({ where: { archived_at: null, ...prospectoObjectWhere(req.user), OR: [{ nombre: { contains: query, mode: 'insensitive' } }, { email: { contains: query, mode: 'insensitive' } }] }, select: { id: true, nombre: true, tipo_acto: true }, take: limit }) : [],
       req.user.permissions.includes('cotizaciones.read') ? prisma.cotizacion.findMany({ where: { ...cotizacionObjectWhere(req.user), OR: [{ numero_cotizacion: { contains: query, mode: 'insensitive' } }, { numero_solicitud: { contains: query, mode: 'insensitive' } }, { prospecto: { is: { nombre: { contains: query, mode: 'insensitive' } } } }] }, select: { id: true, numero_cotizacion: true, numero_solicitud: true, prospecto: { select: { nombre: true } } }, take: limit }) : [],
-      req.user.permissions.includes('notarias.read') ? prisma.notaria.findMany({ where: { activa: true, OR: [{ nombre: { contains: query, mode: 'insensitive' } }, { numero_notaria: { contains: query, mode: 'insensitive' } }] }, select: { id: true, nombre: true, numero_notaria: true }, take: limit }) : [],
     ]);
     const data = [
       ...expedientes.map((item) => ({ type: 'EXPEDIENTE', id: item.id, title: item.numero_pravia, subtitle: item.cliente_alias, href: `/expedientes/${item.id}` })),
       ...comparecientes.map((item) => ({ type: 'COMPARECIENTE', id: item.id, title: item.nombre_busqueda, subtitle: 'Compareciente', href: `/comparecientes/${item.id}` })),
       ...prospectos.map((item) => ({ type: 'PROSPECTO', id: item.id, title: item.nombre, subtitle: item.tipo_acto, href: `/prospectos/${item.id}` })),
       ...cotizaciones.map((item) => ({ type: 'COTIZACION', id: item.id, title: item.numero_cotizacion || item.numero_solicitud || 'Cotización', subtitle: item.prospecto?.nombre, href: `/cotizaciones/${item.id}` })),
-      ...notarias.map((item) => ({ type: 'NOTARIA', id: item.id, title: item.nombre, subtitle: item.numero_notaria ? `Notaría ${item.numero_notaria}` : 'Notaría', href: `/notarias/${item.id}` })),
     ];
     return res.json({ data: data.slice(0, 25), query });
   }

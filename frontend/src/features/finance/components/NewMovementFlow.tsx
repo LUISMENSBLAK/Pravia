@@ -73,7 +73,6 @@ export function NewMovementFlow({ catalogs, initialExpedienteId = '', lockExpedi
           fecha_movimiento: new Date(`${date}T12:00:00`).toISOString(),
           cuenta_id: accountId,
           expediente_id: caseId || undefined,
-          notaria_id: selectedCase?.notaria_id || undefined,
           responsable_id: selectedCase?.abogado_id,
           tipo_movimiento: nature === 'INGRESO' ? 'ABONO' : 'EGRESO_TERCEROS',
           concepto: concept.trim(),

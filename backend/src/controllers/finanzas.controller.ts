@@ -642,18 +642,16 @@ export class FinanzasController {
    */
   public static async getHonorariosPravia(req: Request, res: Response) {
     try {
-      const { abogado_id, notaria_id, tipo_acto_id } = req.query;
+      const { abogado_id, tipo_acto_id } = req.query;
 
       const expedientes = await prisma.expediente.findMany({
         where: {
           archived_at: null,
           ...(abogado_id && typeof abogado_id === 'string' && abogado_id !== 'TODOS' ? { abogado_id } : {}),
-          ...(notaria_id && typeof notaria_id === 'string' && notaria_id !== 'TODOS' ? { notaria_id } : {}),
           ...(tipo_acto_id && typeof tipo_acto_id === 'string' && tipo_acto_id !== 'TODOS' ? { actos: { some: { tipo_acto_id, estatus: 'ACTIVO', removed_at: null } } } : {})
         },
         include: {
           actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: true }, orderBy: { created_at: 'asc' } },
-          notaria: true,
           abogado: { select: { id: true, nombre: true, apellido: true } },
           cotizacion: true,
           movimientosFinancieros: { where: { naturaleza: 'INGRESO', estatus: { in: ['APLICADO', 'VALIDADO', 'RECIBIDO'] } } }
@@ -665,7 +663,6 @@ export class FinanzasController {
       let honorariosCobrados = 0;
 
       const porAbogado: Record<string, { nombre: string; esperados: number; generados: number; cobrados: number }> = {};
-      const porNotaria: Record<string, { nombre: string; esperados: number; generados: number; cobrados: number }> = {};
       const porTipoActo: Record<string, { nombre: string; esperados: number; generados: number; cobrados: number }> = {};
 
       expedientes.forEach((exp) => {
@@ -701,16 +698,6 @@ export class FinanzasController {
         porAbogado[abogKey].generados += praviaGenerado;
         porAbogado[abogKey].cobrados += praviaCobrado;
 
-        // Por Notaría
-        const notKey = exp.notaria_id || 'SIN_NOTARIA';
-        const notNombre = exp.notaria ? exp.notaria.nombre : 'Sin Notaría';
-        if (!porNotaria[notKey]) {
-          porNotaria[notKey] = { nombre: notNombre, esperados: 0, generados: 0, cobrados: 0 };
-        }
-        porNotaria[notKey].esperados += praviaTotal;
-        porNotaria[notKey].generados += praviaGenerado;
-        porNotaria[notKey].cobrados += praviaCobrado;
-
         // Por Tipo de Acto
         const actoKey = exp.actos[0]?.tipo_acto_id || 'SIN_ACTO';
         const actoNombre = exp.actos.map((acto) => acto.tipo_acto.nombre).join(', ') || 'General';
@@ -732,7 +719,6 @@ export class FinanzasController {
         },
         desglose: {
           por_abogado: Object.values(porAbogado),
-          por_notaria: Object.values(porNotaria),
           por_tipo_acto: Object.values(porTipoActo)
         }
       });

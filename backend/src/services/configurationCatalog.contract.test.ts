@@ -6,12 +6,14 @@ const root = resolve(process.cwd(), '..');
 const read = (path: string) => readFileSync(resolve(root, path), 'utf8');
 const schema = read('backend/prisma/schema.prisma');
 const migration = read('backend/prisma/migrations/20260824010000_phase_a_cfg_catalogs/migration.sql');
+const ownerMigration = read('backend/prisma/migrations/20261020101000_cfg002_organization_owner_backfill/migration.sql');
 const service = read('backend/src/services/configurationCatalog.service.ts');
 const routes = read('backend/src/routes/configurationCatalog.routes.ts');
 const permissions = read('backend/src/auth/permissions.ts');
 const tenant = read('backend/src/config/tenantPrisma.ts');
 const settings = read('frontend/src/features/settings/SettingsPage.tsx');
 const actsUi = read('frontend/src/features/settings/catalogs/ActsTimesCatalog.tsx');
+const actCreationUi = read('frontend/src/features/settings/catalogs/ActCreationConfigurator.tsx');
 const artifactsUi = read('frontend/src/features/settings/catalogs/TemplatesFormatsCatalog.tsx');
 
 type ContractCase = [string, () => void];
@@ -33,7 +35,8 @@ const cfg001: ContractCase[] = [
   ['modela múltiples dependencias', contains(service, 'dependency_ids', 'createMany', 'configuracionDependencia')],
   ['no impone secuencia a actividades independientes', contains(actsUi, 'puede ejecutarse en paralelo', 'sin dependencias configuradas')],
   ['admite excepción por institución', contains(service, "selector === 'INSTITUCION'", 'institucion_id')],
-  ['admite excepción por Notaría canónica', contains(service, "selector === 'NOTARIA'", "assertOwner(actor, 'NOTARIA'")],
+  ['conserva excepción histórica por Notaría pero bloquea writes nuevos', contains(service, "selector.type === 'NOTARIA'", 'CFG001_LEGACY_NOTARY_SELECTOR_READ_ONLY', 'assertOperationalTimingSelector')],
+  ['no ofrece selector operativo de Notaría en tiempos nuevos', () => { expect(actsUi).not.toContain('<option value="NOTARIA">'); expect(actCreationUi).not.toContain('<option value="NOTARIA">'); }],
   ['admite excepción territorial', contains(service, "selector === 'JURISDICCION'", 'jurisdiccion')],
   ['conserva fallback general', contains(service, "source: 'EXCEPTION'", "source: 'GENERAL'", 'duracion_estimada')],
   ['selecciona la excepción exacta', contains(service, "selector.type === 'INSTITUCION'", "selector.type === 'NOTARIA'", "selector.type === 'JURISDICCION'")],
@@ -50,10 +53,10 @@ const cfg001: ContractCase[] = [
 const cfg002: ContractCase[] = [
   ['entra bajo Configuración/Catálogos', contains(settings, "group('CATÁLOGOS'", '/configuracion/plantillas-formatos')],
   ['separa Plantillas y Formatos', contains(schema, "PLANTILLA", "FORMATO")],
-  ['Notaría ofrece ambos tipos', contains(artifactsUi, 'selection!.ownerType === "NOTARIA"', "kind: \"PLANTILLA\"", "kind: \"FORMATO\"")],
-  ['Banco ofrece sólo Formatos', contains(artifactsUi, 'Las instituciones sólo contienen Formatos', 'Las Plantillas pertenecen exclusivamente a la Notaría')],
-  ['DB impide Plantilla bancaria', contains(migration, '"tipo" = \'PLANTILLA\' AND "propietario_tipo" = \'NOTARIA\'')],
-  ['reutiliza Notaría', contains(service, 'prisma.notaria.findMany', "assertOwner(actor, 'NOTARIA'")],
+  ['Organización ofrece ambos tipos', contains(artifactsUi, 'selection!.ownerType === "ORGANIZACION"', "kind: \"PLANTILLA\"", "kind: \"FORMATO\"")],
+  ['Banco ofrece sólo Formatos', contains(artifactsUi, 'Las instituciones sólo contienen Formatos', 'Las Plantillas pertenecen a la organización activa')],
+  ['DB impide Plantilla bancaria', contains(ownerMigration, '"propietario_tipo" = \'INSTITUCION\' AND "tipo" = \'FORMATO\'')],
+  ['usa Organization como propietario operativo', contains(service, 'prisma.organization.findUnique', 'assertCatalogOwner(actor, ownerType, ownerId)')],
   ['reutiliza el mismo TipoActo', contains(schema, 'CatalogoArtefactoActo', 'tipo_acto_id')],
   ['crea carpetas raíz', contains(service, 'catalogoCarpeta.create', 'parent_id')],
   ['crea carpetas anidadas', contains(schema, 'CarpetasJerarquia', 'parent_id')],

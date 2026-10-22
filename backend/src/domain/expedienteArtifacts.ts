@@ -27,9 +27,10 @@ export type Exp006Rule = {
 
 export type Exp006Artifact = {
   id: string;
+  organization_id?: string;
   nombre: string;
   tipo: 'PLANTILLA' | 'FORMATO';
-  propietario_tipo: 'NOTARIA' | 'INSTITUCION';
+  propietario_tipo: 'ORGANIZACION' | 'NOTARIA' | 'INSTITUCION';
   notaria_id?: string | null;
   institucion_id?: string | null;
   activo: boolean;
@@ -40,6 +41,7 @@ export type Exp006Artifact = {
 
 export type Exp006Context = {
   expedienteId: string;
+  organizationId?: string;
   notariaId?: string | null;
   institutionIds: string[];
   currentStageId?: string | null;
@@ -89,6 +91,7 @@ export const exp006Identity = (ruleId: string, subjectType: Exp006Subject, subje
   `${ruleId}:${subjectType}:${subjectId || 'case'}:${ordinal}`;
 
 function ownerMatches(artifact: Exp006Artifact, context: Exp006Context) {
+  if (artifact.propietario_tipo === 'ORGANIZACION') return Boolean(context.organizationId && (!artifact.organization_id || artifact.organization_id === context.organizationId));
   if (artifact.propietario_tipo === 'NOTARIA') return Boolean(context.notariaId && artifact.notaria_id === context.notariaId);
   return artifact.tipo === 'FORMATO' && Boolean(artifact.institucion_id && context.institutionIds.includes(artifact.institucion_id));
 }
@@ -201,7 +204,7 @@ export function resolveExp006(
         const identityKey = exp006Identity(rule.id, subjectType, subjectId, ordinal);
         const snapshot = {
           source: 'CFG-002', artifact_id: artifact.id, artifact_name: artifact.nombre, artifact_type: artifact.tipo,
-          owner_type: artifact.propietario_tipo, owner_id: artifact.notaria_id || artifact.institucion_id,
+          owner_type: artifact.propietario_tipo, owner_id: artifact.propietario_tipo === 'ORGANIZACION' ? context.organizationId : artifact.notaria_id || artifact.institucion_id,
           rule_id: rule.id, master_version_id: masterVersion.id, master_version: masterVersion.version,
           act_ids: matchingActs.map((act) => act.id), act_names: matchingActs.map((act) => act.name),
           selected_act_id: actId, subject_type: subjectType, subject_id: subjectId, subject_name: subjectName,

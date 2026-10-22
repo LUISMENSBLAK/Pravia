@@ -185,18 +185,17 @@ export class FinanceLedgerController {
 
   static async catalogs(req: Request, res: Response) {
     try {
-      const [categories, accounts, expedientes, notarias, responsables] = await Promise.all([
+      const [categories, accounts, expedientes, responsables] = await Promise.all([
         prisma.categoriaFinanciera.findMany({ where: { activa: true, OR: [{ organization_id: req.user!.organizationId }, { organization_id: null }] }, orderBy: [{ orden: 'asc' }, { nombre: 'asc' }] }),
         prisma.cuentaFinanciera.findMany({ where: { activa: true, organization_id: req.user!.organizationId }, select: { id: true, institucion: true, alias: true, ultimos_cuatro: true, moneda: true, tipo: true, predeterminada: true }, orderBy: [{ predeterminada: 'desc' }, { alias: 'asc' }] }),
-        prisma.expediente.findMany({ where: { archived_at: null, organization_id: req.user!.organizationId }, select: { id: true, numero_pravia: true, cliente_alias: true, notaria_id: true, abogado_id: true, cotizacion_id: true }, orderBy: { updated_at: 'desc' }, take: 200 }),
-        prisma.notaria.findMany({ where: { activa: true, organization_id: req.user!.organizationId }, select: { id: true, nombre: true, numero_notaria: true }, orderBy: { nombre: 'asc' } }),
+        prisma.expediente.findMany({ where: { archived_at: null, organization_id: req.user!.organizationId }, select: { id: true, numero_pravia: true, cliente_alias: true, abogado_id: true, cotizacion_id: true }, orderBy: { updated_at: 'desc' }, take: 200 }),
         prisma.user.findMany({
           where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(req.user!.organizationId, ['DIRECCION', 'ADMINISTRACION', 'ABOGADO']) } },
           select: { id: true, nombre: true, apellido: true, ...organizationMembershipRoleSelect(req.user!.organizationId) },
           orderBy: { nombre: 'asc' },
         }),
       ]);
-      return res.json({ success: true, data: { categories, accounts, expedientes, notarias, responsables: usersWithEffectiveMembershipRoles(responsables), permisos: { escribir: Boolean(req.user?.permissions.includes('finanzas.write')), aplicar: Boolean(req.user?.permissions.includes('finanzas.validate')), conciliar: Boolean(req.user?.permissions.includes('finanzas.validate')), expedientesLeer: Boolean(req.user?.permissions.includes('expedientes.read')), documentosLeer: Boolean(req.user?.permissions.includes('documentos.read')), documentosEscribir: Boolean(req.user?.permissions.includes('documentos.write')), documentosEliminar: Boolean(req.user?.permissions.includes('documentos.unlink')) }, invoiceIntegration: { configured: false, status: 'PENDIENTE_CONFIGURACION', message: 'Integración de facturación pendiente de configuración.' }, bankImport: { configured: false, message: 'Formato de importación bancaria pendiente de confirmar con el cliente.' } } });
+      return res.json({ success: true, data: { categories, accounts, expedientes, responsables: usersWithEffectiveMembershipRoles(responsables), permisos: { escribir: Boolean(req.user?.permissions.includes('finanzas.write')), aplicar: Boolean(req.user?.permissions.includes('finanzas.validate')), conciliar: Boolean(req.user?.permissions.includes('finanzas.validate')), expedientesLeer: Boolean(req.user?.permissions.includes('expedientes.read')), documentosLeer: Boolean(req.user?.permissions.includes('documentos.read')), documentosEscribir: Boolean(req.user?.permissions.includes('documentos.write')), documentosEliminar: Boolean(req.user?.permissions.includes('documentos.unlink')) }, invoiceIntegration: { configured: false, status: 'PENDIENTE_CONFIGURACION', message: 'Integración de facturación pendiente de configuración.' }, bankImport: { configured: false, message: 'Formato de importación bancaria pendiente de confirmar con el cliente.' } } });
     } catch (error) { return failure(res, error, 'No pudimos cargar los catálogos financieros.'); }
   }
 

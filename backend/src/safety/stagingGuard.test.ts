@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { assertStagingWriteTarget, databaseIdentity } from './stagingGuard';
+import { resolveRuntimeConfig } from '../config/runtime';
+import { assertStagingRuntime, assertStagingWriteTarget, databaseIdentity } from './stagingGuard';
 
 const base = {
   PRAVIA_ENV: 'staging',
@@ -10,6 +11,20 @@ const base = {
   EXPECTED_STAGING_DATABASE_SCHEMA: 'pravia_os',
   STAGING_STORAGE_MODE: 'local',
   STAGING_LOCAL_STORAGE_PATH: '/private/tmp/pravia-staging-storage',
+};
+
+const runtimeEnv = {
+  ...base,
+  NODE_ENV: 'production',
+  PRAVIA_DATABASE_MODE: 'local',
+  LOCAL_DATABASE_URL: base.STAGING_DATABASE_URL,
+  LOCAL_DIRECT_URL: base.STAGING_DATABASE_URL,
+  STAGING_DIRECT_URL: base.STAGING_DATABASE_URL,
+  STORAGE_MODE: 'local',
+  LOCAL_STORAGE_PATH: base.STAGING_LOCAL_STORAGE_PATH,
+  LOCAL_STORAGE_SIGNING_SECRET: 'local-staging-signing-secret-with-32-characters',
+  PRODUCTION_DATABASE_URL: 'postgresql://prod:secret@db.production.supabase.co:5432/postgres?schema=pravia_os',
+  PRODUCTION_SUPABASE_URL: 'https://production.supabase.co',
 };
 
 describe('stagingGuard', () => {
@@ -43,5 +58,29 @@ describe('stagingGuard', () => {
       EXPECTED_STAGING_SUPABASE_PROJECT_REF: 'stagingref',
     };
     expect(() => assertStagingWriteTarget(env)).toThrow(/REFUSED_PRODUCTION_WRITE: DB y Storage staging/);
+  });
+
+  it('permite iniciar el backend únicamente con las conexiones staging declaradas', () => {
+    expect(() => assertStagingRuntime(resolveRuntimeConfig(runtimeEnv), runtimeEnv)).not.toThrow();
+  });
+
+  it('rechaza staging sin fingerprint productivo explícito', () => {
+    const env = { ...runtimeEnv, PRODUCTION_DATABASE_URL: '' };
+    expect(() => assertStagingRuntime(resolveRuntimeConfig(env), env)).toThrow(/falta PRODUCTION_DATABASE_URL/);
+  });
+
+  it('rechaza una DB activa distinta de la declarada para staging', () => {
+    const env = { ...runtimeEnv, LOCAL_DATABASE_URL: runtimeEnv.PRODUCTION_DATABASE_URL };
+    expect(() => assertStagingRuntime(resolveRuntimeConfig(env), env)).toThrow(/conexión DB activa/);
+  });
+
+  it('rechaza la conexión directa productiva aun con la conexión principal staging', () => {
+    const env = { ...runtimeEnv, LOCAL_DIRECT_URL: runtimeEnv.PRODUCTION_DATABASE_URL, STAGING_DIRECT_URL: runtimeEnv.PRODUCTION_DATABASE_URL };
+    expect(() => assertStagingRuntime(resolveRuntimeConfig(env), env)).toThrow(/conexión DB directa de staging coincide con producción/);
+  });
+
+  it('rechaza Storage activo distinto del path staging declarado', () => {
+    const env = { ...runtimeEnv, LOCAL_STORAGE_PATH: '/private/tmp/other-storage' };
+    expect(() => assertStagingRuntime(resolveRuntimeConfig(env), env)).toThrow(/path Storage activo/);
   });
 });

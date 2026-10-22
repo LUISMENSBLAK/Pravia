@@ -96,7 +96,8 @@ export const unlinkPredioDocumento = async (req: Request, res: Response) => {
 export const proposePredioFromDocument = async (req: Request, res: Response) => {
   try {
     const ids = Array.isArray(req.body?.documento_ids) ? req.body.documento_ids.map(String) : [String(req.body?.documento_id || '')];
-    return res.json({ data: await service.proposeFromDocument(actor(req), req.params.id, ids) });
+    const idempotencyKey = String(req.header('Idempotency-Key') || req.body?.idempotency_key || '').trim();
+    return res.json({ data: await service.proposeFromDocument(actor(req), req.params.id, ids, idempotencyKey) });
   }
   catch (error) { return respondError(res, error); }
 };

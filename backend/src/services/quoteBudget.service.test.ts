@@ -1,6 +1,6 @@
 import type { Request } from 'express';
 import { describe, expect, it, vi } from 'vitest';
-import { QuoteBudgetService, quoteBudgetDraft } from './quoteBudget.service';
+import { QuoteBudgetService, createQuoteOperationalSnapshotInTransaction, quoteBudgetDraft } from './quoteBudget.service';
 
 type Actor = NonNullable<Request['user']>;
 
@@ -31,7 +31,7 @@ const quote = (overrides: Record<string, unknown> = {}) => ({
   prospecto: { nombre: 'CLIENTE QA', tipo_acto: 'Compraventa', necesidad: 'Operación QA' },
   creada_por: { nombre: 'QA', apellido: 'Local' },
   actos: [{ tipo_acto: { nombre: 'Compraventa' } }],
-  etapa_contractual: 'ACEPTADA',
+  etapa_contractual: 'EN_ELABORACION',
   conceptos: [{ id: 'old', concepto: 'Anterior', categoria: 'HONORARIOS', importe: '10.00', orden: 0, origen: 'MANUAL' }],
   ...overrides,
 });
@@ -48,7 +48,7 @@ const harness = (found: ReturnType<typeof quote> | null = quote()) => {
         contexto_operacion: 'COMPRAVENTA DE INMUEBLE URBANO CON CRÉDITO BANCARIO.',
         conceptos: [
           { id: 'new-1', concepto: 'Honorarios vigentes', categoria: 'HONORARIOS', importe: '100.00', orden: 0, origen: 'MANUAL' },
-          { id: 'new-2', concepto: 'IVA', categoria: 'IVA_HONORARIOS', importe: '16.00', orden: 1, origen: 'MANUAL' },
+          { id: 'new-2', concepto: 'IVA', categoria: 'IVA_HONORARIOS', importe: '16.00', orden: 1, origen: 'DERIVADO' },
         ],
       }),
     },
@@ -63,7 +63,6 @@ const harness = (found: ReturnType<typeof quote> | null = quote()) => {
 const input = {
   concepts: [
     { concepto: 'Honorarios vigentes', categoria: 'HONORARIOS', importe: '100.00' },
-    { concepto: 'IVA', categoria: 'IVA_HONORARIOS', importe: '16.00' },
   ],
   origin: 'MANUAL',
   operationContext: 'Compraventa de inmueble urbano con crédito bancario.',
@@ -71,11 +70,11 @@ const input = {
 };
 
 describe('Corrección 002 v2 · presupuesto único editable', () => {
-  it('edita una cotización aceptada sin cambiar etapa ni crear una versión editable', async () => {
+  it('edita una cotización en elaboración sin cambiar etapa ni crear una versión editable', async () => {
     const { tx, service } = harness();
     const result = await service.save(actor(), quote().id, input);
 
-    expect(result).toMatchObject({ stage: 'ACEPTADA', presupuesto: { totals: { honorarios: '100.00', iva_honorarios: '16.00', total: '116.00' } } });
+    expect(result).toMatchObject({ stage: 'EN_ELABORACION', presupuesto: { totals: { honorarios: '100.00', iva_honorarios: '16.00', total: '116.00' } } });
     expect(tx.cotizacion.update).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         total_cliente: '116.00',
@@ -95,6 +94,24 @@ describe('Corrección 002 v2 · presupuesto único editable', () => {
     }) }));
   });
 
+  it('protege el presupuesto histórico de una cotización aceptada', async () => {
+    const accepted = quote({ etapa_contractual: 'ACEPTADA' });
+    const { tx, service } = harness(accepted);
+    await expect(service.save(actor(), accepted.id, input)).rejects.toMatchObject({ status: 409, code: 'QUOTE_BUDGET_FROZEN' });
+    expect(tx.cotizacionConcepto.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('no crea un nuevo snapshot operativo a partir de honorarios legacy sin IVA verificable', async () => {
+    const tx: any = {
+      cotizacion: { findFirst: vi.fn().mockResolvedValue(quote()), update: vi.fn() },
+      cotizacionVersion: { findFirst: vi.fn(), create: vi.fn() },
+    };
+    await expect(createQuoteOperationalSnapshotInTransaction(tx, { organizationId: actor().organizationId, quoteId: quote().id, actorId: actor().id, reason: 'QA' }))
+      .rejects.toMatchObject({ status: 409, code: 'QUOTE_BUDGET_TAX_REVIEW_REQUIRED' });
+    expect(tx.cotizacionVersion.create).not.toHaveBeenCalled();
+    expect(tx.cotizacion.update).not.toHaveBeenCalled();
+  });
+
   it('redacta el correo con el presupuesto estructurado vigente y agrupa el IVA dentro de honorarios', () => {
     const draft = quoteBudgetDraft({
       folio: 'COT-0042-2026', client: 'CLIENTE QA', act: 'Compraventa', description: 'Operación QA',
@@ -104,6 +121,18 @@ describe('Corrección 002 v2 · presupuesto único editable', () => {
     expect(draft.body).toContain('Honorarios: $9,280.00');
     expect(draft.body).toContain('Impuestos y derechos: $2,000.00');
     expect(draft.body).toContain('Total: $11,280.00');
+  });
+
+  it('explica los otros gastos y su IVA cuando el total los incluye', () => {
+    const draft = quoteBudgetDraft({
+      folio: 'COT-QA-2026', client: 'CLIENTE QA', act: 'Compraventa', description: 'Operación QA',
+      responsible: 'QA Local', date: timestamp,
+      totals: { subtotal_honorarios: '58000.00', subtotal_impuestos_derechos: '20000.00',
+        otros_gastos: '1500.00', iva_otros_gastos: '240.00', total: '79740.00' },
+    });
+    expect(draft.body).toContain('Otros gastos: $1,500.00');
+    expect(draft.body).toContain('IVA de otros gastos configurados: $240.00');
+    expect(draft.body).toContain('Total: $79,740.00');
   });
 
   it('no reemplaza el correo histórico después del primer envío', async () => {

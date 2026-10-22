@@ -263,7 +263,7 @@ test('Correcciones 008 v2 + 009 + 010: recorrido integrado en Chrome real', asyn
     // depender del estado inicial hacía que un rerun verificara el documento
     // equivocado aun cuando la resolución CFG-002 fuese correcta.
     await open(page, '/configuracion/plantillas-formatos');
-    await page.getByRole('button', { name: /Notaría.*Notaría QA Local/ }).click();
+    await page.getByRole('button', { name: /^Organización / }).click();
     await page.getByRole('button', { name: /Formatos/ }).click();
     let artifact = page.locator('article').filter({ has: page.getByRole('heading', { name: 'ADM-001 · Cotización QA', exact: true }) });
     await artifact.getByRole('button', { name: 'Nueva versión', exact: true }).click();
@@ -295,7 +295,7 @@ test('Correcciones 008 v2 + 009 + 010: recorrido integrado en Chrome real', asyn
     await viewer.getByRole('button', { name: 'Cerrar vista previa' }).click();
 
     await open(page, '/configuracion/plantillas-formatos');
-    await page.getByRole('button', { name: /Notaría.*Notaría QA Local/ }).click();
+    await page.getByRole('button', { name: /^Organización / }).click();
     await page.getByRole('button', { name: /Formatos/ }).click();
     artifact = page.locator('article').filter({ has: page.getByRole('heading', { name: 'ADM-001 · Cotización QA', exact: true }) });
     await artifact.getByRole('button', { name: 'Nueva versión', exact: true }).click();

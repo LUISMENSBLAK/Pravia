@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { assertStrictPartySourceScope, exp006Identity, exp006ResolutionRevision, resolveExp006, type Exp006Artifact, type Exp006Context } from './expedienteArtifacts';
 
 const context = (overrides: Partial<Exp006Context> = {}): Exp006Context => ({
-  expedienteId: 'case-1', notariaId: 'notary-1', institutionIds: ['bank-1'], currentStageId: 'stage-prefirma',
+  expedienteId: 'case-1', organizationId: 'org-1', notariaId: 'notary-1', institutionIds: ['bank-1'], currentStageId: 'stage-prefirma',
   acts: [{ id: 'case-act-sale', typeId: 'act-sale', name: 'Compraventa' }, { id: 'case-act-trust', typeId: 'act-trust', name: 'Fideicomiso' }],
   parties: [
     { relationId: 'rel-juan-sale', partyId: 'juan', actId: 'case-act-sale', personType: 'FISICA', roleId: 'seller', name: 'Juan' },
@@ -33,6 +33,13 @@ describe('EXP-006 resolver operacional', () => {
 
   it('filtra propietario Notaría de forma exacta', () => {
     expect(resolveExp006([artifact()], context({ notariaId: 'notary-2' }))).toEqual([]);
+  });
+
+  it('resuelve artefactos de la organización sin depender de una Notaría legacy', () => {
+    const input = artifact({ organization_id: 'org-1', propietario_tipo: 'ORGANIZACION', notaria_id: 'notary-legacy' });
+    const [row] = resolveExp006([input], context({ notariaId: null }));
+    expect(row.snapshot).toMatchObject({ owner_type: 'ORGANIZACION', owner_id: 'org-1' });
+    expect(resolveExp006([input], context({ organizationId: 'org-2' }))).toEqual([]);
   });
 
   it('permite formato institucional y bloquea plantilla bancaria', () => {

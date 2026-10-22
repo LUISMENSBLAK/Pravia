@@ -15,7 +15,13 @@ export const propertiesService = {
   unlinkDocument(id: string, documentId: string, reason: string) { return apiRequest<{ success: true; master_document_preserved: true }>(`/predios/${encodeURIComponent(id)}/documentos/${encodeURIComponent(documentId)}/desvincular`, { method: 'POST', body: JSON.stringify({ reason }) }); },
   expedienteDocuments(id: string, expedienteId: string, signal?: AbortSignal) { return apiRequest<{ data: PropertyImportableDocument[] }>(`/predios/${encodeURIComponent(id)}/expedientes/${encodeURIComponent(expedienteId)}/documentos`, { signal }).then((payload) => payload.data); },
   importExpedienteDocument(id: string, expedienteId: string, expedienteDocumentoId: string, tipo: string, principal = false) { return apiRequest<{ data: PropertyRecord }>(`/predios/${encodeURIComponent(id)}/expedientes/${encodeURIComponent(expedienteId)}/documentos/importar`, { method: 'POST', body: JSON.stringify({ expediente_documento_id: expedienteDocumentoId, tipo, es_antecedente_principal: principal }) }).then((payload) => payload.data); },
-  propose(id: string, documentIds: string[]) { return apiRequest<{ data: PropertyAIReview }>(`/predios/${encodeURIComponent(id)}/extracciones/preview`, { method: 'POST', body: JSON.stringify({ documento_ids: documentIds }) }).then((payload) => payload.data); },
+  propose(id: string, documentIds: string[]) {
+    const idempotencyKey = crypto.randomUUID();
+    return apiRequest<{ data: PropertyAIReview }>(`/predios/${encodeURIComponent(id)}/extracciones/preview`, {
+      method: 'POST', headers: { 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify({ documento_ids: documentIds, idempotency_key: idempotencyKey }),
+    }).then((payload) => payload.data);
+  },
   applyProposal(id: string, extractionId: string, expectedVersion: number, decisions: Record<string, 'ACCEPT' | 'KEEP'>) {
     return apiRequest<{ data: PropertyRecord }>(`/predios/${encodeURIComponent(id)}/extracciones/${encodeURIComponent(extractionId)}/aplicar`, { method: 'POST', body: JSON.stringify({ expected_version: expectedVersion, decisions }) }).then((payload) => payload.data);
   },

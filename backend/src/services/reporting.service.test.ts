@@ -52,7 +52,7 @@ describe('ReportingService', () => {
     const service = new ReportingService(db);
     const scopedUser = user('CONSULTA', ['reportes.read']);
     const ctx = service.context(scopedUser, { notaria_id: 'n2' });
-    expect(ctx.scope.notariaId).toBeUndefined();
+    expect('notariaId' in ctx.scope).toBe(false);
     const catalogs = await service.catalogs(scopedUser);
     expect(catalogs.notarias).toEqual([]);
     expect(db.notaria.findMany).not.toHaveBeenCalled();
@@ -104,12 +104,14 @@ describe('ReportingService', () => {
     expect(result).toMatchObject({ honorarios_generados: 390_000, honorarios_cobrados: 312_000, honorarios_por_cobrar: 78_000, fondos_terceros: 498_000 });
   });
 
-  it('filtra abogado y notaría en las consultas del subconjunto', async () => {
+  it('filtra abogado e ignora el selector legacy de notaría', async () => {
     const db = database();
     const service = new ReportingService(db);
     await service.collections(user(), { abogado_id: 'u2', notaria_id: 'n2' });
-    expect(db.honorarioGenerado.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ responsable_id: 'u2', notaria_id: 'n2' }) }));
-    expect(db.movimientoFinanciero.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ responsable_id: 'u2', notaria_id: 'n2' }) }));
+    expect(db.honorarioGenerado.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ responsable_id: 'u2' }) }));
+    expect(db.movimientoFinanciero.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ responsable_id: 'u2' }) }));
+    expect(db.honorarioGenerado.findMany.mock.calls[0][0].where.notaria_id).toBeUndefined();
+    expect(db.movimientoFinanciero.findMany.mock.calls[0][0].where.notaria_id).toBeUndefined();
   });
 
   it('sólo marca vencido con fecha fiable y conserva la ecuación de cobranza', async () => {

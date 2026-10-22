@@ -21,7 +21,6 @@ export type H8PanelRow = {
   escritura: string | null;
   compareciente_principal: { id: string; nombre: string } | null;
   abogado: { id: string; nombre: string } | null;
-  notaria: { id: string; nombre: string; numero_notaria: string | null } | null;
   actos: Array<{ id: string; nombre: string }>;
   cumplimiento: { code: string; pending_count: number };
   aviso: { code: string; label: string; count: number; pending: number };
@@ -37,8 +36,6 @@ export type H8Panel = {
   filters: {
     lawyers: Array<{ id: string; nombre: string }>;
     acts: Array<{ id: string; nombre: string }>;
-    notaries: Array<{ id: string; nombre: string; numero_notaria: string | null }>;
-    show_notaria: boolean;
   };
 };
 

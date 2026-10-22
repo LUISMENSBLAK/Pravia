@@ -137,8 +137,8 @@ describe("H5 service behavioral security and lifecycle", () => {
       expect(result.content).toMatchObject({ amount_original: "100.10", field_states: { account_number: { state: "ABSENT" } } });
       expect(result.field_provenance.amount_original).toHaveLength(2);
       expect(result.field_provenance.amount_original[0]).toMatchObject({ document_id: "doc-a", checksum: "checksum-doc-a", page: 2, model: "synthetic-model", locator: null });
-      expect(mocks.extract).toHaveBeenCalledTimes(2); expect(mocks.usage).toHaveBeenCalledTimes(2);
-      expect(mocks.usage.mock.calls[0][1]).toMatchObject({ organizationId: actor.organizationId, usuarioId: actor.id, expedienteId: review.expediente_id, metadata: { questionnaire_answers_sent: false, auto_write: false } });
+      expect(mocks.extract).toHaveBeenCalledTimes(2); expect(mocks.usage).not.toHaveBeenCalled();
+      expect(mocks.extract.mock.calls[0][3]).toMatchObject({ idempotencyKey: `h5:${actor.organizationId}:${review.id}:prepare-test:document:doc-a` });
       expect(JSON.stringify(mocks.db.complianceAiProposal.create.mock.calls)).not.toContain("SENSITIVE OCR");
       expect(mocks.db.complianceOperationPayment.create).not.toHaveBeenCalled(); expect(mocks.db.complianceOperationPaymentRevision.create).not.toHaveBeenCalled();
     });
@@ -150,7 +150,7 @@ describe("H5 service behavioral security and lifecycle", () => {
     it("records an extraction failure without creating a partial proposal or payment", async () => {
       mocks.extract.mockRejectedValue(new Error("synthetic provider failure"));
       await expect(ComplianceH5Service.preparePaymentProposal(actor, review.id, { operation_id: "failure-test", source_document_ids: ["doc-a", "doc-b"] })).rejects.toMatchObject({ code: "H5_PAYMENT_AI_FAILED" });
-      expect(mocks.failure).toHaveBeenCalledOnce(); expect(mocks.db.complianceAiProposal.create).not.toHaveBeenCalled();
+      expect(mocks.failure).not.toHaveBeenCalled(); expect(mocks.db.complianceAiProposal.create).not.toHaveBeenCalled();
       expect(mocks.db.complianceOperationPaymentRevision.create).not.toHaveBeenCalled();
     });
     it("rejects a stale base payment before applying reviewed proposal facts", async () => {

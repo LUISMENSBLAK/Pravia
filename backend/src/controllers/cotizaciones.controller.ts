@@ -16,7 +16,7 @@ import { ProspectWorkflowService } from '../services/prospectWorkflow.service';
 import { prospectWorkflowError } from './prospectWorkflowError';
 import { CotizacionWorkflowService } from '../services/cotizacionWorkflow.service';
 import { allowedQuoteActions, QuoteContractError, quoteKnowledge, quoteStageLabel } from '../domain/cotizacionContract';
-import { BudgetValidationError, budgetTotals, normalizeBudgetConcepts } from '../domain/expedienteBudget';
+import { BudgetValidationError, budgetTotals, moneyToCents, normalizeEditableBudgetConcepts, withDerivedHonorariosIva } from '../domain/expedienteBudget';
 import { QuoteDocumentError, quoteDocumentService } from '../services/quoteDocument.service';
 import { QuoteBudgetError, QuoteBudgetService } from '../services/quoteBudget.service';
 import { downloadFile } from '../services/supabase.service';
@@ -33,13 +33,17 @@ const quoteFrozenStages = new Set<CotizacionEtapaContractual>([
   CotizacionEtapaContractual.CONVERTIDA_EXPEDIENTE,
 ]);
 
-const normalizeQuoteConcepts = (raw: unknown) => normalizeBudgetConcepts(
+const normalizeQuoteConcepts = (raw: unknown) => withDerivedHonorariosIva(normalizeEditableBudgetConcepts(
   Array.isArray(raw) ? raw.map((item: any) => ({
     concepto: item?.concepto,
     importe: item?.importe ?? item?.monto,
     categoria: item?.categoria,
+    tratamiento_iva: item?.tratamiento_iva,
+    iva_tasa: item?.iva_tasa,
+    regla_fiscal_fuente: item?.regla_fiscal_fuente,
+    regla_fiscal_version: item?.regla_fiscal_version,
   })) : raw,
-);
+));
 
 const quoteBudgetResponse = (rows: any[]) => {
   const concepts = rows.map((row, orden) => ({
@@ -47,9 +51,13 @@ const quoteBudgetResponse = (rows: any[]) => {
     concepto: row.concepto,
     categoria: row.categoria,
     importe: String(row.importe),
-    importeCents: BigInt(Math.round(Number(row.importe) * 100)),
+    importeCents: moneyToCents(String(row.importe)),
     orden,
     origen: row.origen,
+    tratamiento_iva: row.tratamiento_iva,
+    iva_tasa: row.iva_tasa == null ? null : String(row.iva_tasa),
+    regla_fiscal_fuente: row.regla_fiscal_fuente,
+    regla_fiscal_version: row.regla_fiscal_version,
   }));
   const totals = budgetTotals(concepts);
   return {
@@ -59,6 +67,10 @@ const quoteBudgetResponse = (rows: any[]) => {
       iva_honorarios: totals.iva_honorarios,
       subtotal_honorarios: totals.subtotal_honorarios,
       impuestos_derechos: totals.subtotal_impuestos_derechos,
+      otros_gastos: totals.otros_gastos,
+      iva_otros_gastos: totals.iva_otros_gastos,
+      subtotal_otros_gastos: totals.subtotal_otros_gastos,
+      requires_review: totals.requiresReview,
       total: totals.total,
     },
   };
@@ -77,7 +89,10 @@ const quoteWorkflowError = (res: Response, error: unknown) => {
 };
 
 export const draftCotizacionEmailWithAI = async (req: Request, res: Response) => {
-  try { return res.json(await quoteEmailAIService.draft(req.user!, req.params.id)); }
+  try {
+    const idempotencyKey = String(req.get('Idempotency-Key') || req.body?.idempotency_key || '').trim();
+    return res.json(await quoteEmailAIService.draft(req.user!, req.params.id, idempotencyKey, req.correlationId));
+  }
   catch (error) { return quoteWorkflowError(res, error); }
 };
 
@@ -418,7 +433,7 @@ export const createCotizacionVersion = async (req: Request, res: Response) => {
     // The normalized rows are authoritative; supplied totals are accepted only
     // when they agree exactly, preventing a document/JSON total from drifting.
     const totalNotariaVal = Number(calculated.total);
-    if (total_notaria !== undefined && Number(total_notaria) !== totalNotariaVal) {
+    if (total_notaria !== undefined && moneyToCents(total_notaria) !== moneyToCents(calculated.total)) {
       return res.status(400).json({ error: 'El total no coincide con los conceptos estructurados.', code: 'QUOTE_TOTAL_MISMATCH' });
     }
     const totalClienteVal = totalNotariaVal;
@@ -463,7 +478,8 @@ export const createCotizacionVersion = async (req: Request, res: Response) => {
           organization_id: cotizacion.organization_id,
           cotizacion_id: id,
           version: newVersionNum,
-          desglose_notaria: { rubros: normalizedConcepts.map((item) => ({ concepto: item.concepto, categoria: item.categoria, monto: item.importe })) },
+          desglose_notaria: { rubros: normalizedConcepts.map((item) => ({ concepto: item.concepto, categoria: item.categoria, monto: item.importe,
+            tratamiento_iva: item.tratamiento_iva, iva_tasa: item.iva_tasa, regla_fiscal_fuente: item.regla_fiscal_fuente, regla_fiscal_version: item.regla_fiscal_version })) },
           desglose_pravia,
           total_notaria: totalNotariaVal,
           honorarios_pravia: honorariosPraviaVal,
@@ -476,13 +492,17 @@ export const createCotizacionVersion = async (req: Request, res: Response) => {
       await tx.cotizacionVersionConcepto.createMany({ data: normalizedConcepts.map((item) => ({
         organization_id: cotizacion.organization_id!, cotizacion_version_id: version.id,
         concepto: item.concepto, categoria: item.categoria, importe: item.importe, orden: item.orden,
-        origen: origen === 'IMPORTADO' ? 'IMPORTADO' : 'MANUAL',
+        tratamiento_iva: item.tratamiento_iva, iva_tasa: item.iva_tasa,
+        regla_fiscal_fuente: item.regla_fiscal_fuente, regla_fiscal_version: item.regla_fiscal_version,
+        origen: item.categoria === 'IVA_HONORARIOS' ? 'DERIVADO' : origen === 'IMPORTADO' ? 'IMPORTADO' : 'MANUAL',
       })) });
       await tx.cotizacionConcepto.deleteMany({ where: { cotizacion_id: id, organization_id: cotizacion.organization_id! } });
       await tx.cotizacionConcepto.createMany({ data: normalizedConcepts.map((item) => ({
         organization_id: cotizacion.organization_id!, cotizacion_id: id, concepto: item.concepto,
         categoria: item.categoria, importe: item.importe, orden: item.orden,
-        origen: origen === 'IMPORTADO' ? 'IMPORTADO' : 'MANUAL',
+        tratamiento_iva: item.tratamiento_iva, iva_tasa: item.iva_tasa,
+        regla_fiscal_fuente: item.regla_fiscal_fuente, regla_fiscal_version: item.regla_fiscal_version,
+        origen: item.categoria === 'IVA_HONORARIOS' ? 'DERIVADO' : origen === 'IMPORTADO' ? 'IMPORTADO' : 'MANUAL',
       })) });
       const updatedCotizacion = await tx.cotizacion.update({
         where: { id },
@@ -663,6 +683,17 @@ export const updateCotizacionPresupuesto = async (req: Request, res: Response) =
     if (error instanceof BudgetValidationError) return res.status(400).json({ error: error.message, code: error.code });
     console.error('Quote budget update failed', error);
     return res.status(500).json({ error: 'No fue posible guardar el presupuesto.', code: 'QUOTE_BUDGET_UPDATE_FAILED' });
+  }
+};
+
+export const previewCotizacionPresupuesto = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
+    return res.json(await quoteBudgetService.preview(req.user, req.params.id, req.body?.concepts));
+  } catch (error) {
+    if (error instanceof QuoteBudgetError) return res.status(error.status).json({ error: error.message, code: error.code });
+    if (error instanceof BudgetValidationError) return res.status(400).json({ error: error.message, code: error.code });
+    return res.status(500).json({ error: 'No fue posible calcular el presupuesto.', code: 'QUOTE_BUDGET_PREVIEW_FAILED' });
   }
 };
 

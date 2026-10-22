@@ -12,7 +12,6 @@ export type H8PanelQuery = {
   search: string;
   lawyerId: string;
   actId: string;
-  notaryId: string;
   from: Date | null;
   toExclusive: Date | null;
   page: number;
@@ -50,7 +49,6 @@ export function parseH8PanelQuery(input: Record<string, unknown>): H8PanelQuery 
     search: String(input.search || '').trim().slice(0, 160),
     lawyerId: String(input.lawyer_id || '').trim(),
     actId: String(input.act_id || '').trim(),
-    notaryId: String(input.notaria_id || '').trim(),
     from: dateParam(input.from),
     toExclusive: dateParam(input.to, true),
     page: Math.max(1, Math.min(10_000, Number(input.page) || 1)),
@@ -126,7 +124,6 @@ const panelCte = (user: User, query: H8PanelQuery, now: Date) => {
         AND e.archived_at IS NULL
         ${accessSql(user)}
         ${query.lawyerId ? Prisma.sql`AND e.abogado_id = ${query.lawyerId}::uuid` : Prisma.empty}
-        ${query.notaryId ? Prisma.sql`AND e.notaria_id = ${query.notaryId}::uuid` : Prisma.empty}
         ${query.actId ? Prisma.sql`AND EXISTS (SELECT 1 FROM expediente_actos ea WHERE ea.expediente_id = e.id AND ea.organization_id = ${user.organizationId}::uuid AND ea.estatus = 'ACTIVO' AND ea.removed_at IS NULL AND ea.tipo_acto_id = ${query.actId}::uuid)` : Prisma.empty}
         ${query.search ? Prisma.sql`AND (
           e.numero_pravia ILIKE ${search} ESCAPE '\\' OR COALESCE(e.numero_notaria, '') ILIKE ${search} ESCAPE '\\'
@@ -204,7 +201,6 @@ export class ComplianceH8Service {
       include: { expediente: {
         include: {
           abogado: { select: { id: true, nombre: true, apellido: true } },
-          notaria: { select: { id: true, nombre: true, numero_notaria: true } },
           actos: { where: { estatus: 'ACTIVO', removed_at: null }, orderBy: [{ created_at: 'asc' }, { id: 'asc' }], include: { tipo_acto: { select: { id: true, nombre: true } } } },
           comparecientes: { where: { archived_at: null, estatus: 'ACTIVO' }, orderBy: [{ es_principal: 'desc' }, { orden_comparecencia: 'asc' }, { created_at: 'asc' }], include: { compareciente: { select: { id: true, nombre_busqueda: true } } } },
         },
@@ -223,7 +219,6 @@ export class ComplianceH8Service {
         escritura: expediente.numero_notaria || ((expediente.datos_operacion as any)?.numero_escritura ?? null),
         compareciente_principal: main ? { id: main.compareciente.id, nombre: main.compareciente.nombre_busqueda } : null,
         abogado: expediente.abogado ? { id: expediente.abogado.id, nombre: `${expediente.abogado.nombre} ${expediente.abogado.apellido}`.trim() } : null,
-        notaria: expediente.notaria,
         actos: expediente.actos.map((item) => ({ id: item.tipo_acto.id, nombre: item.tipo_acto.nombre })),
         cumplimiento: { code: state.state, pending_count: state.pending_count },
         aviso: noticeSummary(sqlRow),
@@ -236,10 +231,9 @@ export class ComplianceH8Service {
     const summary = summaryRows[0] || { total: 0n, pending: 0n, notices: 0n, approaching: 0n, expired: 0n };
     const total = asNumber(summary.total);
     const optionsScope = { organization_id: user.organizationId, archived_at: null, ...expedienteAccessWhere(user) };
-    const [lawyers, acts, notaries] = await Promise.all([
+    const [lawyers, acts] = await Promise.all([
       this.db.expediente.findMany({ where: optionsScope, distinct: ['abogado_id'], select: { abogado: { select: { id: true, nombre: true, apellido: true } } }, orderBy: { abogado_id: 'asc' } }),
       this.db.tipoActo.findMany({ where: { archived_at: null, activo: true, expedienteActos: { some: { organization_id: user.organizationId, estatus: 'ACTIVO', removed_at: null, expediente: optionsScope } } }, select: { id: true, nombre: true }, orderBy: { nombre: 'asc' } }),
-      this.db.expediente.findMany({ where: { ...optionsScope, notaria_id: { not: null } }, distinct: ['notaria_id'], select: { notaria: { select: { id: true, nombre: true, numero_notaria: true } } }, orderBy: { notaria_id: 'asc' } }),
     ]);
     return {
       rows,
@@ -248,8 +242,6 @@ export class ComplianceH8Service {
       filters: {
         lawyers: lawyers.map((item) => ({ id: item.abogado.id, nombre: `${item.abogado.nombre} ${item.abogado.apellido}`.trim() })),
         acts,
-        notaries: notaries.flatMap((item) => item.notaria ? [item.notaria] : []),
-        show_notaria: notaries.length > 1,
       },
     };
   }

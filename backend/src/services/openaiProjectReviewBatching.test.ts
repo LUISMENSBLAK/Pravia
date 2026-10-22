@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PROJECT_REVIEW_AREAS, isRetryableProjectReviewError, isRetryableProjectReviewStatus, mapProjectReviewBatches, partitionProjectReviewDocuments, type DocumentoParaExtraccion } from './openaiDocument.service';
+import { analizarProyectoNotarialConOpenAI, PROJECT_REVIEW_AREAS, isRetryableProjectReviewError, isRetryableProjectReviewStatus, mapProjectReviewBatches, partitionProjectReviewDocuments, type DocumentoParaExtraccion } from './openaiDocument.service';
 
 const document = (id: string, bytes: number): DocumentoParaExtraccion => ({
   buffer: Buffer.alloc(bytes),
@@ -10,6 +10,25 @@ const document = (id: string, bytes: number): DocumentoParaExtraccion => ({
 });
 
 describe('EXP-010 · revisión documental grande por lotes', () => {
+  it('asigna una subclave económica estable a cada lote revisado', async () => {
+    const calls: any[] = [];
+    const gateway = { execute: async (request: any) => {
+      calls.push(request);
+      return { status: 'completed', usage: { input_tokens: 5, output_tokens: 5, input_tokens_details: { cached_tokens: 0 } }, output: [{ content: [{
+        type: 'output_text', text: JSON.stringify({ resumen_ejecutivo: 'QA', observaciones: [], areas_revision: PROJECT_REVIEW_AREAS.map((area) => ({
+          area: area.id, etiqueta: area.label, estado: 'REVISADO_SIN_HALLAZGOS', resumen: 'Sin hallazgos.', hallazgos: 0,
+        })) }),
+      }] }] };
+    } };
+    const result = await analizarProyectoNotarialConOpenAI(document('project', 2), [document('a', 2), document('b', 2)], {}, undefined, {
+      actor: { userId: 'user-qa', organizationId: 'org-qa', membershipId: 'membership-qa', role: 'DIRECCION', permissions: ['ai.use'], scope: 'GLOBAL', sessionId: 'session-qa' },
+      idempotencyKey: 'review-qa', traceId: 'trace-review-qa', gateway,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ operationCode: 'PROJECT_LEGAL_REVIEW', billingClass: 'CUSTOMER_WALLET', idempotencyKey: 'review-qa:batch:1' });
+    expect(result.areas_revision).toHaveLength(17);
+  });
+
   it('conserva las 17 áreas contractuales en un orden estable y sin duplicados', () => {
     expect(PROJECT_REVIEW_AREAS).toHaveLength(17);
     expect(new Set(PROJECT_REVIEW_AREAS.map((item) => item.id)).size).toBe(17);
