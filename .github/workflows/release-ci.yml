@@ -85,6 +85,14 @@ jobs:
         env:
           DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=pravia_os
           DIRECT_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=pravia_os
+          PRAVIA_DATABASE_MODE: local
+          PRAVIA_PRIMARY_DATABASE: local
+          LOCAL_DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=pravia_os
+          LOCAL_DIRECT_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=pravia_os
+          STORAGE_MODE: local
+          PRAVIA_PRIMARY_STORAGE: local
+          LOCAL_STORAGE_PATH: /tmp/pravia-ci-storage
+          LOCAL_STORAGE_SIGNING_SECRET: pravia-ci-local-storage-signing-secret
 
   secret-scan:
     runs-on: ubuntu-latest
