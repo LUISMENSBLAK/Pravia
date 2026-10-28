@@ -102,4 +102,6 @@ Resultado físico: **0/26 localizados y verificados**. Resultado lógico: **26/2
 
 `STAGING_GATE`: **NOT VERIFIED** por falta de PostgreSQL + Storage externos aislados.
 
+`UPLOAD_POLICY_GATE`: **FAIL**; el bucket canónico observado limita archivos a 20 MB y la política aprobada es 50 MB. No se cambió producción sin staging ni certificación.
+
 `PRODUCTION_RELEASE_GATE`: **NO-GO**. No se ejecutaron migraciones ni deploy productivo.

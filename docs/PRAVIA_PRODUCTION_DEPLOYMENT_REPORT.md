@@ -36,7 +36,8 @@ procedimiento completo en una falla independiente de la infraestructura primaria
 1. Las 26/26 referencias históricas existen y tienen tenant coherente, pero 0/26 objetos físicos fueron localizados en ambos buckets o metadata accesible.
 2. No existe staging externo aislado configurado para ejecutar el recorrido obligatorio.
 3. No existe evidencia de restauración independiente y utilizable de PostgreSQL + Storage.
-4. IA externa queda fail-closed en producción mediante `AI_EXTERNAL_ENABLED=false` hasta certificación específica.
+4. El bucket canónico `pravia_documentos` tiene límite productivo de 20 MB; la política aprobada exige 50 MB y el ajuste aún no fue validado en staging.
+5. IA externa queda fail-closed en producción mediante `AI_EXTERNAL_ENABLED=false` hasta certificación específica.
 
 ## Evidencia local añadida
 
