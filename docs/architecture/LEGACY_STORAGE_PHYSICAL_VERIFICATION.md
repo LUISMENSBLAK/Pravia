@@ -1,6 +1,6 @@
 # Verificación física de documentos heredados — 2026-10-18/19
 
-Estado: **FAIL / bloquea release**. Esta evidencia complementa la [matriz principal](./PLATFORM_ARCHITECTURE_GAP_MATRIX.md); no convierte el backfill lógico en una certificación de los originales.
+Estado: **FAIL / bloquea release**. Esta evidencia complementa la [matriz principal](./PLATFORM_ARCHITECTURE_GAP_MATRIX.md); no convierte el backfill lógico en una certificación de los originales. Revalidación read-only directa de NOTARYPROY del 28-10-2026: las 26/26 asociaciones y tenants continúan coherentes, pero 0/26 objetos fueron localizados en ambos buckets o listados de metadata; véase [evidencia actual](../release/2026-10-28/NOTARYPROY_READONLY_AUDIT.md).
 
 ## Alcance y método
 

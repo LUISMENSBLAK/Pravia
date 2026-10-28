@@ -137,6 +137,15 @@ migrations=(
   20261020100000_cfg002_organization_owner_enum
   20261020101000_cfg002_organization_owner_backfill
   20261020230000_quote_budget_tax_correction
+  20261026010000_prefactura_pdf_versions
+  20261026020000_cfdi_incremental_drafts
+  20261026030000_supplier_csf_extraction_lineage
+  20261026040000_receiver_fiscal_regimes
+  20261026050000_receiver_csf_extraction_lineage
+  20261027010000_org_scoped_folios
+  20261027020000_record_collaboration
+  20261028010000_unassigned_prospects
+  20261028020000_expediente_folio_series
 )
 
 for migration in "${migrations[@]}"; do

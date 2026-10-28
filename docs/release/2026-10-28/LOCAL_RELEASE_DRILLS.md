@@ -40,3 +40,14 @@
 - La sesión web Supabase disponible pertenece a otra organización y rechazó el acceso al project ref productivo `mkiwijbampubccrpvgga` (`NOTARYPROY`).
 - No se ejecutaron consultas SQL ni migraciones contra producción.
 - No se declara staging, backup independiente, integridad física histórica ni rollback productivo como PASS.
+
+## Addendum: acceso read-only a NOTARYPROY
+
+La limitación de acceso anterior quedó superada el mismo 28-10-2026. Se confirmó
+`NOTARYPROY` (`mkiwijbampubccrpvgga`) y se obtuvo un dump con transacción read-only.
+El dump fue restaurado localmente y las nueve migraciones pendientes pasaron hasta
+`123/123`. También se respaldaron y verificaron por hash `249/249` objetos actualmente
+accesibles. Este addendum no convierte el ejercicio en recuperación independiente:
+la copia todavía comparte host/disco y los 26 objetos históricos siguen ausentes.
+
+Evidencia: [NOTARYPROY_READONLY_AUDIT.md](NOTARYPROY_READONLY_AUDIT.md).
