@@ -1,6 +1,6 @@
 # PRAVIA OS — preparación verificable de release
 
-Estado al 28-10-2026: **NO-GO / preparación en curso**. Se creó `codex/release-pravia-20261028` desde HEAD `5ca8ad675853c3e5a2a2be1930bd9b8b279ad0c2`, conservando el worktree sucio; `main` no se modificó. Había 100 rutas modificadas y 56 nuevas antes de crear los documentos de release, staging Git vacío y nueve migraciones nuevas sin commit. Ese HEAD coincide con `origin/main` como commit Git, pero no prueba qué está desplegado actualmente. Las suites locales más recientes pasaron backend 2.308/2.308, frontend 494/494, PostgreSQL folios 4/4 y E2E COL56/COL67 2/2; son evidencia local, no staging ni producción.
+Estado al 28-10-2026: **NO-GO / preparación en curso**. Se creó `codex/release-pravia-20261028` desde HEAD `5ca8ad675853c3e5a2a2be1930bd9b8b279ad0c2`, conservando el worktree acumulado; `main` no se modificó. El alcance y las nueve migraciones nuevas están comprometidos en la rama candidata, cuyo HEAD actual es `5065791ac8964256ad9472fbcd17b3f05fdaa76e`. La corrida remota de CI de ese commit pasó completa. Esto no prueba staging ni producción y no cierra por sí solo los demás gates obligatorios.
 
 | GATE | EVIDENCE | STATUS | BLOCKER | REMEDIATION | OWNER / DEPENDENCY |
 |---|---|---|---|---|---|
@@ -11,10 +11,10 @@ Estado al 28-10-2026: **NO-GO / preparación en curso**. Se creó `codex/release
 | `STORAGE_GATE` | Storage QA local y SHA en pruebas COL67; histórico productivo no reconciliado. | `PARTIAL` | Sí | Verificación de buckets/objetos productivos read-only, aislamiento staging y hashes. | Operación Storage |
 | `BACKUP_RESTORE_GATE` | [Drill local 2026-10-28](release/2026-10-28/LOCAL_RELEASE_DRILLS.md): dump/restore DB, 161/161 hashes Storage, conteos críticos y runtime restaurado PASS; comparte host/disco. | `PARTIAL` | Sí | Repetir backup y restore en dominio de falla independiente. | Infraestructura / destino autorizado |
 | `PRODUCTION_FOLIO_GATE` | COL45 sintético PostgreSQL 4/4; cotejo de folios/IDs/relaciones productivas read-only pendiente. | `PARTIAL` | Sí | Consultas productivas de sólo lectura y snapshot antes/después; nunca reservar ni renumerar. | DBA / acceso read-only |
-| `MIGRATION_SAFETY_GATE` | Bootstrap PostgreSQL 16 desde vacío PASS: 122 migraciones, 0 pendientes. Nueve migraciones nuevas siguen sin commit y falta preflight productivo read-only. | `PARTIAL` | Sí | Preflight productivo de colisiones/constraints y replay sobre snapshot productivo restaurado. | Ingeniería + DBA |
+| `MIGRATION_SAFETY_GATE` | Bootstrap PostgreSQL 16 desde vacío PASS local y en CI: 122 migraciones, 0 pendientes. Las nueve migraciones nuevas están incluidas en el commit candidato; falta preflight productivo read-only. | `PARTIAL` | Sí | Preflight productivo de colisiones/constraints y replay sobre snapshot productivo restaurado. | Ingeniería + DBA |
 | `STAGING_GATE` | No hay URLs externas de backend/DB/Storage/Netlify staging verificadas en este corte. | `NOT VERIFIED` | Sí | Infraestructura aislada autorizada, variables separadas y E2E externo multiusuario. | Operaciones Render/Netlify/PostgreSQL/Storage |
 | `ENABLED_FEATURES_FUNCTIONAL_GATE` | [Alcance propuesto](PRAVIA_PRODUCTION_RELEASE_SCOPE.md); COL 67 PASS/3 PARCIAL, FDR 15/90 puntual, EXT 0/60 integral. | `NOT VERIFIED` | Sí | Aislar de verdad funciones no certificadas y probar 25 pasos del camino mínimo; FDR31 si Facturación se anuncia. | Producto + QA |
-| `RELEASE_CI_GATE` | Builds/suites locales PASS; se añadió `.github/workflows/release-ci.yml`, pero todavía no existe corrida remota del commit candidato. | `PARTIAL` | Sí | Commit(s), push de rama segura y CI verde sin autodeploy productivo. | Ingeniería / Git + CI |
+| `RELEASE_CI_GATE` | GitHub Actions [run 40736831435](https://github.com/LUISMENSBLAK/Pravia/actions/runs/40736831435) sobre `5065791ac8964256ad9472fbcd17b3f05fdaa76e`: backend, frontend, bootstrap PostgreSQL vacío y secret scan PASS. | `PASS` | No | Mantener CI verde sobre cualquier commit posterior antes de promover. | Ingeniería / Git + CI |
 
 ## Infraestructura observada en modo lectura
 
