@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Prisma, PrismaClient, type ExpedienteActividadCategoria, type TipoActividad } from '@prisma/client';
 import type { Request } from 'express';
-import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { expedienteAccessWhere, expedienteReadWhere } from '../middleware/auth.middleware';
 
 type Actor = NonNullable<Request['user']>;
 type CategoryFilter = 'TODO' | ExpedienteActividadCategoria;
@@ -67,7 +67,8 @@ export class ExpedienteActivityService {
   constructor(private readonly prisma: PrismaClient) {}
 
   async list(actor: Actor, expedienteId: string, query: ActivityQuery) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    if (!actor.permissions.includes('expedientes.read')) throw new ExpedienteActivityError(403, 'EXP009_READ_DENIED', 'No tienes permiso para consultar este expediente.');
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const category = clean(query.category || 'TODO', 20).toUpperCase() as CategoryFilter;
     if (!categories.has(category)) throw new ExpedienteActivityError(400, 'EXP009_CATEGORY_INVALID', 'Selecciona una categoría de actividad válida.');
     const search = clean(query.search, 120);
@@ -113,6 +114,7 @@ export class ExpedienteActivityService {
   }
 
   async addNote(actor: Actor, expedienteId: string, input: { note?: unknown; idempotency_key?: unknown }) {
+    if (!actor.permissions.includes('expedientes.write')) throw new ExpedienteActivityError(403, 'EXP009_WRITE_DENIED', 'No tienes permiso para modificar este expediente.');
     await this.assertExpediente(this.prisma, actor, expedienteId);
     const rawNote = String(input.note || '').trim(); const note = clean(rawNote, 2000); const idempotencyKey = clean(input.idempotency_key, 160);
     if (!note) throw new ExpedienteActivityError(400, 'EXP009_NOTE_REQUIRED', 'Escribe una nota antes de guardarla.');
@@ -138,8 +140,9 @@ export class ExpedienteActivityService {
 
   private noteDto(item: any) { return { id: item.id, type: item.tipo, category: 'OPERACION', title: item.titulo, description: item.descripcion, occurred_at: item.created_at, actor: item.usuario, manual_note: true, previous_values: null, new_values: null, related_section: 'actividad', related_entity: 'Expediente', related_entity_id: item.expediente_id }; }
 
-  private async assertExpediente(db: Db, actor: Actor, expedienteId: string) {
-    const expediente = await db.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) }, select: { id: true } });
+  private async assertExpediente(db: Db, actor: Actor, expedienteId: string, access: 'read' | 'write' = 'write') {
+    const expediente = await db.expediente.findFirst({ where: { id: expedienteId,
+      ...(access === 'read' ? expedienteReadWhere(actor) : { organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) }) }, select: { id: true } });
     if (!expediente) throw new ExpedienteActivityError(403, 'EXP009_EXPEDIENTE_ACCESS_DENIED', 'No tienes acceso a este expediente.');
     return expediente;
   }

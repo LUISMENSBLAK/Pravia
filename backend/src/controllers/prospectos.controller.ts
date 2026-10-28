@@ -10,7 +10,7 @@ import {
   prospectServiceByCode,
   prospectStageByCode,
 } from '../domain/prospectCatalog';
-import { prospectoObjectWhere } from '../services/objectAccess.service';
+import { prospectoReadWhere } from '../services/objectAccess.service';
 import { logAudit } from '../utils/auditLogger';
 import { ProspectWorkflowService } from '../services/prospectWorkflow.service';
 import { prospectWorkflowError } from './prospectWorkflowError';
@@ -68,7 +68,7 @@ export const getProspectos = async (req: Request, res: Response) => {
     if (parsed.serviceCode && !service) return res.status(400).json({ error: 'El servicio seleccionado no es válido.', code: 'INVALID_PROSPECT_SERVICE' });
     if (parsed.operationalStageCode && !stage) return res.status(400).json({ error: 'La etapa seleccionada no es válida.', code: 'INVALID_PROSPECT_STAGE' });
 
-    const scope = { archived_at: null, ...(req.user ? prospectoObjectWhere(req.user) : {}) };
+    const scope = { archived_at: null, ...(req.user ? prospectoReadWhere(req.user) : {}) };
     const where: any = { ...scope };
     const and: any[] = [];
     if (parsed.pipelineStage) {
@@ -189,6 +189,7 @@ export const getProspectoById = async (req: Request, res: Response) => {
       where: { id: req.params.id },
       include: {
         atendido_por: { select: { nombre: true, id: true } },
+        collaborators: { where: { active: true }, select: { user_id: true, assigned_at: true } },
         etapa_operativa: true,
         servicio_catalogo: true,
         actos: { include: { tipo_acto: { select: { id: true, nombre: true, codigo_catalogo: true } } }, orderBy: { orden: 'asc' } },

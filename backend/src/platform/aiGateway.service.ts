@@ -64,6 +64,15 @@ const FALLBACK_ELIGIBLE_PROVIDER_ERRORS = new Set([
 const canTryNextProvider = (error: unknown) => !(error instanceof PlatformDomainError)
   || FALLBACK_ELIGIBLE_PROVIDER_ERRORS.has(error.code);
 
+/**
+ * External provider execution is fail-closed in production. Local and test
+ * environments keep the gateway available for synthetic adapters, while a
+ * production release must opt in explicitly after its provider, pricing and
+ * recovery gates have been certified.
+ */
+const externalProviderExecutionEnabled = () => process.env.NODE_ENV !== 'production'
+  || /^(?:1|true|yes)$/i.test(String(process.env.AI_EXTERNAL_ENABLED || '').trim());
+
 const economicSnapshot = (snapshot: Prisma.InputJsonValue | undefined, attempts: FailedProviderAttempt[]) => {
   const base = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
     ? snapshot as Prisma.JsonObject : {};
@@ -88,6 +97,13 @@ export class AiGateway {
   async execute<T = unknown>(request: AiGatewayRequest): Promise<T> {
     if (!request.idempotencyKey || !request.traceId) {
       throw new PlatformDomainError('AI_IDEMPOTENCY_CONTEXT_REQUIRED', 'La solicitud IA requiere trazabilidad e idempotencia.', 400);
+    }
+    if (!externalProviderExecutionEnabled()) {
+      throw new PlatformDomainError(
+        'AI_EXTERNAL_DISABLED',
+        'Las funciones de IA externa están temporalmente deshabilitadas en este entorno.',
+        503,
+      );
     }
     const operation = await this.db.aiOperationCatalog.findUnique({ where: { operation_code: request.operationCode } });
     if (!operation?.active) throw new PlatformDomainError('AI_OPERATION_DISABLED', 'La operación IA no está disponible.', 409);

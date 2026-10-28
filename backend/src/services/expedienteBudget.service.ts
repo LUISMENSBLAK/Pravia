@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'crypto';
 import { CatalogoDestinoFuncional, Prisma, PrismaClient } from '@prisma/client';
-import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { expedienteAccessWhere, expedienteReadWhere } from '../middleware/auth.middleware';
 import {
   budgetTotals, calculateDistribution, centsToMoney, moneyToCents, normalizeBudgetConcepts, normalizeEditableBudgetConcepts, withDerivedHonorariosIva,
   percentageFromCents, quoteCategoryToBudget, type BudgetCategory,
@@ -30,14 +30,15 @@ export class ExpedienteBudgetService {
   constructor(private readonly prisma: PrismaClient) {}
 
   async read(actor: BudgetActor, expedienteId: string) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    if (!can(actor, 'expedientes.read')) throw new ExpedienteBudgetError(403, 'EXP007_READ_DENIED', 'No tienes permiso para consultar el presupuesto.');
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const budget = await this.budget(this.prisma, actor, expedienteId);
     return this.response(actor, budget);
   }
 
   async preview(actor: BudgetActor, expedienteId: string, rawConcepts: unknown) {
     if (!can(actor, 'expedientes.read')) throw new ExpedienteBudgetError(403, 'EXP007_READ_DENIED', 'No tienes permiso para consultar el presupuesto.');
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const concepts = withDerivedHonorariosIva(normalizeEditableBudgetConcepts(rawConcepts));
     const totals = budgetTotals(concepts);
     return { totals: {
@@ -198,7 +199,7 @@ export class ExpedienteBudgetService {
 
   async signedUrl(actor: BudgetActor, expedienteId: string, historyId: string) {
     if (!can(actor, 'documentos.read')) throw new ExpedienteBudgetError(403, 'EXP007_PDF_READ_DENIED', 'No tienes permiso para consultar documentos.');
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const item = await this.pdf(this.prisma, actor, expedienteId, historyId);
     if (item.eliminado_at) throw new ExpedienteBudgetError(404, 'EXP007_PDF_NOT_FOUND', 'El presupuesto histórico ya no está disponible.');
     return { url: await getSignedUrl(item.documento.storage_key, 600), expires_in: 600, file_name: item.documento.nombre_original, mime_type: item.documento.mime_type };
@@ -268,8 +269,9 @@ export class ExpedienteBudgetService {
     return budget;
   }
 
-  private async assertExpediente(db: Db, actor: BudgetActor, expedienteId: string) {
-    const record = await db.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor as any) }, include: {
+  private async assertExpediente(db: Db, actor: BudgetActor, expedienteId: string, access: 'read' | 'write' = 'write') {
+    const record = await db.expediente.findFirst({ where: { id: expedienteId,
+      ...(access === 'read' ? expedienteReadWhere(actor as any) : { organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor as any) }) }, include: {
       notaria: { select: { nombre: true } },
       actos: { where: { estatus: 'ACTIVO', removed_at: null }, select: { tipo_acto: { select: { nombre: true } } }, orderBy: { created_at: 'asc' } },
     } });

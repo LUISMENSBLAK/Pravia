@@ -48,7 +48,7 @@ describe('ISRService, RBAC e inmutabilidad',()=>{
     expect(roleHasPermission('DIRECCION','isr.admin')).toBe(true);expect(roleHasPermission('ADMINISTRACION','isr.calculate')).toBe(true);expect(roleHasPermission('ADMINISTRACION','isr.export')).toBe(true);expect(roleHasPermission('ABOGADO','isr.write')).toBe(true);expect(roleHasPermission('ABOGADO','isr.export')).toBe(true);expect(roleHasPermission('CONSULTA','isr.read')).toBe(true);expect(roleHasPermission('CONSULTA','isr.export')).toBe(false);expect(roleHasPermission('CONSULTA','isr.write')).toBe(false);expect(roleHasPermission('RECEPCION','isr.read')).toBe(false);expect(roleHasPermission('GESTORIA','isr.read')).toBe(false);
   });
   it('impone object scope a abogado e impide IDOR por lectura',async()=>{
-    expect(isrObjectWhere(user())).toEqual({OR:[{creado_por_id:'user-1'},{expediente:{OR:[{abogado_id:'user-1'},{creador_id:'user-1'}]}}]});
+    expect(isrObjectWhere(user())).toEqual({OR:[{creado_por_id:'user-1'},{expediente:{OR:[{abogado_id:'user-1'},{collaborators:{some:{organization_id:'org-1',user_id:'user-1',active:true}}}]}}]});
     const {db}=dbMock(null as any);await expect(new ISRService(db).get(user(),'foreign-id')).rejects.toMatchObject({code:'ISR_NOT_FOUND'});
   });
   it('lista exclusivamente con el scope del actor',async()=>{const {db}=dbMock();await new ISRService(db).list(user(),{});expect(db.calculoISR.findMany.mock.calls[0][0].where.OR).toBeDefined();});

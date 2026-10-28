@@ -47,7 +47,7 @@ import {
   generarProyectoDesdeMachoteExcepcional,
   aplicarIndicacionesProyecto,
 } from '../controllers/proyectos.controller';
-import { requireExpedienteAccess, requirePermission } from '../middleware/auth.middleware';
+import { requireAnyPermission, requireExpedienteAccess, requirePermission } from '../middleware/auth.middleware';
 import { applyExpedienteActoChange, listExpedienteActos, previewExpedienteActoChange, updateExpedienteActoObjectPercentage } from '../controllers/expedienteActos.controller';
 import {
   applyExpedientePartyChange,
@@ -176,10 +176,10 @@ router.get('/:id/presupuesto/documentos/:historyId/url', requirePermission('docu
 router.delete('/:id/presupuesto/documentos/:historyId', requirePermission('documentos.unlink'), deleteExpedienteBudgetPdf);
 router.get('/:id/finanzas-operativas', requirePermission('expedientes.read'), getExpedienteFinance);
 router.post('/:id/finanzas-operativas/estado-cuenta', requirePermission('expedientes.read'), requirePermission('documentos.write'), generateExpedienteAccountStatement);
-router.post('/:id/finanzas-operativas/ingresos', requirePermission('expedientes.write'), requirePermission('documentos.write'), uploadExp008.fields([{ name: 'file', maxCount: 1 }, { name: 'invoice_pdf', maxCount: 1 }, { name: 'invoice_xml', maxCount: 1 }]), reportExpedienteIncome);
-router.post('/:id/finanzas-operativas/ingresos/ia/vista-previa', requirePermission('expedientes.write'), requirePermission('documentos.write'), requirePermission('ia.execute'), uploadExp008.single('file'), previewExpedienteIncomeAI);
-router.post('/:id/finanzas-operativas/solicitudes/interna', requirePermission('expedientes.write'), requirePermission('documentos.write'), createInternalPaymentRequest);
-router.post('/:id/finanzas-operativas/solicitudes/externa', requirePermission('expedientes.write'), requirePermission('documentos.write'), uploadExp008.single('file'), createExternalPaymentRequest);
+router.post('/:id/finanzas-operativas/ingresos', requireAnyPermission('expedientes.write', 'finanzas.write'), requirePermission('documentos.write'), uploadExp008.fields([{ name: 'file', maxCount: 1 }, { name: 'invoice_pdf', maxCount: 1 }, { name: 'invoice_xml', maxCount: 1 }]), reportExpedienteIncome);
+router.post('/:id/finanzas-operativas/ingresos/ia/vista-previa', requireAnyPermission('expedientes.write', 'finanzas.write'), requirePermission('documentos.write'), requirePermission('ia.execute'), uploadExp008.single('file'), previewExpedienteIncomeAI);
+router.post('/:id/finanzas-operativas/solicitudes/interna', requireAnyPermission('expedientes.write', 'finanzas.write'), requirePermission('documentos.write'), createInternalPaymentRequest);
+router.post('/:id/finanzas-operativas/solicitudes/externa', requireAnyPermission('expedientes.write', 'finanzas.write'), requirePermission('documentos.write'), uploadExp008.single('file'), createExternalPaymentRequest);
 router.post('/:id/finanzas-operativas/ia/proponer', requirePermission('ia.execute'), proposeExpedienteFinanceAI);
 router.post('/:id/finanzas-operativas/ia/propuestas/:proposalId/validar', requirePermission('finanzas.validate'), validateExpedienteFinanceAI);
 router.post('/:id/finanzas-operativas/ingresos/:incomeId/aplicar', requirePermission('finanzas.validate'), applyExpedienteIncome);

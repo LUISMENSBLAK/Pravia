@@ -2,8 +2,8 @@ import type { Request, Response } from 'express';
 import { Prisma, Role } from '@prisma/client';
 import prisma from '../config/prisma';
 import { PERMISSIONS, ROLE_PERMISSIONS } from '../auth/permissions';
-import { expedienteAccessWhere } from '../middleware/auth.middleware';
-import { comparecienteObjectWhere, cotizacionObjectWhere, prospectoObjectWhere } from '../services/objectAccess.service';
+import { expedienteReadWhere } from '../middleware/auth.middleware';
+import { comparecienteObjectWhere, cotizacionReadWhere, prospectoReadWhere } from '../services/objectAccess.service';
 import { intelligentNotificationService } from '../services/intelligentNotification.service';
 
 const PREFERENCE_VALUES = {
@@ -134,7 +134,10 @@ export class SettingsController {
 
   static async preferences(req: Request, res: Response) {
     if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
-    const preferences = await prisma.userPreference.upsert({ where: { user_id: req.user.id }, create: { user_id: req.user.id }, update: {}, select: preferenceSelect });
+    // An empty-update upsert is implemented as read-then-create by Prisma and races
+    // when two sessions initialize the same user's preferences at once.
+    await prisma.userPreference.createMany({ data: [{ user_id: req.user.id }], skipDuplicates: true });
+    const preferences = await prisma.userPreference.findUniqueOrThrow({ where: { user_id: req.user.id }, select: preferenceSelect });
     return res.json({ preferences });
   }
 
@@ -239,10 +242,10 @@ export class SettingsController {
     const query = text(req.query.q, 120); const limit = Math.min(8, pageSize(req.query.limit, 5));
     if (query.length < 2) return res.json({ data: [], query });
     const [expedientes, comparecientes, prospectos, cotizaciones] = await Promise.all([
-      req.user.permissions.includes('expedientes.read') ? prisma.expediente.findMany({ where: { archived_at: null, ...expedienteAccessWhere(req.user), OR: [{ numero_pravia: { contains: query, mode: 'insensitive' } }, { cliente_alias: { contains: query, mode: 'insensitive' } }] }, select: { id: true, numero_pravia: true, cliente_alias: true }, take: limit }) : [],
-      req.user.permissions.includes('comparecientes.read') ? prisma.compareciente.findMany({ where: { archived_at: null, ...comparecienteObjectWhere(req.user), nombre_busqueda: { contains: query, mode: 'insensitive' } }, select: { id: true, nombre_busqueda: true }, take: limit }) : [],
-      req.user.permissions.includes('prospectos.read') ? prisma.prospecto.findMany({ where: { archived_at: null, ...prospectoObjectWhere(req.user), OR: [{ nombre: { contains: query, mode: 'insensitive' } }, { email: { contains: query, mode: 'insensitive' } }] }, select: { id: true, nombre: true, tipo_acto: true }, take: limit }) : [],
-      req.user.permissions.includes('cotizaciones.read') ? prisma.cotizacion.findMany({ where: { ...cotizacionObjectWhere(req.user), OR: [{ numero_cotizacion: { contains: query, mode: 'insensitive' } }, { numero_solicitud: { contains: query, mode: 'insensitive' } }, { prospecto: { is: { nombre: { contains: query, mode: 'insensitive' } } } }] }, select: { id: true, numero_cotizacion: true, numero_solicitud: true, prospecto: { select: { nombre: true } } }, take: limit }) : [],
+      req.user.permissions.includes('expedientes.read') ? prisma.expediente.findMany({ where: { ...expedienteReadWhere(req.user), OR: [{ numero_pravia: { contains: query, mode: 'insensitive' } }, { cliente_alias: { contains: query, mode: 'insensitive' } }] }, select: { id: true, numero_pravia: true, cliente_alias: true }, take: limit }) : [],
+      req.user.permissions.includes('comparecientes.read') ? prisma.compareciente.findMany({ where: { organization_id: req.user.organizationId, archived_at: null, ...comparecienteObjectWhere(req.user), nombre_busqueda: { contains: query, mode: 'insensitive' } }, select: { id: true, nombre_busqueda: true }, take: limit }) : [],
+      req.user.permissions.includes('prospectos.read') ? prisma.prospecto.findMany({ where: { archived_at: null, ...prospectoReadWhere(req.user), OR: [{ nombre: { contains: query, mode: 'insensitive' } }, { email: { contains: query, mode: 'insensitive' } }] }, select: { id: true, nombre: true, tipo_acto: true }, take: limit }) : [],
+      req.user.permissions.includes('cotizaciones.read') ? prisma.cotizacion.findMany({ where: { ...cotizacionReadWhere(req.user), OR: [{ numero_cotizacion: { contains: query, mode: 'insensitive' } }, { numero_solicitud: { contains: query, mode: 'insensitive' } }, { prospecto: { is: { nombre: { contains: query, mode: 'insensitive' } } } }] }, select: { id: true, numero_cotizacion: true, numero_solicitud: true, prospecto: { select: { nombre: true } } }, take: limit }) : [],
     ]);
     const data = [
       ...expedientes.map((item) => ({ type: 'EXPEDIENTE', id: item.id, title: item.numero_pravia, subtitle: item.cliente_alias, href: `/expedientes/${item.id}` })),

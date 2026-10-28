@@ -4,11 +4,13 @@ import { Link } from 'react-router-dom';
 import { quotesService } from '../quotes.service';
 import type { Quote, QuoteActTypeOption } from '../quotes.types';
 import { QuoteActionDialog } from './QuoteActionDialog';
+import { useAuth } from '../../auth/AuthProvider';
 import styles from '../Quotes.module.css';
 
 type Result = { id: string; numero_pravia?: string; idempotent?: boolean };
 
 export function ConvertQuoteDialog({ quote, onClose, onDone }: { quote: Quote; onClose: () => void; onDone: (result: Result) => void }) {
+  const { user } = useAuth();
   const localNow = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 23);
   const canonical = Boolean(quote.workflow?.stage);
   const [effectiveAt, setEffectiveAt] = useState(localNow);
@@ -20,6 +22,26 @@ export function ConvertQuoteDialog({ quote, onClose, onDone }: { quote: Quote; o
   const [applicantRoles, setApplicantRoles] = useState<Record<string, string>>({});
   const [actsStatus, setActsStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [unavailableActNames, setUnavailableActNames] = useState<string[]>([]);
+  const [series, setSeries] = useState<Array<{ code: string; label: string }>>([{ code: '', label: 'Ordinaria' }]);
+  const [selectedSeries, setSelectedSeries] = useState('');
+  const [newSeries, setNewSeries] = useState('');
+  const [seriesError, setSeriesError] = useState('');
+
+  useEffect(() => {
+    void quotesService.expedienteSeries().then(setSeries).catch(() => setSeriesError('No pudimos cargar las series configuradas. Sólo está disponible la ordinaria.'));
+  }, []);
+
+  const addSeries = async () => {
+    const code = newSeries.trim().toUpperCase();
+    if (!/^[A-Z][A-Z0-9]{1,15}$/.test(code) || code === 'EXP') return setSeriesError('Usa un código de 2 a 16 letras o números, iniciado por letra.');
+    setSeriesError('');
+    try {
+      await quotesService.createExpedienteSeries(code);
+      setSeries(await quotesService.expedienteSeries());
+      setSelectedSeries(code);
+      setNewSeries('');
+    } catch (cause) { setSeriesError(cause instanceof Error ? cause.message : 'No pudimos configurar la serie.'); }
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -60,8 +82,8 @@ export function ConvertQuoteDialog({ quote, onClose, onDone }: { quote: Quote; o
       ]));
       onDone(await quotesService.convert(quote.id, canonical
         ? { expectedVersion: quote.workflow!.version, idempotencyKey: key, confirm: true,
-          effectiveAt: new Date(effectiveAt).toISOString(), tipoActoId: selectedActId, solicitanteCaracterPorActo }
-        : { tipoActoId: selectedActId }));
+          effectiveAt: new Date(effectiveAt).toISOString(), tipoActoId: selectedActId, folioSeries: selectedSeries || undefined, solicitanteCaracterPorActo }
+        : { tipoActoId: selectedActId, folioSeries: selectedSeries || undefined }));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'No se pudo crear el expediente.');
       setSaving(false);
@@ -83,6 +105,9 @@ export function ConvertQuoteDialog({ quote, onClose, onDone }: { quote: Quote; o
       <div><dt>Cotización</dt><dd>{quote.numero_cotizacion || quote.numero_solicitud}</dd></div>
       <div><dt>Responsable</dt><dd>{quote.creada_por?.nombre || 'Sin responsable visible'}</dd></div>
     </dl>
+    <label className={styles.confirmDate}><span>Serie del expediente</span><select value={selectedSeries} onChange={(event) => setSelectedSeries(event.target.value)}>{series.map((item) => <option key={item.code || 'ordinary'} value={item.code}>{item.label}</option>)}</select><small>La serie ordinaria conserva el formato EXP-####-AAAA.</small></label>
+    {['DIRECCION', 'ADMINISTRACION'].includes(user?.role ?? '') && <div className={styles.confirmDate}><label htmlFor="exp-new-series">Configurar nueva serie de expedientes</label><input id="exp-new-series" value={newSeries} maxLength={16} placeholder="ESP" onChange={(event) => setNewSeries(event.target.value.toUpperCase())} /><button type="button" className={styles.secondaryButton} onClick={() => void addSeries()}>Agregar serie</button></div>}
+    {seriesError && <p className={styles.formError} role="alert">{seriesError}</p>}
     <label className={styles.confirmDate}>
       <span>{canonical ? 'Acto principal del expediente' : 'Tipo de acto del expediente'}</span>
       <select aria-label="Tipo de acto del expediente" value={selectedActId} onChange={(event) => { setSelectedActId(event.target.value); setError(''); }} disabled={actsStatus !== 'ready'}>

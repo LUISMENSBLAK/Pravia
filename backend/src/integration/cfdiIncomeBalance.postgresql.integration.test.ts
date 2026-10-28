@@ -117,7 +117,7 @@ describe.runIf(enabled)('CFDI V2 income balance · isolated PostgreSQL', () => {
       rfc: 'XEXX010101000', razon_social: 'COMPARECIENTE QA DOS', regimen_fiscal: '616', codigo_postal: '63735',
     });
     const first = await service!.createDraft(actor(), draft(incomeId, partyIds[0], '10000.00'));
-    expect(first.cfdi).toMatchObject({ estado: 'PREFACTURA', ingreso_reportado_id: incomeId,
+    expect(first.cfdi).toMatchObject({ estado: 'DRAFT', ingreso_reportado_id: incomeId,
       receptor_compareciente_id: partyIds[0], receptor_rfc: 'XAXX010101000' });
     expect(first.cfdi.cuentaPorCobrar).toBeNull();
     const balance = await service!.incomeContext(actor(), incomeId);

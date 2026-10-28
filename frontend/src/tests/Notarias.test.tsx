@@ -39,7 +39,7 @@ describe('Una organización por tenant: retiro del módulo Notarías', () => {
   it('redirige /notarias a la ficha institucional del tenant', async () => {
     show();
     expect(await screen.findByRole('heading', { name: 'Ficha de la organización' })).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Notaría 45')).toBeInTheDocument();
+    expect(await screen.findByDisplayValue('Notaría 45')).toBeInTheDocument();
   });
 
   it('redirige /notarias/:id sin abrir el detalle histórico', async () => {

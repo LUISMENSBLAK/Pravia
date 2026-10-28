@@ -36,6 +36,14 @@ function database(input: { acts?: any[]; count?: Record<string, number>; status?
 }
 
 describe('EXP-002 actos canónicos del expediente', () => {
+  it('comparte lectura de actos por tenant sin conceder edición al colega no asignado', async () => {
+    const { prisma, tx } = database();
+    const colleague = { ...actor, id: 'colleague-1', rol: 'ABOGADO', permissions: ['expedientes.read', 'expedientes.write'] };
+    await new ExpedienteActosService(prisma).list(colleague, 'exp-1');
+    expect(tx.expediente.findFirst.mock.calls[0][0].where).toEqual({ id: 'exp-1', organization_id: 'org-1', archived_at: null });
+    expect(tx.expedienteActo.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { organization_id: 'org-1', expediente_id: 'exp-1' } }));
+  });
+
   it('permite agregar dos instancias del mismo tipo porque no deduplica por tipo', async () => {
     const { prisma, tx } = database();
     const service = new ExpedienteActosService(prisma);

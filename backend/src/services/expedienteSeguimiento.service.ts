@@ -6,7 +6,7 @@ import {
   SeguimientoActividadEstado,
 } from '@prisma/client';
 import type { Request } from 'express';
-import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { expedienteAccessWhere, expedienteReadWhere } from '../middleware/auth.middleware';
 import { ExpedienteArtifactsService } from './expedienteArtifacts.service';
 import { dependencyGraphHasCycle, resolveOperationalActivityConfiguration } from './configurationCatalog.service';
 import { calculateCriticalPath } from './configurationCatalogV2.service';
@@ -154,7 +154,7 @@ export class ExpedienteSeguimientoService {
   constructor(private readonly prisma: PrismaClient) {}
 
   async read(actor: Actor, expedienteId: string) {
-    const expediente = await this.assertExpediente(this.prisma, actor, expedienteId);
+    const expediente = await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const [activities, origins, dependencies, acts, responsibleUsers] = await Promise.all([
       this.prisma.expedienteSeguimientoActividad.findMany({
         where: { organization_id: actor.organizationId, expediente_id: expedienteId },
@@ -656,9 +656,10 @@ export class ExpedienteSeguimientoService {
     await this.reevaluateDependencies(tx, actor, expedienteId, correlationId);
   }
 
-  private async assertExpediente(db: Db, actor: Actor, expedienteId: string) {
+  private async assertExpediente(db: Db, actor: Actor, expedienteId: string, access: 'read' | 'write' = 'write') {
+    if (access === 'read' && !actor.permissions.includes('expedientes.read')) throw new ExpedienteSeguimientoError(403, 'EXP005_READ_DENIED', 'No tienes permiso para consultar este expediente.');
     const record = await db.expediente.findFirst({
-      where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) },
+      where: { id: expedienteId, ...(access === 'read' ? expedienteReadWhere(actor) : { organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) }) },
       select: { id: true, estatus: true, fecha_estimada_firma: true, fecha_real_firma: true, fecha_entrega_cliente: true },
     });
     if (!record) throw new ExpedienteSeguimientoError(403, 'EXP005_EXPEDIENTE_ACCESS_DENIED', 'No tienes acceso a este expediente.');

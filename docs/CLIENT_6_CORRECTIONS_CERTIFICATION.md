@@ -296,3 +296,7 @@ CFG-002 dirigido: **20 PASS / 10 NOT VERIFIED**. No se declara 30/30 ni certific
 - `PLATFORM_PRODUCTION_RELEASE_GATE`: BLOCKED por 26 binarios históricos aún no localizados, además de backup/restauración y validaciones productivas pendientes.
 - PAC/CFDI real: NOT VERIFIED sin credenciales de prueba o productivas aprobadas; no simular UUID/timbrado.
 - Upload de 50 MB en producción: NOT VERIFIED hasta comprobar proxy, backend y bucket reales.
+
+## Dependencia nueva: extracción universal y Facturación Demo-Ready (27-10-2026)
+
+La nueva orden maestra añade EXT01–EXT60 y exige completar FDR01–FDR90, 31 pasos Chrome y segunda auditoría antes de promover el conjunto. El inventario y matriz están en `PRAVIA_UNIVERSAL_DOCUMENT_EXTRACTION_INVENTORY.md` y `PRAVIA_UNIVERSAL_EXTRACTION_CERTIFICATION.md`. La corrección dirigida de CSF es evidencia parcial, no certifica extracción transversal, catálogos SAT ni OCR INE. **No cambia ningún PASS histórico de las seis correcciones, pero tampoco convierte el release global en PASS.** Staging y producción siguen sin autorizarse hasta gates verificables.

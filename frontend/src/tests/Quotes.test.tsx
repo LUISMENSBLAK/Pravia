@@ -39,6 +39,8 @@ const mockApi = (options: MockOptions = {}) => {
       batch_total_max_bytes: 200 * 1024 * 1024,
     });
     if (url.endsWith('/auth/me')) return response(session(options.permissions));
+    if (url.endsWith('/cotizaciones/expediente-series')) return response([{ code: '', label: 'Ordinaria' }]);
+    if (url.includes('/collaboration/cotizacion/quote-1/asistentes')) return response({ data: [] });
     if (url.includes('/comparecientes?')) return response({ data: [{ id: 'party-1', nombre: 'CLIENTE FORMAL', tipo_persona: 'FISICA' }], meta: { total: 1 } });
     if (url.endsWith('/expedientes/tipos-acto')) return response([{ id: 'act-compraventa', nombre: 'Compraventa', tipoActoCaracteresCompareciente: [{ caracter_id: 'char-comprador', caracter: { nombre: 'Comprador' } }, { caracter_id: 'char-vendedor', caracter: { nombre: 'Vendedor' } }] }, { id: 'act-donacion', nombre: 'Donación' }]);
     if (url.includes('/prospectos?')) return response({ data: [{ id: 'prospect-2', nombre: 'Nueva Empresa', tipo_acto: 'Hipoteca', email: 'nueva@empresa.mx' }], meta: { total: 1 }, facets: { services: [], sources: [] } });

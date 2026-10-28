@@ -8,7 +8,8 @@ describe('motor único de apertura de expedientes', () => {
   it('reserva folio, congela versiones e inicializa exclusivamente desde cotización', async () => {
     const tx: any = {
       $executeRaw: vi.fn().mockResolvedValue(1),
-      $queryRaw: vi.fn().mockResolvedValue([{ numero_pravia: 'EXP-2026-0040' }]),
+      $queryRaw: vi.fn().mockResolvedValue([{ folio: 'EXP-2026-0040' }]),
+      folioCounter: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({}), update: vi.fn().mockResolvedValue({ last_value: 41 }) },
       tipoActo: { findFirst: vi.fn().mockResolvedValue({ id: 'act-1', tipoActoCaracteresCompareciente: [{ caracter_id: 'char-1', caracter: { id: 'char-1' } }] }) },
       user: { findFirst: vi.fn().mockResolvedValueOnce({ id: 'actor-1' }).mockResolvedValueOnce({ id: 'lawyer-1', organizationMemberships: [{ rol: 'ABOGADO' }] }) },
       formularioVersion: { findFirst: vi.fn().mockResolvedValue({ id: 'form-v1' }) },

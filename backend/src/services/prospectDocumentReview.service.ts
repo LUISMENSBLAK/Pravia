@@ -1,7 +1,7 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
 import prisma from '../config/prisma';
-import { prospectoObjectWhere } from './objectAccess.service';
+import { prospectoObjectWhere, prospectoReadWhere } from './objectAccess.service';
 import { downloadFile } from './supabase.service';
 import { extractDocxText } from './docxText';
 import { getOpenAIModelName } from './openaiDocument.service';
@@ -122,8 +122,9 @@ export class ProspectDocumentReviewService {
     private readonly downloadImpl: typeof downloadFile = downloadFile,
     private readonly provider: typeof requestProspectDocumentReview = requestProspectDocumentReview) {}
 
-  private async sources(actor: Actor, prospectId: string) {
-    const prospect = await this.db.prospecto.findFirst({ where: { id: prospectId, archived_at: null, ...prospectoObjectWhere(actor) },
+  private async sources(actor: Actor, prospectId: string, write = true) {
+    const prospect = await this.db.prospecto.findFirst({ where: { id: prospectId, archived_at: null,
+      ...(write ? prospectoObjectWhere(actor) : prospectoReadWhere(actor)) },
       select: { id: true, actos: { select: { tipo_acto_id: true, tipo_acto: { select: { nombre: true } } }, orderBy: { orden: 'asc' } } } });
     if (!prospect) return fail(404, 'PROSPECT_REVIEW_NOT_FOUND', 'No tienes acceso a este prospecto.');
     const documents = await this.db.documento.findMany({ where: {
@@ -140,7 +141,7 @@ export class ProspectDocumentReviewService {
 
   async latest(actor: Actor, prospectId: string) {
     if (!actor.permissions.includes('prospectos.read') || !actor.permissions.includes('documentos.read')) return fail(403, 'PROSPECT_REVIEW_DENIED', 'No tienes permiso para consultar esta revisión.');
-    const { documents, actSnapshot, documentSnapshot } = await this.sources(actor, prospectId);
+    const { documents, actSnapshot, documentSnapshot } = await this.sources(actor, prospectId, false);
     const review = await this.db.prospectoRevisionDocumental.findFirst({ where: { organization_id: actor.organizationId, prospecto_id: prospectId },
       orderBy: [{ created_at: 'desc' }, { id: 'desc' }] });
     return { available: actSnapshot.length > 0 && documents.some(supportedForReview),

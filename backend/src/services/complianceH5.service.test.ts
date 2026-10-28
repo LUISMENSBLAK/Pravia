@@ -346,7 +346,7 @@ describe("H5 service behavioral security and lifecycle", () => {
   });
   it("uses tenant and case object authorization for a valid foreign review ID", async () => {
     await expect(ComplianceH5Service.createPaymentRevision({ ...actor, organizationId: "foreign-org" }, review.id, { idempotency_key: "request" })).rejects.toMatchObject({ code: "H5_REVIEW_NOT_FOUND" });
-    expect(mocks.db.complianceReview.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ organization_id: "foreign-org", expediente: expect.objectContaining({ OR: [{ abogado_id: actor.id }, { creador_id: actor.id }] }) }) }));
+    expect(mocks.db.complianceReview.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ organization_id: "foreign-org", expediente: expect.objectContaining({ OR: [{ abogado_id: actor.id }, { collaborators: { some: { organization_id: "foreign-org", user_id: actor.id, active: true } } }] }) }) }));
     expect(mocks.db.complianceOperationPayment.create).not.toHaveBeenCalled();
   });
   it("blocks a historical review before any payment write", async () => {

@@ -1,7 +1,8 @@
 import JSZip from 'jszip';
 import { describe, expect, it, vi } from 'vitest';
 import { ContractTestCfdiProvider, DisabledCfdiProvider } from './cfdiProvider';
-import { FinanceFiscalError, FinanceFiscalService, calculateFiscalLine, draftFiscalDetails, extractCsfFields, parseCfdi40Xml } from './financeFiscal.service';
+import { FinanceFiscalError, FinanceFiscalService, calculateFiscalLine, draftFiscalDetails, parseCfdi40Xml } from './financeFiscal.service';
+import { parseFiscalCsfText } from './fiscalDocumentExtraction.service';
 
 const xml = (overrides = '') => Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
 <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" Version="4.0" Serie="QA" Folio="12" Fecha="2026-10-06T10:00:00" SubTotal="1000.00" Total="1160.00" Moneda="MXN" TipoDeComprobante="I" MetodoPago="PPD" FormaPago="99" ${overrides}>
@@ -25,8 +26,8 @@ describe('B3 · dominio fiscal local seguro', () => {
   });
 
   it('extrae RFC, CP y varios regímenes de una CSF y exige revisión humana en el controlador', () => {
-    expect(extractCsfFields('RFC: AAA010101AAA\nDenominación/Razón Social: PROVEEDOR QA\nCódigo Postal: 63735\nRégimen Fiscal: 601 General\nRégimen Fiscal: 612 Personas Físicas'))
-      .toEqual({ rfc: 'AAA010101AAA', razon_social: 'PROVEEDOR QA', codigo_postal: '63735', regimenes_fiscales: [{ clave: '601', descripcion: 'General' }, { clave: '612', descripcion: 'Personas Físicas' }] });
+    expect(parseFiscalCsfText('CONSTANCIA DE SITUACIÓN FISCAL — SINTÉTICA SIN VALIDEZ FISCAL\nRFC: AAA010101AAA\nDenominación/Razón Social: PROVEEDOR QA\nCódigo Postal: 63735\nRégimen Fiscal: 601 General\nRégimen Fiscal: 612 Personas Físicas'))
+      .toMatchObject({ rfc: 'AAA010101AAA', razon_social: 'PROVEEDOR QA', codigo_postal: '63735', regimenes_fiscales: [{ clave: '601', descripcion: 'General' }, { clave: '612', descripcion: 'Personas Físicas' }] });
   });
 
   it('mantiene PAC deshabilitado y nunca fabrica timbrado', async () => {
@@ -78,6 +79,7 @@ describe('B3 · dominio fiscal local seguro', () => {
       moneda: 'MXN', fiscal_comprobante: { tipo_cambio: null, exportacion: '01', lugar_expedicion: '63735', condiciones_pago: 'CRÉDITO' },
     });
     expect(() => draftFiscalDetails({ moneda: 'USD' })).toThrowError(expect.objectContaining({ code: 'CFDI_EXCHANGE_RATE_REQUIRED' }));
+    expect(draftFiscalDetails({ moneda: 'USD' }, {}, true).fiscal_comprobante.tipo_cambio).toBeNull();
     expect(() => draftFiscalDetails({ lugar_expedicion: '6373' })).toThrowError(expect.objectContaining({ code: 'CFDI_ISSUE_PLACE_INVALID' }));
     expect(draftFiscalDetails({ moneda: 'USD', tipo_cambio: '17.123456' }).fiscal_comprobante.tipo_cambio).toBe('17.123456');
   });

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import { FormaComparecencia, Prisma, PrismaClient, TipoPersona } from '@prisma/client';
 import type { Request } from 'express';
-import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { expedienteAccessWhere, expedienteReadWhere } from '../middleware/auth.middleware';
 import { comparecienteObjectWhere } from './objectAccess.service';
 import { ExpedienteArtifactsService } from './expedienteArtifacts.service';
 
@@ -168,7 +168,7 @@ export class ExpedientePartiesService {
   }
 
   async list(actor: Actor, expedienteId: string) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const [data, acts] = await Promise.all([
       this.prisma.expedienteCompareciente.findMany({
         where: { organization_id: actor.organizationId, expediente_id: expedienteId, archived_at: null, estatus: 'ACTIVO' },
@@ -307,7 +307,7 @@ export class ExpedientePartiesService {
   }
 
   async search(actor: Actor, expedienteId: string, term: string) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const search = clean(term, 120);
     const data = await this.prisma.compareciente.findMany({
       where: {
@@ -338,7 +338,7 @@ export class ExpedientePartiesService {
   }
 
   async catalogs(actor: Actor, expedienteId: string) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const [acts, representationCharacters, tenantCharacters] = await Promise.all([
       this.prisma.expedienteActo.findMany({
         where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', removed_at: null },
@@ -548,8 +548,10 @@ export class ExpedientePartiesService {
     };
   }
 
-  private async assertExpediente(db: Db, actor: Actor, expedienteId: string) {
-    const expediente = await db.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) }, select: { id: true } });
+  private async assertExpediente(db: Db, actor: Actor, expedienteId: string, access: 'read' | 'write' = 'write') {
+    if (access === 'read' && !actor.permissions.includes('expedientes.read')) throw new ExpedientePartyError(403, 'EXPEDIENTE_READ_DENIED', 'No tienes permiso para consultar este expediente.');
+    const expediente = await db.expediente.findFirst({ where: { id: expedienteId,
+      ...(access === 'read' ? expedienteReadWhere(actor) : { organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) }) }, select: { id: true } });
     if (!expediente) throw new ExpedientePartyError(403, 'EXPEDIENTE_ACCESS_DENIED', 'No tienes acceso a este expediente.');
     return expediente;
   }

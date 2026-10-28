@@ -15,6 +15,11 @@ const definitions: Array<{ key: string; email: string; nombre: string; apellido:
   { key: 'ROSA', email: 'rosa.becerra@pravia.test', nombre: 'Rosa Dolores', apellido: 'Becerra', rol: Role.FINANCIERO },
 ];
 
+const selectedKeys = String(process.env.PRAVIA_QA_USER_KEYS || '').trim();
+const selectedDefinitions = selectedKeys
+  ? definitions.filter((definition) => selectedKeys.split(',').map((key) => key.trim().toUpperCase()).includes(definition.key))
+  : definitions;
+
 function assertLocalDatabase() {
   const configured = String(process.env.DATABASE_URL || '');
   const parsed = new URL(configured);
@@ -28,11 +33,14 @@ function assertLocalDatabase() {
 
 async function main() {
   assertLocalDatabase();
+  if (selectedKeys && selectedDefinitions.length !== new Set(selectedKeys.split(',').map((key) => key.trim().toUpperCase())).size) {
+    throw new Error('PRAVIA_QA_USER_KEYS contiene una clave de usuario QA desconocida o repetida.');
+  }
   const organization = await prisma.organization.findFirst({ where: { id: organizationId, status: 'ACTIVE' }, select: { id: true, name: true } });
   if (!organization) throw new Error('La Organization QA indicada no existe o no está activa.');
 
   const created: Array<{ email: string; role: Role; organization: string }> = [];
-  for (const definition of definitions) {
+  for (const definition of selectedDefinitions) {
     const password = String(process.env[`PRAVIA_USER_${definition.key}_PASSWORD`] || '');
     const failures = validatePasswordStrength(password);
     if (failures.length) throw new Error(`Contraseña inválida para ${definition.email}: ${failures.join(' ')}`);

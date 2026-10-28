@@ -6,10 +6,14 @@ const db = vi.hoisted(() => ({
   prospectoActo: { deleteMany: vi.fn(), createMany: vi.fn(), updateMany: vi.fn() },
   tipoActo: { findMany: vi.fn() },
   prospectoTransicion: { create: vi.fn() }, $transaction: vi.fn(), $executeRaw: vi.fn(), $queryRaw: vi.fn(),
+  folioCounter: { findUnique: vi.fn(), create: vi.fn(), update: vi.fn() },
   auditLog: { create: vi.fn() },
 }));
 vi.mock('../config/prisma', () => ({ default: db }));
-vi.mock('../services/objectAccess.service', () => ({ prospectoObjectWhere: vi.fn(() => ({ user_id: 'user-1' })) }));
+vi.mock('../services/objectAccess.service', () => ({
+  prospectoObjectWhere: vi.fn(() => ({ user_id: 'user-1' })),
+  prospectoReadWhere: vi.fn(() => ({ organization_id: 'org-1' })),
+}));
 vi.mock('../utils/auditLogger', () => ({ logAudit: vi.fn().mockResolvedValue(undefined) }));
 
 import { createProspecto, getProspectCatalogs, getProspectos, updateProspecto } from './prospectos.controller';
@@ -22,6 +26,9 @@ describe('Prospectos endpoints de catálogo y escritura', () => {
     vi.clearAllMocks();
     db.$transaction.mockImplementation((fn) => fn(db));
     db.$executeRaw.mockResolvedValue(1); db.$queryRaw.mockResolvedValue([]);
+    db.folioCounter.findUnique.mockResolvedValue(null);
+    db.folioCounter.create.mockResolvedValue({ last_value: 0 });
+    db.folioCounter.update.mockResolvedValue({ last_value: 1 });
     db.prospectoTransicion.create.mockImplementation(async ({data}) => ({id:'event-1',...data}));
     db.prospectoServicioCatalogo.findUnique.mockResolvedValue({ tipo_acto_id: '10000000-0000-4000-8000-000000000001' });
     db.tipoActo.findMany.mockImplementation(async ({ where }: any) => where?.id?.in
@@ -52,6 +59,16 @@ describe('Prospectos endpoints de catálogo y escritura', () => {
     }) }));
     expect(res.status).toHaveBeenCalledWith(201);
     expect(db.prospectoTransicion.create).toHaveBeenCalledWith(expect.objectContaining({data:expect.objectContaining({etapa_nueva:'NUEVO',accion:'CREAR'})}));
+  });
+
+  it('permite a Recepción crear un prospecto realmente sin responsable, sin sustituirlo por el actor', async () => {
+    db.prospecto.create.mockImplementation(async ({ data }: any) => ({ id: 'prospect-1', etapa_contractual: null, version_operativa: 0, ...data }));
+    const reception = { ...user, rol: 'RECEPCION' };
+    const res = response();
+    await createProspecto({ user: reception, get: () => 'unassigned-qa', body: { nombre: 'QA SIN ASIGNAR', sinAsignar: true } } as any, res);
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(db.prospecto.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ user_id: null }) }));
+    expect(db.prospectoTransicion.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ evidencia: { assignment: 'SIN_ASIGNAR', createdByActor: true } }) }));
   });
 
   it('rechaza serviceId inválido sin escribir', async () => {

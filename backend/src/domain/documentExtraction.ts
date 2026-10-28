@@ -17,6 +17,8 @@ export interface ExtractionConflict {
     fuente: string;
     documento_id: string;
     confianza: ExtractionConfidence;
+    pagina?: number;
+    fragmento?: string;
   }>;
   motivo: string;
 }
@@ -70,6 +72,8 @@ export function consolidateExtractedFields(fields: ExtractionField[]) {
         fuente: candidate.fuente || 'Documento sin nombre',
         documento_id: candidate.documento_id || '',
         confianza: candidate.confianza,
+        pagina: candidate.pagina,
+        fragmento: candidate.fragmento,
       }));
       for (const candidate of alternativas) if (candidate.documento_id) escalationDocumentIds.add(candidate.documento_id);
       const conflict = { campo, alternativas, motivo: 'Las fuentes contienen valores distintos; se requiere decisión humana.' };
@@ -85,6 +89,8 @@ export function consolidateExtractedFields(fields: ExtractionField[]) {
       fuente: selected.fuente || 'Documento sin nombre',
       documento_id: selected.documento_id || '',
       confianza: selected.confianza,
+      pagina: selected.pagina,
+      fragmento: selected.fragmento,
       estado: 'PENDIENTE_CONFIRMACION',
     };
   }

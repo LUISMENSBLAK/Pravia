@@ -25,7 +25,7 @@ describe('Mi Día: límites de fuentes canónicas', () => {
     const scope = miDiaDashboardScope(actor('ABOGADO', 'ASSIGNED_OBJECTS'), '22222222-2222-4222-8222-222222222222');
     expect(scope.selectedUserId).toBeNull();
     expect(scope.caseWhere).toMatchObject({ organization_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', OR: [
-      { abogado_id: '11111111-1111-4111-8111-111111111111' }, { creador_id: '11111111-1111-4111-8111-111111111111' },
+      { abogado_id: '11111111-1111-4111-8111-111111111111' }, { collaborators: { some: { organization_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', user_id: '11111111-1111-4111-8111-111111111111', active: true } } },
     ] });
     expect(JSON.stringify(scope.taskWhere)).toContain('asignado_a_id');
     expect(JSON.stringify(scope.taskWhere)).not.toContain('22222222-2222-4222-8222-222222222222');

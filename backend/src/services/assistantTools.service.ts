@@ -2,8 +2,8 @@ import type { Request } from 'express';
 import type { ExpedienteEstatus, PrismaClient } from '@prisma/client';
 import prisma from '../config/prisma';
 import type { Permission } from '../auth/permissions';
-import { expedienteAccessWhere } from '../middleware/auth.middleware';
-import { canAccessDocumento, comparecienteObjectWhere, cotizacionObjectWhere, predioObjectWhere, prospectoObjectWhere } from './objectAccess.service';
+import { expedienteAccessWhere, expedienteReadWhere } from '../middleware/auth.middleware';
+import { canAccessDocumento, comparecienteObjectWhere, cotizacionReadWhere, predioObjectWhere, prospectoObjectWhere } from './objectAccess.service';
 import { calculateFinancialPosition } from '../domain/financialLedger';
 import { ReportingService } from './reporting.service';
 import { resolveAssistantTimeRange, safeAssistantTimezone } from './assistantTime';
@@ -215,7 +215,7 @@ async function resolveExpedienteReference(db: PrismaClient, input: ToolInput) {
   const folio = textArg(args.folio, 80);
   if (!folio) throw new AssistantToolError('Falta expediente_id o folio y no hay un expediente compatible en el contexto.', 'AI_CONTEXT_OBJECT_REQUIRED');
   const record = await db.expediente.findFirst({
-    where: { numero_pravia: { equals: folio, mode: 'insensitive' }, archived_at: null, ...expedienteAccessWhere(input.user) },
+    where: { numero_pravia: { equals: folio, mode: 'insensitive' }, ...expedienteReadWhere(input.user) },
     select: { id: true },
   });
   if (!record) throw new AssistantToolError('El expediente no existe o está fuera de tu alcance.', 'AI_EXPEDIENTE_SCOPE_DENIED', 403);
@@ -261,7 +261,7 @@ function financialBudget(exp: any) {
 }
 
 async function findScopedExpediente(db: PrismaClient, user: AuthUser, id: string, include?: Record<string, unknown>) {
-  const record = await db.expediente.findFirst({ where: { id, archived_at: null, ...expedienteAccessWhere(user) }, include: include as any });
+  const record = await db.expediente.findFirst({ where: { id, ...expedienteReadWhere(user) }, include: include as any });
   if (!record) throw new AssistantToolError('El expediente no existe o está fuera de tu alcance.', 'AI_EXPEDIENTE_SCOPE_DENIED', 403);
   return record as any;
 }
@@ -340,7 +340,7 @@ const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
       truncated: data.length === limit,
     };
   },
-  searchExpedientes: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const query = textArg(args.query, 120); const records = await db.expediente.findMany({ where: { archived_at: null, ...expedienteAccessWhere(input.user), ...(query ? { OR: [{ numero_pravia: { contains: query, mode: 'insensitive' } }, { cliente_alias: { contains: query, mode: 'insensitive' } }] } : {}) }, select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true, etapa_actual_nombre: true, updated_at: true }, orderBy: { updated_at: 'desc' }, take: limit }); const data = records.map((item) => ({ ...item, estatus: expedienteStatusLabel(item.estatus) })); return { data, provenance: data.map((item) => source('Expediente', item.id, item.numero_pravia, `/expedientes/${item.id}`)), truncated: data.length === limit }; },
+  searchExpedientes: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const query = textArg(args.query, 120); const records = await db.expediente.findMany({ where: { ...expedienteReadWhere(input.user), ...(query ? { OR: [{ numero_pravia: { contains: query, mode: 'insensitive' } }, { cliente_alias: { contains: query, mode: 'insensitive' } }] } : {}) }, select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true, etapa_actual_nombre: true, updated_at: true }, orderBy: { updated_at: 'desc' }, take: limit }); const data = records.map((item) => ({ ...item, estatus: expedienteStatusLabel(item.estatus) })); return { data, provenance: data.map((item) => source('Expediente', item.id, item.numero_pravia, `/expedientes/${item.id}`)), truncated: data.length === limit }; },
   getExpedientesRequiringAttention: async (db, input) => {
     const limit = boundedLimit(input.args?.limit);
     const now = new Date();
@@ -416,7 +416,7 @@ const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
   getExpedienteSummary: async (db, input) => { const args = input.args || {}; const id = resolveContextId(args, input.context, 'expediente_id', 'expediente'); const exp = await findScopedExpediente(db, input.user, id, { actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: true }, orderBy: { created_at: 'asc' } }, abogado: { select: { nombre: true, apellido: true } }, gestor: { select: { nombre: true, apellido: true } }, notaria: { select: { nombre: true } } }); const data = { id: exp.id, folio: exp.numero_pravia, cliente: exp.cliente_alias, estado: expedienteStatusLabel(exp.estatus), etapa: exp.etapa_actual_nombre, actos: exp.actos.map((item: any) => ({ id: item.id, tipo: item.tipo_acto.nombre, origen: item.origen })), abogado: exp.abogado ? `${exp.abogado.nombre} ${exp.abogado.apellido}`.trim() : null, gestor: exp.gestor ? `${exp.gestor.nombre} ${exp.gestor.apellido}`.trim() : null, notaria: exp.notaria?.nombre, fechas: { apertura: exp.fecha_apertura, firma_estimada: exp.fecha_estimada_firma, firma_real: exp.fecha_real_firma, entrega: exp.fecha_entrega_cliente }, avance: { general: exp.avance_general, documental: exp.avance_documental, operativo: exp.avance_operativo, ...(input.user.permissions.includes('finanzas.read') ? { financiero: exp.avance_financiero } : {}) } }; return { data, provenance: [source('Expediente', exp.id, exp.numero_pravia, `/expedientes/${exp.id}`)], truncated: false }; },
   getExpedientePendingItems: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const id = await resolveExpedienteReference(db, input); const exp = await findScopedExpediente(db, input.user, id, { requisitos_docs: { where: { obligatorio: true, estatus: { in: ['PENDIENTE', 'EN_REVISION', 'RECHAZADO', 'VENCIDO'] } }, select: { id: true, nombre: true, categoria: true, estatus: true, fecha_vencimiento: true } }, tareas: { where: { estatus: { in: ['PENDIENTE', 'EN_PROCESO'] } }, select: { id: true, titulo: true, prioridad: true, estatus: true, fecha_limite: true } }, tareas_externas: { where: { estatus: { not: 'COMPLETADA' } }, select: { id: true, tipo: true, descripcion: true, institucion: true, estatus: true, fecha_limite: true } } }); const data = { expediente_id: exp.id, folio: exp.numero_pravia, requisitos_documentales: exp.requisitos_docs.slice(0, limit), tareas: exp.tareas.slice(0, limit), gestiones_externas: exp.tareas_externas.slice(0, limit), total_pendientes: exp.requisitos_docs.length + exp.tareas.length + exp.tareas_externas.length }; return { data, provenance: [source('Expediente', exp.id, exp.numero_pravia, `/expedientes/${exp.id}`)], truncated: [exp.requisitos_docs, exp.tareas, exp.tareas_externas].some((items) => items.length > limit) }; },
   searchComparecientes: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const query = textArg(args.query, 120); const data = await db.compareciente.findMany({ where: { organization_id: input.user.organizationId, archived_at: null, ...comparecienteObjectWhere(input.user), ...(query ? { OR: [{ nombre_busqueda: { contains: query, mode: 'insensitive' } }, { personaFisica: { is: { OR: [{ curp: { contains: query, mode: 'insensitive' } }, { rfc: { contains: query, mode: 'insensitive' } }] } } }, { personaMoral: { is: { rfc: { contains: query, mode: 'insensitive' } } } }] } : {}) }, select: { id: true, tipo_persona: true, nombre_busqueda: true, estatus: true, personaFisica: { select: { nombre_completo_calculado: true, rfc: true, curp: true } }, personaMoral: { select: { razon_social: true, rfc: true } } }, orderBy: { updated_at: 'desc' }, take: limit }); const serialized = data.map((item) => ({ id: item.id, tipo: item.tipo_persona, nombre: item.personaFisica?.nombre_completo_calculado || item.personaMoral?.razon_social || item.nombre_busqueda, rfc: item.personaFisica?.rfc || item.personaMoral?.rfc || null, curp: item.personaFisica?.curp || null, estatus: item.estatus })); return { data: serialized, provenance: serialized.map((item) => source('Compareciente', item.id, item.nombre, `/comparecientes/${item.id}`)), truncated: data.length === limit }; },
-  getComparecienteSummary: async (db, input) => { const args = input.args || {}; const id = resolveContextId(args, input.context, 'compareciente_id', 'compareciente'); const item = await db.compareciente.findFirst({ where: { id, organization_id: input.user.organizationId, archived_at: null, ...comparecienteObjectWhere(input.user) }, include: { personaFisica: true, personaMoral: true, documentos: { where: { estatus: 'ACTIVO' }, select: { id: true } }, expedientes: { where: { expediente: { archived_at: null, ...expedienteAccessWhere(input.user) } }, select: { expediente: { select: { id: true, numero_pravia: true, estatus: true } } }, take: 10 } } }); if (!item) throw new AssistantToolError('El compareciente no existe o está fuera de tu alcance.', 'AI_COMPARECIENTE_SCOPE_DENIED', 403); const name = item.personaFisica?.nombre_completo_calculado || item.personaMoral?.razon_social || item.nombre_busqueda; const data = { id: item.id, tipo: item.tipo_persona, nombre: name, rfc: item.personaFisica?.rfc || item.personaMoral?.rfc, curp: item.personaFisica?.curp, estado: item.estatus, documentos_activos: item.documentos.length, expedientes: item.expedientes.map((link) => link.expediente) }; return { data, provenance: [source('Compareciente', item.id, name, `/comparecientes/${item.id}`)], truncated: item.expedientes.length === 10 }; },
+  getComparecienteSummary: async (db, input) => { const args = input.args || {}; const id = resolveContextId(args, input.context, 'compareciente_id', 'compareciente'); const item = await db.compareciente.findFirst({ where: { id, organization_id: input.user.organizationId, archived_at: null, ...comparecienteObjectWhere(input.user) }, include: { personaFisica: true, personaMoral: true, documentos: { where: { estatus: 'ACTIVO' }, select: { id: true } }, expedientes: { where: { expediente: expedienteReadWhere(input.user) }, select: { expediente: { select: { id: true, numero_pravia: true, estatus: true } } }, take: 10 } } }); if (!item) throw new AssistantToolError('El compareciente no existe o está fuera de tu alcance.', 'AI_COMPARECIENTE_SCOPE_DENIED', 403); const name = item.personaFisica?.nombre_completo_calculado || item.personaMoral?.razon_social || item.nombre_busqueda; const data = { id: item.id, tipo: item.tipo_persona, nombre: name, rfc: item.personaFisica?.rfc || item.personaMoral?.rfc, curp: item.personaFisica?.curp, estado: item.estatus, documentos_activos: item.documentos.length, expedientes: item.expedientes.map((link) => link.expediente) }; return { data, provenance: [source('Compareciente', item.id, name, `/comparecientes/${item.id}`)], truncated: item.expedientes.length === 10 }; },
   getExpedienteDocuments: async (db, input) => { const args = input.args || {}; const limit = boundedLimit(args.limit); const id = resolveContextId(args, input.context, 'expediente_id', 'expediente'); const exp = await findScopedExpediente(db, input.user, id, { expedienteDocumentos: { where: { estatus: 'ACTIVO' }, include: { documento: { select: { id: true, nombre_original: true, tipo: true, categoria: true, estatus: true, fecha_vigencia: true } } }, orderBy: { fecha_vinculo: 'desc' } } }); const data = exp.expedienteDocumentos.slice(0, limit).map((link: any) => ({ ...link.documento, tipo_vinculo: link.tipo_vinculo, fecha_vinculo: link.fecha_vinculo })); return { data, provenance: data.map((doc: any) => source('Documento', doc.id, doc.nombre_original, `/expedientes/${exp.id}`)), truncated: exp.expedienteDocumentos.length > limit }; },
   searchPredios: async (db, input) => {
     const query = textArg(input.args?.query, 160); const limit = boundedLimit(input.args?.limit);
@@ -441,7 +441,7 @@ const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
       include: {
         colindancias: { orderBy: { orden: 'asc' } },
         documentos: { where: { estatus: 'ACTIVO' }, select: { tipo_vinculo: true, vigencia: true, documento: { select: { id: true, nombre_original: true, mime_type: true, checksum_sha256: true } } } },
-        expedientes: { where: { estatus: 'ACTIVO', expediente: { archived_at: null, ...expedienteAccessWhere(input.user) } }, select: { expediente: { select: { id: true, numero_pravia: true, estatus: true } } } },
+        expedientes: { where: { estatus: 'ACTIVO', expediente: expedienteReadWhere(input.user) }, select: { expediente: { select: { id: true, numero_pravia: true, estatus: true } } } },
       },
     });
     if (!item) throw new AssistantToolError('El predio no existe o está fuera de tu alcance.', 'AI_PREDIO_SCOPE_DENIED', 403);
@@ -450,7 +450,7 @@ const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
   getQuotation: async (db, input) => {
     const id = resolveContextId(input.args || {}, input.context, 'quote_id', 'cotizacion');
     const item = await db.cotizacion.findFirst({
-      where: { id, ...cotizacionObjectWhere(input.user) },
+      where: { id, ...cotizacionReadWhere(input.user) },
       include: {
         prospecto: { select: { id: true, folio: true, nombre: true, telefono: true, email: true } },
         creada_por: { select: { id: true, nombre: true, apellido: true } },
@@ -602,10 +602,10 @@ const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
     const limit = boundedLimit(args.limit);
     const query = textArg(args.query, 120);
     if (query.length < 2) throw new AssistantToolError('Escribe al menos dos caracteres para buscar.', 'AI_SEARCH_QUERY_TOO_SHORT');
-    const expScope = expedienteAccessWhere(input.user);
+    const expScope = expedienteReadWhere(input.user);
     const [expedientes, comparecientes] = await Promise.all([
       input.user.permissions.includes('expedientes.read')
-        ? db.expediente.findMany({ where: { archived_at: null, ...expScope, OR: [{ numero_pravia: { contains: query, mode: 'insensitive' } }, { cliente_alias: { contains: query, mode: 'insensitive' } }] }, select: { id: true, numero_pravia: true, cliente_alias: true }, take: limit })
+        ? db.expediente.findMany({ where: { ...expScope, OR: [{ numero_pravia: { contains: query, mode: 'insensitive' } }, { cliente_alias: { contains: query, mode: 'insensitive' } }] }, select: { id: true, numero_pravia: true, cliente_alias: true }, take: limit })
         : [],
       input.user.permissions.includes('comparecientes.read')
         ? db.compareciente.findMany({ where: { organization_id: input.user.organizationId, archived_at: null, ...comparecienteObjectWhere(input.user), nombre_busqueda: { contains: query, mode: 'insensitive' } }, select: { id: true, nombre_busqueda: true }, take: limit })
@@ -633,7 +633,11 @@ async function executePreparedTool(db: PrismaClient, input: ToolInput) {
     if (!prefixes[entity] || !id) throw new AssistantToolError('La entidad de navegación no es válida.', 'AI_NAVIGATION_INVALID');
     if (entity === 'expediente') await findScopedExpediente(db, input.user, id);
     if (entity === 'compareciente') {
-      const record = await db.compareciente.findFirst({ where: { id, archived_at: null, ...comparecienteObjectWhere(input.user) }, select: { id: true } });
+      const record = await db.compareciente.findFirst({ where: { id, organization_id: input.user.organizationId, archived_at: null, ...comparecienteObjectWhere(input.user) }, select: { id: true } });
+      if (!record) throw new AssistantToolError('El objeto está fuera de tu alcance.', 'AI_OBJECT_SCOPE_DENIED', 403);
+    }
+    if (entity === 'cotizacion') {
+      const record = await db.cotizacion.findFirst({ where: { id, ...cotizacionReadWhere(input.user) }, select: { id: true } });
       if (!record) throw new AssistantToolError('El objeto está fuera de tu alcance.', 'AI_OBJECT_SCOPE_DENIED', 403);
     }
     return { data: { kind: 'NAVIGATION', to: `${prefixes[entity]}/${id}` }, provenance: [], truncated: false };

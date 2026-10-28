@@ -3,6 +3,7 @@ import { ArrowLeft, Download, Eye, FileCheck2, FileText, LoaderCircle, Unlink, U
 import { Link, useParams } from 'react-router-dom';
 import { DocumentViewer } from '../../components/documents/DocumentViewer';
 import { downloadPrivateUrl } from '../../components/documents/documentDownload';
+import { RecordCollaborators } from '../../components/collaboration/RecordCollaborators';
 import { useAuth } from '../auth/AuthProvider';
 import { FollowUpForm } from './components/FollowUpForm';
 import { ProspectActivity } from './components/ProspectActivity';
@@ -37,8 +38,10 @@ export function ProspectDetailPage() {
   const [unlinkTarget, setUnlinkTarget] = useState<ProspectDocument | null>(null);
   const [unlinking, setUnlinking] = useState(false);
   const [viewer, setViewer] = useState<{ document: ProspectDocument; url?: string; loading?: boolean; error?: string } | null>(null);
-  const canWrite = user?.permissions?.includes('prospectos.write') ?? false;
-  const canUpload = user?.permissions?.includes('documentos.write') ?? false;
+  const canWrite = Boolean(user?.permissions?.includes('prospectos.write') && prospect &&
+    (['DIRECCION', 'ADMINISTRACION'].includes(user.role ?? '') || prospect.user_id === user.id ||
+      prospect.collaborators?.some((item) => item.user_id === user.id)));
+  const canUpload = canWrite && (user?.permissions?.includes('documentos.write') ?? false);
   const canReadDocuments = user?.permissions?.includes('documentos.read') ?? false;
   const canUnlink = canWrite && (user?.permissions?.includes('documentos.unlink') ?? false);
   const canAssign = user?.role === 'DIRECCION' || user?.role === 'ADMINISTRACION';
@@ -120,6 +123,7 @@ export function ProspectDetailPage() {
         <ProspectStageActivity workflow={workflow} />
       </main>
       <aside className={styles.detailSidebar}>
+        <RecordCollaborators kind="prospecto" recordId={prospect.id} canManage={canAssign} />
         <section className={styles.detailSection}><header><div><h2>Documentación inicial ({visibleDocuments.length})</h2><p>Archivos persistentes de la operación.</p></div></header>
           {documentError && <p className={styles.sectionEmpty} role="alert">{documentError} <button type="button" onClick={() => void loadDocuments()}>Reintentar</button></p>}
           {visibleDocuments.length ? <ul className={styles.documentList}>{visibleDocuments.map((document) => <li key={document.id}><FileText size={16} /><span><strong>{document.nombre_original}</strong><small>{document.tipo || 'Documento inicial'} · {formatDate(document.fecha_carga)}</small></span>{canReadDocuments && <button type="button" className={styles.documentOpen} aria-label={`Visualizar ${document.nombre_original}`} onClick={() => void openDocument(document)}><Eye size={16} /></button>}{canReadDocuments && <button type="button" className={styles.documentOpen} aria-label={`Descargar ${document.nombre_original}`} onClick={() => void downloadDocument(document)}><Download size={16} /></button>}{canUnlink && <button type="button" className={styles.documentOpen} aria-label={`Eliminar vínculo de ${document.nombre_original}`} onClick={() => setUnlinkTarget(document)}><Unlink size={16} /></button>}</li>)}</ul> : <p className={styles.sectionEmpty}>Sin documentos vinculados.</p>}

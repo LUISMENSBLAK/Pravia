@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'crypto';
 import { DOCUMENT_UPLOAD_MAX_BYTES, uploadLimitLabel } from '../config/uploadLimits';
 import { CatalogoDestinoFuncional, Prisma, PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
-import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { expedienteAccessWhere, expedienteReadWhere } from '../middleware/auth.middleware';
 import { hashVerificationToken, moneyDecimal, validateIncomeAllocation } from '../domain/expedienteFinance';
 import { deleteFile, downloadFile, getSignedUrl, uploadFile } from '../storage/storage.service';
 import { extraerFinanzasDesdeDocumento } from './openaiDocument.service';
@@ -132,7 +132,7 @@ export class ExpedienteFinanceService {
   constructor(private readonly prisma: PrismaClient) { this.ledger = new FinancialMovementService(prisma); }
 
   async read(actor: ExpedienteFinanceActor, expedienteId: string) {
-    const expediente = await this.assertExpediente(this.prisma, actor, expedienteId);
+    const expediente = await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const data = await this.prisma.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId }, select: include });
     const [accounts, categories] = this.canApply(actor) ? await Promise.all([
       this.prisma.cuentaFinanciera.findMany({ where: { organization_id: actor.organizationId, activa: true }, select: { id: true, institucion: true, alias: true, ultimos_cuatro: true, moneda: true }, orderBy: [{ predeterminada: 'desc' }, { alias: 'asc' }] }),
@@ -148,7 +148,7 @@ export class ExpedienteFinanceService {
   }
 
   async accountStatement(actor: ExpedienteFinanceActor, expedienteId: string) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const [budget, movements] = await Promise.all([
       this.prisma.expedientePresupuesto.findFirst({
         where: { organization_id: actor.organizationId, expediente_id: expedienteId },
@@ -510,7 +510,7 @@ export class ExpedienteFinanceService {
   }
 
   async applyIncome(actor: ExpedienteFinanceActor, expedienteId: string, incomeId: string, input: any) {
-    if (!this.canApply(actor)) throw new ExpedienteFinanceError(403, 'EXP008_APPLY_DENIED', 'Sólo Administración autorizada puede aplicar ingresos.');
+    if (!this.canApply(actor)) throw new ExpedienteFinanceError(403, 'EXP008_APPLY_DENIED', 'Sólo personal autorizado de Finanzas puede aplicar ingresos.');
     const allocation = validateIncomeAllocation(input.monto_validado, input.honorarios, input.impuestos_derechos);
     const key = this.idempotency(input.idempotency_key);
     return this.prisma.$transaction(async (tx) => {
@@ -536,7 +536,7 @@ export class ExpedienteFinanceService {
   }
 
   async payRequest(actor: ExpedienteFinanceActor, expedienteId: string, requestId: string, input: any, files: { payment?: Upload; fiscal?: Upload; fiscalPdf?: Upload; fiscalXml?: Upload }) {
-    if (!this.canApply(actor)) throw new ExpedienteFinanceError(403, 'EXP008_PAY_DENIED', 'Sólo Administración autorizada puede registrar el pago.');
+    if (!this.canApply(actor)) throw new ExpedienteFinanceError(403, 'EXP008_PAY_DENIED', 'Sólo personal autorizado de Finanzas puede registrar el pago.');
     const key = this.idempotency(input.idempotency_key);
     await this.assertExpediente(this.prisma, actor, expedienteId);
     const existing = await this.prisma.expedienteSolicitudPago.findFirst({ where: { id: requestId, organization_id: actor.organizationId, expediente_id: expedienteId } });
@@ -630,7 +630,7 @@ export class ExpedienteFinanceService {
 
   async signedUrl(actor: ExpedienteFinanceActor, expedienteId: string, linkId: string) {
     if (!actor.permissions.includes('documentos.read')) throw new ExpedienteFinanceError(403, 'EXP008_DOCUMENT_READ_DENIED', 'No tienes permiso para consultar documentos.');
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const link = await this.prisma.expedienteFinanzaDocumento.findFirst({ where: { id: linkId, organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', documento: { estatus: 'VIGENTE' } }, include: { documento: true } });
     if (!link) throw new ExpedienteFinanceError(404, 'EXP008_DOCUMENT_NOT_FOUND', 'El documento no está disponible.');
     return { url: await getSignedUrl(link.documento.storage_key, 600), expires_in: 600, file_name: link.documento.nombre_original, mime_type: link.documento.mime_type };
@@ -683,12 +683,21 @@ export class ExpedienteFinanceService {
     });
   }
 
-  private capabilities(actor: ExpedienteFinanceActor) { return { canRead: actor.permissions.includes('expedientes.read'), canReport: actor.permissions.includes('expedientes.write') && actor.permissions.includes('documentos.write'), canCreateRequest: actor.permissions.includes('expedientes.write') && actor.permissions.includes('documentos.write'), canApply: this.canApply(actor), canCompleteInvoice: this.canApply(actor) && actor.permissions.includes('documentos.write'), canUseAI: this.canApply(actor) && actor.permissions.includes('ia.execute'), canPrefillAI: actor.permissions.includes('expedientes.write') && actor.permissions.includes('documentos.write') && actor.permissions.includes('ia.execute'), canReadDocuments: actor.permissions.includes('documentos.read'), canRetireDocuments: actor.permissions.includes('documentos.unlink') }; }
+  private capabilities(actor: ExpedienteFinanceActor) { return { canRead: actor.permissions.includes('expedientes.read'), canReport: this.canOperationalWrite(actor), canCreateRequest: this.canOperationalWrite(actor), canApply: this.canApply(actor), canCompleteInvoice: this.canApply(actor) && actor.permissions.includes('documentos.write'), canUseAI: this.canApply(actor) && actor.permissions.includes('ia.execute'), canPrefillAI: this.canOperationalWrite(actor) && actor.permissions.includes('ia.execute'), canReadDocuments: actor.permissions.includes('documentos.read'), canRetireDocuments: actor.permissions.includes('documentos.unlink') }; }
   private canApply(actor: ExpedienteFinanceActor) { return actor.permissions.includes('finanzas.write') && actor.permissions.includes('finanzas.validate'); }
-  private requireOperationalWrite(actor: ExpedienteFinanceActor) { if (!actor.permissions.includes('expedientes.write') || !actor.permissions.includes('documentos.write')) throw new ExpedienteFinanceError(403, 'EXP008_OPERATION_DENIED', 'No tienes permiso para registrar operaciones financieras del expediente.'); }
+  private canOperationalWrite(actor: ExpedienteFinanceActor) {
+    return (actor.permissions.includes('expedientes.write')
+      || (actor.rol === 'FINANCIERO' && actor.permissions.includes('finanzas.write')))
+      && actor.permissions.includes('documentos.write');
+  }
+  private requireOperationalWrite(actor: ExpedienteFinanceActor) {
+    if (!this.canOperationalWrite(actor)) {
+      throw new ExpedienteFinanceError(403, 'EXP008_OPERATION_DENIED', 'No tienes permiso para registrar operaciones financieras del expediente.');
+    }
+  }
   private idempotency(value: unknown) { const key = clean(value, 160); if (!key) throw new ExpedienteFinanceError(400, 'EXP008_IDEMPOTENCY_REQUIRED', 'No fue posible identificar de forma segura la operación.'); return key; }
   private async lock(tx: Prisma.TransactionClient, key: string) { await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp008:${key}`}))`); }
-  private async assertExpediente(db: Db, actor: ExpedienteFinanceActor, expedienteId: string) { const record = await db.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) }, select: { id: true, numero_pravia: true, cliente_alias: true, notaria: { select: { nombre: true } }, actos: { where: { estatus: 'ACTIVO', removed_at: null }, orderBy: { created_at: 'asc' }, select: { tipo_acto: { select: { nombre: true } } } } } }); if (!record) throw new ExpedienteFinanceError(403, 'EXP008_EXPEDIENTE_ACCESS_DENIED', 'No tienes acceso a este expediente.'); return record; }
+  private async assertExpediente(db: Db, actor: ExpedienteFinanceActor, expedienteId: string, access: 'read' | 'write' = 'write') { const record = await db.expediente.findFirst({ where: { id: expedienteId, ...(access === 'read' ? expedienteReadWhere(actor) : { organization_id: actor.organizationId, archived_at: null, ...(actor.rol === 'FINANCIERO' ? {} : expedienteAccessWhere(actor)) }) }, select: { id: true, numero_pravia: true, cliente_alias: true, notaria: { select: { nombre: true } }, actos: { where: { estatus: 'ACTIVO', removed_at: null }, orderBy: { created_at: 'asc' }, select: { tipo_acto: { select: { nombre: true } } } } } }); if (!record) throw new ExpedienteFinanceError(403, 'EXP008_EXPEDIENTE_ACCESS_DENIED', 'No tienes acceso a este expediente.'); return record; }
   private async resolveFormat(organizationId: string, kind: 'solicitud' | 'comprobante') {
     const destination = kind === 'solicitud' ? 'FINANZAS_SOLICITUD_PAGO' : 'FINANZAS_RECIBO_PAGO';
     const links = await this.prisma.catalogoArtefactoDestino.findMany({

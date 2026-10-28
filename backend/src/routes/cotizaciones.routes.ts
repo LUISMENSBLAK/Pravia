@@ -25,6 +25,8 @@ import {
   decideCotizacionAIProposal,
   attachCotizacionAct,
   draftCotizacionEmailWithAI,
+  getExpedienteFolioSeries,
+  createExpedienteFolioSeries,
 } from '../controllers/cotizaciones.controller';
 import { requirePermission } from '../middleware/auth.middleware';
 import { requireCotizacionObjectAccess, requireDocumentoObjectAccess } from '../middleware/objectAccess.middleware';
@@ -34,6 +36,8 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: DOC
 router.param('id', requireCotizacionObjectAccess);
 
 router.get('/', getCotizaciones);
+router.get('/expediente-series', getExpedienteFolioSeries);
+router.post('/expediente-series', createExpedienteFolioSeries);
 router.get('/:id', getCotizacionById);
 router.post('/', createCotizacion);
 router.put('/:id/estado', updateCotizacionEstado);

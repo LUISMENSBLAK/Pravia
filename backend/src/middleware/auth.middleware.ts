@@ -57,6 +57,13 @@ export const requirePermission = (permission: Permission) => (req: Request, res:
   return next();
 };
 
+export const requireAnyPermission = (...permissions: Permission[]) => (req: Request, res: Response, next: NextFunction) => {
+  if (!permissions.some((permission) => req.user?.permissions.includes(permission))) {
+    return res.status(403).json({ code: 'PERMISSION_DENIED', error: 'No tienes permiso para realizar esta acción.' });
+  }
+  return next();
+};
+
 export function requirePasswordReady(req: Request, res: Response, next: NextFunction) {
   if (req.user?.requiresPasswordChange) {
     return res.status(403).json({ code: 'PASSWORD_CHANGE_REQUIRED', error: 'Debes establecer una contraseña definitiva antes de continuar.' });
@@ -67,43 +74,68 @@ export function requirePasswordReady(req: Request, res: Response, next: NextFunc
 export const authorizeByMethod = (read: Permission, write: Permission) => (req: Request, res: Response, next: NextFunction) =>
   requirePermission(['GET', 'HEAD'].includes(req.method) ? read : write)(req, res, next);
 
+export const authorizeCotizacionRequest = (req: Request, res: Response, next: NextFunction) => {
+  const preview = req.method === 'POST' && /^\/[^/]+\/presupuesto\/vista-previa\/?$/.test(req.path);
+  return requirePermission(['GET', 'HEAD'].includes(req.method) || preview ? 'cotizaciones.read' : 'cotizaciones.write')(req, res, next);
+};
+
 export function permissionForExpedienteRequest(method: string, path: string): Permission {
   if (['GET', 'HEAD'].includes(method.toUpperCase())) return 'expedientes.read';
+  if (method.toUpperCase() === 'POST' && /^\/[^/]+\/presupuesto\/vista-previa\/?$/.test(path)) return 'expedientes.read';
   if (/^\/[^/]+\/entrega\/?$/.test(path)) return 'expedientes.deliver';
   if (/^\/[^/]+\/postfirma(?:\/|$)/.test(path)) return 'expedientes.postfirma.manage';
   return 'expedientes.write';
 }
 
-export const authorizeExpedienteRequest = (req: Request, res: Response, next: NextFunction) =>
-  requirePermission(permissionForExpedienteRequest(req.method, req.path))(req, res, next);
+export const authorizeExpedienteRequest = (req: Request, res: Response, next: NextFunction) => {
+  const financePath = /^\/[^/]+\/(?:finanzas-operativas|movimientos)(?:\/|$)/.test(req.path);
+  if (financePath && req.user?.rol === 'FINANCIERO') {
+    return requirePermission(['GET', 'HEAD'].includes(req.method) ? 'finanzas.read' : 'finanzas.write')(req, res, next);
+  }
+  return requirePermission(permissionForExpedienteRequest(req.method, req.path))(req, res, next);
+};
 
 export function expedienteAccessWhere(user: NonNullable<Request['user']>) {
   if (['DIRECCION', 'ADMINISTRACION', 'CONSULTA'].includes(user.rol)) return {};
-  if (user.rol === 'ABOGADO') return { OR: [{ abogado_id: user.id }, { creador_id: user.id }] };
+  if (user.rol === 'ABOGADO') return { OR: [
+    { abogado_id: user.id },
+    { collaborators: { some: { organization_id: user.organizationId, user_id: user.id, active: true } } },
+  ] };
   if (user.rol === 'GESTORIA') return {
     OR: [
       { gestor_id: user.id },
       { tareas: { some: { asignado_a_id: user.id, estatus: { not: 'CANCELADA' as const } } } },
       { tareas_externas: { some: { gestionado_por_id: user.id } } },
+      { collaborators: { some: { organization_id: user.organizationId, user_id: user.id, active: true } } },
     ],
   };
   if (user.rol === 'RECEPCION') return { estatus: { in: ['LISTO_ENTREGA' as const, 'ENTREGADO' as const] } };
   return { id: '00000000-0000-0000-0000-000000000000' };
 }
 
+export function expedienteReadWhere(user: NonNullable<Request['user']>) {
+  return { organization_id: user.organizationId, archived_at: null };
+}
+
 export async function requireExpedienteAccess(req: Request, res: Response, next: NextFunction) {
   try {
     if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
-    if (['DIRECCION', 'ADMINISTRACION', 'CONSULTA'].includes(req.user.rol)) return next();
-    if (!['ABOGADO', 'GESTORIA', 'RECEPCION'].includes(req.user.rol)) {
+    const reading = ['GET', 'HEAD'].includes(req.method) ||
+      (req.method === 'POST' && /^\/[^/]+\/presupuesto\/vista-previa\/?$/.test(req.path));
+    if (reading && !req.user.permissions.includes('expedientes.read')) {
+      return res.status(403).json({ code: 'EXPEDIENTE_ACCESS_DENIED', error: 'No tienes acceso a este expediente.' });
+    }
+    const financeMutation = /^\/[^/]+\/(?:finanzas-operativas|movimientos)(?:\/|$)/.test(req.path);
+    if (!reading && !(financeMutation && req.user.rol === 'FINANCIERO') &&
+      !['DIRECCION', 'ADMINISTRACION', 'ABOGADO', 'GESTORIA', 'RECEPCION'].includes(req.user.rol)) {
       return res.status(403).json({ code: 'EXPEDIENTE_ACCESS_DENIED', error: 'No tienes acceso a este expediente.' });
     }
     const expedienteId = req.params.id || req.body?.expediente_id;
     if (!expedienteId) return next();
     const expediente = await prisma.expediente.findFirst({
       where: {
-        id: String(expedienteId), archived_at: null,
-        ...expedienteAccessWhere(req.user),
+        id: String(expedienteId), ...expedienteReadWhere(req.user),
+        ...(reading || (financeMutation && req.user.rol === 'FINANCIERO') ? {} : expedienteAccessWhere(req.user)),
       },
       select: { id: true },
     });

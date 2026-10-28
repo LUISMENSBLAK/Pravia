@@ -88,7 +88,7 @@ const cases: Array<[string, () => boolean]> = [
   ['02 no segundo ledger',()=>!schema().includes('ExpedienteMovimientoFinanciero')],
   ['03 comprobante reportado es operativo',()=>schema().includes('model ExpedienteIngresoReportado')],
   ['04 upload no auto-aplica',()=>service().includes('auto_applied: false')],
-  ['05 abogado reporta con expediente y documentos',()=>routes().includes("requirePermission('expedientes.write'), requirePermission('documentos.write'), uploadExp008.fields")],
+  ['05 abogado reporta con expediente y documentos',()=>routes().includes("requireAnyPermission('expedientes.write', 'finanzas.write'), requirePermission('documentos.write'), uploadExp008.fields")],
   ['06 abogado no aplica',()=>routes().includes("ingresos/:incomeId/aplicar', requirePermission('finanzas.validate')")],
   ['07 administración valida con RBAC',()=>service().includes("actor.permissions.includes('finanzas.validate')")],
   ['08 aplicación transaccional',()=>service().includes('this.prisma.$transaction')&&service().includes('income-apply:')],

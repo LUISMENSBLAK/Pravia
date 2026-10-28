@@ -34,7 +34,7 @@ async function validateAgendaLinks(input: { expedienteId?: unknown; comparecient
       ? prisma.expediente.findFirst({ where: { id: String(input.expedienteId), archived_at: null, ...expedienteAccessWhere(user) }, select: { id: true } })
       : null,
     input.comparecienteId
-      ? prisma.compareciente.findFirst({ where: { id: String(input.comparecienteId), archived_at: null, ...comparecienteObjectWhere(user) }, select: { id: true } })
+      ? prisma.compareciente.findFirst({ where: { id: String(input.comparecienteId), organization_id: user.organizationId, archived_at: null, ...comparecienteObjectWhere(user) }, select: { id: true } })
       : null,
   ]);
   if (input.expedienteId && !expediente) throw new AgendaError('El expediente vinculado no está activo.', 'AGENDA_EXPEDIENTE_INVALID', 404);
@@ -197,7 +197,10 @@ export class AgendaController {
           include: { asignado_a: { select: { id: true, nombre: true, apellido: true } }, expediente: { select: { id: true, numero_pravia: true, cliente_alias: true } } },
         });
         await tx.auditLog.create({
-          data: { user_id: actorId, accion: 'CREATE_TASK', entidad: 'Tarea', entidad_id: created.id, valores_nuevos: { titulo: title, prioridad: priority, responsable_id: responsableId, expediente_id: links.expedienteId }, correlation_id: (req as any).correlationId },
+          data: { organization_id: organizationId, user_id: actorId, session_id: req.user!.sessionId,
+            accion: 'CREATE_TASK', entidad: 'Tarea', entidad_id: created.id,
+            valores_nuevos: { titulo: title, prioridad: priority, responsable_id: responsableId, expediente_id: links.expedienteId },
+            correlation_id: (req as any).correlationId },
         });
         if (links.expedienteId) {
           await tx.expedienteActividad.create({ data: { organization_id: req.user!.organizationId, expediente_id: links.expedienteId, usuario_id: actorId, tipo: 'TAREA', titulo: `Tarea creada: ${title}`, descripcion: `Prioridad ${priority}` } });
@@ -244,7 +247,10 @@ export class AgendaController {
           include: { asignado_a: { select: { id: true, nombre: true, apellido: true } }, expediente: { select: { id: true, numero_pravia: true, cliente_alias: true } } },
         });
         await tx.auditLog.create({
-          data: { user_id: actorId, accion: 'UPDATE_TASK', entidad: 'Tarea', entidad_id: task.id, valores_anteriores: { estatus: current.estatus, prioridad: current.prioridad }, valores_nuevos: { estatus: task.estatus, prioridad: task.prioridad }, correlation_id: (req as any).correlationId },
+          data: { organization_id: req.user!.organizationId, user_id: actorId, session_id: req.user!.sessionId,
+            accion: 'UPDATE_TASK', entidad: 'Tarea', entidad_id: task.id,
+            valores_anteriores: { estatus: current.estatus, prioridad: current.prioridad },
+            valores_nuevos: { estatus: task.estatus, prioridad: task.prioridad }, correlation_id: (req as any).correlationId },
         });
         if (current.expediente_id && current.estatus !== status) {
           await tx.expedienteActividad.create({ data: { organization_id: req.user!.organizationId, expediente_id: current.expediente_id, usuario_id: actorId, tipo: 'TAREA', titulo: `Tarea ${status.toLowerCase()}: ${current.titulo}`, descripcion: `Estado anterior: ${current.estatus}` } });
@@ -346,7 +352,7 @@ export class AgendaController {
         }),
         prisma.expediente.findMany({ where: { archived_at: null, ...expedienteScope }, select: { id: true, numero_pravia: true, cliente_alias: true, estatus: true, version: true, fecha_estimada_firma: true, fecha_real_firma: true, abogado_id: true, actos: { where: { estatus: 'ACTIVO', removed_at: null }, select: { tipo_acto: { select: { id: true, nombre: true } } }, orderBy: { created_at: 'asc' } }, notaria: { select: { id: true, numero_notaria: true, nombre: true, ciudad: true, municipio: true, entidad_federativa: true } } }, orderBy: { updated_at: 'desc' }, take: 300 }),
         prisma.compareciente.findMany({
-          where: { archived_at: null, ...(!canReadComparecientes ? { id: '00000000-0000-0000-0000-000000000000' } : comparecienteObjectWhere(req.user)) },
+          where: { organization_id: req.user.organizationId, archived_at: null, ...(!canReadComparecientes ? { id: '00000000-0000-0000-0000-000000000000' } : comparecienteObjectWhere(req.user)) },
           select: {
             id: true,
             tipo_persona: true,

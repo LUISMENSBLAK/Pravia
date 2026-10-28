@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'crypto';
 import { DOCUMENT_UPLOAD_MAX_BYTES, uploadLimitLabel } from '../config/uploadLimits';
 import { Prisma, PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
-import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { expedienteAccessWhere, expedienteReadWhere } from '../middleware/auth.middleware';
 import { canonicalUploadedDocumentMime } from './documentUploadValidation';
 import { deleteFile, downloadFile, uploadFile } from './supabase.service';
 import { functionalDestinationService } from './functionalDestination.service';
@@ -131,7 +131,7 @@ export class ArchivoService {
 
   async overview(actor: Actor) {
     const [records, unused, latestNumber, latestFolio, legacy] = await Promise.all([
-      this.prisma.archivoRegistro.findMany({ where: { organization_id: actor.organizationId, clase: 'INSTRUMENTO', expediente: { is: { archived_at: null, ...expedienteAccessWhere(actor) } } }, include: recordInclude, orderBy: [{ numero_escritura: 'desc' }, { created_at: 'desc' }], take: 200 }),
+      this.prisma.archivoRegistro.findMany({ where: { organization_id: actor.organizationId, clase: 'INSTRUMENTO', expediente: { is: expedienteReadWhere(actor) } }, include: recordInclude, orderBy: [{ numero_escritura: 'desc' }, { created_at: 'desc' }], take: 200 }),
       this.prisma.archivoRegistro.findMany({ where: { organization_id: actor.organizationId, clase: 'INUTILIZADO' }, orderBy: { folio_inicio: 'desc' }, take: 100 }),
       this.prisma.archivoRegistro.findFirst({ where: { organization_id: actor.organizationId, clase: 'INSTRUMENTO' }, orderBy: { numero_escritura: 'desc' }, select: { numero_escritura: true, libro_tomo: true } }),
       this.prisma.archivoRegistro.findFirst({ where: { organization_id: actor.organizationId }, orderBy: { folio_fin: 'desc' }, select: { folio_fin: true } }),
@@ -150,7 +150,7 @@ export class ArchivoService {
   }
 
   async forExpediente(actor: Actor, expedienteId: string) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const record = await this.prisma.archivoRegistro.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId }, include: recordInclude });
     const attachments = record ? await this.prisma.expedienteDocumento.findMany({
       where: { organization_id: actor.organizationId, expediente_id: expedienteId, source_entity_type: 'ArchivoRegistro', source_entity_id: record.id, source_context: { in: ['APENDICE_ARCHIVO', 'NOTA_ARCHIVO'] }, estatus: 'ACTIVO' },
@@ -267,7 +267,7 @@ export class ArchivoService {
   }
 
   async downloadAppendix(actor: Actor, expedienteId: string, itemId: string) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const item = await this.prisma.expedienteDocumento.findFirst({ where: {
       id: itemId, organization_id: actor.organizationId, expediente_id: expedienteId, source_entity_type: 'ArchivoRegistro', source_context: { in: ['APENDICE_ARCHIVO', 'NOTA_ARCHIVO'] }, estatus: 'ACTIVO',
     }, include: { documento: true } });
@@ -335,8 +335,8 @@ export class ArchivoService {
     return db.expediente.count({ where: { organization_id: actor.organizationId, archivoRegistro: { is: null }, OR: [{ numero_escritura: { not: null } }, { folio_desde: { not: null } }, { folio_hasta: { not: null } }, { fecha_escritura: { not: null } }] } });
   }
 
-  private async assertExpediente(db: Db, actor: Actor, id: string) {
-    const expediente = await db.expediente.findFirst({ where: { id, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) }, select: { id: true, numero_escritura: true, folio_desde: true, folio_hasta: true, fecha_escritura: true } });
+  private async assertExpediente(db: Db, actor: Actor, id: string, access: 'read' | 'write' = 'write') {
+    const expediente = await db.expediente.findFirst({ where: { id, ...(access === 'read' ? expedienteReadWhere(actor) : { organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) }) }, select: { id: true, numero_escritura: true, folio_desde: true, folio_hasta: true, fecha_escritura: true } });
     if (!expediente) throw new ArchivoError(403, 'ARCHIVO_EXPEDIENTE_ACCESS_DENIED', 'No tienes acceso a este expediente.');
     return expediente;
   }

@@ -148,9 +148,9 @@ describe('G1 MID-BASE · fuentes canónicas integradas', () => {
   it('aplica tenant y object-level filters backend en las cinco fuentes', async () => {
     const db = representativeDb();
     await new MidBaseSourceService(db as unknown as PrismaClient).read(actor({ rol: 'ABOGADO' }), { now: fixedNow });
-    expect(db.prospecto.findMany.mock.calls[0][0].where).toMatchObject({ organization_id: org, user_id: actor().id });
-    expect(db.cotizacion.findMany.mock.calls[0][0].where).toMatchObject({ organization_id: org, user_id: actor().id });
-    expect(db.expediente.findMany.mock.calls[0][0].where).toMatchObject({ organization_id: org, OR: [{ abogado_id: actor().id }, { creador_id: actor().id }] });
+    expect(db.prospecto.findMany.mock.calls[0][0].where).toMatchObject({ organization_id: org, OR: [{ user_id: actor().id }, { collaborators: { some: { organization_id: org, user_id: actor().id, active: true } } }] });
+    expect(db.cotizacion.findMany.mock.calls[0][0].where).toMatchObject({ organization_id: org, OR: [{ user_id: actor().id }, { collaborators: { some: { organization_id: org, user_id: actor().id, active: true } } }] });
+    expect(db.expediente.findMany.mock.calls[0][0].where).toMatchObject({ organization_id: org, OR: [{ abogado_id: actor().id }, { collaborators: { some: { organization_id: org, user_id: actor().id, active: true } } }] });
     expect(db.expedienteSolicitudPago.findMany.mock.calls[0][0].where).toMatchObject({ organization_id: org, expediente_id: { in: ['case-pre', 'case-post', 'case-delivered'] } });
     expect(db.expedienteIngresoReportado.findMany.mock.calls[0][0].where).toMatchObject({ organization_id: org, expediente_id: { in: ['case-pre', 'case-post', 'case-delivered'] } });
   });

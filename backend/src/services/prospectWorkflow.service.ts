@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import type { Request } from 'express';
 import { Prisma, PrismaClient, ProspectoEtapaContractual as Stage } from '@prisma/client';
-import { prospectoObjectWhere } from './objectAccess.service';
+import { prospectoObjectWhere, prospectoReadWhere } from './objectAccess.service';
 import { normalizeProspectName, prospectServiceByCode, prospectStageByCode } from '../domain/prospectCatalog';
 import { allowedProspectActions, assertProspectFields, assertProspectReplay, assertProspectVersion, failProspect,
   nextProspectStage, PROSPECT_ACTIONS, PROSPECT_CONTRACT_STAGES, ProspectAction, prospectEffectiveAt,
@@ -12,12 +12,14 @@ import { getQuotationTemplate } from './quotationTemplate.service';
 import { optionalOperationalText, preserveFormatText } from '../utils/operationalText';
 import { roleHasPermission } from '../auth/permissions';
 import { budgetTotals, normalizeEditableBudgetConcepts, withDerivedHonorariosIva } from '../domain/expedienteBudget';
+import { reserveOrganizationFolio } from './organizationFolio.service';
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
 const docSelect = { id: true, nombre_original: true, tipo: true, mime_type: true, fecha_carga: true, size_bytes: true } as const;
 const detailInclude = {
   atendido_por: { select: { id: true, nombre: true } }, etapa_operativa: true, servicio_catalogo: true,
+  collaborators: { where: { active: true }, select: { user_id: true } },
   actos: { include: { tipo_acto: { select: { id: true, nombre: true, codigo_catalogo: true, organization_id: true } } }, orderBy: { orden: 'asc' as const } },
   notaria: { select: { id: true, nombre: true, correo_general: true } },
   cotizacion: { select: { id: true, estado: true, numero_cotizacion: true } },
@@ -40,9 +42,10 @@ export class ProspectWorkflowService {
   private async lock(tx: Prisma.TransactionClient, key: string) {
     await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:pro001:${key}`}))`);
   }
-  private async prospect(db: Db, actor: Actor, id: string) {
+  private async prospect(db: Db, actor: Actor, id: string, access: 'read' | 'write' = 'read') {
     permission(actor, 'prospectos.read');
-    const row = await db.prospecto.findFirst({ where: { id, archived_at: null, ...prospectoObjectWhere(actor) }, include: detailInclude });
+    const row = await db.prospecto.findFirst({ where: { id, archived_at: null,
+      ...(access === 'write' ? prospectoObjectWhere(actor) : prospectoReadWhere(actor)) }, include: detailInclude });
     if (!row) return failProspect(404, 'PRO001_NOT_FOUND', 'No se encontró el prospecto o no tienes acceso.');
     return row;
   }
@@ -74,19 +77,6 @@ export class ProspectWorkflowService {
       action: input.action,
     });
     return event;
-  }
-  private async folio(tx: Prisma.TransactionClient, kind: 'PRO' | 'COT', date: Date) {
-    const year = date.getFullYear();
-    // Folios are globally unique in the existing schema; do not tenant-filter this numeric reservation.
-    await this.lock(tx, `folio:${kind}:${year}`);
-    const rows = kind === 'PRO'
-      ? await tx.$queryRaw<Array<{ folio: string | null }>>(Prisma.sql`SELECT folio FROM pravia_os.prospectos WHERE folio LIKE ${`PRO-%-${year}`}`)
-      : await tx.$queryRaw<Array<{ folio: string | null }>>(Prisma.sql`SELECT numero_cotizacion AS folio FROM pravia_os.cotizaciones WHERE numero_cotizacion LIKE ${`COT-%-${year}`} OR numero_cotizacion LIKE ${`COT-${year}-%`}`);
-    const next = rows.reduce((max, row) => {
-      const match = row.folio?.match(new RegExp(`^${kind}-(\\d+)-${year}$`)) ?? row.folio?.match(new RegExp(`^${kind}-${year}-(\\d+)$`));
-      return Math.max(max, match ? Number(match[1]) : 0);
-    }, 0) + 1;
-    return `${kind}-${String(next).padStart(4, '0')}-${year}`;
   }
   private cleanData(raw: Record<string, any>) {
     const data: any = {};
@@ -164,11 +154,15 @@ export class ProspectWorkflowService {
   }
   async create(actor: Actor, raw: Record<string, unknown>, idempotencyKey: unknown) {
     permission(actor, 'prospectos.write');
-    assertProspectFields(raw, newDataFields);
+    assertProspectFields(raw, [...newDataFields, 'sinAsignar']);
+    if (raw.sinAsignar !== undefined && typeof raw.sinAsignar !== 'boolean') failProspect(400, 'PRO001_ASSIGNMENT_INVALID', 'Indica si el prospecto quedará sin asignar.');
+    if (raw.sinAsignar === true && !['DIRECCION', 'ADMINISTRACION', 'RECEPCION'].includes(actor.rol)) {
+      failProspect(403, 'PRO001_UNASSIGNED_CREATE_DENIED', 'No tienes permiso para crear prospectos sin responsable.');
+    }
     const data = this.cleanData(raw);
     if (raw.tipo_acto_ids !== undefined && raw.servicio_catalogo_codigo === undefined) data.servicio_catalogo_codigo = null;
     if (!data.nombre) failProspect(400, 'PROSPECT_NAME_REQUIRED', 'Indica el nombre para abrir la ficha.');
-    const key = prospectKey(idempotencyKey), hash = prospectHash({ data, tipoActoIds: this.actIds(raw), actor: actor.id });
+    const key = prospectKey(idempotencyKey), hash = prospectHash({ data, tipoActoIds: this.actIds(raw), actor: actor.id, sinAsignar: raw.sinAsignar === true });
     return this.prisma.$transaction(async (tx) => {
       await this.lock(tx, `create:${actor.organizationId}:${key}`);
       const previous = await tx.prospecto.findFirst({ where: { organization_id: actor.organizationId, creation_key: key } });
@@ -179,9 +173,9 @@ export class ProspectWorkflowService {
       const now = new Date();
       const actIds = await this.resolveActIds(tx, actor, raw);
       const p = await tx.prospecto.create({ data: { ...data, id: randomUUID(), organization_id: actor.organizationId,
-        user_id: actor.id, estado: 'NUEVO', folio: await this.folio(tx, 'PRO', now), creation_key: key, creation_hash: hash } });
+        user_id: raw.sinAsignar === true ? null : actor.id, estado: 'NUEVO', folio: await reserveOrganizationFolio(tx, actor.organizationId, 'PRO', now), creation_key: key, creation_hash: hash } });
       if (actIds) await this.syncActs(tx, actor, p.id, actIds);
-      await this.event(tx, actor, p, { action: 'CREAR', next: Stage.NUEVO, effectiveAt: now, recordedAt: now, key, hash, evidence: { createdByActor: true } });
+      await this.event(tx, actor, p, { action: 'CREAR', next: Stage.NUEVO, effectiveAt: now, recordedAt: now, key, hash, evidence: { createdByActor: true, assignment: p.user_id ? 'ASSIGNED' : 'SIN_ASIGNAR' } });
       return { prospecto: await this.prospect(tx, actor, p.id), idempotent: false };
     });
   }
@@ -196,7 +190,7 @@ export class ProspectWorkflowService {
     }
     return this.prisma.$transaction(async (tx) => {
       await this.lock(tx, `${actor.organizationId}:${id}`);
-      const p = await this.prospect(tx, actor, id);
+      const p = await this.prospect(tx, actor, id, 'write');
       assertProspectVersion(raw.expectedVersion, p.version_operativa);
       const actIds = await this.resolveActIds(tx, actor, raw);
       if (raw.responsable_id !== undefined && raw.responsable_id !== p.user_id) {
@@ -221,7 +215,9 @@ export class ProspectWorkflowService {
       Promise.resolve([]),
       actor.permissions.includes('prospectos.write') ? this.prisma.organizationMembership.findMany({ where: { organization_id: actor.organizationId, status: 'ACTIVE', user: { activo: true } }, select: { rol: true, user: { select: { id: true, nombre: true, apellido: true } } } }) : [],
     ]);
-    const actions = actor.permissions.includes('prospectos.write') ? allowedProspectActions(p.etapa_contractual, Boolean(p.cotizacion)).filter((a) => a !== 'CONVERTIR' || actor.permissions.includes('cotizaciones.write')) : [];
+    const canWrite = actor.permissions.includes('prospectos.write') &&
+      (['DIRECCION', 'ADMINISTRACION'].includes(actor.rol) || p.user_id === actor.id || p.collaborators.some((item) => item.user_id === actor.id));
+    const actions = canWrite ? allowedProspectActions(p.etapa_contractual, Boolean(p.cotizacion)).filter((a) => a !== 'CONVERTIR' || actor.permissions.includes('cotizaciones.write')) : [];
     return { stage: p.etapa_contractual, stageLabel: stageLabel(p.etapa_contractual), stageEnteredAt: p.transicion_actual?.effective_at ?? null,
       knowledge: p.transicion_actual ? 'KNOWN' : 'UNKNOWN_LEGACY', version: p.version_operativa, folio: p.folio,
       wait: prospectWait(p.etapa_contractual), stages: PROSPECT_CONTRACT_STAGES,
@@ -241,7 +237,7 @@ export class ProspectWorkflowService {
   }
   async prepare(actor: Actor, id: string, _raw: Record<string, unknown>): Promise<{ subject: string; content: string }> {
     permission(actor, 'prospectos.write');
-    await this.prospect(this.prisma, actor, id);
+    await this.prospect(this.prisma, actor, id, 'write');
     return failProspect(409, 'LEGACY_NOTARY_FLOW_RETIRED', 'La solicitud a una notaría externa ya no forma parte del flujo operativo de Prospectos.');
   }
   async act(actor: Actor, id: string, raw: Record<string, unknown>) {
@@ -254,7 +250,7 @@ export class ProspectWorkflowService {
     const key = prospectKey(raw.idempotencyKey), hash = prospectHash({ ...raw, actor: actor.id });
     return this.prisma.$transaction(async (tx) => {
       await this.lock(tx, `${actor.organizationId}:${id}`);
-      const p = await this.prospect(tx, actor, id);
+      const p = await this.prospect(tx, actor, id, 'write');
       const replayWhere = { organization_id: actor.organizationId, prospecto_id: id, idempotency_key: key };
       const existingEvent = await tx.prospectoTransicion.findFirst({ where: replayWhere });
       if (existingEvent) {
@@ -309,7 +305,7 @@ export class ProspectWorkflowService {
         if (!currentAssignee || !roleHasPermission(currentAssignee.rol, 'cotizaciones.write')) {
           return failProspect(409, 'PRO001_QUOTE_ASSIGNEE_INACTIVE', 'La persona asignada ya no puede cotizar. Revisa la asignación antes de convertir.');
         }
-        const quoteFolio = await this.folio(tx, 'COT', recordedAt);
+        const quoteFolio = await reserveOrganizationFolio(tx, actor.organizationId, 'COT', recordedAt);
         const actLabel = p.actos.map((item) => item.tipo_acto.nombre).join(', ');
         const inheritedConcepts = p.honorarios_estimados != null && p.impuestos_derechos_estimados != null
           ? withDerivedHonorariosIva(normalizeEditableBudgetConcepts([
@@ -320,7 +316,7 @@ export class ProspectWorkflowService {
         const inheritedTotals = inheritedConcepts.length ? budgetTotals(inheritedConcepts) : null;
         const template = getQuotationTemplate({
           folio: quoteFolio, cliente: p.nombre, acto: actLabel,
-          descripcion: p.necesidad || 'Sin descripción adicional', responsable: quoteAssignee?.user.nombre || p.cotizacion_responsable?.user.nombre || p.atendido_por.nombre,
+          descripcion: p.necesidad || 'Sin descripción adicional', responsable: quoteAssignee?.user.nombre || p.cotizacion_responsable?.user.nombre || p.atendido_por?.nombre || 'Sin asignar',
           fecha: recordedAt, honorarios: inheritedTotals?.subtotal_honorarios ?? null,
           impuestos_derechos: inheritedTotals?.subtotal_impuestos_derechos ?? null,
           total: inheritedTotals?.total ?? null,

@@ -181,6 +181,7 @@ export class PrediosService {
   async update(actor: Actor, id: string, input: PredioInput, expectedVersion?: number) {
     const normalized = normalizeInput(input);
     return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:predio-master:${actor.organizationId}:${id}`}))`);
       const current = await this.assertAccess(tx, actor, id);
       if (expectedVersion != null && expectedVersion !== current.version) throw new PredioError(409, 'PREDIO_VERSION_STALE', 'La ficha cambió. Recarga antes de guardar.');
       await tx.predioColindancia.deleteMany({ where: { organization_id: actor.organizationId, predio_id: id } });

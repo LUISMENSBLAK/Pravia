@@ -51,7 +51,8 @@ describe('Agenda endpoints', () => {
     db.expediente.findMany.mockResolvedValue([]); db.compareciente.findMany.mockResolvedValue([]);
     const req: any = { query: {}, user: baseUser }; const res = response(); await AgendaController.catalogs(req, res);
     expect(db.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ activo: true, organizationMemberships: { some: expect.objectContaining({ organization_id: baseUser.organizationId }) } }) }));
-    expect(db.compareciente.findMany.mock.calls[0][0].where.OR).toBeDefined();
+    expect(db.compareciente.findMany.mock.calls[0][0].where).toMatchObject({ organization_id: baseUser.organizationId });
+    expect(db.compareciente.findMany.mock.calls[0][0].where.OR).toBeUndefined();
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ catalogos: expect.objectContaining({ timezone: 'America/Mexico_City', permisos: { gestionar_equipo: false, escribir: true } }) }));
   });
 

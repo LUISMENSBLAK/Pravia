@@ -22,6 +22,7 @@ export type OpenExpedienteInput = {
   valorOperacion?: number | null;
   datosOperacion?: Prisma.InputJsonValue;
   cotizacionId: string;
+  folioSeries?: string | null;
   proximaAccion?: string | null;
   correlationId?: string;
 };
@@ -75,7 +76,7 @@ export class ExpedienteOpeningService {
       throw new ExpedienteOpeningError('El carácter seleccionado no corresponde al tipo de acto.', 'EXPEDIENTE_PARTY_CHARACTER_INVALID');
     }
 
-    const numeroPravia = await reserveExpedienteFolio(tx);
+    const numeroPravia = await reserveExpedienteFolio(tx, organizationId, new Date(), input.folioSeries);
     let expediente = await tx.expediente.create({ data: {
       organization_id: organizationId,
       numero_pravia: numeroPravia,

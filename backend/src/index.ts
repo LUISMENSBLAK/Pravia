@@ -11,6 +11,8 @@ import prospectosRoutes from './routes/prospectos.routes';
 import documentosRoutes from './routes/documentos.routes';
 import cotizacionesRoutes from './routes/cotizaciones.routes';
 import expedientesRoutes from './routes/expedientes.routes';
+import recordCollaborationRoutes from './routes/recordCollaboration.routes';
+import { securityDenialAudit } from './middleware/securityDenialAudit.middleware';
 import archivoRoutes from './routes/archivo.routes';
 import comparecientesRoutes from './routes/compareciente.routes';
 import comparecienteAltaSessionRoutes from './routes/comparecienteAltaSession.routes';
@@ -31,7 +33,7 @@ import prediosRoutes from './routes/predios.routes';
 import { timingSourceRoutes } from './routes/timingPolicy.routes';
 import platformRoutes from './routes/platform.routes';
 import { PlatformDomainError } from './platform/platform.errors';
-import { authenticate, authorizeByMethod, authorizeExpedienteRequest, requirePasswordReady, requirePermission } from './middleware/auth.middleware';
+import { authenticate, authorizeByMethod, authorizeCotizacionRequest, authorizeExpedienteRequest, requirePasswordReady, requirePermission } from './middleware/auth.middleware';
 import { errorLogLevel, normalizeErrorBody } from './utils/httpError';
 import { getStorageCompensationHealth, storageCompensationWorker } from './workers/storageCompensation.worker';
 import { resolveRuntimeConfig, validateRuntimeConfig } from './config/runtime';
@@ -229,6 +231,8 @@ if (process.env.NODE_ENV !== 'production') app.get('/api/debug/openai', authenti
 // ══════════════════════════════════════
 app.use('/api', authenticate);
 app.use('/api', requirePasswordReady);
+app.use('/api', securityDenialAudit(prisma));
+app.use('/api/collaboration', recordCollaborationRoutes);
 app.get('/api/upload-policy', (_req: Request, res: Response) => res.json({
   standard_file_max_bytes: DOCUMENT_UPLOAD_MAX_BYTES,
   fiscal_file_max_bytes: FISCAL_UPLOAD_MAX_BYTES,
@@ -244,7 +248,7 @@ app.use('/api/timing', timingSourceRoutes);
 app.use('/api/platform', platformRoutes);
 app.use('/api/prospectos', authorizeByMethod('prospectos.read', 'prospectos.write'), prospectosRoutes);
 app.use('/api/documentos', authorizeByMethod('documentos.read', 'documentos.write'), documentosRoutes);
-app.use('/api/cotizaciones', authorizeByMethod('cotizaciones.read', 'cotizaciones.write'), cotizacionesRoutes);
+app.use('/api/cotizaciones', authorizeCotizacionRequest, cotizacionesRoutes);
 app.use('/api/expedientes', authorizeExpedienteRequest, expedientesRoutes);
 app.use('/api/archivo', archivoRoutes);
 app.use('/api/predios', authorizeByMethod('expedientes.read', 'expedientes.write'), prediosRoutes);

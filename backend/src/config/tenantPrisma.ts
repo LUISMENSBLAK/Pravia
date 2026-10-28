@@ -4,6 +4,7 @@ import { currentActorContext, TenantContextError } from '../auth/actorContext';
 // Modelos que poseen organization_id explícito. Los hijos derivados también lo
 // conservan para defensa en profundidad, consultas directas e índices eficientes.
 export const TENANT_SCOPED_MODELS = new Set([
+  'FolioCounter', 'ExpedienteFolioSerie', 'RecordCollaboration',
   'MiDiaTenantConfig', 'MiDiaUserLayout', 'MiDiaCardPermission', 'MiDiaPersonalTask',
   'UserInvitation', 'Notification', 'NotificationReminder', 'Prospecto', 'ProspectoActo', 'ProspectoSeguimiento', 'ProspectoTransicion', 'ProspectoFuenteNotarial', 'ProspectoRevisionDocumental', 'Notaria', 'NotariaContacto',
   'Cotizacion', 'CotizacionActo', 'CotizacionVersion', 'CotizacionConcepto', 'CotizacionVersionConcepto', 'CotizacionSeguimiento', 'CotizacionTransicion', 'Expediente', 'ExpedienteEstatus_Log',
@@ -53,7 +54,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'TimingPolicyRevision', 'TimingInterval',
   'KnowledgeSource', 'KnowledgeSourceVersion', 'KnowledgeArticle', 'KnowledgeCriterion', 'KnowledgeRadarRun', 'KnowledgeImpact',
   'AssistantAlert', 'GastoRecurrenteFinanciero', 'ConsultaFinancieraGuardada',
-  'EntidadFiscalCfdi', 'EntidadFiscalCuenta', 'ProveedorFiscal', 'ConceptoFiscalCfdi', 'DocumentoCfdi',
+  'EntidadFiscalCfdi', 'EntidadFiscalCuenta', 'ProveedorFiscal', 'ConceptoFiscalCfdi', 'DocumentoCfdi', 'PrefacturaRepresentacion',
   'CuentaPorCobrarCfdi', 'CuentaPorPagarCfdi', 'AplicacionPagoCfdi', 'TransferenciaInterna',
   'CotizacionIAProposal', 'ProjectFactSnapshot', 'ProjectInstructionApplication', 'ProjectTemplateAssignment',
   'ArchivoRegistro',

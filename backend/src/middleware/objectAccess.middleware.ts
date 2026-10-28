@@ -7,6 +7,9 @@ import {
   canAccessDocumento,
   canAccessProspecto,
   canAccessPredio,
+  canModifyDocumento,
+  canReadCotizacion,
+  canReadProspecto,
 } from '../services/objectAccess.service';
 
 const deny = (res: Response, code: string, resource: string) =>
@@ -25,14 +28,23 @@ const catchAsync = (handler: AsyncMiddleware) => async (req: Request, res: Respo
 export const requireProspectoObjectAccess = catchAsync(async (req, res, next) => {
   if (!req.user) return deny(res, 'AUTH_REQUIRED', 'este prospecto');
   const id = req.params.id || req.body?.prospecto_id;
-  if (!id || await canAccessProspecto(req.user, String(id))) return next();
+  if (!id) return next();
+  const allowed = ['GET', 'HEAD'].includes(req.method)
+    ? await canReadProspecto(req.user, String(id))
+    : await canAccessProspecto(req.user, String(id));
+  if (allowed) return next();
   return deny(res, 'PROSPECTO_ACCESS_DENIED', 'este prospecto');
 });
 
 export const requireCotizacionObjectAccess = catchAsync(async (req, res, next) => {
   if (!req.user) return deny(res, 'AUTH_REQUIRED', 'esta cotización');
   const id = req.params.id || req.body?.cotizacion_id;
-  if (!id || await canAccessCotizacion(req.user, String(id))) return next();
+  if (!id) return next();
+  const readOnlyPreview = req.method === 'POST' && /^\/[^/]+\/presupuesto\/vista-previa\/?$/.test(req.path);
+  const allowed = ['GET', 'HEAD'].includes(req.method) || readOnlyPreview
+    ? await canReadCotizacion(req.user, String(id))
+    : await canAccessCotizacion(req.user, String(id));
+  if (allowed) return next();
   return deny(res, 'COTIZACION_ACCESS_DENIED', 'esta cotización');
 });
 
@@ -46,7 +58,13 @@ export const requireComparecienteObjectAccess = catchAsync(async (req, res, next
 export const requireDocumentoObjectAccess = catchAsync(async (req, res, next) => {
   if (!req.user) return deny(res, 'AUTH_REQUIRED', 'este documento');
   const id = req.params.documentoId || req.params.id || req.body?.documento_id;
-  if (!id || await canAccessDocumento(req.user, String(id))) return next();
+  if (!id) return next();
+  // Nested write routes have already passed their parent object guard.
+  const nested = Boolean(req.params.documentoId);
+  const allowed = ['GET', 'HEAD'].includes(req.method) || nested
+    ? await canAccessDocumento(req.user, String(id))
+    : await canModifyDocumento(req.user, String(id));
+  if (allowed) return next();
   return deny(res, 'DOCUMENTO_ACCESS_DENIED', 'este documento');
 });
 

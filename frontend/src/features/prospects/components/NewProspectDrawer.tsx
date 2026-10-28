@@ -4,6 +4,7 @@ import { prospectsService } from '../prospects.service';
 import type { Prospect } from '../prospects.types';
 import { displayProspectName, uppercaseProspectNameInput } from '../prospects.types';
 import { DrawerShell } from './DrawerShell';
+import { useAuth } from '../../auth/AuthProvider';
 import styles from '../ProspectsPage.module.css';
 
 export function NewProspectDrawer({ onClose, onCreated }: {
@@ -11,6 +12,9 @@ export function NewProspectDrawer({ onClose, onCreated }: {
   onCreated: (prospect: Prospect) => void;
 }) {
   const [name, setName] = useState('');
+  const { user } = useAuth();
+  const canLeaveUnassigned = ['DIRECCION', 'ADMINISTRACION', 'RECEPCION'].includes(user?.role ?? '');
+  const [unassigned, setUnassigned] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const attempt = useRef(crypto.randomUUID());
@@ -24,7 +28,7 @@ export function NewProspectDrawer({ onClose, onCreated }: {
     setSubmitting(true);
     setError('');
     try {
-      onCreated(await prospectsService.create({ nombre: displayProspectName(name) }, attempt.current));
+      onCreated(await prospectsService.create({ nombre: displayProspectName(name), ...(canLeaveUnassigned && unassigned ? { sinAsignar: true } : {}) }, attempt.current));
     } catch {
       setError('No pudimos crear el prospecto. Revisa el nombre e inténtalo de nuevo.');
       busy.current = false;
@@ -41,6 +45,7 @@ export function NewProspectDrawer({ onClose, onCreated }: {
     <form id="new-prospect-form" className={styles.prospectForm} onSubmit={submit} noValidate>
       {error && <div className={styles.formError} role="alert">{error}</div>}
       <label className={styles.fullField}><span>Nombre o razón social <b aria-hidden="true">*</b></span><input autoFocus value={name} onChange={(event) => setName(uppercaseProspectNameInput(event.target.value))} aria-invalid={Boolean(error)} /></label>
+      {canLeaveUnassigned && <label className={styles.fullField}><input type="checkbox" checked={unassigned} onChange={(event) => setUnassigned(event.target.checked)} /><span>Dejar sin asignar para que Dirección o Administración asigne responsable</span></label>}
       <p className={`${styles.permissionNote} ${styles.fullField}`}>El folio, la fecha y la etapa Nuevo se asignan automáticamente.</p>
     </form>
   </DrawerShell>;

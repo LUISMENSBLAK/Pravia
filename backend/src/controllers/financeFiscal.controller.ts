@@ -1,9 +1,10 @@
 import type { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
-import { FISCAL_UPLOAD_MAX_BYTES, uploadLimitLabel } from '../config/uploadLimits';
-import { FinanceFiscalError, FinanceFiscalService, extractCsfFields, type UploadedFiscalFile } from '../services/financeFiscal.service';
+import { FinanceFiscalError, FinanceFiscalService, type UploadedFiscalFile } from '../services/financeFiscal.service';
+import { FiscalDocumentExtractionService, FiscalExtractionError } from '../services/fiscalDocumentExtraction.service';
 
 const service = new FinanceFiscalService(prisma);
+const fiscalExtractor = new FiscalDocumentExtractionService();
 const correlation = (req: Request) => req.correlationId;
 const actor = (req: Request) => {
   if (!req.user) throw new FinanceFiscalError(401, 'AUTH_REQUIRED', 'Inicia sesión para continuar.');
@@ -16,6 +17,7 @@ function file(value: Express.Multer.File | undefined): UploadedFiscalFile | unde
 
 function fail(res: Response, error: unknown, fallback: string) {
   if (error instanceof FinanceFiscalError) return res.status(error.status).json({ success: false, code: error.code, error: error.message });
+  if (error instanceof FiscalExtractionError) return res.status(error.status).json({ success: false, code: error.code, error: error.message });
   console.error(`[FinanceFiscal] ${fallback}`, error);
   return res.status(500).json({ success: false, code: 'CFDI_OPERATION_FAILED', error: fallback });
 }
@@ -66,7 +68,15 @@ export class FinanceFiscalController {
       if (req.file) {
         const regime = String(input.regimen_fiscal || '').trim();
         if (regime && !/^\d{3}$/.test(regime)) throw new FinanceFiscalError(400, 'CFDI_REGIME_INVALID', 'El régimen fiscal debe tener tres dígitos.');
-        input.regimenes_fiscales = regime ? [{ clave: regime, descripcion: '' }] : [];
+        let regimes: unknown = [];
+        if (input.regimenes_fiscales) {
+          try { regimes = JSON.parse(String(input.regimenes_fiscales)); }
+          catch { throw new FinanceFiscalError(400, 'CFDI_REGIMES_INVALID', 'La lista de regímenes no tiene un formato válido.'); }
+        }
+        if (!Array.isArray(regimes) || regimes.length > 20 || regimes.some((item) => !item || typeof item !== 'object' || !/^\d{3}$/.test(String(item.clave || '')))) {
+          throw new FinanceFiscalError(400, 'CFDI_REGIMES_INVALID', 'Confirma cada régimen fiscal detectado con una clave de tres dígitos.');
+        }
+        input.regimenes_fiscales = regimes.length ? regimes : regime ? [{ clave: regime, descripcion: '' }] : [];
       }
       const result = await service.createSupplier(actor(req), input, correlation(req), file(req.file));
       return res.status(result.idempotent ? 200 : 201).json({ success: true, data: result });
@@ -78,25 +88,15 @@ export class FinanceFiscalController {
     catch (error) { return fail(res, error, 'No pudimos actualizar el proveedor.'); }
   }
 
+  static async supplierCsfUrl(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await service.supplierCsfUrl(actor(req), req.params.id, correlation(req)) }); }
+    catch (error) { return fail(res, error, 'No pudimos abrir la constancia fiscal.'); }
+  }
+
   static async extractCsf(req: Request, res: Response) {
     try {
-      const uploaded = req.file;
-      let text = String(req.body?.text || '');
-      if (uploaded) {
-        if (uploaded.size > FISCAL_UPLOAD_MAX_BYTES) throw new FinanceFiscalError(400, 'CSF_FILE_TOO_LARGE', `La constancia no puede exceder ${uploadLimitLabel(FISCAL_UPLOAD_MAX_BYTES)}.`);
-        if (uploaded.mimetype === 'application/pdf' || uploaded.originalname.toLowerCase().endsWith('.pdf')) {
-          const { PDFParse } = require('pdf-parse');
-          const parser = new PDFParse({ data: uploaded.buffer });
-          try { text = String((await parser.getText())?.text || ''); } finally { await parser.destroy(); }
-        } else if (/\.txt$/i.test(uploaded.originalname) || uploaded.mimetype.startsWith('text/')) text = uploaded.buffer.toString('utf8');
-        else throw new FinanceFiscalError(400, 'CSF_FORMAT_UNSUPPORTED', 'La constancia debe ser PDF textual o TXT.');
-      }
-      if (!text.trim()) throw new FinanceFiscalError(422, 'CSF_TEXT_UNREADABLE', 'No pudimos leer texto de la constancia; captura los datos manualmente.');
-      const extracted = extractCsfFields(text);
-      if (!extracted.rfc && !extracted.razon_social && !extracted.codigo_postal && extracted.regimenes_fiscales.length === 0) {
-        throw new FinanceFiscalError(422, 'CSF_FIELDS_NOT_FOUND', 'No encontramos datos fiscales identificables en la constancia; revisa el documento y captura los datos manualmente.');
-      }
-      return res.json({ success: true, data: { ...extracted, source: 'DETERMINISTIC_TEXT', requiresReview: true } });
+      if (!req.file) throw new FiscalExtractionError(400, 'CSF_FILE_REQUIRED', 'Selecciona un archivo de constancia para extraer datos.');
+      return res.json({ success: true, data: await fiscalExtractor.extract(file(req.file)!) });
     } catch (error) { return fail(res, error, 'No pudimos extraer la constancia fiscal.'); }
   }
 
@@ -130,6 +130,24 @@ export class FinanceFiscalController {
   static async deleteDraft(req: Request, res: Response) {
     try { return res.json({ success: true, data: await service.deleteDraft(actor(req), req.params.id, correlation(req)) }); }
     catch (error) { return fail(res, error, 'No pudimos eliminar la prefactura.'); }
+  }
+
+  static async generatePrefactura(req: Request, res: Response) {
+    try {
+      const key = String(req.header('Idempotency-Key') || req.body?.idempotency_key || '').trim();
+      const result = await service.generatePrefactura(actor(req), req.params.id, key, correlation(req));
+      return res.status(result.idempotent ? 200 : 201).json({ success: true, data: result });
+    } catch (error) { return fail(res, error, 'No pudimos generar el PDF de prefactura.'); }
+  }
+
+  static async prefacturaVersions(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await service.prefacturaVersions(actor(req), req.params.id) }); }
+    catch (error) { return fail(res, error, 'No pudimos cargar las versiones de la prefactura.'); }
+  }
+
+  static async prefacturaVersionUrl(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await service.prefacturaVersionUrl(actor(req), req.params.id, Number(req.params.version)) }); }
+    catch (error) { return fail(res, error, 'No pudimos abrir esta versión PDF.'); }
   }
 
   static async uploadManual(req: Request, res: Response) {

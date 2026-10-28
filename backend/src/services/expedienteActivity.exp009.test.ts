@@ -16,6 +16,18 @@ function database(rows = [event()]) {
 }
 
 describe('EXP-009 operational activity', () => {
+  it('comparte la lectura de actividad dentro de la notaría sin conceder escritura', async () => {
+    const db = database();
+    const colleague = { ...actor, id: '00000000-0000-4000-8000-000000000099' };
+    await new ExpedienteActivityService(db).list(colleague, expedienteId, {});
+    expect(db.expediente.findFirst.mock.calls[0][0].where).toEqual({ id: expedienteId,
+      organization_id: actor.organizationId, archived_at: null });
+    db.expediente.findFirst.mockResolvedValueOnce(null);
+    await expect(new ExpedienteActivityService(db).addNote(colleague, expedienteId,
+      { note: 'No autorizado', idempotency_key: 'shared-note-qa' })).rejects.toMatchObject({ status: 403 });
+    expect(db.expediente.findFirst.mock.calls[1][0].where).toHaveProperty('OR');
+  });
+
   it('scopes every timeline read by tenant and expediente object access', async () => {
     const db = database(); const result = await new ExpedienteActivityService(db).list(actor, expedienteId, { category: 'TODO' });
     expect(db.expediente.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: expedienteId, organization_id: actor.organizationId }) }));

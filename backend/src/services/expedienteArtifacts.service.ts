@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'crypto';
 import { DOCUMENT_UPLOAD_MAX_BYTES, uploadLimitLabel } from '../config/uploadLimits';
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
 import { Prisma, PrismaClient } from '@prisma/client';
-import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { expedienteAccessWhere, expedienteReadWhere } from '../middleware/auth.middleware';
 import { assertStrictPartySourceScope, exp006ResolutionRevision, resolveExp006, type Exp006Context, type Exp006Resolution, type Exp006UnresolvedDecision } from '../domain/expedienteArtifacts';
 import { deleteFile, downloadFile, getSignedUrl, uploadFile } from '../storage/storage.service';
 import { generateOperationalArtifactWithOpenAI } from './openaiDocument.service';
@@ -36,7 +36,7 @@ export class ExpedienteArtifactsService {
   constructor(private readonly prisma: PrismaClient) {}
 
   async read(actor: Exp006Actor, expedienteId: string) {
-    const context = await this.buildContext(this.prisma, actor, expedienteId);
+    const context = await this.buildContext(this.prisma, actor, expedienteId, 'read');
     const artifacts = await this.masterArtifacts(this.prisma, actor.organizationId);
     const unresolved: Exp006UnresolvedDecision[] = [];
     const resolution = resolveExp006(artifacts as any, context, unresolved);
@@ -82,7 +82,7 @@ export class ExpedienteArtifactsService {
 
   async generationPreview(actor: Exp006Actor, expedienteId: string, pendingId: string, requestedDocumentIds?: string[]) {
     await this.assertExpediente(this.prisma, actor, expedienteId);
-    const pending = await this.pending(this.prisma, actor, expedienteId, pendingId);
+    const pending = await this.pending(this.prisma, actor, expedienteId, pendingId, 'read');
     assertStrictPartySourceScope({ subjectType: pending.sujeto_tipo, subjectId: pending.sujeto_id }, requestedDocumentIds);
     const sources = await this.partySources(this.prisma, actor, pending);
     return { pending_id: pending.id, pending_version: pending.version, source_revision: sources.revision, source_manifest: sources.manifest, missing: sources.missing, conflicts: sources.conflicts, can_generate: true };
@@ -175,7 +175,7 @@ export class ExpedienteArtifactsService {
   }
 
   async signedUrl(actor: Exp006Actor, expedienteId: string, pendingId: string) {
-    const pending = await this.pending(this.prisma, actor, expedienteId, pendingId);
+    const pending = await this.pending(this.prisma, actor, expedienteId, pendingId, 'read');
     if (!pending.current_document_id) throw new ExpedienteArtifactsError(404, 'EXP006_DOCUMENT_NOT_FOUND', 'Este pendiente todavía no tiene un documento.');
     const document = await this.prisma.documento.findFirst({ where: { id: pending.current_document_id, organization_id: actor.organizationId, expediente_id: expedienteId }, select: { storage_key: true, nombre_original: true, mime_type: true } });
     if (!document) throw new ExpedienteArtifactsError(403, 'EXP006_DOCUMENT_ACCESS_DENIED', 'No tienes acceso a este documento.');
@@ -268,8 +268,8 @@ export class ExpedienteArtifactsService {
     return { created, updated, preserved, inactivated };
   }
 
-  private async buildContext(db: Db, actor: Exp006Actor, expedienteId: string): Promise<Exp006Context> {
-    const expediente = await this.assertExpediente(db, actor, expedienteId);
+  private async buildContext(db: Db, actor: Exp006Actor, expedienteId: string, access: 'read' | 'write' = 'write'): Promise<Exp006Context> {
+    const expediente = await this.assertExpediente(db, actor, expedienteId, access);
     const [acts, parties, properties, currentTracking, complianceState] = await Promise.all([
       db.expedienteActo.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO' }, include: { tipo_acto: { select: { nombre: true } } } }),
       db.expedienteCompareciente.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', archived_at: null, expediente_acto_id: { not: null } }, include: { compareciente: { select: { id: true, tipo_persona: true, nombre_busqueda: true, personaFisica: { select: { nacionalidad: true, calidad_migratoria: true, pep_estado: true } }, personaMoral: { select: { nacionalidad: true } } } } } }),
@@ -347,15 +347,15 @@ export class ExpedienteArtifactsService {
     return `[Archivo maestro ${fileName}; contenido binario no textual. Respetar estructura y requerir revisión humana.]`;
   }
 
-  private async pending(db: Db, actor: Exp006Actor, expedienteId: string, pendingId: string) {
-    await this.assertExpediente(db, actor, expedienteId);
+  private async pending(db: Db, actor: Exp006Actor, expedienteId: string, pendingId: string, access: 'read' | 'write' = 'write') {
+    await this.assertExpediente(db, actor, expedienteId, access);
     const row = await db.expedienteArtefactoPendiente.findFirst({ where: { id: pendingId, organization_id: actor.organizationId, expediente_id: expedienteId, en_alcance: true } });
     if (!row) throw new ExpedienteArtifactsError(403, 'EXP006_PENDING_ACCESS_DENIED', 'No tienes acceso a este pendiente.');
     return row;
   }
 
-  private async assertExpediente(db: Db, actor: Exp006Actor, expedienteId: string) {
-    const record = await db.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor as any) }, select: { id: true, notaria_id: true, datos_operacion: true, estatus: true } });
+  private async assertExpediente(db: Db, actor: Exp006Actor, expedienteId: string, access: 'read' | 'write' = 'write') {
+    const record = await db.expediente.findFirst({ where: { id: expedienteId, ...(access === 'read' ? expedienteReadWhere(actor as any) : { organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor as any) }) }, select: { id: true, notaria_id: true, datos_operacion: true, estatus: true } });
     if (!record) throw new ExpedienteArtifactsError(403, 'EXP006_EXPEDIENTE_ACCESS_DENIED', 'No tienes acceso a este expediente.');
     return record;
   }

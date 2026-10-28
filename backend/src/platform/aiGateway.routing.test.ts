@@ -177,4 +177,21 @@ describe('AI Gateway versioned routing contract', () => {
     })).rejects.toMatchObject({ code: 'AI_IDEMPOTENCY_CONTEXT_REQUIRED' });
     expect(provider.execute).not.toHaveBeenCalled();
   });
+
+  it('fails closed in production unless external AI is explicitly enabled', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('AI_EXTERNAL_ENABLED', 'false');
+    const db = fakeDb();
+    const provider = adapter('QA_PROVIDER', 'should-not-run');
+    try {
+      await expect(new AiGateway(db, [provider]).execute({
+        actor, operationCode: 'QA_STANDARD', billingClass: 'PLATFORM_INCLUDED',
+        idempotencyKey: 'external-disabled', traceId: 'external-disabled-trace', payload: {},
+      })).rejects.toMatchObject({ code: 'AI_EXTERNAL_DISABLED', status: 503 });
+      expect(provider.execute).not.toHaveBeenCalled();
+      expect(db.aiOperationCatalog.findUnique).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });

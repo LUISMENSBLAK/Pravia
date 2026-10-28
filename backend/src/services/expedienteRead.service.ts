@@ -1,7 +1,7 @@
 import { Prisma, PrismaClient, type ExpedienteEstatus } from '@prisma/client';
 import type { Request } from 'express';
 import { activeOrganizationMembershipWhere, organizationMembershipRoleSelect, usersWithEffectiveMembershipRoles } from '../auth/organizationMembership';
-import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { expedienteReadWhere } from '../middleware/auth.middleware';
 import { resolveCurrentOperationalActivity } from '../domain/expedienteOperationalStage';
 import {
   complianceAttention,
@@ -18,7 +18,7 @@ const partyName = (link: any) => link?.compareciente?.personaFisica?.nombre_comp
   || link?.compareciente?.nombre_busqueda
   || null;
 
-const scopeWhere = (user: AuthUser): Prisma.ExpedienteWhereInput => ({ archived_at: null, ...expedienteAccessWhere(user) });
+const scopeWhere = (user: AuthUser): Prisma.ExpedienteWhereInput => expedienteReadWhere(user);
 
 export class ExpedienteReadService {
   constructor(private readonly prisma: PrismaClient) {}

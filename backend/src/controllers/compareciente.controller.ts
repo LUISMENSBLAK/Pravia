@@ -20,7 +20,7 @@ export class ComparecienteController {
         nombre: nombre as string,
         correo: correo as string,
         telefono: telefono as string,
-        accessWhere: req.user ? comparecienteObjectWhere(req.user) : undefined,
+        accessWhere: req.user ? { organization_id: req.user.organizationId, ...comparecienteObjectWhere(req.user) } : undefined,
       });
       return res.status(200).json({ success: true, data: resultados });
     } catch (err: any) {
@@ -38,7 +38,7 @@ export class ComparecienteController {
         limit: pageSize ? parseInt(pageSize as string, 10) : limit ? parseInt(limit as string, 10) : 25,
         actualizacion: actualizacion as any,
         sort: sort as string,
-        accessWhere: req.user ? comparecienteObjectWhere(req.user) : undefined,
+        accessWhere: req.user ? { organization_id: req.user.organizationId, ...comparecienteObjectWhere(req.user) } : undefined,
       });
       return res.status(200).json({ success: true, ...result });
     } catch (err: any) {
@@ -83,6 +83,7 @@ export class ComparecienteController {
       const data = await comparecienteService.actualizarMaster(req.params.id, req.body, actor.id);
       return res.status(200).json({ success: true, data });
     } catch (err: any) {
+      if (err.code === 'COMPARECIENTE_VERSION_CONFLICT') return res.status(409).json({ success: false, code: err.code, error: err.message });
       return res.status(400).json({ success: false, error: err.message || 'No pudimos actualizar este compareciente.' });
     }
   }

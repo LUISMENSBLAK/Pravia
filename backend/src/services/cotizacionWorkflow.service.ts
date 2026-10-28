@@ -18,7 +18,7 @@ import {
   quoteLegacyProjection,
   quoteStageLabel,
 } from '../domain/cotizacionContract';
-import { cotizacionObjectWhere } from './objectAccess.service';
+import { cotizacionObjectWhere, cotizacionReadWhere } from './objectAccess.service';
 import { createQuoteOperationalSnapshotInTransaction } from './quoteBudget.service';
 
 type Actor = NonNullable<Request['user']>;
@@ -111,6 +111,7 @@ export async function initializeQuoteContractInTransaction(tx: Prisma.Transactio
 
 const readInclude = {
   transicion_actual: true,
+  collaborators: { where: { active: true }, select: { user_id: true } },
   prospecto: { select: { id: true, nombre: true } },
   expediente: { select: { id: true, numero_pravia: true } },
   creada_por: { select: { id: true, nombre: true, apellido: true } },
@@ -125,9 +126,10 @@ export class CotizacionWorkflowService {
     await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:cot001:${organizationId}:${id}`}))`);
   }
 
-  private async quote(db: Db, actor: Actor, id: string) {
+  private async quote(db: Db, actor: Actor, id: string, access: 'read' | 'write' = 'read') {
     permission(actor, 'cotizaciones.read');
-    const quote = await db.cotizacion.findFirst({ where: { id, ...cotizacionObjectWhere(actor) }, include: readInclude });
+    const quote = await db.cotizacion.findFirst({ where: { id,
+      ...(access === 'write' ? cotizacionObjectWhere(actor) : cotizacionReadWhere(actor)) }, include: readInclude });
     if (!quote) return failQuote(404, 'COT001_NOT_FOUND', 'No se encontró la cotización o no tienes acceso.');
     return quote;
   }
@@ -145,7 +147,8 @@ export class CotizacionWorkflowService {
     const suspended = events.find((event) => event.accion === 'SUSPENDER');
     const cancelled = events.find((event) => event.accion === 'CANCELAR');
     const converted = events.find((event) => event.accion === 'CONVERTIR');
-    const writable = actor.permissions.includes('cotizaciones.write');
+    const writable = actor.permissions.includes('cotizaciones.write') &&
+      (['DIRECCION', 'ADMINISTRACION'].includes(actor.rol) || quote.user_id === actor.id || quote.collaborators.some((item) => item.user_id === actor.id));
     const actions = writable ? allowedQuoteActions(quote.etapa_contractual).filter((action) => action !== 'CONVERTIR' || actor.permissions.includes('expedientes.write')) : [];
     return {
       stage: quote.etapa_contractual,
@@ -203,7 +206,7 @@ export class CotizacionWorkflowService {
     const hash = quoteHash({ ...raw, actor: actor.id });
     return this.prisma.$transaction(async (tx) => {
       await this.lock(tx, actor.organizationId, id);
-      const quote = await this.quote(tx, actor, id);
+      const quote = await this.quote(tx, actor, id, 'write');
       if (!quote.etapa_contractual) failQuote(409, 'COT001_LEGACY_COMPATIBILITY_ONLY', 'Esta cotización histórica conserva su flujo original y no puede adoptar hitos contractuales sin revisión.');
       const existing = await tx.cotizacionTransicion.findFirst({ where: { organization_id: actor.organizationId, cotizacion_id: id, idempotency_key: key } });
       if (existing) { assertQuoteReplay(existing, hash, actor.id); return { idempotent: true, eventId: existing.id }; }

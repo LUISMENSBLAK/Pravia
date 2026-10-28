@@ -64,19 +64,19 @@ export const extractPresupuestoData = async (pdfBuffer: Buffer, filename = 'Docu
 
   try {
     // 1. Digital text extraction with PDFParse
+    const { PDFParse } = require('pdf-parse');
+    const instance = new PDFParse({ data: pdfBuffer });
     try {
-      const { PDFParse } = require('pdf-parse');
-      const instance = new PDFParse({ data: pdfBuffer });
       await instance.load();
       const res = await instance.getText();
       rawText = res?.text || '';
       numPages = res?.total || 1;
-    } catch (parseErr: any) {
-      console.warn('pdf-parse warning, fallback to raw buffer toString:', parseErr.message);
-      rawText = pdfBuffer.toString('utf8');
+    } finally {
+      await instance.destroy();
     }
-
-    console.log(`=== STRICT BOUNDED EXTRACTION [${filename}] (Text Length: ${rawText.length}, Pages: ${numPages}) ===`);
+    if (!rawText.replace(/--\s*\d+\s+(?:of|de)\s+\d+\s*--/gi, '').trim()) {
+      throw new Error('El PDF no contiene texto utilizable; requiere OCR o revisión manual.');
+    }
 
     const allLines = rawText.split(/[\r\n\t]+/).map(l => l.trim()).filter(Boolean);
 
@@ -210,16 +210,16 @@ export const extractPresupuestoData = async (pdfBuffer: Buffer, filename = 'Docu
       }
     };
   } catch (error: any) {
-    console.error('Error in extractPresupuestoData:', error);
+    console.error('Error in extractPresupuestoData:', error instanceof Error ? error.name : 'UNKNOWN_ERROR');
     return {
       rubros: [],
       totales: { impuestos_derechos: 0, honorarios: 0, gastos_terceros: 0, total_general: 0 },
       total_notaria: 0,
       total_pdf_declarado: 0,
       suma_valida: false,
-      mensaje_validacion: 'Error al procesar el archivo PDF: ' + error.message,
+      mensaje_validacion: 'No se pudo leer el PDF. Si es un escaneo o está dañado, revisa el archivo manualmente.',
       diferencia_monto: 0,
-      error: error.message
+      error: 'PDF_TEXT_UNAVAILABLE'
     };
   }
 };

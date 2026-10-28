@@ -31,7 +31,7 @@ export type DuplicateCandidate = {
 export type HealthDimension = { key: string; label: string; state: HealthState };
 
 export type ComparecienteDetail = ComparecienteListItem & {
-  nombre_busqueda: string; estatus: string; created_at: string; updated_at_material: string;
+  nombre_busqueda: string; estatus: string; created_at: string; updated_at_material: string; version: number;
   personaFisica?: Record<string, any> | null; personaMoral?: Record<string, any> | null;
   creado_por?: { id: string; nombre: string; apellido?: string | null };
   domicilios: Array<Record<string, any>>; contactos: Array<Record<string, any>>; identificaciones: Array<Record<string, any>>;

@@ -27,6 +27,7 @@ export interface ConvertCotizacionInput {
   actorSessionId?: string;
   actor?: Actor;
   abogadoId?: string;
+  folioSeries?: string | null;
   tipoActoId?: string;
   correlationId?: string;
   expectedVersion?: unknown;
@@ -80,6 +81,7 @@ export class CotizacionConversionService {
         cotizacionId: input.cotizacionId,
         tipoActoId: input.tipoActoId ?? null,
         abogadoId: input.abogadoId ?? null,
+        folioSeries: input.folioSeries ?? null,
         expectedVersion: input.expectedVersion,
         effectiveAt: input.effectiveAt,
         actor: input.actorUserId,
@@ -218,6 +220,7 @@ export class CotizacionConversionService {
         clienteAlias: cotizacion.prospecto?.nombre || 'Cliente',
         notariaId: cotizacion.notaria_id,
         cotizacionId: cotizacion.id,
+        folioSeries: input.folioSeries,
         comparecienteId: !canonical || input.solicitanteCaracterPorActo![cotizacion.actos.find((item) => item.tipo_acto_id === tipoActo.id)!.id]
           ? cotizacion.solicitante_formal?.id || null : null,
         caracterId: canonical ? input.solicitanteCaracterPorActo![cotizacion.actos.find((item) => item.tipo_acto_id === tipoActo.id)!.id] : null,

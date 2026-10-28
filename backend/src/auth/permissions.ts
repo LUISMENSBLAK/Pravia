@@ -81,7 +81,7 @@ export const ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   ],
   FINANCIERO: [
     'mi_dia.read',
-    'documentos.read',
+    'expedientes.read', 'documentos.read', 'documentos.write',
     'finanzas.read', 'finanzas.write', 'finanzas.validate',
     'reportes.read', 'reportes.global.read', 'reportes.financial.read',
     'ia.read', 'ia.execute',

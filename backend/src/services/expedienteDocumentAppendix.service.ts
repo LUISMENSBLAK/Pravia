@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'crypto';
 import path from 'path';
 import JSZip from 'jszip';
 import { ExpedienteDocumentoOrigen, Prisma, PrismaClient, TipoDocumentoCompareciente } from '@prisma/client';
-import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { expedienteAccessWhere, expedienteReadWhere } from '../middleware/auth.middleware';
 import { deleteFile, downloadFile, fileExists, getSignedUrl, uploadFile } from './supabase.service';
 import { safeDocumentPath, type IntakeFile } from './documentArchiveIntake.service';
 
@@ -107,18 +107,18 @@ export class ExpedienteDocumentAppendixService {
   constructor(private readonly prisma: PrismaClient) {}
 
   async read(actor: Actor, expedienteId: string) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const snapshot = await this.prisma.expedienteDocumentoSnapshot.findFirst({
       where: { organization_id: actor.organizationId, expediente_id: expedienteId },
       include: { items: { orderBy: [{ origen: 'asc' }, { nombre_snapshot: 'asc' }] } },
     });
     if (snapshot) return this.snapshotResponse(snapshot);
-    const candidates = await this.buildCandidates(this.prisma, actor, expedienteId);
+    const candidates = await this.buildCandidates(this.prisma, actor, expedienteId, 'read');
     return this.liveResponse(candidates, actor, expedienteId);
   }
 
   async importPreview(actor: Actor, expedienteId: string, origin: 'COMPARECIENTE' | 'PREDIO') {
-    const expediente = await this.assertExpediente(this.prisma, actor, expedienteId);
+    const expediente = await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     if (frozenStatuses.has(expediente.estatus)) throw new ExpedienteDocumentAppendixError(409, 'EXP004_APPENDIX_FROZEN', 'El apéndice quedó congelado al firmar y ya no admite importaciones.');
     const sources = (await this.discoverCurrentSources(this.prisma, actor, expedienteId, origin)).filter((source) => source.document);
     const keys = sources.map((source) => source.sourceKey);
@@ -318,7 +318,7 @@ export class ExpedienteDocumentAppendixService {
   }
 
   async folderDestinations(actor: Actor, expedienteId: string) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const [parties, properties] = await Promise.all([
       this.prisma.expedienteCompareciente.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, archived_at: null, estatus: 'ACTIVO' }, select: { compareciente_id: true, compareciente: { select: { nombre_busqueda: true } } } }),
       this.prisma.expedientePredio.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO' }, select: { predio_id: true, predio: { select: { apodo: true, ubicacion_texto: true, clave_catastral: true, folio_real: true } } } }),
@@ -651,7 +651,7 @@ export class ExpedienteDocumentAppendixService {
   }
 
   async signedUrl(actor: Actor, expedienteId: string, itemId: string) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const snapshot = await this.prisma.expedienteDocumentoSnapshot.findFirst({
       where: { organization_id: actor.organizationId, expediente_id: expedienteId }, select: { id: true },
     });
@@ -674,7 +674,7 @@ export class ExpedienteDocumentAppendixService {
   }
 
   async file(actor: Actor, expedienteId: string, itemId: string) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const snapshot = await this.prisma.expedienteDocumentoSnapshot.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId } });
     const item = snapshot
       ? await this.prisma.expedienteDocumentoSnapshotItem.findFirst({ where: { id: itemId, organization_id: actor.organizationId, snapshot_id: snapshot.id }, select: { storage_key_snapshot: true, nombre_snapshot: true, mime_type_snapshot: true } })
@@ -863,18 +863,18 @@ export class ExpedienteDocumentAppendixService {
 
   private safeName(value: string) { return value.replace(/[\\/:*?"<>|]/g, '-').replace(/\.\./g, '-').trim() || 'sin-nombre'; }
 
-  private async assertExpediente(db: Db, actor: Actor, expedienteId: string) {
+  private async assertExpediente(db: Db, actor: Actor, expedienteId: string, access: 'read' | 'write' = 'write') {
     const expediente = await db.expediente.findFirst({
-      where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor as any) },
+      where: { id: expedienteId, ...(access === 'read' ? expedienteReadWhere(actor as any) : { organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor as any) }) },
       select: { id: true, estatus: true, version: true },
     });
     if (!expediente) throw new ExpedienteDocumentAppendixError(403, 'EXPEDIENTE_ACCESS_DENIED', 'No tienes acceso a este expediente.');
     return expediente;
   }
 
-  private async buildCandidates(db: Db, actor: Actor, expedienteId: string): Promise<Candidate[]> {
+  private async buildCandidates(db: Db, actor: Actor, expedienteId: string, access: 'read' | 'write' = 'write'): Promise<Candidate[]> {
     const expediente = await db.expediente.findFirst({
-      where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor as any) },
+      where: { id: expedienteId, ...(access === 'read' ? expedienteReadWhere(actor as any) : { organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor as any) }) },
       select: {
         id: true, cotizacion_id: true,
         cotizacion: { select: { id: true, prospecto_id: true } },
@@ -987,7 +987,7 @@ export class ExpedienteDocumentAppendixService {
       mimeType: link.documento.mime_type,
     };
 
-    const candidate = (await this.buildCandidates(this.prisma, actor, expedienteId)).find((item) =>
+    const candidate = (await this.buildCandidates(this.prisma, actor, expedienteId, 'read')).find((item) =>
       item.sourceKey === itemId || item.expedienteDocumentoId === itemId || item.document?.id === itemId,
     );
     if (!candidate) {

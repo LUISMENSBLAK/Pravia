@@ -15,7 +15,7 @@ function fixture(authorized:boolean,crossTenant=false){
  return {db,person,root};
 }
 describe('H4 F004 canonical read authority',()=>{
- it('denies the whole projection when a same-tenant linked identity is outside canonical object scope',async()=>{const {db,person,root}=fixture(false);expect(matches(person,comparecienteObjectWhere(actor))).toBe(false);await expect(new BeneficialControllerService(db).current(actor,root.id)).rejects.toMatchObject({code:'BC_LINKED_PARTY_NOT_FOUND'});});
+ it('allows a same-tenant linked identity created by a colleague',async()=>{const {db,person,root}=fixture(false);expect(matches(person,comparecienteObjectWhere(actor))).toBe(true);const result:any=await new BeneficialControllerService(db).current(actor,root.id);expect(result.nodes[1].canonical_label).toBe(person.nombre_busqueda);});
  it('shows an authorized identity in both current and expanded projections',async()=>{const {db,person,root}=fixture(true);expect(matches(person,comparecienteObjectWhere(actor))).toBe(true);const result:any=await new BeneficialControllerService(db).current(actor,root.id);expect(result.nodes[1].canonical_label).toBe(person.nombre_busqueda);expect(result.expanded.nodes.find((n:any)=>n.id===id(7)).canonical_label).toBe(person.nombre_busqueda);});
  it('rejects a cross-tenant valid linked ID even when creator matches',async()=>{const {db,root}=fixture(true,true);await expect(new BeneficialControllerService(db).current(actor,root.id)).rejects.toMatchObject({code:'BC_LINKED_PARTY_NOT_FOUND'});});
 });

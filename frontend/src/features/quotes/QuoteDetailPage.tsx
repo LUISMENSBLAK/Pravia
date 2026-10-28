@@ -3,6 +3,7 @@ import { ArrowLeft, Check, Download, Eye, FilePlus2, FileText, LoaderCircle, Sen
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { DocumentViewer } from '../../components/documents/DocumentViewer';
 import { downloadPrivateUrl } from '../../components/documents/documentDownload';
+import { RecordCollaborators } from '../../components/collaboration/RecordCollaborators';
 import { useAuth } from '../auth/AuthProvider';
 import { ConvertQuoteDialog } from './components/ConvertQuoteDialog';
 import { QuoteActivity } from './components/QuoteActivity';
@@ -33,10 +34,12 @@ export function QuoteDetailPage() {
   const [contractAction, setContractAction] = useState<ContractDialogAction | null>(null);
   const [convert, setConvert] = useState(false);
   const [viewer, setViewer] = useState<{ document: QuoteDocument; url?: string; loading?: boolean; error?: string; source?: boolean } | null>(null);
-  const canWrite = user?.permissions?.includes('cotizaciones.write') ?? false;
-  const canConvert = user?.permissions?.includes('expedientes.write') ?? false;
+  const canWrite = Boolean(user?.permissions?.includes('cotizaciones.write') && quote &&
+    (['DIRECCION', 'ADMINISTRACION'].includes(user.role ?? '') || quote.user_id === user.id ||
+      quote.collaborators?.some((item) => item.user_id === user.id)));
+  const canConvert = canWrite && (user?.permissions?.includes('expedientes.write') ?? false);
   const canReadDocuments = user?.permissions?.includes('documentos.read') ?? false;
-  const canDeleteDocuments = user?.permissions?.includes('documentos.unlink') ?? false;
+  const canDeleteDocuments = canWrite && (user?.permissions?.includes('documentos.unlink') ?? false);
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try { setQuote(await quotesService.getDetail(id, signal)); setStatus('ready'); }
@@ -47,7 +50,7 @@ export function QuoteDetailPage() {
   useEffect(() => {
     const returned = location.state as { cfg001CreatedActId?: string; cfg001CreatedActName?: string } | null;
     const actId = returned?.cfg001CreatedActId;
-    if (!actId || status !== 'ready' || processedReturnedAct.current === actId) return;
+    if (!actId || status !== 'ready' || !canWrite || processedReturnedAct.current === actId) return;
     processedReturnedAct.current = actId;
     void quotesService.attachAct(id, actId)
       .then(async () => { await load(); notify(`${returned?.cfg001CreatedActName || 'Acto'} quedó seleccionado en la cotización.`); })
@@ -155,6 +158,7 @@ export function QuoteDetailPage() {
         <QuoteActivity quote={quote} />
       </main>
       <aside>
+        <RecordCollaborators kind="cotizacion" recordId={quote.id} canManage={user?.role === 'DIRECCION' || user?.role === 'ADMINISTRACION'} />
         <section className={styles.detailSection}><header><div><h2>Actos de la cotización</h2><p>Fuente canónica compartida con Prospectos y Expedientes.</p></div></header>{quote.actos?.length ? <ul className={styles.documentList}>{quote.actos.map((item) => <li key={item.id}><span><strong>{item.tipo_acto.nombre}</strong><small>{item.tipo_acto.codigo_catalogo || 'Acto de esta Notaría'}</small></span></li>)}</ul> : <p className={styles.sectionEmpty}>Sin actos vinculados.</p>}{canonical && canWrite && ['BORRADOR', 'EN_ELABORACION'].includes(quote.workflow?.stage || '') && <Link className={styles.secondaryButton} to={`/configuracion/actos-tiempos?returnTo=${encodeURIComponent(`/cotizaciones/${quote.id}`)}`}>+ Crear nuevo acto en Actos y tiempos</Link>}</section>
         <section className={styles.detailSection}><header><div><h2>Acciones de negocio</h2><p>{canonical ? 'Acciones contractuales disponibles para el hito actual.' : 'Compatibilidad operativa del registro histórico.'}</p></div></header><div className={styles.businessActions}>
           {canonical && canWrite && actions.includes('RECHAZAR') && <button type="button" className={styles.dangerAction} onClick={() => setContractAction('RECHAZAR')}><X size={17} />Registrar rechazo</button>}

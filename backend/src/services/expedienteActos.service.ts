@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import { Prisma, PrismaClient, type ExpedienteActoOrigen } from '@prisma/client';
 import type { Request } from 'express';
-import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { expedienteAccessWhere, expedienteReadWhere } from '../middleware/auth.middleware';
 import { ExpedienteArtifactsService } from './expedienteArtifacts.service';
 import { ExpedienteSeguimientoService } from './expedienteSeguimiento.service';
 
@@ -34,7 +34,8 @@ export class ExpedienteActosService {
   constructor(private readonly prisma: PrismaClient) {}
 
   async list(actor: Actor, expedienteId: string) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    if (!actor.permissions.includes('expedientes.read')) throw new ExpedienteActoError(403, 'EXPEDIENTE_ACT_READ_DENIED', 'No tienes permiso para consultar los actos.');
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const data = await this.prisma.expedienteActo.findMany({
       where: { organization_id: actor.organizationId, expediente_id: expedienteId },
       include: activeActInclude,
@@ -216,9 +217,9 @@ export class ExpedienteActosService {
     } });
   }
 
-  private async assertExpediente(db: Db, actor: Actor, expedienteId: string) {
+  private async assertExpediente(db: Db, actor: Actor, expedienteId: string, access: 'read' | 'write' = 'write') {
     const record = await db.expediente.findFirst({
-      where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) },
+      where: { id: expedienteId, ...(access === 'read' ? expedienteReadWhere(actor) : { organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) }) },
       select: { id: true },
     });
     if (!record) throw new ExpedienteActoError(403, 'EXPEDIENTE_ACCESS_DENIED', 'No tienes acceso a este expediente.');

@@ -68,7 +68,8 @@ export type Prospect = {
   prioridad: ProspectPriority;
   /** El nombre `estado` se conserva por compatibilidad con la API/DB; representa el subestado detallado. */
   estado: ProspectSubstatus;
-  user_id?: string;
+  user_id?: string | null;
+  collaborators?: Array<{ user_id: string; assigned_at?: string }>;
   created_at: string;
   updated_at: string;
   atendido_por?: { id?: string; nombre?: string | null } | null;
@@ -124,7 +125,7 @@ export type ProspectMutationInput = {
   total_estimado?: number | string | null;
 };
 
-export type NewProspectInput = { nombre: string };
+export type NewProspectInput = { nombre: string; sinAsignar?: boolean };
 export type UpdateProspectInput = Partial<ProspectMutationInput> & { expectedVersion?: number; responsable_id?: string };
 
 export type ProspectWorkflowAction = 'COMENZAR_INTEGRACION' | 'MARCAR_LISTO_PARA_COTIZAR' | 'CONVERTIR' | 'SUSPENDER' | 'CANCELAR' | 'REACTIVAR';

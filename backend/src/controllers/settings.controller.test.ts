@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const db = vi.hoisted(() => ({
-  user: { findUnique: vi.fn(), count: vi.fn() }, organization: { findUnique: vi.fn(), update: vi.fn() }, organizationMembership: { count: vi.fn() }, userPreference: { upsert: vi.fn() },
+  user: { findUnique: vi.fn(), count: vi.fn() }, organization: { findUnique: vi.fn(), update: vi.fn() }, organizationMembership: { count: vi.fn() }, userPreference: { upsert: vi.fn(), createMany: vi.fn(), findUniqueOrThrow: vi.fn() },
   authSession: { findMany: vi.fn(), findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn(), count: vi.fn() },
   notification: { count: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() }, notaria: { findFirst: vi.fn(), findMany: vi.fn() },
   auditLog: { create: vi.fn(), findMany: vi.fn(), count: vi.fn() }, expediente: { findMany: vi.fn() }, compareciente: { findMany: vi.fn() },
@@ -54,6 +54,17 @@ describe('Configuración y acceso', () => {
   it('rechaza preferencias fuera del catálogo persistible', async () => {
     const res = response(); await SettingsController.updatePreferences({ user, body: { theme: 'DARK' } } as any, res);
     expect(res.status).toHaveBeenCalledWith(400); expect(db.userPreference.upsert).not.toHaveBeenCalled();
+  });
+
+  it('inicializa preferencias sin upsert de lectura susceptible a carrera entre sesiones', async () => {
+    const preferences = { user_id: user.id, notifications_enabled: true };
+    db.userPreference.createMany.mockResolvedValue({ count: 0 });
+    db.userPreference.findUniqueOrThrow.mockResolvedValue(preferences);
+    const res = response(); await SettingsController.preferences({ user } as any, res);
+    expect(db.userPreference.createMany).toHaveBeenCalledWith({ data: [{ user_id: user.id }], skipDuplicates: true });
+    expect(db.userPreference.findUniqueOrThrow).toHaveBeenCalledWith(expect.objectContaining({ where: { user_id: user.id } }));
+    expect(db.userPreference.upsert).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith({ preferences });
   });
 
   it('muestra sesiones con IP aproximada y marca la sesión actual', async () => {

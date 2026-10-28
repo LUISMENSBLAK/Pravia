@@ -6,43 +6,50 @@ type AuthUser = NonNullable<Request['user']>;
 
 const hasGlobalRead = (user: AuthUser) => ['DIRECCION', 'ADMINISTRACION', 'CONSULTA'].includes(user.rol);
 const hasGlobalFinanceRead = (user: AuthUser) => hasGlobalRead(user) || user.rol === 'FINANCIERO';
-const canOperateCommercialCatalog = (user: AuthUser) => user.rol === 'RECEPCION';
+const hasOrganizationWrite = (user: AuthUser) => ['DIRECCION', 'ADMINISTRACION'].includes(user.rol);
+
+// Shared records are readable by members with the module's read permission.
+// Assignment remains a separate write concern, not a visibility filter.
+export const prospectoReadWhere = (user: AuthUser) => ({ organization_id: user.organizationId });
+export const cotizacionReadWhere = (user: AuthUser) => ({ organization_id: user.organizationId });
 
 export const prospectoObjectWhere = (user: AuthUser) =>
   ({
     organization_id: user.organizationId,
-    ...(hasGlobalRead(user) || canOperateCommercialCatalog(user) ? {} : { user_id: user.id }),
+    ...(hasOrganizationWrite(user) ? {} : { OR: [
+      { user_id: user.id },
+      { collaborators: { some: { organization_id: user.organizationId, user_id: user.id, active: true } } },
+    ] }),
   });
 
 export const cotizacionObjectWhere = (user: AuthUser) =>
   ({
     organization_id: user.organizationId,
-    ...(hasGlobalRead(user) || canOperateCommercialCatalog(user) ? {} : { user_id: user.id }),
+    ...(hasOrganizationWrite(user) ? {} : { OR: [
+      { user_id: user.id },
+      { collaborators: { some: { organization_id: user.organizationId, user_id: user.id, active: true } } },
+    ] }),
   });
 
 export const comparecienteObjectWhere = (user: AuthUser) => {
-  if (hasGlobalRead(user)) return {};
-  const expedienteScope = expedienteAccessWhere(user);
-  return {
-    OR: [
-      { creado_por_id: user.id },
-      { expedientes: { some: { expediente: expedienteScope } } },
-      { representacionesComoRepresentante: { some: { expediente: expedienteScope } } },
-      { representacionesComoRepresentado: { some: { expediente: expedienteScope } } },
-    ],
-  };
+  void user;
+  return {};
 };
 
 export const predioObjectWhere = (user: AuthUser) => {
-  if (hasGlobalRead(user)) return {};
-  const expedienteScope = expedienteAccessWhere(user);
-  return {
-    OR: [
-      { created_by: user.id },
-      { expedientes: { some: { estatus: 'ACTIVO' as const, expediente: expedienteScope } } },
-    ],
-  };
+  void user;
+  return {};
 };
+
+export async function canReadProspecto(user: AuthUser, id: string) {
+  if (!user.permissions.includes('prospectos.read')) return false;
+  return Boolean(await prisma.prospecto.findFirst({ where: { id, archived_at: null, ...prospectoReadWhere(user) }, select: { id: true } }));
+}
+
+export async function canReadCotizacion(user: AuthUser, id: string) {
+  if (!user.permissions.includes('cotizaciones.read')) return false;
+  return Boolean(await prisma.cotizacion.findFirst({ where: { id, ...cotizacionReadWhere(user) }, select: { id: true } }));
+}
 
 export async function canAccessProspecto(user: AuthUser, id: string) {
   return Boolean(await prisma.prospecto.findFirst({ where: { id, archived_at: null, ...prospectoObjectWhere(user) }, select: { id: true } }));
@@ -100,21 +107,22 @@ export async function canAccessDocumento(user: AuthUser, id: string) {
   const movementIds = document.movimientoVinculos.map((link) => link.movimiento_id);
   const predioIds = document.predioVinculos.map((link) => link.predio_id);
 
-  if ((await Promise.all(prospectIds.map((recordId) => canAccessProspecto(user, recordId)))).some(Boolean)) return true;
-  if ((await Promise.all(quoteIds.map((recordId) => canAccessCotizacion(user, recordId)))).some(Boolean)) return true;
-  if ((await Promise.all(comparecienteIds.map((recordId) => canAccessCompareciente(user, recordId)))).some(Boolean)) return true;
-  if (expedienteIds.length) {
+  if ((await Promise.all(prospectIds.map((recordId) => canReadProspecto(user, recordId)))).some(Boolean)) return true;
+  if ((await Promise.all(quoteIds.map((recordId) => canReadCotizacion(user, recordId)))).some(Boolean)) return true;
+  if (user.permissions.includes('comparecientes.read') && (await Promise.all(comparecienteIds.map((recordId) => canAccessCompareciente(user, recordId)))).some(Boolean)) return true;
+  if (expedienteIds.length && user.permissions.includes('expedientes.read')) {
     const accessible = await prisma.expediente.findFirst({
-      where: { id: { in: expedienteIds }, archived_at: null, ...expedienteAccessWhere(user) },
+      where: { id: { in: expedienteIds }, organization_id: user.organizationId, archived_at: null },
       select: { id: true },
     });
     if (accessible) return true;
   }
-  if ((await Promise.all(predioIds.map((recordId) => canAccessPredio(user, recordId)))).some(Boolean)) return true;
+  if (user.permissions.includes('expedientes.read') && (await Promise.all(predioIds.map((recordId) => canAccessPredio(user, recordId)))).some(Boolean)) return true;
   if (movementIds.length && user.permissions.includes('finanzas.read') && user.permissions.includes('documentos.read')) {
     const accessible = await prisma.movimientoFinanciero.findFirst({
       where: {
         id: { in: movementIds },
+        organization_id: user.organizationId,
         ...(hasGlobalFinanceRead(user) ? {} : {
           OR: [
             { expediente_id: null },
@@ -127,6 +135,17 @@ export async function canAccessDocumento(user: AuthUser, id: string) {
     if (accessible) return true;
   }
   return false;
+}
+
+// The generic Documento mutation endpoints only alter a direct Cotización link.
+// Reading a colleague's document must not authorize unlinking that quote.
+export async function canModifyDocumento(user: AuthUser, id: string) {
+  if (!user.permissions.includes('documentos.unlink')) return false;
+  const document = await prisma.documento.findFirst({
+    where: { id, organization_id: user.organizationId },
+    select: { cotizacion_id: true },
+  });
+  return Boolean(document?.cotizacion_id && await canAccessCotizacion(user, document.cotizacion_id));
 }
 
 export async function canAttachDocumento(user: AuthUser, targets: {
@@ -152,6 +171,7 @@ export async function canAttachDocumento(user: AuthUser, targets: {
     const record = await prisma.movimientoFinanciero.findFirst({
       where: {
         id: targets.movimiento_id,
+        organization_id: user.organizationId,
         ...(hasGlobalFinanceRead(user) ? {} : {
           OR: [
             { expediente_id: null },
@@ -170,7 +190,7 @@ export async function canAttachDocumento(user: AuthUser, targets: {
 export async function canAccessAltaSession(user: AuthUser, sessionId: string) {
   const elevated = ['DIRECCION', 'ADMINISTRACION'].includes(user.rol);
   return Boolean(await prisma.comparecienteAltaSession.findFirst({
-    where: { id: sessionId, archived_at: null, ...(elevated ? {} : { usuario_id: user.id }) },
+    where: { id: sessionId, organization_id: user.organizationId, archived_at: null, ...(elevated ? {} : { usuario_id: user.id }) },
     select: { id: true },
   }));
 }
@@ -178,7 +198,7 @@ export async function canAccessAltaSession(user: AuthUser, sessionId: string) {
 export async function canAccessAltaCarga(user: AuthUser, sessionId: string, cargaId: string) {
   if (!(await canAccessAltaSession(user, sessionId))) return false;
   return Boolean(await prisma.cargaTemporalDocumento.findFirst({
-    where: { id: cargaId, alta_session_id: sessionId, archived_at: null },
+    where: { id: cargaId, alta_session_id: sessionId, organization_id: user.organizationId, archived_at: null },
     select: { id: true },
   }));
 }

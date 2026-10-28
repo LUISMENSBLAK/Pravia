@@ -9,7 +9,7 @@ import {
   validateCotizacionTransition,
 } from '../domain/cotizacionWorkflow';
 import { CotizacionConversionService } from '../services/cotizacionConversion.service';
-import { canAccessCotizacion, canAccessDocumento, canAccessProspecto, cotizacionObjectWhere } from '../services/objectAccess.service';
+import { canAccessCotizacion, canAccessDocumento, canAccessProspecto, cotizacionObjectWhere, cotizacionReadWhere } from '../services/objectAccess.service';
 import { buildQuoteAnalytics, parseQuoteListQuery, quoteAnalyticsRange } from '../domain/quoteQuery';
 import { recognizeAcceptedQuote } from '../services/honorarioRecognition.service';
 import { ProspectWorkflowService } from '../services/prospectWorkflow.service';
@@ -21,6 +21,7 @@ import { QuoteDocumentError, quoteDocumentService } from '../services/quoteDocum
 import { QuoteBudgetError, QuoteBudgetService } from '../services/quoteBudget.service';
 import { downloadFile } from '../services/supabase.service';
 import { ExpedienteOpeningError } from '../services/expedienteOpening.service';
+import { OrganizationFolioError } from '../services/organizationFolio.service';
 import { quoteAIProposalService, QuoteAIError } from '../services/quoteAIProposal.service';
 import { quoteEmailAIService, QuoteEmailAIError } from '../services/quoteEmailAI.service';
 
@@ -84,6 +85,7 @@ const quoteWorkflowError = (res: Response, error: unknown) => {
   if (error instanceof BudgetValidationError) return res.status(400).json({ error: error.message, code: error.code });
   if (error instanceof CotizacionBusinessError) return res.status(error.status).json({ error: error.message, code: error.code });
   if (error instanceof ExpedienteOpeningError) return res.status(error.status).json({ error: error.message, code: error.code });
+  if (error instanceof OrganizationFolioError) return res.status(error.status).json({ error: error.message, code: error.code });
   console.error('[QUOTE_WORKFLOW_ERROR]', error);
   return res.status(500).json({ error: 'No fue posible completar la operación.', code: 'COT001_OPERATION_FAILED' });
 };
@@ -114,7 +116,9 @@ const quoteWorkflowSummary = (quote: any, req: Request) => ({
   stageEnteredAt: quote.transicion_actual?.effective_at ?? null,
   knowledge: quoteKnowledge(quote.etapa_contractual),
   version: quote.version_operativa,
-  actions: req.user?.permissions.includes('cotizaciones.write')
+  actions: req.user?.permissions.includes('cotizaciones.write') &&
+    (['DIRECCION', 'ADMINISTRACION', 'RECEPCION'].includes(req.user.rol) || quote.user_id === req.user.id ||
+      quote.collaborators?.some((item: { user_id: string }) => item.user_id === req.user?.id))
     ? allowedQuoteActions(quote.etapa_contractual)
       .filter((action) => action !== 'CONVERTIR' || req.user?.permissions.includes('expedientes.write'))
     : [],
@@ -123,7 +127,7 @@ const quoteWorkflowSummary = (quote: any, req: Request) => ({
 export const getCotizaciones = async (req: Request, res: Response) => {
   try {
     const parsed = parseQuoteListQuery(req.query as Record<string, unknown>);
-    const scope: any = req.user ? cotizacionObjectWhere(req.user) : {};
+    const scope: any = req.user ? cotizacionReadWhere(req.user) : {};
     const where: any = { ...scope };
     if (parsed.states.length === 1) where.estado = parsed.states[0];
     else if (parsed.states.length > 1) where.estado = { in: parsed.states };
@@ -147,6 +151,7 @@ export const getCotizaciones = async (req: Request, res: Response) => {
         prospecto: { select: { nombre: true, tipo_acto: true } },
         notaria: { select: { nombre: true } },
         creada_por: { select: { nombre: true } },
+        collaborators: { where: { active: true }, select: { user_id: true } },
         versiones: { orderBy: { version: 'desc' }, ...(parsed.paginated ? { take: 1 } : {}) },
         pagos: {
           where: { categoria_ingreso: 'ANTICIPO_NOTARIA' },
@@ -223,7 +228,8 @@ export const getCotizacionById = async (req: Request, res: Response) => {
         documentos: true,
         pagos: true,
         expediente: true,
-        creada_por: { select: { nombre: true } }
+        creada_por: { select: { nombre: true } },
+        collaborators: { where: { active: true }, select: { user_id: true, assigned_at: true } },
       }
     });
 
@@ -789,9 +795,12 @@ export const validarAnticipo = async (req: Request, res: Response) => {
 export const convertToExpediente = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { tipo_acto_id, abogado_id, expectedVersion, idempotencyKey, confirm, effectiveAt, solicitante_caracter_por_acto, ...extra } = req.body ?? {};
+    const { tipo_acto_id, abogado_id, folio_serie, expectedVersion, idempotencyKey, confirm, effectiveAt, solicitante_caracter_por_acto, ...extra } = req.body ?? {};
     if (Object.keys(extra).length) {
       return res.status(400).json({ error: 'La solicitud contiene campos no permitidos.', code: 'COT001_FIELDS_DENIED' });
+    }
+    if (folio_serie !== undefined && folio_serie !== null && (typeof folio_serie !== 'string' || !/^[A-Z][A-Z0-9]{1,15}$/.test(folio_serie) || folio_serie === 'EXP')) {
+      return res.status(400).json({ error: 'Selecciona una serie de expediente válida.', code: 'EXPEDIENTE_SERIES_INVALID' });
     }
     if (!req.user || !(await canAccessCotizacion(req.user, id))) {
       return res.status(403).json({ error: 'No tienes acceso a esta cotización.', code: 'COTIZACION_ACCESS_DENIED' });
@@ -803,6 +812,7 @@ export const convertToExpediente = async (req: Request, res: Response) => {
       actorSessionId: req.user.sessionId,
       tipoActoId: tipo_acto_id,
       abogadoId: abogado_id,
+      folioSeries: folio_serie,
       correlationId: (req as any).correlationId,
       actor: req.user,
       expectedVersion,
@@ -818,6 +828,37 @@ export const convertToExpediente = async (req: Request, res: Response) => {
       anticipo_validado: result.validatedAdvanceTotal,
     });
   } catch (error: any) {
+    return quoteWorkflowError(res, error);
+  }
+};
+
+export const getExpedienteFolioSeries = async (req: Request, res: Response) => {
+  if (!req.user?.permissions.includes('expedientes.write')) return res.status(403).json({ code: 'PERMISSION_DENIED' });
+  const rows = await prisma.expedienteFolioSerie.findMany({ where: { organization_id: req.user.organizationId, active: true }, select: { code: true }, orderBy: { code: 'asc' } });
+  return res.json([{ code: '', label: 'Ordinaria' }, ...rows.map((row) => ({ code: row.code, label: row.code }))]);
+};
+
+export const createExpedienteFolioSeries = async (req: Request, res: Response) => {
+  if (!req.user?.permissions.includes('expedientes.write') || !['DIRECCION', 'ADMINISTRACION'].includes(req.user.rol)) {
+    return res.status(403).json({ code: 'PERMISSION_DENIED' });
+  }
+  const code = req.body?.code;
+  if (typeof code !== 'string' || !/^[A-Z][A-Z0-9]{1,15}$/.test(code) || code === 'EXP') {
+    return res.status(400).json({ code: 'EXPEDIENTE_SERIES_INVALID', error: 'La serie debe ser un código de 2 a 16 letras o números, iniciado por letra.' });
+  }
+  try {
+    const row = await prisma.$transaction(async (tx) => {
+      const created = await tx.expedienteFolioSerie.create({ data: { organization_id: req.user!.organizationId, code, created_by_id: req.user!.id } });
+      await tx.auditLog.create({ data: { organization_id: req.user!.organizationId, user_id: req.user!.id, session_id: req.user!.sessionId,
+        accion: 'EXPEDIENTE_FOLIO_SERIES_CREATED', entidad: 'ExpedienteFolioSerie', entidad_id: req.user!.organizationId,
+        valores_nuevos: { code } } });
+      return created;
+    });
+    return res.status(201).json({ code: row.code });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      return res.status(409).json({ code: 'EXPEDIENTE_SERIES_EXISTS', error: 'Esta serie ya existe en la organización.' });
+    }
     return quoteWorkflowError(res, error);
   }
 };
@@ -1069,7 +1110,7 @@ export const getCotizacionDocumentos = async (req: Request, res: Response) => {
 
 const cotizacionDocumento = async (req: Request, cotizacionId: string, documentoId: string) => {
   const quote = await prisma.cotizacion.findFirst({
-    where: { id: cotizacionId, ...cotizacionObjectWhere(req.user!) },
+    where: { id: cotizacionId, ...cotizacionReadWhere(req.user!) },
     select: { id: true, prospecto_id: true },
   });
   if (!quote) return null;

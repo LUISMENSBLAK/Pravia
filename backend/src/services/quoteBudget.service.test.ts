@@ -70,6 +70,17 @@ const input = {
 };
 
 describe('Corrección 002 v2 · presupuesto único editable', () => {
+  it('permite previsualizar a un colega del mismo tenant sin asignación, pero no le permite guardar', async () => {
+    const colleague = { ...actor(['cotizaciones.read', 'cotizaciones.write']), rol: 'ABOGADO' as const,
+      id: '20000000-0000-4000-8000-000000000099' };
+    const prisma: any = { cotizacion: { findFirst: vi.fn().mockResolvedValue({ id: quote().id }) }, $transaction: vi.fn() };
+    const service = new QuoteBudgetService(prisma);
+    await service.preview(colleague, quote().id, [{ concepto: 'Honorarios', categoria: 'HONORARIOS', importe: '100.00' }]);
+    expect(prisma.cotizacion.findFirst).toHaveBeenCalledWith({ where: {
+      id: quote().id, organization_id: colleague.organizationId,
+    }, select: { id: true } });
+  });
+
   it('edita una cotización en elaboración sin cambiar etapa ni crear una versión editable', async () => {
     const { tx, service } = harness();
     const result = await service.save(actor(), quote().id, input);

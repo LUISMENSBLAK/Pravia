@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 
-export const RESERVING_CFDI_DRAFT_STATES = new Set(['DRAFT', 'PREFACTURA']);
+export const RESERVING_CFDI_DRAFT_STATES = new Set(['DRAFT', 'BORRADOR', 'PREFACTURA']);
 export const ISSUED_CFDI_STATES = new Set(['VIGENTE', 'TIMBRADO', 'CANCELACION_SOLICITADA', 'SUSTITUIDO']);
 
 /** Single balance rule shared by CFDI V2 and its Mi Día reader. */

@@ -1,7 +1,7 @@
 import crypto, { createHash } from 'crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
-import { expedienteAccessWhere } from '../middleware/auth.middleware';
+import { expedienteAccessWhere, expedienteReadWhere } from '../middleware/auth.middleware';
 import { predioObjectWhere } from './objectAccess.service';
 import { PredioError } from './predios.service';
 import { ExpedienteArtifactsService } from './expedienteArtifacts.service';
@@ -31,7 +31,7 @@ export class ExpedientePrediosService {
   constructor(private readonly prisma: PrismaClient) {}
 
   async list(actor: Actor, expedienteId: string) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const data = await this.prisma.expedientePredio.findMany({
       where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO' }, include: relationInclude, orderBy: { created_at: 'asc' },
     });
@@ -39,7 +39,7 @@ export class ExpedientePrediosService {
   }
 
   async catalogs(actor: Actor, expedienteId: string) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const acts = await this.prisma.expedienteActo.findMany({
       where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', removed_at: null },
       include: { tipo_acto: { select: { id: true, nombre: true } } }, orderBy: { created_at: 'asc' },
@@ -48,7 +48,7 @@ export class ExpedientePrediosService {
   }
 
   async search(actor: Actor, expedienteId: string, search: string) {
-    await this.assertExpediente(this.prisma, actor, expedienteId);
+    await this.assertExpediente(this.prisma, actor, expedienteId, 'read');
     const q = clean(search, 120);
     const data = await this.prisma.predio.findMany({
       where: {
@@ -122,8 +122,10 @@ export class ExpedientePrediosService {
     }, { timeout: 20_000 });
   }
 
-  private async assertExpediente(db: Db, actor: Actor, expedienteId: string) {
-    const record = await db.expediente.findFirst({ where: { id: expedienteId, organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) }, select: { id: true } });
+  private async assertExpediente(db: Db, actor: Actor, expedienteId: string, access: 'read' | 'write' = 'write') {
+    if (access === 'read' && !actor.permissions.includes('expedientes.read')) throw new PredioError(403, 'EXPEDIENTE_READ_DENIED', 'No tienes permiso para consultar este expediente.');
+    const record = await db.expediente.findFirst({ where: { id: expedienteId,
+      ...(access === 'read' ? expedienteReadWhere(actor) : { organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor) }) }, select: { id: true } });
     if (!record) throw new PredioError(403, 'EXPEDIENTE_ACCESS_DENIED', 'No tienes acceso a este expediente.');
     return record;
   }

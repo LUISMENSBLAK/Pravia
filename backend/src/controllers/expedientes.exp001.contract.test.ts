@@ -69,7 +69,7 @@ describe('EXP-001 contrato de nacimiento de expediente', () => {
     prismaMock.cotizacion.findMany.mockResolvedValue([]);
     await getEligibleCotizacionesForExpediente({ user: user('ABOGADO') } as any, response());
     expect(prismaMock.cotizacion.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ user_id: 'user-1', expediente: null }),
+      where: expect.objectContaining({ organization_id: 'org-1', expediente: null, OR: expect.arrayContaining([{ user_id: 'user-1' }]) }),
     }));
   });
 
@@ -81,7 +81,7 @@ describe('EXP-001 contrato de nacimiento de expediente', () => {
       body: { cotizacion_id: 'quote-from-another-tenant' },
     } as any, res);
     expect(prismaMock.cotizacion.findFirst).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ id: 'quote-from-another-tenant', user_id: 'user-1' }),
+      where: expect.objectContaining({ id: 'quote-from-another-tenant', organization_id: 'org-1', OR: expect.arrayContaining([{ user_id: 'user-1' }]) }),
     }));
     expect(res.status).toHaveBeenCalledWith(403);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'COTIZACION_ACCESS_DENIED' }));

@@ -225,6 +225,9 @@ export function ComparecienteWorkspace() {
     missing: string[];
     errors: string[];
     alerts: string[];
+    curpDocuments: Array<{ document_id: string; status: string; fields: Record<string, { literal: string; normalized: string; page: number } | null>; warnings: string[] }>;
+    csfDocuments: Array<{ document_id: string; sha256: string; source: string; status: string;
+      regimenes_fiscales: Array<{ clave: string; descripcion: string }> }>;
     structure?: Record<string, any> | null;
   } | null>(null);
   const [extractionConflicts, setExtractionConflicts] = useState<
@@ -326,6 +329,7 @@ export function ComparecienteWorkspace() {
   const upload = async (
     files: File[],
     options: {
+      categoria: string;
       vigencia: "VIGENTE" | "HISTORICO";
       priorDocumentId?: string;
       replacement: "KEEP_BOTH" | "ARCHIVE_PRIOR";
@@ -341,6 +345,7 @@ export function ComparecienteWorkspace() {
           const response = await comparecientesService.uploadAssisted(
             session,
             file,
+            options.categoria,
           );
           uploaded.push({
             id: response.documento.id,
@@ -354,7 +359,7 @@ export function ComparecienteWorkspace() {
         setTemporaryDocuments((current) => [...current, ...uploaded]);
       } else {
         for (const file of files)
-          await comparecientesService.uploadDocument(id, file, "OTROS", {
+          await comparecientesService.uploadDocument(id, file, options.categoria, {
             vigencia: options.vigencia,
           });
         if (options.priorDocumentId && options.replacement === "ARCHIVE_PRIOR")
@@ -365,6 +370,7 @@ export function ComparecienteWorkspace() {
           );
         await load();
       }
+      setExtractionState("");
     } finally {
       setBusy(false);
     }
@@ -378,6 +384,7 @@ export function ComparecienteWorkspace() {
     try {
       await comparecientesService.classifyDocument(id, document.id, vigencia);
       await load();
+      setExtractionState("");
     } catch (err) {
       setError(
         err instanceof Error
@@ -403,6 +410,7 @@ export function ComparecienteWorkspace() {
         await comparecientesService.deleteDocument(id, document.id);
         await load();
       }
+      setExtractionState("");
     } finally {
       setBusy(false);
     }
@@ -498,6 +506,8 @@ export function ComparecienteWorkspace() {
       missing,
       errors,
       alerts: response.alertas || nested._ia_alertas || response.resultado?.alertas || [],
+      curpDocuments: response.documentos_curp || response.resultado?.documentos_curp || nested._ia_documentos_curp || [],
+      csfDocuments: response.documentos_csf || response.resultado?.documentos_csf || [],
       structure: response.estructura_persona_moral || nested._ia_estructura_persona_moral || response.resultado?.estructura_persona_moral || null,
     });
     setDirty(true);
@@ -590,7 +600,7 @@ export function ComparecienteWorkspace() {
         });
         return;
       }
-      await comparecientesService.update(id, updatePayload(draft));
+      await comparecientesService.update(id, { ...updatePayload(draft), expectedVersion: item?.version });
       setMessage("Cambios guardados correctamente.");
       await load();
     } catch (err) {
@@ -732,6 +742,16 @@ export function ComparecienteWorkspace() {
             {extractionReview.missing.length > 0 && <div><b>Datos no encontrados</b><ul>{extractionReview.missing.map((field) => <li key={field}>{field.replaceAll("_", " ")}: DATO NO ENCONTRADO</li>)}</ul></div>}
             {extractionReview.errors.length > 0 && <div><b>Errores de lectura</b><ul>{extractionReview.errors.map((entry) => <li key={entry}>{entry}</li>)}</ul></div>}
             {extractionReview.alerts.length > 0 && <div><b>Observaciones</b><ul>{extractionReview.alerts.map((entry) => <li key={entry}>{entry}</li>)}</ul></div>}
+            {extractionReview.curpDocuments.length > 0 && <div><b>Constancia CURP · datos sin confirmar</b><p>Se leyó el documento localmente. La identidad y la certificación requieren revisión humana; no se consultó RENAPO.</p><ul>{extractionReview.curpDocuments.flatMap((document) => ([
+              ["nombre_literal", "Nombre literal"], ["folio_documental", "Folio documental"],
+              ["entidad_registro", "Entidad de registro"], ["fecha_inscripcion", "Fecha de inscripción"],
+              ["certificacion_literal", "Leyenda de certificación"],
+            ] as const).map(([key, label]) => ({ document, key, label }))).filter(({ document, key }) => Boolean(document.fields[key])).map(({ document, key, label }) => (
+              <li key={`${document.document_id}-${key}`}>{label}: {document.fields[key]?.normalized} · página {document.fields[key]?.page}</li>
+            ))}</ul><p>Los apellidos no se separan ni se crea una fecha de emisión si el documento no los etiqueta expresamente.</p></div>}
+            {extractionReview.csfDocuments.length > 0 && <div><b>Constancia fiscal · lectura local</b><p>Datos detectados, no confirmados. No se consultó el SAT ni se cobró IA externa.</p><ul>{extractionReview.csfDocuments.flatMap((document) => document.regimenes_fiscales.map((regime) => (
+              <li key={`${document.document_id}-${regime.clave}`}>Régimen {regime.clave} — {regime.descripcion}</li>
+            )))}</ul></div>}
             {draft.tipo_persona === "MORAL" && extractionReview.structure && <div><b>Estructura societaria propuesta</b><p>{extractionReview.structure.accionistas?.length || 0} accionista(s) · {extractionReview.structure.administracion?.length || 0} integrante(s) de administración · {extractionReview.structure.beneficiarios_controladores?.length || 0} beneficiario(s) propuesto(s){extractionReview.structure.cadena_incompleta ? " · cadena incompleta" : ""}. Revisa y confirma en los bloques societarios de esta ficha.</p></div>}
             {extractionConflicts.length > 0 && <div><b>Diferencias con datos guardados</b>{extractionConflicts.map((conflict) => <article key={conflict.field}><span><strong>{conflict.field.replaceAll("_", " ")}</strong><small>Actual: {conflict.current}</small><small>Documento: {conflict.proposed}</small></span><button type="button" onClick={() => decideExtractionConflict(conflict.field, "KEEP")}>Conservar actual</button><button type="button" onClick={() => decideExtractionConflict(conflict.field, "UPDATE")}>Actualizar</button></article>)}</div>}
           </section>
@@ -771,6 +791,15 @@ export function ComparecienteWorkspace() {
               onClassify={createMode ? undefined : classify}
               onExtract={extract}
             />
+            {!createMode && (item?.datosFuente || []).some((source: any) => source.campo === 'regimen_fiscal') && (
+              <section className={styles.extractionReview} aria-label="Regímenes fiscales detectados">
+                <strong>Regímenes fiscales documentales</strong>
+                <p>Lecturas conservadas por documento; confirma los datos fiscales antes de facturar.</p>
+                <ul>{(item?.datosFuente || []).filter((source: any) => source.campo === 'regimen_fiscal').map((source: any) => (
+                  <li key={source.id}>{source.valor_detectado} — {source.fragmento_fuente || 'Sin descripción'} · {source.estado === 'CONFIRMADO' ? 'Confirmado' : 'Pendiente de confirmación'} · {source.documento?.nombre_original || 'Documento fuente'}</li>
+                ))}</ul>
+              </section>
+            )}
           </aside>
         </div>
         {!createMode &&

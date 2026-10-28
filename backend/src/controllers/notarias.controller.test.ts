@@ -8,7 +8,7 @@ vi.mock('../config/prisma', () => ({ default: db }));
 import { addNotariaContacto, createNotaria, getNotariaById, getNotariaExpedientes, getNotarias, setNotariaContactoPrincipal, updateNotaria } from './notarias.controller';
 
 const response = () => { const res: any = {}; res.status = vi.fn(() => res); res.json = vi.fn(() => res); return res; };
-const user = { id: 'user-1', rol: 'ABOGADO', permissions: ['notarias.read'], email: 'a@b.mx', nombre: 'Ana', apellido: 'Ruiz', sessionId: 's', requiresPasswordChange: false };
+const user = { id: 'user-1', organizationId: 'org-1', rol: 'ABOGADO', permissions: ['notarias.read'], email: 'a@b.mx', nombre: 'Ana', apellido: 'Ruiz', sessionId: 's', requiresPasswordChange: false };
 
 describe('Notarías endpoints', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -17,17 +17,17 @@ describe('Notarías endpoints', () => {
     service.listPortfolio.mockResolvedValue({ data: [], metrics: {}, meta: {} });
     const req: any = { query: { portfolio: 'true', page: '2', pageSize: '10', search: '12', estado: 'Nayarit', ciudad: 'Tepic', estatus: 'ACTIVA', con_expedientes_activos: 'true', sort: 'titular:desc' }, user };
     const res = response(); await getNotarias(req, res);
-    expect(service.listPortfolio).toHaveBeenCalledWith({ page: 2, pageSize: 10, search: '12', estado: 'Nayarit', sort: 'numero:asc', expedienteScope: { OR: [{ abogado_id: 'user-1' }, { creador_id: 'user-1' }] } });
+    expect(service.listPortfolio).toHaveBeenCalledWith({ page: 2, pageSize: 10, search: '12', estado: 'Nayarit', sort: 'numero:asc', expedienteScope: { OR: [{ abogado_id: 'user-1' }, { collaborators: { some: { organization_id: 'org-1', user_id: 'user-1', active: true } } }] } });
     expect(res.status).toHaveBeenCalledWith(200);
   });
 
   it('carga detalle y expedientes relacionados con el alcance real del usuario', async () => {
     service.detail.mockResolvedValue({ id: 'notaria-1' });
     const detailReq: any = { params: { id: 'notaria-1' }, user }; const detailRes = response(); await getNotariaById(detailReq, detailRes);
-    expect(service.detail).toHaveBeenCalledWith('notaria-1', { OR: [{ abogado_id: 'user-1' }, { creador_id: 'user-1' }] });
+    expect(service.detail).toHaveBeenCalledWith('notaria-1', { OR: [{ abogado_id: 'user-1' }, { collaborators: { some: { organization_id: 'org-1', user_id: 'user-1', active: true } } }] });
     db.notaria.findFirst.mockResolvedValue({ id: 'notaria-1' }); service.listCases.mockResolvedValue({ data: [], meta: {} });
     const listReq: any = { params: { id: 'notaria-1' }, query: { page: '2', pageSize: '8' }, user }; const listRes = response(); await getNotariaExpedientes(listReq, listRes);
-    expect(service.listCases).toHaveBeenCalledWith('notaria-1', expect.objectContaining({ page: 2, pageSize: 8, expedienteScope: { OR: [{ abogado_id: 'user-1' }, { creador_id: 'user-1' }] } }));
+    expect(service.listCases).toHaveBeenCalledWith('notaria-1', expect.objectContaining({ page: 2, pageSize: 8, expedienteScope: { OR: [{ abogado_id: 'user-1' }, { collaborators: { some: { organization_id: 'org-1', user_id: 'user-1', active: true } } }] } }));
   });
 
   it('impide duplicar número dentro de la misma entidad y demarcación', async () => {

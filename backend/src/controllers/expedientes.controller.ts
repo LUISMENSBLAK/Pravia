@@ -169,6 +169,7 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         abogado: { select: { id: true, nombre: true, apellido: true, email: true } },
         gestor: { select: { id: true, nombre: true, apellido: true } },
         creador: { select: { id: true, nombre: true, apellido: true } },
+        collaborators: { where: { active: true }, select: { user_id: true, assigned_at: true } },
         notaria: true,
         cotizacion: {
           include: {
@@ -293,19 +294,23 @@ export const getExpedienteById = async (req: Request, res: Response) => {
       prisma.expedienteDocumento.count({ where: { expediente_id: id, estatus: 'ACTIVO', tipo_vinculo: 'PROYECTO_ESCRITURA', documento: { tipo: 'PROYECTO_ESCRITURA', estatus: { not: 'RECHAZADO' } } } }),
     ]);
     const readiness = buildExpedienteReadiness(expediente, currentProjectCount > 0);
+    const canEditCase = Boolean(req.user?.permissions.includes('expedientes.write') &&
+      (['DIRECCION', 'ADMINISTRACION'].includes(req.user.rol) ||
+        (req.user.rol === 'ABOGADO' && (expediente.abogado_id === req.user.id ||
+          expediente.collaborators.some((item: { user_id: string }) => item.user_id === req.user?.id)))));
     const capabilities = {
-      canWrite: Boolean(req.user?.permissions.includes('expedientes.write')),
+      canWrite: canEditCase,
       canDeliver: Boolean(req.user?.permissions.includes('expedientes.deliver')),
       canManagePostfirma: Boolean(req.user?.permissions.includes('expedientes.postfirma.manage')),
       canReadProject: Boolean(req.user?.permissions.includes('expedientes.project.read')),
       canReadFinance: Boolean(req.user?.permissions.includes('finanzas.read')),
       canWriteFinance: Boolean(req.user?.permissions.includes('finanzas.write')),
       canReadCaseFinance: Boolean(req.user?.permissions.includes('expedientes.read')),
-      canReportCaseFinance: Boolean(req.user?.permissions.includes('expedientes.write') && req.user?.permissions.includes('documentos.write')),
+      canReportCaseFinance: (canEditCase || req.user?.rol === 'FINANCIERO') && Boolean(req.user?.permissions.includes('documentos.write')),
       canApplyCaseFinance: Boolean(req.user?.permissions.includes('finanzas.write') && req.user?.permissions.includes('finanzas.validate')),
-      canUploadDocuments: Boolean(req.user?.permissions.includes('documentos.write')),
+      canUploadDocuments: canEditCase && Boolean(req.user?.permissions.includes('documentos.write')),
       canReadDocuments: Boolean(req.user?.permissions.includes('documentos.read')),
-      canDeleteDocuments: Boolean(req.user?.permissions.includes('documentos.unlink')),
+      canDeleteDocuments: canEditCase && Boolean(req.user?.permissions.includes('documentos.unlink')),
     };
     const headerResponsibles = req.user ? await prisma.user.findMany({
       where: { activo: true, organizationMemberships: { some: activeOrganizationMembershipWhere(req.user.organizationId, ['DIRECCION', 'ADMINISTRACION', 'ABOGADO']) } },
@@ -1024,6 +1029,9 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
       }
 
       if (cleanAbogadoId !== undefined) {
+        if (cleanAbogadoId !== currentExp.abogado_id && !['DIRECCION', 'ADMINISTRACION'].includes(req.user!.rol)) {
+          throw new ExpedienteUpdateError('Sólo Dirección o Administración puede cambiar al responsable.', 'EXPEDIENTE_ASSIGNMENT_DENIED', 403);
+        }
         const lawyer = await tx.user.findFirst({ where: { id: cleanAbogadoId, activo: true, organizationMemberships: { some: { organization_id: req.user!.organizationId, status: 'ACTIVE' } } }, select: { id: true } });
         if (!lawyer) throw new ExpedienteUpdateError('El abogado seleccionado no existe o está inactivo.', 'EXPEDIENTE_LAWYER_INVALID');
       }
@@ -1079,13 +1087,15 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
         });
         await tx.auditLog.create({
           data: {
+            organization_id: req.user!.organizationId,
             user_id: actor.id,
-          accion: 'UPDATE_EXPEDIENTE_HEADER',
+            accion: 'UPDATE_EXPEDIENTE_HEADER',
             entidad: 'Expediente',
             entidad_id: id,
             valores_anteriores: { version: currentExp.version },
             valores_nuevos: { version: expediente.version, campos: changes },
             correlation_id: correlationId,
+            session_id: req.user!.sessionId,
           },
         });
       }

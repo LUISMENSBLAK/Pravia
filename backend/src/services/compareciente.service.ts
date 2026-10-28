@@ -14,6 +14,14 @@ type IdentityState = 'VERIFICADA' | 'PENDIENTE' | 'OBSERVACION';
 type HealthState = 'COMPLETO' | 'PENDIENTE' | 'OBSERVACION' | 'NO_APLICA' | 'NO_CONFIGURADO';
 type ComparecienteActor = NonNullable<Request['user']>;
 
+function extractionCorrelationId(operationId: string): string {
+  const bytes = crypto.createHash('sha256').update(operationId).digest().subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 const VERIFIED_IDENTIFICATION = {
   archived_at: null,
   validado_at: { not: null },
@@ -666,7 +674,7 @@ export class ComparecienteService {
       });
 
       return { compareciente, personaFisica };
-    });
+    }, { timeout: 15_000 });
   }
 
   /**
@@ -794,13 +802,14 @@ export class ComparecienteService {
 
       return { compareciente, personaMoral };
     };
-    return transaction ? create(transaction) : this.prisma.$transaction(create);
+    return transaction ? create(transaction) : this.prisma.$transaction(create, { timeout: 15_000 });
   }
 
   /** Edición explícita del dato maestro. No altera snapshots de cumplimiento ni relaciones históricas. */
   public async actualizarMaster(id: string, dto: Record<string, any>, actorUserId: string) {
     return this.prisma.$transaction(async (tx) => {
       const organizationId = requireActorContext().organizationId;
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:compareciente-master:${organizationId}:${id}`}))`);
       const current = await tx.compareciente.findFirst({ where: { id, archived_at: null }, include: {
         personaFisica: true, personaMoral: true,
         domicilios: { where: { archived_at: null, vigente: true } },
@@ -810,6 +819,9 @@ export class ComparecienteService {
         datosFuente: { where: { archived_at: null, estado: { in: ['PENDIENTE_CONFIRMACION', 'EN_CONFLICTO'] } } },
       } });
       if (!current) throw new Error('Compareciente no encontrado.');
+      if (dto.expectedVersion !== undefined && (!Number.isSafeInteger(dto.expectedVersion) || dto.expectedVersion !== current.version)) {
+        throw Object.assign(new Error('La ficha cambió en otra sesión. Recarga antes de guardar.'), { code: 'COMPARECIENTE_VERSION_CONFLICT' });
+      }
       const identityBefore = await loadScreeningIdentity(tx, organizationId, id);
       const validationFingerprintBefore = validationFingerprint(current);
       let nombreBusqueda = current.nombre_busqueda;
@@ -953,7 +965,7 @@ export class ComparecienteService {
           correlation_id: correlationId,
         } });
       }
-      await tx.auditLog.create({ data: { organization_id: organizationId, user_id: actorUserId, accion: 'EDITAR_COMPARECIENTE', entidad: 'Compareciente', entidad_id: id, valores_anteriores: { version: current.version }, valores_nuevos: { version: header.version, campos: Object.keys(dto) }, detalles: { modulo: 'COMPARECIENTES', validaciones_relacion_invalidadas: validatedRelations.length }, correlation_id: correlationId } });
+      await tx.auditLog.create({ data: { organization_id: organizationId, user_id: actorUserId, accion: 'EDITAR_COMPARECIENTE', entidad: 'Compareciente', entidad_id: id, valores_anteriores: { version: current.version }, valores_nuevos: { version: header.version, campos: Object.keys(dto) }, detalles: { modulo: 'COMPARECIENTES', validaciones_relacion_invalidadas: validatedRelations.length }, correlation_id: correlationId, session_id: requireActorContext().sessionId } });
       const identityAfter = await loadScreeningIdentity(tx, organizationId, id);
       if (screeningIdentityFingerprint(identityBefore) !== screeningIdentityFingerprint(identityAfter)) {
         const event = await tx.domainEventOutbox.create({ data: {
@@ -964,7 +976,7 @@ export class ComparecienteService {
         await queueMasterScreeningTx(tx, { organizationId, comparecienteId: id, requestedById: actorUserId, triggerReason: 'RELEVANT_IDENTITY_CHANGED', triggerKey: `event:${event.id}`, triggerEventId: event.id, correlationId });
       }
       return header;
-    });
+    }, { timeout: 15_000 });
   }
 
   /** Resuelve de forma auditable un conflicto documental de RFC/CURP. */
@@ -1259,7 +1271,7 @@ export class ComparecienteService {
   public async extraerDocumentosExistentesConIA(comparecienteId: string, actor: ComparecienteActor, requestKey: string) {
     const actorUserId = actor.id;
     const actorOrganizationId = actor.organizationId;
-    if (!requestKey.trim()) throw new Error('La extracción requiere una clave de idempotencia.');
+    if (!requestKey.trim() || requestKey.length > 100) throw new Error('La extracción requiere una clave de idempotencia válida.');
     const [links, compareciente] = await Promise.all([
       this.prisma.comparecienteDocumento.findMany({
         where: { organization_id: actorOrganizationId, compareciente_id: comparecienteId, archived_at: null, estatus: 'ACTIVO', vigencia: 'VIGENTE' },
@@ -1285,6 +1297,7 @@ export class ComparecienteService {
     if (!readable.length) throw new Error('No fue posible leer los documentos disponibles.');
     try {
       const operationId = `compareciente-extraction:${actorOrganizationId}:${comparecienteId}:${requestKey}`;
+      const correlationId = extractionCorrelationId(operationId);
       const extraction = await extraerMultiplesDocumentos(readable, {
         actor: { userId: actor.id, organizationId: actor.organizationId, membershipId: actor.membershipId,
           role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId },
@@ -1305,14 +1318,65 @@ export class ComparecienteService {
       if (consolidated.values.celular && !consolidated.values.telefono) consolidated.values.telefono = consolidated.values.celular;
       const faltantes = missingApplicableComparecienteFields(extraction, compareciente.tipo_persona as 'FISICA' | 'MORAL');
       await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${correlationId}))`);
+        const prior = await tx.auditLog.findFirst({ where: { organization_id: actorOrganizationId,
+          entidad_id: comparecienteId, accion: 'EXTRAER_DATOS_COMPARECIENTE_IA', correlation_id: correlationId },
+        select: { id: true } });
+        if (prior) return;
         for (const [field, proposal] of Object.entries(consolidated.proposals)) {
           const alternatives = proposal.estado === 'EN_CONFLICTO' ? proposal.alternativas : [proposal];
           for (const alternative of alternatives) {
             await tx.comparecienteDatoFuente.create({ data: {
               organization_id: actorOrganizationId, compareciente_id: comparecienteId, campo: field, entidad_destino: 'ComparecienteWorkspace',
               valor_detectado: alternative.valor || null, documento_id: alternative.documento_id || null,
+              pagina: alternative.pagina || null, fragmento_fuente: alternative.fragmento || null,
               proveedor_ia: extraction.proveedor, modelo_ia: extraction.modelo, confianza: alternative.confianza || null,
-              estado: proposal.estado === 'EN_CONFLICTO' ? 'EN_CONFLICTO' : 'PENDIENTE_CONFIRMACION', correlation_id: crypto.randomUUID(),
+              estado: proposal.estado === 'EN_CONFLICTO' ? 'EN_CONFLICTO' : 'PENDIENTE_CONFIRMACION', correlation_id: correlationId,
+            } });
+          }
+        }
+        for (const document of extraction.documentos_curp || []) {
+          for (const field of ['nombre_literal', 'folio_documental', 'entidad_registro', 'fecha_inscripcion', 'certificacion_literal'] as const) {
+            const detected = document.fields[field];
+            if (!detected) continue;
+            const campo = `curp_${field}`;
+            const existing = await tx.comparecienteDatoFuente.findFirst({ where: {
+              organization_id: actorOrganizationId, compareciente_id: comparecienteId,
+              documento_id: document.document_id, campo, archived_at: null,
+              valor_detectado: detected.normalized,
+            }, select: { id: true } });
+            if (existing) continue;
+            await tx.comparecienteDatoFuente.create({ data: {
+              organization_id: actorOrganizationId, compareciente_id: comparecienteId,
+              campo, entidad_destino: 'CURP_DOCUMENT_METADATA', valor_detectado: detected.normalized,
+              documento_id: document.document_id, pagina: detected.page,
+              fragmento_fuente: detected.literal, proveedor_ia: 'LOCAL_DETERMINISTIC',
+              confianza: 'LECTURA_CLARA', estado: 'PENDIENTE_CONFIRMACION',
+              correlation_id: correlationId,
+            } });
+          }
+        }
+        for (const document of extraction.documentos_csf || []) {
+          const fiscalFields = [
+            { campo: 'csf_sha256', value: document.sha256, fragment: document.source },
+            ...document.regimenes_fiscales.map((regime) => ({
+              campo: 'regimen_fiscal', value: regime.clave, fragment: regime.descripcion,
+            })),
+          ];
+          for (const field of fiscalFields) {
+            const existing = await tx.comparecienteDatoFuente.findFirst({ where: {
+              organization_id: actorOrganizationId, compareciente_id: comparecienteId,
+              documento_id: document.document_id, campo: field.campo,
+              valor_detectado: field.value, archived_at: null,
+            }, select: { id: true } });
+            if (existing) continue;
+            await tx.comparecienteDatoFuente.create({ data: {
+              organization_id: actorOrganizationId, compareciente_id: comparecienteId,
+              documento_id: document.document_id, campo: field.campo,
+              entidad_destino: 'FISCAL_PROFILE', valor_detectado: field.value,
+              fragmento_fuente: field.fragment || null, proveedor_ia: 'LOCAL_DETERMINISTIC',
+              modelo_ia: 'FISCAL_CSF_LOCAL_V1', confianza: 'LECTURA_CLARA',
+              estado: 'PENDIENTE_CONFIRMACION', correlation_id: correlationId,
             } });
           }
         }
@@ -1322,18 +1386,22 @@ export class ComparecienteService {
           if (!existing) await tx.comparecienteDatoFuente.create({ data: {
             organization_id: actorOrganizationId, compareciente_id: comparecienteId, campo: field, entidad_destino: 'ComparecienteWorkspace', valor_detectado: value,
             proveedor_ia: extraction.proveedor, modelo_ia: extraction.modelo, confianza: 'LECTURA_CLARA',
-            estado: 'PENDIENTE_CONFIRMACION', correlation_id: crypto.randomUUID(),
+            estado: 'PENDIENTE_CONFIRMACION', correlation_id: correlationId,
           } });
         }
         await tx.auditLog.create({ data: {
           organization_id: actorOrganizationId, user_id: actorUserId, accion: 'EXTRAER_DATOS_COMPARECIENTE_IA', entidad: 'Compareciente', entidad_id: comparecienteId,
           valores_nuevos: { campos_propuestos: Object.keys(consolidated.proposals), conflictos: consolidated.conflicts.length, faltantes: faltantes.length, errores_lectura: skipped.length, documentos: readable.length },
-          detalles: { modulo: 'COMPARECIENTES', persistencia_maestra: false, reextraccion: true }, correlation_id: crypto.randomUUID(),
+          detalles: { modulo: 'COMPARECIENTES', persistencia_maestra: false,
+            documentos_csf_locales: extraction.documentos_csf?.length || 0,
+            reextraccion: true }, correlation_id: correlationId, session_id: actor.sessionId,
         } });
       });
       return {
         values: consolidated.values, proposals: consolidated.proposals, conflicts: consolidated.conflicts,
         domicilios_detectados: extraction.domicilios_detectados || [], documentos_omitidos: skipped,
+        documentos_curp: extraction.documentos_curp || [],
+        documentos_csf: extraction.documentos_csf || [],
         identificadores_ine: ineIdentifiers,
         faltantes,
         resumen_ejecutivo: extraction.resumen_ejecutivo || '',

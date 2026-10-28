@@ -58,6 +58,7 @@ describe('ComparecienteService read model', () => {
 describe('ComparecienteService human review', () => {
   it('confirma o registra edición manual de las propuestas IA únicamente al guardar', async () => {
     const tx = {
+      $executeRaw: vi.fn().mockResolvedValue(1),
       compareciente: {
         findFirst: vi.fn().mockResolvedValue({
           id: 'party-1', tipo_persona: 'FISICA', nombre_busqueda: 'MARIA LOPEZ', observaciones: null, version: 3,
@@ -96,6 +97,6 @@ describe('ComparecienteService human review', () => {
       where: { id: 'source-address' },
       data: expect.objectContaining({ estado: 'EDITADO_MANUALMENTE', valor_confirmado: '63100', confirmado_por_id: 'user-1' }),
     }));
-    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ accion: 'EDITAR_COMPARECIENTE' }) }));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ accion: 'EDITAR_COMPARECIENTE', organization_id: TEST_ORGANIZATION_ID, user_id: 'user-1', session_id: 'test-session' }) }));
   });
 });

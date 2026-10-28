@@ -1,7 +1,7 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import type { Request } from 'express';
 import { budgetTotals, moneyToCents, normalizeEditableBudgetConcepts, withDerivedHonorariosIva } from '../domain/expedienteBudget';
-import { cotizacionObjectWhere } from './objectAccess.service';
+import { cotizacionObjectWhere, cotizacionReadWhere } from './objectAccess.service';
 import { normalizeOperationalText } from '../utils/operationalText';
 import { getQuotationTemplate } from './quotationTemplate.service';
 
@@ -128,7 +128,7 @@ export class QuoteBudgetService {
 
   async preview(actor: Actor, quoteId: string, rawConcepts: unknown) {
     if (!actor.permissions.includes('cotizaciones.read')) throw new QuoteBudgetError(403, 'QUOTE_BUDGET_READ_DENIED', 'No tienes permiso para consultar la cotización.');
-    const quote = await this.prisma.cotizacion.findFirst({ where: { id: quoteId, ...cotizacionObjectWhere(actor) }, select: { id: true } });
+    const quote = await this.prisma.cotizacion.findFirst({ where: { id: quoteId, ...cotizacionReadWhere(actor) }, select: { id: true } });
     if (!quote) throw new QuoteBudgetError(404, 'QUOTE_NOT_FOUND', 'No se encontró la cotización o no tienes acceso.');
     const concepts = withDerivedHonorariosIva(normalizeEditableBudgetConcepts(rawConcepts));
     const totals = budgetTotals(concepts);

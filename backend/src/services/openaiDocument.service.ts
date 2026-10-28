@@ -6,6 +6,8 @@ import { openAiProviderFetch } from '../platform/openaiProvider.adapter';
 import type { ActorContext } from '../auth/actorContext';
 import { aiGateway, type AiGatewayExecutor } from '../platform/aiGateway.runtime';
 import { AI_OPERATION_CODES } from '../platform/aiBillingPolicy';
+import { extractCurpPdf } from './curpDocumentExtraction.service';
+import { FiscalDocumentExtractionService } from './fiscalDocumentExtraction.service';
 dotenv.config();
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,6 +68,9 @@ export interface DocumentExtractionResult {
   estructura_persona_moral?: MoralStructureExtraction;
   uso?: AIUsageMetrics;
   usos?: AIUsageMetrics[];
+  documentos_curp?: Array<Awaited<ReturnType<typeof extractCurpPdf>>>;
+  documentos_csf?: Array<{ document_id: string; sha256: string; source: string; status: string;
+    regimenes_fiscales: Array<{ clave: string; descripcion: string }> }>;
 }
 
 export interface MoralStructureExtraction {
@@ -1082,13 +1087,70 @@ export async function extraerMultiplesDocumentos(
       });
     }
   }
+  const localResults: DocumentExtractionResult[] = [];
+  const remoteDocuments: DocumentoParaExtraccion[] = [];
+  for (const document of expanded) {
+    if (document.tipoDocumento.toUpperCase() === 'CURP' &&
+      document.mimeType.toLowerCase().includes('pdf')) {
+      const detected = await extractCurpPdf(document.buffer, document.documentoId);
+      localResults.push({ proveedor: 'LOCAL_DETERMINISTIC', modelo: detected.schema,
+        tipo_persona_detectado: 'FISICA', campos: detected.fields.curp ? [{
+          campo: 'curp', valor: detected.fields.curp.normalized, confianza: 'LECTURA_CLARA',
+          pagina: detected.fields.curp.page, documento_id: document.documentoId,
+          fuente: 'CURP PDF local · dato sin confirmar', fragmento: detected.fields.curp.literal,
+        }] : [],
+        alertas: ['La CURP y los demás campos detectados requieren confirmación humana; no hubo consulta RENAPO.'],
+        resumen_ejecutivo: 'Lectura local del PDF CURP sin proveedor IA externo.',
+        documentos_curp: [detected], usos: [] });
+    } else if (document.tipoDocumento.toUpperCase() === 'CONSTANCIA_FISCAL') {
+      const detected = await new FiscalDocumentExtractionService().extract({
+        buffer: document.buffer, originalname: document.nombreOriginal,
+        mimetype: document.mimeType, size: document.buffer.length,
+      });
+      const field = (campo: string, valor: string | null, page: number | null): ExtractedField[] => valor ? [{
+        campo, valor, confianza: detected.status === 'EXTRACTED' ? 'LECTURA_CLARA' : 'LECTURA_DUDOSA',
+        pagina: page || undefined, documento_id: document.documentoId,
+        fuente: `CSF local ${detected.source} · dato sin confirmar`, fragmento: valor,
+      }] : [];
+      const pages = detected.source_pages;
+      localResults.push({ proveedor: 'LOCAL_DETERMINISTIC', modelo: 'FISCAL_CSF_LOCAL_V1',
+        tipo_persona_detectado: detected.rfc?.length === 12 ? 'MORAL' : 'FISICA',
+        campos: [
+          ...field('rfc', detected.rfc, pages.rfc),
+          ...(detected.rfc?.length === 12 ? field('razon_social', detected.razon_social, null) : []),
+        ],
+        domicilios_detectados: detected.domicilio_fiscal ? [{
+          tipo_sugerido: 'FISCAL', fuente: `CSF local ${detected.source} · dato sin confirmar`,
+          documento_id: document.documentoId,
+          calle: detected.domicilio_fiscal_estructurado.nombre_vialidad || undefined,
+          numero_exterior: detected.domicilio_fiscal_estructurado.numero_exterior || undefined,
+          numero_interior: detected.domicilio_fiscal_estructurado.numero_interior || undefined,
+          colonia: detected.domicilio_fiscal_estructurado.colonia || undefined,
+          localidad: detected.domicilio_fiscal_estructurado.localidad || undefined,
+          municipio: detected.domicilio_fiscal_estructurado.municipio || undefined,
+          estado: detected.domicilio_fiscal_estructurado.estado || undefined,
+          codigo_postal: detected.codigo_postal || undefined,
+        }] : [],
+        regimenes: detected.regimenes_fiscales.map((item) => `${item.clave} — ${item.descripcion}`),
+        documentos_csf: [{ document_id: document.documentoId, sha256: detected.sha256,
+          source: detected.source, status: detected.status,
+          regimenes_fiscales: detected.regimenes_fiscales }],
+        alertas: [
+          'La CSF sintética o aportada requiere confirmación humana; no hubo consulta al SAT.',
+          ...(detected.conflicts.length ? detected.conflicts : []),
+          ...(detected.regimenes_fiscales.length > 1 ? ['Se detectaron varios regímenes; confirma cuál aplica a cada factura.'] : []),
+        ],
+        resumen_ejecutivo: 'Lectura fiscal local sin proveedor IA externo ni cargo de wallet.', usos: [],
+      });
+    } else remoteDocuments.push(document);
+  }
   const batches = partitionProjectReviewDocuments(
-    expanded,
+    remoteDocuments,
     Number(process.env.AI_IDENTITY_EXTRACTION_BATCH_DOCUMENTS || 4),
     Number(process.env.AI_IDENTITY_EXTRACTION_BATCH_BYTES || 6 * 1024 * 1024),
   );
-  if (!batches.length) throw new Error('No hay documentos válidos para analizar.');
-  const results: DocumentExtractionResult[] = [];
+  if (!batches.length && !localResults.length) throw new Error('No hay documentos válidos para analizar.');
+  const results: DocumentExtractionResult[] = [...localResults];
   for (const [index, batch] of batches.entries()) results.push(await extractDocumentBatch(batch, {
     ...economicContext, idempotencyKey: `${economicContext.idempotencyKey}:batch:${index}`,
   }));
@@ -1113,7 +1175,7 @@ export async function extraerMultiplesDocumentos(
     ...(ocr.length > 1 ? ['Se detectaron valores OCR distintos entre lotes; no se eligió uno automáticamente.'] : []),
   ];
   return {
-    proveedor: 'OpenAI',
+    proveedor: [...new Set(results.map((result) => result.proveedor))].join(', '),
     modelo: [...new Set(results.map((result) => result.modelo))].join(', '),
     tipo_persona_detectado: tipoPersona[0] || 'FISICA',
     campos: results.flatMap((result) => result.campos),
@@ -1126,6 +1188,8 @@ export async function extraerMultiplesDocumentos(
     estructura_persona_moral: latestRelevantStructure,
     uso: aggregateProjectUsage(usages),
     usos: usages,
+    documentos_curp: results.flatMap((result) => result.documentos_curp || []),
+    documentos_csf: results.flatMap((result) => result.documentos_csf || []),
   };
 }
 

@@ -1,5 +1,15 @@
 # PRAVIA OS — registro maestro de requisitos del cliente
 
+## Colaboración organizacional — corrección posterior (27-10-2026)
+
+La regla de una notaría como equipo compartido añade lectura por organización y edición controlada por responsable, colaborador o Dirección/Administración. La matriz individual [COL01–COL70](PRAVIA_ORGANIZATION_COLLABORATION_CERTIFICATION.md) conserva por separado cada prueba requerida; su implementación local no equivale a certificación integral. No sustituye FDR01–FDR90, EXT01–EXT60 ni las matrices históricas. Estado: **NO-GO producción** hasta cerrar los casos pendientes y los gates generales.
+
+## Facturación demo-ready — fuente posterior (26-10-2026)
+
+El DOCX `PRAVIA_OS_Prompt_Final_Facturacion_Demo_Ready.docx` (SHA-256 `ba687b92a34b2335ff9aa97370b24bcf8c7d6a99182587929a48738ecdc59608`) y su orden maestra Markdown (SHA-256 `d8845d7962fe8ef7734e43261c9e2386bff0d5ed4ab706409c0ee2c5548e77ca`) se leyeron completos. Su matriz individual [FDR01–FDR90](FACTURACION_DEMO_READY_GAP_AND_CERTIFICATION.md) **no sustituye** CF01–CF39, CX13–CX17/CX20–CX24, SQ01–SQ22, QT09–QT14/QT28 ni los demás casos vigentes. Una implementación focalizada de PDF y OCR sintético no convierte esas matrices en PASS. El XML preliminar deja de ser requisito de la demo por prevalencia posterior; el timbrado/UUID/XML fiscal definitivo continúa condicionado a PAC real. Estado global: **NO CERTIFICADO / NO-GO**.
+
+Continuación 27-10-2026: [EXT01–EXT60](PRAVIA_UNIVERSAL_EXTRACTION_CERTIFICATION.md) sigue **0/60 certificado integralmente**. Se incorporó parser CURP PDF local con procedencia y categoría de carga explícita; Chrome y PostgreSQL/Storage sólo usaron fixture sintética. La CSF real se leyó en memoria y ahora aporta actividad económica tabular sin clave SAT inferida. La INE y el mapeo oficial/compatibilidad SAT siguen no verificados. FDR permanece **15/90** de alcance puntual y el recorrido principal de 31 pasos no está certificado; no se autoriza producción por esta mejora aislada.
+
 Estado: **EN CONSTRUCCIÓN / NO CERTIFICADO** (20-10-2026). Este registro no convierte una implementación, un test unitario o una captura aislada en aceptación del cliente. Los 226 casos mínimos y los 30 casos dirigidos CFG-002 permanecen en [CLIENT_6_CORRECTIONS_CERTIFICATION.md](CLIENT_6_CORRECTIONS_CERTIFICATION.md); este archivo registra las fuentes originales, la trazabilidad adicional y los requisitos que no deben perderse al ampliar aquella matriz.
 
 ## Fuentes originales verificadas
@@ -72,5 +82,12 @@ Dependencias de la corrección coordinada: `PresupuestoConceptoCategoria` en Pri
 - Estado: **NOT VERIFIED**. Defecto pendiente: revalidación integral de flujos afectados por la eliminación del selector.
 
 ## Disciplina de avance
+
+### EXTRACT-20261027 — certificación universal CSF/CURP/INE y todos los puntos de extracción
+
+- Fuente: orden maestra de certificación de facturación y extracción del 27-10-2026, §§4–48. Los tres PDF privados del cliente se usan sólo en QA local; no se agregan como fixtures ni evidencia pública.
+- Alcance: inventario transversal de carga/extracción, CSF fiscal, CURP, INE con OCR visual, propuestas con procedencia, revisión humana, Storage privado, AI Gateway, permisos/tenant, matriz EXT01–EXT60, FDR01–FDR90 y 31 pasos Chrome. Evidencia y brechas: `PRAVIA_UNIVERSAL_DOCUMENT_EXTRACTION_INVENTORY.md`, `PRAVIA_UNIVERSAL_EXTRACTION_CERTIFICATION.md`, `FACTURACION_DEMO_READY_GAP_AND_CERTIFICATION.md`.
+- Prueba parcial: parser CSF tabular corregido, siete pruebas sintéticas dirigidas PASS y lectura privada de CSF textual/CURP; INE aún no se extrae con confianza. La CSF real trae un régimen descriptivo sin clave SAT explícita, por lo que el sistema pide revisión sin inferir una clave.
+- Estado: **NOT VERIFIED / NO-GO** para aceptación integral. No hay recorrido Chrome 31/31, EXT60/60 ni FDR90/90; no se autoriza elevar la evidencia parcial a release.
 
 La matriz mínima conserva sus `NOT VERIFIED` hasta que el caso exacto se ejecute. Las fuentes restantes, los casos históricos y los deltas que aparezcan durante la inspección deben añadirse aquí con el mismo nivel de trazabilidad antes de declarar cobertura completa. La orden del 22-10-2026 autoriza commit, push y deploy de manera condicional, sólo cuando los gates correspondientes sean PASS; no se hizo ninguna escritura productiva en este corte.

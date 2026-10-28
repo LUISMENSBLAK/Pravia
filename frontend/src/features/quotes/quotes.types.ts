@@ -92,6 +92,7 @@ export type Quote = {
   version_actual: number;
   prospecto_id?: string | null;
   user_id: string;
+  collaborators?: Array<{ user_id: string; assigned_at?: string }>;
   notaria_id?: string | null;
   estado: QuoteState;
   fecha_solicitud_notaria?: string | null;

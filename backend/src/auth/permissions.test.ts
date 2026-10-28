@@ -60,7 +60,7 @@ describe('RBAC de PRAVIA', () => {
     expect(roleHasPermission('FINANCIERO', 'finanzas.validate')).toBe(true);
     expect(roleHasPermission('FINANCIERO', 'reportes.financial.read')).toBe(true);
     expect(roleHasPermission('FINANCIERO', 'ai.finanzas.read')).toBe(true);
-    expect(roleHasPermission('FINANCIERO', 'expedientes.read')).toBe(false);
+    expect(roleHasPermission('FINANCIERO', 'expedientes.read')).toBe(true);
     expect(roleHasPermission('FINANCIERO', 'expedientes.write')).toBe(false);
     expect(roleHasPermission('FINANCIERO', 'configuracion.manage')).toBe(false);
     expect(roleHasPermission('FINANCIERO', 'usuarios.manage')).toBe(false);

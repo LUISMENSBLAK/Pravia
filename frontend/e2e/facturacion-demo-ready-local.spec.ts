@@ -1,0 +1,257 @@
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { expect, test, type Page } from '@playwright/test';
+
+const qaEmail = process.env.PRAVIA_E2E_EMAIL;
+const qaPassword = process.env.PRAVIA_E2E_PASSWORD;
+const qaIncomeId = process.env.PRAVIA_E2E_INCOME_ID;
+
+async function enterLocalBilling(page: Page) {
+  const host = new URL(String(test.info().project.use.baseURL)).hostname;
+  if (host !== '127.0.0.1' && host !== 'localhost') throw new Error('LOCAL_BILLING_QA_SAFETY_GATE_FAILED');
+  if (!qaEmail || !qaPassword) throw new Error('LOCAL_BILLING_QA_CREDENTIALS_REQUIRED');
+  await page.goto('/login');
+  const email = page.getByRole('textbox', { name: 'Correo electrónico' });
+  await email.fill(qaEmail);
+  await page.getByRole('textbox', { name: 'Contraseña', exact: true }).fill(qaPassword);
+  if (await email.inputValue() !== qaEmail) await email.fill(qaEmail);
+  await expect(page.getByRole('button', { name: 'Iniciar sesión', exact: true })).toBeEnabled();
+  const login = page.waitForResponse(response => response.url().endsWith('/api/auth/login') && response.request().method() === 'POST');
+  await page.getByRole('button', { name: 'Iniciar sesión', exact: true }).click();
+  expect((await login).status()).toBe(200);
+  await page.goto('/finanzas?view=facturacion');
+  await page.getByRole('tab', { name: 'CFDI y cuentas' }).click();
+  await expect(page.getByRole('heading', { name: 'CFDI, cuentas y proveedores' })).toBeVisible();
+}
+
+test.describe.serial('Facturación Demo-Ready en Chrome local aislado', () => {
+  test('un ingreso permite guardar y reabrir borrador incompleto sin PDF ni reserva', async ({ page }) => {
+    test.skip(!qaIncomeId, 'Se requiere un ingreso sintético local explícito.');
+    await enterLocalBilling(page);
+    await page.getByRole('tab', { name: 'Ingresos de expedientes' }).click();
+    await page.goto(`/finanzas?view=facturacion&income_id=${encodeURIComponent(qaIncomeId!)}`);
+    const row = page.locator(`#income-${qaIncomeId}`);
+    await expect(row).toBeVisible();
+    await row.getByRole('button', { name: 'Completar factura' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Generar factura CFDI' });
+    const picker = dialog.getByLabel('Continuar prefactura');
+    await expect(picker).toBeVisible();
+    await picker.selectOption('');
+    await expect(picker).toHaveValue('');
+    await expect(dialog.getByRole('button', { name: 'Guardar borrador incompleto' })).toBeEnabled();
+    const created = page.waitForResponse(response => response.url().endsWith('/api/finanzas/facturacion/borradores') && response.request().method() === 'POST');
+    await dialog.getByRole('button', { name: 'Guardar borrador incompleto' }).click();
+    const response = await created;
+    expect(response.status(), await response.text()).toBe(201);
+    const saved = (await response.json()).data.cfdi;
+    expect(Number(saved.total)).toBe(0);
+    expect(saved.draft_payload.incomplete_income).toBe(true);
+    await expect(dialog.getByText(/Borrador incompleto: todavía no reserva saldo ni puede generar PDF/)).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Generar prefactura PDF' })).toBeDisabled();
+    await page.reload();
+    await page.locator(`#income-${qaIncomeId}`).getByRole('button', { name: 'Completar factura' }).click();
+    const reopened = page.getByRole('dialog', { name: 'Generar factura CFDI' });
+    await reopened.getByLabel('Continuar prefactura').selectOption(saved.id);
+    await expect(reopened.getByText(/Borrador incompleto: todavía no reserva saldo ni puede generar PDF/)).toBeVisible();
+    await reopened.getByRole('button', { name: 'Eliminar borrador' }).click();
+    await expect(reopened.getByText(/Prefactura eliminada; saldo liberado/)).toBeVisible();
+  });
+
+  test('borrador central incompleto persiste y se reabre tras reload', async ({ page }) => {
+    await enterLocalBilling(page);
+    await page.getByRole('button', { name: 'Nueva factura' }).click();
+    const editor = page.getByRole('dialog', { name: 'Nueva factura' });
+    await expect(editor.getByLabel('RFC receptor')).toBeVisible();
+    const save = page.waitForResponse(response => response.url().endsWith('/api/finanzas/facturacion/borradores') && response.request().method() === 'POST');
+    await editor.getByRole('button', { name: 'Guardar borrador' }).click();
+    const response = await save;
+    expect(response.status(), await response.text()).toBe(201);
+    const id = (await response.json()).data.cfdi.id as string;
+    await expect(page.locator(`#cfdi-${id}`)).toBeVisible();
+    await page.reload();
+    await page.getByRole('tab', { name: 'CFDI y cuentas' }).click();
+    const card = page.locator(`#cfdi-${id}`);
+    await expect(card).toBeVisible();
+    await card.getByRole('button', { name: 'Abrir borrador' }).click();
+    await expect(page.getByRole('dialog', { name: /Borrador/ }).getByLabel('RFC receptor')).toHaveValue('');
+  });
+
+  test('USD incompleto se guarda sin inventar FX y exige tasa antes del PDF', async ({ page }) => {
+    await enterLocalBilling(page);
+    await page.getByRole('button', { name: 'Nueva factura' }).click();
+    const editor = page.getByRole('dialog', { name: 'Nueva factura' });
+    await editor.getByLabel('Moneda').selectOption('USD');
+    await expect(editor.getByLabel('Tipo de cambio a MXN')).toHaveValue('');
+    const save = page.waitForResponse(response => response.url().endsWith('/api/finanzas/facturacion/borradores') && response.request().method() === 'POST');
+    await editor.getByRole('button', { name: 'Guardar borrador' }).click();
+    const saved = await save;
+    expect(saved.status(), await saved.text()).toBe(201);
+    const id = (await saved.json()).data.cfdi.id as string;
+    const card = page.locator(`#cfdi-${id}`);
+    await expect(card).toBeVisible();
+    await expect(card.getByText('USD 0.00').first()).toBeVisible();
+    const generate = page.waitForResponse(response => response.url().endsWith(`/api/finanzas/facturacion/borradores/${id}/prefacturas`) && response.request().method() === 'POST');
+    await card.getByRole('button', { name: 'Generar nueva versión PDF' }).click();
+    expect((await generate).status()).toBe(409);
+    await page.reload();
+    await page.getByRole('tab', { name: 'CFDI y cuentas' }).click();
+    await page.locator(`#cfdi-${id}`).getByRole('button', { name: 'Abrir borrador' }).click();
+    const reopened = page.getByRole('dialog', { name: /Borrador/ });
+    await expect(reopened.getByLabel('Moneda')).toHaveValue('USD');
+    await expect(reopened.getByLabel('Tipo de cambio a MXN')).toHaveValue('');
+    await reopened.getByLabel('Tipo de cambio a MXN').fill('17.123456');
+    const update = page.waitForResponse(response => response.url().endsWith(`/api/finanzas/facturacion/borradores/${id}`) && response.request().method() === 'PATCH');
+    await reopened.getByRole('button', { name: 'Guardar borrador' }).click();
+    expect((await update).status()).toBe(200);
+    await page.locator(`#cfdi-${id}`).getByRole('button', { name: 'Abrir borrador' }).click();
+    await expect(page.getByRole('dialog', { name: /Borrador/ }).getByLabel('Tipo de cambio a MXN')).toHaveValue('17.123456');
+  });
+
+  test('USD y CAD conservan FX y generan PDF real visible con SHA íntegro', async ({ page }) => {
+    await enterLocalBilling(page);
+    for (const [currency, fx, mxn] of [['USD', '17.000000', 'MXN 1,700.00'], ['CAD', '12.500000', 'MXN 1,250.00']] as const) {
+      await page.getByRole('button', { name: 'Nueva factura' }).click();
+      const editor = page.getByRole('dialog', { name: 'Nueva factura' });
+      await editor.getByLabel('Entidad fiscal').selectOption({ index: 1 });
+      await editor.getByLabel('RFC receptor').fill('FIC010101ABC');
+      await editor.getByLabel('Nombre o razón social').fill('RECEPTOR SINTÉTICO SIN VALIDEZ');
+      await editor.getByLabel('Régimen receptor').fill('601');
+      await editor.getByLabel('Código postal fiscal').fill('63735');
+      await editor.getByLabel('Uso CFDI').fill('G03');
+      await editor.getByLabel('Lugar de expedición').fill('63735');
+      await editor.getByLabel('Método de pago').selectOption('PUE');
+      await editor.getByLabel('Forma de pago').fill('03');
+      await editor.getByLabel('Concepto fiscal configurado').selectOption({ index: 1 });
+      await editor.getByLabel('Valor unitario').fill('100.00');
+      await editor.getByLabel('Moneda').selectOption(currency);
+      await editor.getByLabel('Tipo de cambio a MXN').fill(fx);
+      await expect(editor.getByRole('status').filter({ hasText: 'equivalentes' })).toContainText(mxn);
+      const save = page.waitForResponse(response => response.url().endsWith('/api/finanzas/facturacion/borradores') && response.request().method() === 'POST');
+      await editor.getByRole('button', { name: 'Guardar borrador' }).click();
+      const response = await save;
+      expect(response.status(), await response.text()).toBe(201);
+      const id = (await response.json()).data.cfdi.id as string;
+      await page.reload();
+      await page.getByRole('tab', { name: 'CFDI y cuentas' }).click();
+      const card = page.locator(`#cfdi-${id}`);
+      await expect(card.getByText(`${currency} 100.00`).first()).toBeVisible();
+      await card.getByRole('button', { name: 'Abrir borrador' }).click();
+      const reopened = page.getByRole('dialog', { name: /Borrador/ });
+      await expect(reopened.getByLabel('Moneda')).toHaveValue(currency);
+      await expect(reopened.getByLabel('Tipo de cambio a MXN')).toHaveValue(fx);
+      await reopened.getByRole('button', { name: 'Cerrar', exact: true }).click();
+      const generated = page.waitForResponse(item => item.url().endsWith(`/api/finanzas/facturacion/borradores/${id}/prefacturas`) && item.request().method() === 'POST');
+      await card.getByRole('button', { name: 'Generar nueva versión PDF' }).click();
+      const generatedResponse = await generated;
+      expect(generatedResponse.status(), await generatedResponse.text()).toBe(201);
+      await expect(card.getByText(/v1 ·/)).toBeVisible();
+      await card.getByRole('button', { name: 'Ver', exact: true }).click();
+      const viewer = page.getByRole('dialog', { name: /\.pdf/ });
+      await expect(viewer.locator('canvas[data-preview-loaded="true"]').first()).toBeVisible();
+      await viewer.getByRole('button', { name: 'Cerrar vista previa' }).click();
+      const authorization = generatedResponse.request().headers().authorization;
+      if (!authorization?.startsWith('Bearer ')) throw new Error('QA_ACCESS_TOKEN_MISSING');
+      const signed = await page.request.get(`/api/finanzas/facturacion/borradores/${id}/prefacturas/1`, { headers: { Authorization: authorization } });
+      expect(signed.status()).toBe(200);
+      const file = (await signed.json()).data;
+      const bytes = await (await page.request.get(file.url)).body();
+      expect(bytes.subarray(0, 5).toString()).toBe('%PDF-');
+      expect(createHash('sha256').update(bytes).digest('hex')).toBe(file.sha256);
+    }
+  });
+
+  test('borrador central con concepto genera PDF real, abre, descarga y conserva v1 al regenerar v2', async ({ page }) => {
+    await enterLocalBilling(page);
+    await page.getByRole('button', { name: 'Nueva factura' }).click();
+    const editor = page.getByRole('dialog', { name: 'Nueva factura' });
+    await editor.getByLabel('Entidad fiscal').selectOption({ index: 1 });
+    await editor.getByLabel('RFC receptor').fill('FIC010101ABC');
+    await editor.getByLabel('Nombre o razón social').fill('RECEPTOR SINTÉTICO SIN VALIDEZ');
+    await editor.getByLabel('Régimen receptor').fill('601');
+    await editor.getByLabel('Código postal fiscal').fill('63735');
+    await editor.getByLabel('Uso CFDI').fill('G03');
+    await editor.getByLabel('Lugar de expedición').fill('63735');
+    await editor.getByLabel('Método de pago').selectOption('PUE');
+    await editor.getByLabel('Forma de pago').fill('03');
+    await editor.getByLabel('Concepto fiscal configurado').selectOption({ index: 1 });
+    await editor.getByLabel('Valor unitario').fill('100.00');
+    const save = page.waitForResponse(response => response.url().endsWith('/api/finanzas/facturacion/borradores') && response.request().method() === 'POST');
+    await editor.getByRole('button', { name: 'Guardar borrador' }).click();
+    const response = await save;
+    expect(response.status(), await response.text()).toBe(201);
+    const id = (await response.json()).data.cfdi.id as string;
+    const card = page.locator(`#cfdi-${id}`);
+    await expect(card).toBeVisible();
+    const generate = card.getByRole('button', { name: 'Generar nueva versión PDF' });
+    const generatedV1 = page.waitForResponse(item => item.url().endsWith(`/api/finanzas/facturacion/borradores/${id}/prefacturas`) && item.request().method() === 'POST');
+    await generate.click();
+    const firstGeneration = await generatedV1;
+    expect(firstGeneration.status()).toBe(201);
+    if (!firstGeneration.request().headers().authorization?.startsWith('Bearer ')) throw new Error('QA_ACCESS_TOKEN_MISSING');
+    await expect(card.getByRole('button', { name: 'Timbrar CFDI' })).toBeDisabled();
+    await expect(card.getByText('Timbrado no disponible: PAC no configurado.')).toBeVisible();
+    await expect(card.getByText(/v1 ·/)).toBeVisible();
+    await page.reload();
+    await page.getByRole('tab', { name: 'CFDI y cuentas' }).click();
+    const reloaded = page.locator(`#cfdi-${id}`);
+    await reloaded.getByRole('button', { name: 'Versiones PDF' }).click();
+    await expect(reloaded.getByText(/v1 ·/)).toBeVisible();
+    await reloaded.getByRole('button', { name: 'Ver', exact: true }).click();
+    const viewer = page.getByRole('dialog', { name: /\.pdf/ });
+    await expect(viewer.locator('canvas[data-preview-loaded="true"]').first()).toBeVisible();
+    await viewer.getByRole('button', { name: 'Cerrar vista previa' }).click();
+    const downloadEvent = page.waitForEvent('download');
+    await reloaded.getByRole('listitem').filter({ hasText: /v1 ·/ }).getByRole('button', { name: 'Descargar', exact: true }).click();
+    const downloaded = await downloadEvent;
+    const downloadedPath = await downloaded.path();
+    if (!downloadedPath) throw new Error('QA_PDF_DOWNLOAD_MISSING');
+    const downloadedBytes = await readFile(downloadedPath);
+    expect(downloadedBytes.subarray(0, 5).toString()).toBe('%PDF-');
+    const generatedV2 = page.waitForResponse(item => item.url().endsWith(`/api/finanzas/facturacion/borradores/${id}/prefacturas`) && item.request().method() === 'POST');
+    await reloaded.getByRole('button', { name: 'Generar nueva versión PDF' }).click();
+    const secondGeneration = await generatedV2;
+    expect(secondGeneration.status()).toBe(201);
+    const authorization = secondGeneration.request().headers().authorization;
+    if (!authorization?.startsWith('Bearer ')) throw new Error('QA_ACCESS_TOKEN_MISSING');
+    await expect(reloaded.getByText(/v1 ·/)).toBeVisible();
+    await expect(reloaded.getByText(/v2 ·/)).toBeVisible();
+    const hashes: string[] = [];
+    for (const version of [1, 2]) {
+      const signed = await page.request.get(`/api/finanzas/facturacion/borradores/${id}/prefacturas/${version}`, { headers: { Authorization: authorization } });
+      expect(signed.status()).toBe(200);
+      const file = (await signed.json()).data;
+      const bytes = await (await page.request.get(file.url)).body();
+      expect(bytes.subarray(0, 5).toString()).toBe('%PDF-');
+      const sha = createHash('sha256').update(bytes).digest('hex');
+      expect(sha).toBe(file.sha256);
+      hashes.push(sha);
+    }
+    expect(createHash('sha256').update(downloadedBytes).digest('hex')).toBe(hashes[0]);
+    expect(hashes[0]).not.toBe(hashes[1]);
+  });
+
+  test('editor central y acciones PDF son accesibles sin overflow entre 1440 y 320 px', async ({ page }, testInfo) => {
+    await enterLocalBilling(page);
+    for (const width of [1440, 1366, 1024, 768, 390, 320]) {
+      await page.setViewportSize({ width, height: width <= 390 ? 740 : 900 });
+      await expect(page.getByRole('button', { name: 'Nueva factura' })).toBeVisible();
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+      expect(overflow, `Overflow horizontal en Facturación a ${width}px`).toBe(false);
+      const stamp = page.getByRole('button', { name: 'Timbrar CFDI' }).first();
+      await expect(stamp).toBeDisabled();
+      await stamp.scrollIntoViewIfNeeded();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1),
+        `Overflow en tarjeta fiscal con timbrado bloqueado a ${width}px`).toBe(false);
+      await page.getByRole('button', { name: 'Nueva factura' }).click();
+      const editor = page.getByRole('dialog', { name: 'Nueva factura' });
+      await expect(editor.getByLabel('RFC receptor')).toBeVisible();
+      await expect(editor.getByRole('button', { name: 'Guardar borrador' })).toBeVisible();
+      const box = await editor.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(-1);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width + 1);
+      if (width === 390 || width === 320) await page.screenshot({ path: testInfo.outputPath(`facturacion-editor-${width}.png`) });
+      await editor.getByRole('button', { name: 'Cerrar', exact: true }).click();
+    }
+  });
+});

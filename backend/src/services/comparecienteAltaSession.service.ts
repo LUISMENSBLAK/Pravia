@@ -353,7 +353,7 @@ export class ComparecienteAltaSessionService {
           nombreOriginal: carga.nombre_original
         });
       } catch (loadErr: any) {
-        console.error(`[extraerDatosConIA] No se pudo cargar "${carga.nombre_original}":`, loadErr.message);
+        console.error('[extraerDatosConIA] No se pudo cargar un documento temporal.', { documento_id: carga.id });
         erroresCarga.push({
           documento_id: carga.id,
           nombre: carga.nombre_original,
@@ -553,6 +553,7 @@ export class ComparecienteAltaSessionService {
       _ia_modelo: resultadoIA.modelo,
       _ia_uso: resultadoIA.uso || null,
       _ia_usos: resultadoIA.usos || (resultadoIA.uso ? [resultadoIA.uso] : []),
+      _ia_documentos_curp: resultadoIA.documentos_curp || [],
     };
 
     await prisma.comparecienteAltaSession.update({
@@ -581,6 +582,7 @@ export class ComparecienteAltaSessionService {
       conflictos: consolidacion.conflicts,
       faltantes: faltantesAplicables,
       domicilios_detectados: resultadoIA.domicilios_detectados || [],
+      documentos_curp: resultadoIA.documentos_curp || [],
       resultado: {
         proveedor: resultadoIA.proveedor,
         modelo: resultadoIA.modelo,
@@ -590,6 +592,7 @@ export class ComparecienteAltaSessionService {
         faltantes: faltantesAplicables,
         estructura_persona_moral: resultadoIA.estructura_persona_moral,
         campos: resultadoIA.campos,
+        documentos_curp: resultadoIA.documentos_curp || [],
         uso: resultadoIA.uso || null,
         usos: resultadoIA.usos || (resultadoIA.uso ? [resultadoIA.uso] : []),
       },

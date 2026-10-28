@@ -29,6 +29,7 @@ const eligibleQuote={id:'quote-eligible',numero_solicitud:'SOL-2026-0042',numero
 const questionnaireInstance={assessmentId:'assessment-1',bank:'OPERACION',artifact:{id:'questionnaire-1',name:'Acto / Operación'},version:{id:'questionnaire-version-1',number:3},definition:{schema_version:1,scope:'GENERAL',sections:[{id:'section-1',label:'Cuestionario de operación',questions:[{id:'question-1',label:'¿Requiere representación?',type:'BOOLEAN',required:false,active:true,order:0}]}]},subject:{key:'OPERACION:exp-act-1',label:'Compraventa'},prefill:{},latestResponse:null,formats:[]};
 
 const mockApi = (options: { grants?: string[]; failList?: boolean; transitionFails?: boolean; empty?: boolean; denyActs?: boolean; staleApply?: boolean; headerFails?: boolean } = {}) => vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => { const url = String(input); const grants=options.grants??permissions; const canReadFinance=grants.includes('finanzas.read');
+  if (url.includes('/collaboration/expediente/exp-1/asistentes')) return response({ data: [] });
   if (url.endsWith('/auth/me')) return response(session(grants));
   if (url.includes('/expedientes?')) return options.failList ? response({ error: 'No disponible' }, 500) : response(options.empty ? { ...list, data: [], metrics: list.metrics.map((metric) => ({ ...metric, value: 0, percentage: metric.key === 'TOTAL' ? null : 0 })), meta: { ...list.meta, total: 0 } } : list);
   if (url.endsWith('/expedientes/tipos-acto')) return response(list.facets.actTypes);

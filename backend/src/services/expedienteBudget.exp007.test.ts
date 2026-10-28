@@ -59,6 +59,13 @@ describe('EXP-007 — 51 casos forenses contractuales', () => {
     storage.signed.mockResolvedValue('https://signed.invalid/document');
   });
 
+  it('consulta de presupuesto: lectura compartida de tenant sin edición implícita', async () => {
+    const db: any = { expediente: { findFirst: vi.fn().mockResolvedValue({ id: 'exp-a' }) } };
+    await new ExpedienteBudgetService(db).preview(actor({ rol: 'ABOGADO', id: 'colleague-a',
+      permissions: ['expedientes.read'] }), 'exp-a', [{ concepto: 'Honorarios QA', categoria: 'HONORARIOS', importe: '100.00' }]);
+    expect(db.expediente.findFirst.mock.calls[0][0].where).toEqual({ id: 'exp-a', organization_id: 'tenant-a', archived_at: null });
+  });
+
   it('A. Cotización estructurada → presupuesto inicial correcto', async () => {
     const create = vi.fn().mockResolvedValue({ id: 'budget-a' }); const distribution = vi.fn().mockResolvedValue({});
     const createMany = vi.fn().mockResolvedValue({ count: 3 });
