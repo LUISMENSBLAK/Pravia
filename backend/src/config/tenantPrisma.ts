@@ -54,7 +54,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'TimingPolicyRevision', 'TimingInterval',
   'KnowledgeSource', 'KnowledgeSourceVersion', 'KnowledgeArticle', 'KnowledgeCriterion', 'KnowledgeRadarRun', 'KnowledgeImpact',
   'AssistantAlert', 'GastoRecurrenteFinanciero', 'ConsultaFinancieraGuardada',
-  'EntidadFiscalCfdi', 'EntidadFiscalCuenta', 'ProveedorFiscal', 'ConceptoFiscalCfdi', 'DocumentoCfdi', 'PrefacturaRepresentacion',
+  'EntidadFiscalCfdi', 'EntidadFiscalCsfVersion', 'EntidadFiscalCuenta', 'ProveedorFiscal', 'ConceptoFiscalCfdi', 'DocumentoCfdi', 'PrefacturaRepresentacion',
   'CuentaPorCobrarCfdi', 'CuentaPorPagarCfdi', 'AplicacionPagoCfdi', 'TransferenciaInterna',
   'CotizacionIAProposal', 'ProjectFactSnapshot', 'ProjectInstructionApplication', 'ProjectTemplateAssignment',
   'ArchivoRegistro',

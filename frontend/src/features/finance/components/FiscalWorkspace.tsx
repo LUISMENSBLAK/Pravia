@@ -6,6 +6,7 @@ import { useAuth } from '../../auth/AuthProvider';
 import { DocumentViewer } from '../../../components/documents/DocumentViewer';
 import styles from '../Finance.module.css';
 import { financeService } from '../finance.service';
+import { FiscalEntityDialog, FiscalEntityDetailDialog } from './FiscalEntityDialog';
 import type { FiscalAccounts, FiscalConcept, FiscalDocument, FiscalEntity, FiscalProviderStatus, FiscalSupplier } from '../finance.types';
 
 type Panel = 'documents'|'entities'|'concepts'|'suppliers'|'accounts';
@@ -26,7 +27,8 @@ export function FiscalWorkspace() {
   const [suppliers, setSuppliers] = useState<FiscalSupplier[]>([]);
   const [documents, setDocuments] = useState<FiscalDocument[]>([]);
   const [accounts, setAccounts] = useState<FiscalAccounts>(emptyAccounts);
-  const [dialog, setDialog] = useState<'manual'|'draft'|'entity'|'concept'|'supplier'|null>(null);
+  const [dialog, setDialog] = useState<'manual'|'draft'|'entity'|'entityDetail'|'entityReplace'|'concept'|'supplier'|null>(null);
+  const [selectedEntity,setSelectedEntity]=useState<FiscalEntity|null>(null);
   const [editingDraft,setEditingDraft]=useState<FiscalDocument|null>(null);
   const [notice, setNotice] = useState('');
   const canWrite = Boolean(user?.permissions?.includes('finanzas.write'));
@@ -84,13 +86,15 @@ export function FiscalWorkspace() {
     {status==='loading'&&<div className={styles.invoiceState} role="status">Cargando información fiscal…</div>}
     {status==='error'&&<div className={styles.invoiceState} role="alert"><strong>No pudimos cargar la información fiscal.</strong><button type="button" onClick={()=>void load()}><RefreshCw/>Reintentar</button></div>}
     {status==='ready'&&panel==='documents'&&<Documents documents={documents} entities={entities} provider={provider} focusCfdiId={focusCfdiId} onEdit={canWrite?(item)=>{setEditingDraft(item);setDialog('draft');}:undefined} canGeneratePdf={canWrite&&canReadDocuments&&Boolean(user?.permissions?.includes('documentos.write'))} onChanged={()=>void load()} onDownload={async(id,kind)=>{const result=await financeService.fiscalFileUrl(id,kind);window.open(result.url,'_blank','noopener,noreferrer');}} onExport={()=>void financeService.downloadFiscalExport()}/>}
-    {status==='ready'&&panel==='entities'&&<Cards title="Entidades fiscales" empty="Aún no hay entidades fiscales" action={canValidate?<button type="button" onClick={()=>setDialog('entity')}><Plus/>Agregar entidad</button>:null}>{entities.map(item=><article key={item.id}><header><span>{item.activa?'Activa':'Inactiva'}</span><small>{item.rfc}</small></header><h3>{item.razon_social}</h3><p>Régimen {item.regimen_fiscal} · CP {item.codigo_postal}</p><footer>{item.serie&&<span>Serie {item.serie}</span>}<span>{item.cuentas?.length||0} cuenta(s)</span></footer></article>)}</Cards>}
+    {status==='ready'&&panel==='entities'&&<Cards title="Entidades fiscales" empty="Aún no hay entidades fiscales" action={canValidate?<button type="button" onClick={()=>setDialog('entity')}><Plus/>Agregar entidad fiscal</button>:null}>{entities.map(item=><article key={item.id}><header><span>{item.activa?'Activa':'Inactiva'}</span><small>{item.rfc}</small></header><h3>{item.razon_social}</h3><p>Régimen {item.regimen_fiscal} · CP {item.codigo_postal}</p><footer>{item.serie&&<span>Serie {item.serie}</span>}<span>{item.cuentas?.length||0} cuenta(s)</span><button type="button" onClick={()=>{setSelectedEntity(item);setDialog('entityDetail');}}>Abrir ficha</button></footer></article>)}</Cards>}
     {status==='ready'&&panel==='concepts'&&<Cards title="Conceptos fiscales configurados" empty="Todavía no hay conceptos fiscales para generar prefacturas" action={canValidate?<button type="button" onClick={()=>setDialog('concept')}><Plus/>Configurar concepto</button>:null}>{concepts.map(item=><article key={item.id}><header><span>{item.activo?'Activo':'Inactivo'}</span><small>{item.tipoActo?.nombre||'Cualquier acto'}</small></header><h3>{item.descripcion}</h3><p>Clave SAT {item.clave_prod_serv} · Unidad {item.clave_unidad} · Objeto {item.objeto_impuesto}</p><footer><span>IVA {item.iva_tasa}</span><span>Ret. IVA {item.iva_retencion_tasa}</span><span>Ret. ISR {item.isr_retencion_tasa}</span></footer></article>)}</Cards>}
     {status==='ready'&&panel==='suppliers'&&<Cards title="Proveedores" empty="Aún no hay proveedores fiscales" action={canWrite?<button type="button" onClick={()=>setDialog('supplier')}><Plus/>Agregar proveedor</button>:null}>{suppliers.map(item=><article key={item.id}><header><span>{item.activo?'Activo':'Inactivo'}</span><small>{item.rfc}</small></header><h3>{item.razon_social}</h3><p>{item.codigo_postal?`CP ${item.codigo_postal}`:'Sin CP'} · {item.regimenes_fiscales?.length||0} régimen(es)</p>{item.csf_extraction&&<p>CSF: {item.csf_extraction.confirmation_status==='CORRECTED'?'datos corregidos y confirmados':'datos confirmados'} · extracción {item.csf_extraction.extraction_status}</p>}{item.csf_documento_id&&canReadDocuments&&<footer><button type="button" onClick={()=>void openSupplierCsf(item.id,false)}>Ver CSF</button><button type="button" onClick={()=>void openSupplierCsf(item.id,true)}>Descargar CSF</button></footer>}</article>)}</Cards>}
     {status==='ready'&&panel==='accounts'&&<FiscalAccountsView data={accounts}/>}
     {dialog==='manual'&&<ManualDialog onClose={()=>setDialog(null)} onSaved={(message)=>changed(message)}/>}
     {dialog==='draft'&&<DraftDialog entities={entities} suppliers={suppliers} concepts={concepts} initial={editingDraft} onClose={()=>setDialog(null)} onSaved={()=>changed('Borrador fiscal guardado; no se invocó al PAC.')}/>}
-    {dialog==='entity'&&<EntityDialog onClose={()=>setDialog(null)} onSaved={()=>changed('Entidad fiscal guardada.')}/>}
+    {dialog==='entity'&&<FiscalEntityDialog onClose={()=>setDialog(null)} onSaved={()=>changed('Entidad fiscal guardada.')}/>}
+    {dialog==='entityReplace'&&selectedEntity&&<FiscalEntityDialog replacingEntity={selectedEntity} onClose={()=>setDialog('entityDetail')} onSaved={()=>changed('Nueva versión de CSF guardada.')}/>}
+    {dialog==='entityDetail'&&selectedEntity&&<FiscalEntityDetailDialog entity={selectedEntity} canReadDocument={canReadDocuments} canReplace={canValidate&&Boolean(user?.permissions?.includes('documentos.write'))} onReplace={()=>setDialog('entityReplace')} onClose={()=>setDialog(null)}/>}
     {dialog==='concept'&&<FiscalConceptDialog entities={entities} acts={actOptions} onClose={()=>setDialog(null)} onSaved={()=>changed('Concepto fiscal configurado para esta organización.')}/>}
     {dialog==='supplier'&&<SupplierDialog onClose={()=>setDialog(null)} onSaved={changed}/>}
     {notice&&<div className={styles.fiscalToast} role="status">{notice}</div>}
@@ -106,6 +110,7 @@ export function fiscalStampBlockReason(item:FiscalDocument,provider:FiscalProvid
   const fiscal=item.draft_payload?.fiscal_comprobante;
   const missing=[
     !entity&&'entidad fiscal',!item.receptor_rfc&&'RFC receptor',!item.receptor_nombre&&'nombre receptor',
+    entity&&(entity.regimenes_fiscales?.length||0)>1&&!fiscal?.regimen_emisor&&'régimen emisor',
     !item.receptor_regimen&&'régimen receptor',!item.receptor_codigo_postal&&'CP receptor',
     !item.uso_cfdi&&'Uso CFDI',!item.metodo_pago&&'método de pago',!item.forma_pago&&'forma de pago',
     !fiscal?.lugar_expedicion&&'lugar de expedición',!item.draft_payload?.concepts?.length&&'concepto fiscal',
@@ -177,6 +182,8 @@ function fiscalLinePreview(quantity:string,unitPrice:string,concept:FiscalConcep
 function DraftDialog({entities,suppliers,concepts,initial,onClose,onSaved}:{entities:FiscalEntity[];suppliers:FiscalSupplier[];concepts:FiscalConcept[];initial:FiscalDocument|null;onClose:()=>void;onSaved:()=>void}) {
   const [direction,setDirection]=useState<'EMITIDO'|'RECIBIDO'>(initial?.direccion||'EMITIDO');
   const [entityId,setEntityId]=useState(initial?.entidad_fiscal_id||'');
+  const [place,setPlace]=useState(initial?.draft_payload?.fiscal_comprobante?.lugar_expedicion||'');
+  const [emitterRegime,setEmitterRegime]=useState(initial?.draft_payload?.fiscal_comprobante?.regimen_emisor||'');
   const [currency,setCurrency]=useState(initial?.moneda||'MXN');
   const [exchangeRate,setExchangeRate]=useState(String(initial?.draft_payload?.fiscal_comprobante?.tipo_cambio||''));
   const [conceptId,setConceptId]=useState(initial?.draft_payload?.concepts?.length===1?initial.draft_payload.concepts[0].concepto_fiscal_id||'':'');
@@ -184,6 +191,22 @@ function DraftDialog({entities,suppliers,concepts,initial,onClose,onSaved}:{enti
   const [unitPrice,setUnitPrice]=useState(initial?.draft_payload?.concepts?.length===1?initial.draft_payload.concepts[0].valor_unitario||'':'');
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
+  const [receiverRfc,setReceiverRfc]=useState(initial?.receptor_rfc||'');
+  const [receiverRegime,setReceiverRegime]=useState(initial?.receptor_regimen||'');
+  const [receiverUse,setReceiverUse]=useState(initial?.uso_cfdi||'');
+  const [regimeQuery,setRegimeQuery]=useState('');
+  const [regimes,setRegimes]=useState<Array<{clave:string;descripcion:string;tipo:string}>>([]);
+  const [uses,setUses]=useState<Array<{clave:string;descripcion:string;tiposPersona:string[];regimenesReceptor:string[]}>>([]);
+  useEffect(()=>{let active=true;void Promise.all([financeService.fiscalRegimes(),financeService.fiscalUses()])
+    .then(([nextRegimes,nextUses])=>{if(active){setRegimes(nextRegimes?.items || []);setUses(nextUses?.items || []);}})
+    .catch(()=>{if(active)setError('No pudimos cargar los catálogos SAT. Puedes guardar un borrador incompleto y reintentar.');});
+    return()=>{active=false;};},[]);
+  const receiverType=receiverRfc.trim().length===12?'MORAL':receiverRfc.trim().length===13?'FISICA':'';
+  const visibleRegimes=regimes.filter(item=>(!receiverType||item.tipo===receiverType||item.tipo==='AMBAS')&&
+    `${item.clave} ${item.descripcion}`.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase()
+      .includes(regimeQuery.normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase()));
+  const visibleUses=uses.filter(item=>receiverRegime&&receiverType&&item.regimenesReceptor.includes(receiverRegime)&&
+    item.tiposPersona.includes(receiverType));
   const source=initial?.draft_payload?.fiscal_comprobante;
   const eligibleConcepts=useMemo(()=>concepts.filter(item=>item.activo&&item.entidad_fiscal_id===entityId&&!item.tipo_acto_id),[concepts,entityId]);
   const selectedConcept=eligibleConcepts.find(item=>item.id===conceptId)||null;
@@ -197,6 +220,7 @@ function DraftDialog({entities,suppliers,concepts,initial,onClose,onSaved}:{enti
     const value=(key:string)=>String(form.get(key)||'').trim();
     const payload:Record<string,unknown>={
       direccion:direction,tipo:initial?.tipo||'I',entidad_fiscal_id:entityId,
+      regimen_emisor:direction==='EMITIDO'?emitterRegime:undefined,
       proveedor_id:direction==='RECIBIDO'?value('supplier'):undefined,
       emisor_rfc:value('emisor_rfc'),emisor_nombre:value('emisor_nombre'),
       receptor_rfc:value('receptor_rfc'),receptor_nombre:value('receptor_nombre'),
@@ -227,20 +251,34 @@ function DraftDialog({entities,suppliers,concepts,initial,onClose,onSaved}:{enti
       <fieldset className={styles.fiscalEditorSection}><legend>Origen y emisor</legend>
         <div className={styles.fiscalFormGrid}>
           <Field label="Dirección"><select value={direction} disabled={Boolean(initial)} onChange={event=>setDirection(event.target.value as 'EMITIDO'|'RECIBIDO')}><option value="EMITIDO">Emitido</option><option value="RECIBIDO">Recibido</option></select></Field>
-          <Field label="Entidad fiscal"><select value={entityId} onChange={event=>setEntityId(event.target.value)}><option value="">Por definir</option>{entities.filter(item=>item.activa).map(item=><option key={item.id} value={item.id}>{item.razon_social} · {item.rfc}</option>)}</select></Field>
+          <Field label="Entidad fiscal"><select value={entityId} onChange={event=>{const nextId=event.target.value;
+            const previousCp=entities.find(item=>item.id===entityId)?.codigo_postal;
+            if(!place||place===previousCp)setPlace(entities.find(item=>item.id===nextId)?.codigo_postal||'');
+            const nextEntity=entities.find(item=>item.id===nextId);
+            const choices=nextEntity?.regimenes_fiscales?.length?nextEntity.regimenes_fiscales.map(item=>item.clave):nextEntity?[nextEntity.regimen_fiscal]:[];
+            setEmitterRegime(choices.length===1?choices[0]:'');
+            setEntityId(nextId);}}><option value="">Por definir</option>{entities.filter(item=>item.activa).map(item=><option key={item.id} value={item.id}>{item.razon_social} · {item.rfc}</option>)}</select></Field>
+          {direction==='EMITIDO'&&entityId&&<Field label="Régimen emisor para esta factura"><select value={emitterRegime} onChange={event=>setEmitterRegime(event.target.value)}>
+            <option value="">Seleccionar régimen confirmado</option>
+            {(entities.find(item=>item.id===entityId)?.regimenes_fiscales?.length
+              ? entities.find(item=>item.id===entityId)!.regimenes_fiscales!
+              : [{clave:entities.find(item=>item.id===entityId)?.regimen_fiscal||'',descripcion:'Régimen histórico'}])
+              .map(item=><option key={item.clave} value={item.clave}>{item.clave} — {item.descripcion}</option>)}
+          </select></Field>}
           {direction==='RECIBIDO'&&<Field label="Proveedor"><select name="supplier" defaultValue={initial?.proveedor_id||''}><option value="">Por definir</option>{suppliers.filter(item=>item.activo).map(item=><option key={item.id} value={item.id}>{item.razon_social}</option>)}</select></Field>}
           {direction==='RECIBIDO'&&<Field label="RFC emisor"><input name="emisor_rfc" defaultValue={initial?.emisor_rfc||''}/></Field>}
           {direction==='RECIBIDO'&&<Field label="Nombre emisor"><input name="emisor_nombre" defaultValue={initial?.emisor_nombre||''}/></Field>}
-          <Field label="Lugar de expedición"><input name="lugar_expedicion" inputMode="numeric" maxLength={5} defaultValue={source?.lugar_expedicion||''} placeholder="CP confirmado"/></Field>
+          <Field label="Lugar de expedición"><input name="lugar_expedicion" inputMode="numeric" maxLength={5} value={place} onChange={event=>setPlace(event.target.value)} placeholder="CP confirmado"/></Field>
         </div>
       </fieldset>
       <fieldset className={styles.fiscalEditorSection}><legend>Receptor</legend>
         <div className={styles.fiscalFormGrid}>
-          <Field label="RFC receptor"><input name="receptor_rfc" defaultValue={initial?.receptor_rfc||''} placeholder="Capturar cuando se confirme"/></Field>
+          <Field label="RFC receptor"><input name="receptor_rfc" value={receiverRfc} onChange={event=>setReceiverRfc(event.target.value.toUpperCase())} placeholder="Capturar cuando se confirme"/></Field>
           <Field label="Nombre o razón social"><input name="receptor_nombre" defaultValue={initial?.receptor_nombre||''}/></Field>
-          <Field label="Régimen receptor"><input name="receptor_regimen" defaultValue={initial?.receptor_regimen||''} placeholder="Pendiente de catálogo compatible"/></Field>
+          <Field label="Buscar régimen SAT"><input type="search" value={regimeQuery} onChange={event=>setRegimeQuery(event.target.value)} placeholder="Clave o descripción"/></Field>
+          <Field label="Régimen receptor"><select name="receptor_regimen" value={receiverRegime} onChange={event=>{setReceiverRegime(event.target.value);setReceiverUse('');}}><option value="">Por confirmar</option>{receiverRegime&&!visibleRegimes.some(item=>item.clave===receiverRegime)&&<option value={receiverRegime} disabled>{receiverRegime} · Dato histórico por revisar</option>}{visibleRegimes.map(item=><option key={item.clave} value={item.clave}>{item.clave} — {item.descripcion}</option>)}</select></Field>
           <Field label="Código postal fiscal"><input name="receptor_cp" inputMode="numeric" maxLength={5} defaultValue={initial?.receptor_codigo_postal||''}/></Field>
-          <Field label="Uso CFDI"><input name="uso_cfdi" defaultValue={initial?.uso_cfdi||''} placeholder="Pendiente de confirmar"/></Field>
+          <Field label="Uso CFDI"><select name="uso_cfdi" value={receiverUse} onChange={event=>setReceiverUse(event.target.value)} disabled={!receiverRegime||!receiverType}><option value="">Por confirmar</option>{receiverUse&&!visibleUses.some(item=>item.clave===receiverUse)&&<option value={receiverUse} disabled>{receiverUse} · Dato histórico incompatible</option>}{visibleUses.map(item=><option key={item.clave} value={item.clave}>{item.clave} — {item.descripcion}</option>)}</select></Field>
         </div>
       </fieldset>
       <fieldset className={styles.fiscalEditorSection}><legend>Comprobante y pago</legend>
@@ -269,7 +307,6 @@ function DraftDialog({entities,suppliers,concepts,initial,onClose,onSaved}:{enti
   </Dialog>;
 }
 
-function EntityDialog({onClose,onSaved}:{onClose:()=>void;onSaved:()=>void}) {return <SimpleDialog title="Agregar entidad fiscal" onClose={onClose} onSaved={onSaved} submit={data=>financeService.createFiscalEntity({...data,tipo_contribuyente:'MORAL'})} fields={[['razon_social','Razón social'],['rfc','RFC'],['regimen_fiscal','Régimen fiscal'],['codigo_postal','Código postal'],['serie','Serie opcional']]}/>}
 function SupplierDialog({onClose,onSaved}:{onClose:()=>void;onSaved:(message:string)=>void}) {
   const [csf,setCsf]=useState<File|null>(null);
   const [fields,setFields]=useState({razon_social:'',rfc:'',codigo_postal:'',regimen_fiscal:'',correo:''});
@@ -325,4 +362,3 @@ function FiscalConceptDialog({entities,acts,onClose,onSaved}:{entities:FiscalEnt
   const [busy,setBusy]=useState(false);const [error,setError]=useState('');
   return <Dialog title="Configurar concepto fiscal" subtitle="El responsable fiscal confirma claves y tasas; PRAVIA no las infiere del nombre del acto." onClose={onClose}><form onSubmit={async(event)=>{event.preventDefault();const form=new FormData(event.currentTarget);setBusy(true);setError('');try{await financeService.createFiscalConcept({entidad_fiscal_id:form.get('entity'),tipo_acto_id:form.get('act')||null,descripcion:form.get('description'),clave_prod_serv:form.get('product'),clave_unidad:form.get('unit'),objeto_impuesto:form.get('taxObject'),iva_tasa:form.get('iva'),iva_retencion_tasa:form.get('ivaRetention'),isr_retencion_tasa:form.get('isrRetention')});onSaved();}catch(reason){setError(reason instanceof Error?reason.message:'No pudimos guardar el concepto fiscal.');}finally{setBusy(false);}}}><div className={styles.fiscalFormGrid}><Field label="Entidad emisora"><select name="entity" required><option value="">Seleccionar</option>{entities.filter(item=>item.activa).map(item=><option key={item.id} value={item.id}>{item.razon_social}</option>)}</select></Field><Field label="Acto (opcional)"><select name="act"><option value="">Cualquier acto</option>{acts.map(item=><option key={item.id} value={item.id}>{item.nombre}</option>)}</select></Field><Field label="Descripción"><input name="description" required maxLength={500}/></Field><Field label="Clave SAT producto/servicio"><input name="product" required inputMode="numeric" pattern="[0-9]{8}" maxLength={8}/></Field><Field label="Clave SAT unidad"><input name="unit" required maxLength={8}/></Field><Field label="Objeto de impuesto"><select name="taxObject" required><option value="">Seleccionar</option><option value="01">01</option><option value="02">02</option><option value="03">03</option></select></Field><Field label="Tasa IVA (0 a 1)"><input name="iva" required inputMode="decimal" pattern="(?:0|1)(?:\.[0-9]{1,6})?" placeholder="Confirmar tasa"/></Field><Field label="Tasa retención IVA (0 a 1)"><input name="ivaRetention" required inputMode="decimal" pattern="(?:0|1)(?:\.[0-9]{1,6})?" placeholder="Confirmar tasa"/></Field><Field label="Tasa retención ISR (0 a 1)"><input name="isrRetention" required inputMode="decimal" pattern="(?:0|1)(?:\.[0-9]{1,6})?" placeholder="Confirmar tasa"/></Field></div><p className={styles.fiscalHint}>No se aplica una tasa universal. Si una retención no corresponde, registra explícitamente 0.</p>{error&&<p className={styles.fiscalError} role="alert">{error}</p>}<footer><button type="button" onClick={onClose}>Cancelar</button><button type="submit" className={styles.fiscalPrimary} disabled={busy||!entities.some(item=>item.activa)}>{busy?'Guardando…':'Guardar concepto'}</button></footer></form></Dialog>;
 }
-function SimpleDialog({title,onClose,onSaved,submit,fields}:{title:string;onClose:()=>void;onSaved:()=>void;submit:(data:Record<string,string>)=>Promise<unknown>;fields:Array<[string,string]>}) {const [busy,setBusy]=useState(false);const [error,setError]=useState('');return <Dialog title={title} subtitle="Los datos se guardan sólo para la organización activa." onClose={onClose}><form onSubmit={async(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();const raw=new FormData(event.currentTarget);const data=Object.fromEntries(fields.map(([name])=>[name,String(raw.get(name)||'')]));setBusy(true);setError('');try{await submit(data);onSaved();}catch(reason){setError(reason instanceof Error?reason.message:'No pudimos guardar.');}finally{setBusy(false);}}}><div className={styles.fiscalFormGrid}>{fields.map(([name,label])=><Field key={name} label={label}><input name={name} required={name!=='serie'} /></Field>)}</div>{error&&<p className={styles.fiscalError} role="alert">{error}</p>}<footer><button type="button" onClick={onClose}>Cancelar</button><button className={styles.fiscalPrimary} disabled={busy}>{busy?'Guardando…':'Guardar'}</button></footer></form></Dialog>}

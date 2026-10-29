@@ -1,5 +1,12 @@
-import { apiBlobRequest, apiRequest } from '../../services/api/client';
+import { apiBlobRequest, apiRequest, apiUploadWithProgress } from '../../services/api/client';
 import type { ExpedienteInvoice, FinanceAccount, FinanceCatalogs, FinanceMovement, FinanceSummary, FiscalAccounts, FiscalConcept, FiscalDocument, FiscalEntity, FiscalIncomeContext, FiscalProviderStatus, FiscalSupplier, MovementDraft, Paginated, Receipt, Receivable, ReconciliationData, RecurringExpense } from './finance.types';
+
+export type CsfExtraction = { rfc:string|null;razon_social:string|null;codigo_postal:string|null;domicilio_fiscal:string|null;
+  fecha_csf:string|null; nombre:string|null; apellido_paterno:string|null; apellido_materno:string|null;
+  regimenes_fiscales:Array<{clave:string;descripcion:string}>;
+  regimenes_documentales:Array<{descripcion:string;fecha_inicio:string|null;fecha_fin:string|null;match:{clave:string;descripcion:string;tipo:string}|null}>;
+  actividades_economicas:Array<{descripcion:string}>;status:string;source:string;sha256:string;requiresReview:boolean;
+  catalog_source:string;conflicts:string[] };
 
 const data = <T>(value: { success:boolean;data:T }|T):T => value && typeof value === 'object' && 'data' in value ? (value as {data:T}).data : value as T;
 const params = (input:Record<string,string|number|undefined>) => { const result=new URLSearchParams(); Object.entries(input).forEach(([key,value])=>{if(value!==undefined&&value!=='')result.set(key,String(value));}); return result.toString(); };
@@ -13,6 +20,15 @@ export const financeService = {
   async expedienteInvoices(estado='',signal?:AbortSignal,incomeId?:string){return data(await apiRequest<{success:boolean;data:{items:ExpedienteInvoice[];source:string;count:number}}>(`/finanzas/facturacion/expedientes?${params({estado,income_id:incomeId})}`,{signal}));},
   async fiscalStatus(signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:FiscalProviderStatus}>('/finanzas/facturacion/estado',{signal}));},
   async fiscalEntities(signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:FiscalEntity[]}>('/finanzas/facturacion/entidades',{signal}));},
+  async fiscalRegimes(){return data(await apiRequest<{success:boolean;data:{source:string;complete:boolean;items:Array<{clave:string;descripcion:string;tipo:string}>}}>('/finanzas/facturacion/regimenes-fiscales'));},
+  async fiscalUses(){return data(await apiRequest<{success:boolean;data:{source:string;complete:boolean;items:Array<{clave:string;descripcion:string;tiposPersona:string[];regimenesReceptor:string[];vigenteDesde:string;vigenteHasta:string|null}>}}>('/finanzas/facturacion/usos-cfdi'));},
+  async pendingFiscalEntityCsf(){return data(await apiRequest<{success:boolean;data:{id:string;sha256:string;filename:string;size_bytes:number;extraction:CsfExtraction|null}|null}>('/finanzas/facturacion/entidades/csf/pendiente'));},
+  async uploadFiscalEntityCsf(file:File,onProgress:(loaded:number,total:number)=>void){const form=new FormData();form.append('file',file);return data(await apiUploadWithProgress<{success:boolean;data:{id:string;sha256:string;filename:string;size_bytes:number;idempotent:boolean}}>('/finanzas/facturacion/entidades/csf',form,onProgress));},
+  async extractFiscalEntityCsf(documentId:string){return data(await apiRequest<{success:boolean;data:CsfExtraction}>(`/finanzas/facturacion/entidades/csf/${encodeURIComponent(documentId)}/extraer`,{method:'POST',body:'{}'}));},
+  async fiscalEntityCsfUrl(id:string){return data(await apiRequest<{success:boolean;data:{url:string;filename:string;mimeType:string;sha256:string;sizeBytes:number}}>(`/finanzas/facturacion/entidades/${encodeURIComponent(id)}/csf`));},
+  async fiscalEntityCsfVersions(id:string){return data(await apiRequest<{success:boolean;data:Array<{id:string;version:number;confirmed_at:string;documento:{id:string;nombre_original:string;checksum_sha256:string;size_bytes:number;fecha_carga:string}}>}>(`/finanzas/facturacion/entidades/${encodeURIComponent(id)}/csf/versiones`));},
+  async fiscalEntityCsfVersionUrl(id:string,version:number){return data(await apiRequest<{success:boolean;data:{url:string;filename:string;mimeType:string;sha256:string;sizeBytes:number}}>(`/finanzas/facturacion/entidades/${encodeURIComponent(id)}/csf/versiones/${version}`));},
+  async replaceFiscalEntityCsf(id:string,input:Record<string,unknown>){return data(await apiRequest(`/finanzas/facturacion/entidades/${encodeURIComponent(id)}/csf`,{method:'PATCH',body:JSON.stringify(input)}));},
   async fiscalConcepts(entityId?:string,signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:FiscalConcept[]}>(`/finanzas/facturacion/conceptos?${params({entidad_fiscal_id:entityId})}`,{signal}));},
   async fiscalActOptions(signal?:AbortSignal){return data(await apiRequest<{success:boolean;data:Array<{id:string;nombre:string}>}>('/finanzas/facturacion/conceptos/actos',{signal}));},
   async createFiscalConcept(input:Record<string,unknown>){return data(await apiRequest('/finanzas/facturacion/conceptos',{method:'POST',body:JSON.stringify(input)}));},

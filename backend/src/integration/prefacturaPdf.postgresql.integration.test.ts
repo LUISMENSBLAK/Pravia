@@ -42,7 +42,10 @@ describe.runIf(enabled)('prefactura PDF física · PostgreSQL + Storage local ai
       const csfPdf = await PDFDocument.create();
       const csfFont = await csfPdf.embedFont(StandardFonts.Helvetica);
       const csfPage = csfPdf.addPage([612, 792]);
-      fiscalCsfSynthetic.physicalMultiple.normalize('NFD').replace(/[\u0300-\u036f]/g, '').split('\n')
+      fiscalCsfSynthetic.physicalMultiple
+        .replace('901 REGIMEN SINTETICO A', '612 Personas Fisicas con Actividades Empresariales y Profesionales')
+        .replace('902 REGIMEN SINTETICO B', '626 Regimen Simplificado de Confianza')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '').split('\n')
         .forEach((line, index) => csfPage.drawText(line.replace(/—/g, '-'), {
           x: 32, y: 740 - index * 30, size: 13, font: csfFont,
         }));
@@ -51,8 +54,8 @@ describe.runIf(enabled)('prefactura PDF física · PostgreSQL + Storage local ai
         mimetype: 'application/pdf', size: csfBytes.length };
       const csfSha = createHash('sha256').update(csfBytes).digest('hex');
       const supplierInput = { rfc: 'QAFA010101QA1', razon_social: 'PERSONA FISICA SINTETICA',
-        codigo_postal: '63735', regimen_fiscal: '901',
-        regimenes_fiscales: [{ clave: '901', descripcion: 'REGIMEN SINTETICO A' }],
+        codigo_postal: '63735', regimen_fiscal: '612',
+        regimenes_fiscales: [{ clave: '612', descripcion: 'Personas Físicas con Actividades Empresariales y Profesionales' }],
         csf_reviewed: true, csf_sha256: csfSha };
       await expect(asActor(() => service.createSupplier(actor, { ...supplierInput, csf_sha256: 'otro-archivo' }, undefined, csfFile)))
         .rejects.toMatchObject({ code: 'CFDI_CSF_FILE_CHANGED' });
@@ -63,10 +66,10 @@ describe.runIf(enabled)('prefactura PDF física · PostgreSQL + Storage local ai
       const supplier = await asActor(() => service.createSupplier(actor, supplierInput, undefined, csfFile));
       expect(supplier.idempotent).toBe(false);
       const storedSupplier = await db.proveedorFiscal.findUniqueOrThrow({ where: { id: supplier.supplier.id } });
-      expect(storedSupplier.regimenes_fiscales).toMatchObject([{ clave: '901' }, { clave: '902' }]);
+      expect(storedSupplier.regimenes_fiscales).toMatchObject([{ clave: '612' }, { clave: '626' }]);
       expect(storedSupplier.csf_extraction).toMatchObject({ sha256: csfSha,
         source: 'DETERMINISTIC_PDF_TEXT', extraction_status: 'EXTRACTED', confirmation_status: 'CONFIRMED',
-        confirmed: { regimen_fiscal: '901' }, detected: { regimenes_fiscales: [{ clave: '901' }, { clave: '902' }],
+        confirmed: { regimen_fiscal: '612' }, detected: { regimenes_fiscales: [{ clave: '612' }, { clave: '626' }],
           regimenes_documentales: [] }, source_pages: { rfc: 1, regimenes_documentales: [] } });
       const csfOriginal = await db.documento.findUniqueOrThrow({ where: { id: storedSupplier.csf_documento_id! } });
       expect(csfOriginal.checksum_sha256).toBe(csfSha);
@@ -125,26 +128,34 @@ describe.runIf(enabled)('prefactura PDF física · PostgreSQL + Storage local ai
           cantidad: '1', valor_unitario: '100.00' }] })))
         .rejects.toMatchObject({ code: 'CFDI_RECEIVER_FISCAL_PROFILE_REQUIRED' });
       const receiverConfirmation = { rfc: 'QAFA010101QA1', razon_social: 'PERSONA FISICA SINTETICA',
-        regimen_fiscal: '902', regimenes_fiscales: [{ clave: '902', descripcion: 'REGIMEN SINTETICO B' }],
+        regimen_fiscal: '626', regimenes_fiscales: [{ clave: '626', descripcion: 'Régimen Simplificado de Confianza' }],
         codigo_postal: '63735', csf_documento_id: receiverDocument.id, csf_sha256: csfSha };
       await expect(asActor(() => service.confirmIncomeReceiver(actor, income.id, receiver.id,
         { ...receiverConfirmation, csf_sha256: 'otro-hash' })))
         .rejects.toMatchObject({ code: 'CFDI_CSF_FILE_CHANGED' });
+      await expect(asActor(() => service.confirmIncomeReceiver(actor, income.id, receiver.id,
+        { ...receiverConfirmation, regimen_fiscal: '999',
+          regimenes_fiscales: [{ clave: '999', descripcion: 'Clave inexistente QA' }] })))
+        .rejects.toMatchObject({ status: 422, code: 'CFDI_REGIME_INVALID' });
+      await expect(asActor(() => service.confirmIncomeReceiver(actor, income.id, receiver.id,
+        { ...receiverConfirmation, regimen_fiscal: '601',
+          regimenes_fiscales: [{ clave: '601', descripcion: 'Persona moral QA' }] })))
+        .rejects.toMatchObject({ status: 422, code: 'CFDI_REGIME_INVALID' });
       const confirmedReceiver = await asActor(() => service.confirmIncomeReceiver(actor, income.id,
         receiver.id, receiverConfirmation));
-      expect(confirmedReceiver.regimenes_fiscales).toMatchObject([{ clave: '902' }, { clave: '901' }]);
+      expect(confirmedReceiver.regimenes_fiscales).toMatchObject([{ clave: '626' }, { clave: '612' }]);
       expect(confirmedReceiver.csf_documento_id).toBe(receiverDocument.id);
       expect(confirmedReceiver.csf_extraction).toMatchObject({ sha256: csfSha,
         source: 'DETERMINISTIC_PDF_TEXT', extraction_status: 'EXTRACTED',
-        confirmation_status: 'CONFIRMED', detected: { regimenes_fiscales: [{ clave: '901' }, { clave: '902' }],
+        confirmation_status: 'CONFIRMED', detected: { regimenes_fiscales: [{ clave: '612' }, { clave: '626' }],
           regimenes_documentales: [] }, source_pages: { rfc: 1, regimenes_documentales: [] },
-        confirmed: { regimen_fiscal: '902', regimenes_fiscales: [{ clave: '902' }, { clave: '901' }] },
+        confirmed: { regimen_fiscal: '626', regimenes_fiscales: [{ clave: '626' }, { clave: '612' }] },
       });
       const receiverContext = await service.incomeContext(actor, income.id);
       expect(receiverContext.receivers[0].compareciente.fiscalProfile?.regimenes_fiscales)
-        .toMatchObject([{ clave: '902' }, { clave: '901' }]);
+        .toMatchObject([{ clave: '626' }, { clave: '612' }]);
       const completedIncomeDraft = await asActor(() => service.updateDraft(actor, zeroDraft.cfdi.id, {
-        entidad_fiscal_id: entity.id, receptor_regimen: '901', uso_cfdi: 'G03',
+        entidad_fiscal_id: entity.id, receptor_regimen: '612', uso_cfdi: 'G03',
         subtotal: '100.00', impuestos_trasladados: '0.00', impuestos_retenidos: '0.00', total: '100.00',
         conceptos: [{ concepto_fiscal_id: fiscalConcept.id, cantidad: '1', valor_unitario: '100.00' }],
         metodo_pago: 'PPD', forma_pago: '99', lugar_expedicion: '63735',
@@ -168,17 +179,17 @@ describe.runIf(enabled)('prefactura PDF física · PostgreSQL + Storage local ai
         { ...incomeDraftInput, receptor_regimen: '999' })))
         .rejects.toMatchObject({ code: 'CFDI_RECEIVER_REGIME_SELECTION_REQUIRED' });
       const chosenDraft = await asActor(() => service.createDraft(actor,
-        { ...incomeDraftInput, receptor_regimen: '901' }));
-      expect(chosenDraft.cfdi.receptor_regimen).toBe('901');
+        { ...incomeDraftInput, receptor_regimen: '612' }));
+      expect(chosenDraft.cfdi.receptor_regimen).toBe('612');
       await expect(asActor(() => service.updateDraft(actor, chosenDraft.cfdi.id,
         { receptor_regimen: '999' }))).rejects.toMatchObject({ code: 'CFDI_RECEIVER_REGIME_SELECTION_REQUIRED' });
       const reselectedDraft = await asActor(() => service.updateDraft(actor, chosenDraft.cfdi.id,
-        { receptor_regimen: '902' }));
-      expect(reselectedDraft.receptor_regimen).toBe('902');
-      expect((await service.incomeContext(actor, income.id)).documents[0].receptor_regimen).toBe('902');
+        { receptor_regimen: '626' }));
+      expect(reselectedDraft.receptor_regimen).toBe('626');
+      expect((await service.incomeContext(actor, income.id)).documents[0].receptor_regimen).toBe('626');
       expect((await db.comparecienteFiscalProfile.findUniqueOrThrow({ where: {
         compareciente_id_organization_id: { compareciente_id: receiver.id, organization_id: org.id },
-      } })).regimenes_fiscales).toMatchObject([{ clave: '902' }, { clave: '901' }]);
+      } })).regimenes_fiscales).toMatchObject([{ clave: '626' }, { clave: '612' }]);
       });
       const incomplete = await service.createDraft(actor, { direccion: 'EMITIDO', tipo: 'I', allow_incomplete: true,
         idempotency_key: randomUUID() });
@@ -198,7 +209,7 @@ describe.runIf(enabled)('prefactura PDF física · PostgreSQL + Storage local ai
         { tipo_cambio: '17.123456' });
       expect((currencyCompleted.draft_payload as { fiscal_comprobante: { tipo_cambio: string | null } }).fiscal_comprobante.tipo_cambio).toBe('17.123456');
       const completed = await service.updateDraft(actor, incomplete.cfdi.id, { entidad_fiscal_id: entity.id,
-        receptor_rfc: 'BBB010101BBB', receptor_nombre: 'RECEPTOR SINTETICO QA', receptor_regimen: '612',
+        receptor_rfc: 'BBBA010101BBB', receptor_nombre: 'RECEPTOR SINTETICO QA', receptor_regimen: '612',
         receptor_codigo_postal: '63736', uso_cfdi: 'G03', metodo_pago: 'PPD', forma_pago: '99',
         lugar_expedicion: '63735', subtotal: '8000.00', impuestos_trasladados: '0.00',
         impuestos_retenidos: '0.00', total: '8000.00', conceptos: [{ concepto_fiscal_id: fiscalConcept.id,
@@ -207,18 +218,23 @@ describe.runIf(enabled)('prefactura PDF física · PostgreSQL + Storage local ai
       expect(await db.cuentaPorCobrarCfdi.count({ where: { cfdi_id: incomplete.cfdi.id } })).toBe(1);
       expect((await asActor(() => service.generatePrefactura(actor, incomplete.cfdi.id, randomUUID()))).representation.version).toBe(1);
       await expect(service.createDraft(actor, { direccion: 'EMITIDO', tipo: 'I', entidad_fiscal_id: entity.id,
-        receptor_rfc: 'BBB010101BBB', receptor_nombre: 'RECEPTOR SINTETICO QA',
+        receptor_rfc: 'BBBA010101BBB', receptor_nombre: 'RECEPTOR SINTETICO QA',
         subtotal: '100.00', total: '100.00', conceptos: [{ descripcion: 'Clave enviada por cliente',
           clave_prod_serv: '80121700', clave_unidad: 'E48', cantidad: '1', valor_unitario: '100.00' }],
         idempotency_key: randomUUID() })).rejects.toMatchObject({ code: 'CFDI_CONCEPT_ID_INVALID' });
       const created = await service.createDraft(actor, {
-        direccion: 'EMITIDO', tipo: 'I', entidad_fiscal_id: entity.id, receptor_rfc: 'BBB010101BBB',
+        direccion: 'EMITIDO', tipo: 'I', entidad_fiscal_id: entity.id, receptor_rfc: 'BBBA010101BBB',
         receptor_nombre: 'RECEPTOR SINTETICO QA', receptor_regimen: '612', receptor_codigo_postal: '63736',
         uso_cfdi: 'G03', metodo_pago: 'PPD', forma_pago: '99', moneda: 'MXN', lugar_expedicion: '63735',
         subtotal: '8000.00', impuestos_trasladados: '0.00', impuestos_retenidos: '0.00', total: '8000.00',
         concepto: 'Honorarios QA', conceptos: [{ concepto_fiscal_id: fiscalConcept.id, cantidad: '1', valor_unitario: '8000.00' }],
         idempotency_key: randomUUID(),
       });
+      await expect(service.updateDraft(actor, created.cfdi.id, { uso_cfdi: 'ZZZ' }))
+        .rejects.toMatchObject({ code: 'CFDI_USE_INVALID', status: 422 });
+      await expect(service.updateDraft(actor, created.cfdi.id, { receptor_regimen: '605' }))
+        .rejects.toMatchObject({ code: 'CFDI_USE_REGIME_INCOMPATIBLE', status: 422 });
+      expect((await db.documentoCfdi.findUniqueOrThrow({ where: { id: created.cfdi.id } })).uso_cfdi).toBe('G03');
       expect(created.cfdi.estado).toBe('DRAFT');
       expect(created.cfdi.internal_folio).toMatch(/^FAC-BOR-\d+$/);
       const firstKey = randomUUID();
@@ -258,7 +274,7 @@ describe.runIf(enabled)('prefactura PDF física · PostgreSQL + Storage local ai
       for (const [currency, rate, equivalent] of [['USD', '17.000000', '1700.00'], ['CAD', '12.500000', '1250.00']] as const) {
         const currencyDraft = await service.createDraft(actor, {
           direccion: 'EMITIDO', tipo: 'I', entidad_fiscal_id: entity.id,
-          receptor_rfc: 'BBB010101BBB', receptor_nombre: `RECEPTOR ${currency} SINTETICO QA`,
+          receptor_rfc: 'BBBA010101BBB', receptor_nombre: `RECEPTOR ${currency} SINTETICO QA`,
           receptor_regimen: '612', receptor_codigo_postal: '63736', uso_cfdi: 'G03',
           metodo_pago: 'PUE', forma_pago: '03', moneda: currency, tipo_cambio: rate,
           lugar_expedicion: '63735', subtotal: '100.00', impuestos_trasladados: '0.00',

@@ -16,10 +16,12 @@ function file(value: Express.Multer.File | undefined): UploadedFiscalFile | unde
 }
 
 function fail(res: Response, error: unknown, fallback: string) {
-  if (error instanceof FinanceFiscalError) return res.status(error.status).json({ success: false, code: error.code, error: error.message });
-  if (error instanceof FiscalExtractionError) return res.status(error.status).json({ success: false, code: error.code, error: error.message });
-  console.error(`[FinanceFiscal] ${fallback}`, error);
-  return res.status(500).json({ success: false, code: 'CFDI_OPERATION_FAILED', error: fallback });
+  const correlationId = String(res.getHeader('x-correlation-id') || '');
+  if (error instanceof FinanceFiscalError) return res.status(error.status).json({ success: false, code: error.code, error: error.message, correlation_id: correlationId });
+  if (error instanceof FiscalExtractionError) return res.status(error.status).json({ success: false, code: error.code, error: error.message, correlation_id: correlationId });
+  const safeError = error instanceof Error ? { name: error.name, code: 'CFDI_OPERATION_FAILED' } : { name: 'UnknownError', code: 'CFDI_OPERATION_FAILED' };
+  console.error(`[FinanceFiscal] ${fallback}`, { ...safeError, correlation_id: correlationId });
+  return res.status(500).json({ success: false, code: 'CFDI_OPERATION_FAILED', error: fallback, correlation_id: correlationId });
 }
 
 export class FinanceFiscalController {
@@ -30,6 +32,52 @@ export class FinanceFiscalController {
   static async entities(req: Request, res: Response) {
     try { return res.json({ success: true, data: await service.listEntities(actor(req)) }); }
     catch (error) { return fail(res, error, 'No pudimos cargar las entidades fiscales.'); }
+  }
+
+  static fiscalRegimes(_req: Request, res: Response) {
+    return res.json({ success: true, data: service.fiscalRegimes() });
+  }
+
+  static fiscalUses(_req: Request, res: Response) {
+    return res.json({ success: true, data: service.fiscalUses() });
+  }
+
+  static async pendingEntityCsf(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await service.pendingEntityCsfState(actor(req)) }); }
+    catch (error) { return fail(res, error, 'No pudimos recuperar la constancia pendiente.'); }
+  }
+
+  static async uploadEntityCsf(req: Request, res: Response) {
+    try {
+      if (!req.file) throw new FinanceFiscalError(400, 'CFDI_CSF_FILE_REQUIRED', 'Selecciona un PDF de constancia fiscal.');
+      const result = await service.uploadEntityCsf(actor(req), file(req.file)!, correlation(req));
+      return res.status(result.idempotent ? 200 : 201).json({ success: true, data: result });
+    } catch (error) { return fail(res, error, 'No pudimos guardar la constancia fiscal.'); }
+  }
+
+  static async extractEntityCsf(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await service.extractEntityCsf(actor(req), req.params.id, correlation(req)) }); }
+    catch (error) { return fail(res, error, 'La constancia está guardada, pero no se pudo completar su extracción.'); }
+  }
+
+  static async entityCsfUrl(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await service.entityCsfUrl(actor(req), req.params.id, correlation(req)) }); }
+    catch (error) { return fail(res, error, 'No pudimos abrir la constancia fiscal.'); }
+  }
+
+  static async entityCsfVersions(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await service.entityCsfVersions(actor(req), req.params.id) }); }
+    catch (error) { return fail(res, error, 'No pudimos consultar las versiones de la constancia.'); }
+  }
+
+  static async entityCsfVersionUrl(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await service.entityCsfVersionUrl(actor(req), req.params.id, Number(req.params.version), correlation(req)) }); }
+    catch (error) { return fail(res, error, 'No pudimos abrir la versión solicitada.'); }
+  }
+
+  static async replaceEntityCsf(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await service.replaceEntityCsf(actor(req), req.params.id, req.body || {}, correlation(req)) }); }
+    catch (error) { return fail(res, error, 'No pudimos sustituir la constancia fiscal.'); }
   }
 
   static async createEntity(req: Request, res: Response) {

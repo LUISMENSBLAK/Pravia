@@ -6,7 +6,7 @@ import { financeService } from '../features/finance/finance.service';
 import { comparecientesService } from '../features/comparecientes/comparecientes.service';
 
 vi.mock('../features/finance/finance.service', () => ({ financeService: {
-  fiscalIncomeContext: vi.fn(), fiscalEntities: vi.fn(), fiscalConcepts: vi.fn(), fiscalStatus: vi.fn(),
+  fiscalIncomeContext: vi.fn(), fiscalEntities: vi.fn(), fiscalConcepts: vi.fn(), fiscalStatus: vi.fn(), fiscalUses: vi.fn(), fiscalRegimes: vi.fn(),
   createFiscalDraft: vi.fn(), updateFiscalDraft: vi.fn(), deleteFiscalDraft: vi.fn(), extractCsf: vi.fn(),
   confirmFiscalReceiver: vi.fn(),
   prefacturaVersions: vi.fn(), prefacturaVersionUrl: vi.fn(), generatePrefactura: vi.fn(),
@@ -17,7 +17,7 @@ const context = {
   income: { id: 'income-1', expediente_id: 'exp-1', concepto_contexto: 'Honorarios', estado: 'PENDIENTE',
     expediente: { numero_pravia: 'EXP-QA-1', cliente_alias: 'Cliente QA' } },
   receivers: [{ id: 'receiver-link-1', compareciente: { id: 'party-1', nombre_busqueda: 'Cliente QA',
-    fiscalProfile: { rfc: 'XAXX010101000', razon_social: 'Cliente QA', regimen_fiscal: '616', codigo_postal: '63735', version: 1 } } }],
+    fiscalProfile: { rfc: 'XAXX010101000', razon_social: 'Cliente QA', regimen_fiscal: '612', codigo_postal: '63735', version: 1 } } }],
   acts: [{ tipo_acto_id: 'act-1', tipo_acto: { nombre: 'Acto QA' } }],
   facturableAmount: '1000.00', invoicedAmount: '0.00', reservedDraftAmount: '0.00',
   remainingInvoiceableAmount: '1000.00', documents: [],
@@ -33,6 +33,13 @@ describe('Generador contextual de prefacturas', () => {
       descripcion: 'Honorarios QA', clave_prod_serv: '84111506', clave_unidad: 'E48', iva_tasa: '0.000000',
       iva_retencion_tasa: '0.000000', isr_retencion_tasa: '0.000000' }] as never);
     vi.mocked(financeService.fiscalStatus).mockResolvedValue({ configured: false, realStampingVerified: false } as never);
+    vi.mocked(financeService.fiscalUses).mockResolvedValue({source:'SAT_QA',complete:true,items:[
+      {clave:'G03',descripcion:'Gastos en general.',tiposPersona:['FISICA','MORAL'],regimenesReceptor:['601','612','626'],vigenteDesde:'2022-01-01',vigenteHasta:null},
+    ]});
+    vi.mocked(financeService.fiscalRegimes).mockResolvedValue({source:'SAT_QA',complete:true,items:[
+      {clave:'612',descripcion:'Personas Físicas con Actividades Empresariales y Profesionales',tipo:'FISICA'},
+      {clave:'626',descripcion:'Régimen Simplificado de Confianza',tipo:'AMBAS'},
+    ]});
     vi.mocked(financeService.prefacturaVersions).mockResolvedValue({ draft_id: 'draft-1', internal_folio: 'FAC-BOR-000001', versions: [] });
   });
 
@@ -44,7 +51,7 @@ describe('Generador contextual de prefacturas', () => {
     const user = userEvent.setup();
     render(<IncomeInvoiceGenerator incomeId="income-1" onClose={vi.fn()} onChanged={vi.fn()}/>);
     const dialog = await screen.findByRole('dialog', { name: 'Generar factura CFDI' });
-    await user.type(within(dialog).getByLabelText('Uso CFDI'), 'G03');
+    await user.selectOptions(within(dialog).getByLabelText('Uso CFDI'), 'G03');
     await user.selectOptions(within(dialog).getByLabelText('Concepto 1'), 'concept-1');
     await user.clear(within(dialog).getByLabelText('Valor unitario sin impuestos'));
     await user.type(within(dialog).getByLabelText('Valor unitario sin impuestos'), '500');
@@ -77,6 +84,8 @@ describe('Generador contextual de prefacturas', () => {
     await waitFor(() => expect(financeService.extractCsf).toHaveBeenCalledOnce());
     expect(await within(dialog).findByText('CSF cargada — error de extracción. El documento sigue disponible.')).toBeVisible();
     expect(within(dialog).getByRole('alert')).toHaveTextContent('La CSF se cargó y permanece disponible');
+    expect(within(dialog).getByLabelText('Régimen').tagName).toBe('SELECT');
+    expect(within(dialog).getByLabelText('Régimen')).toHaveTextContent('612 — Personas Físicas con Actividades Empresariales y Profesionales');
     expect(within(dialog).getByRole('button', { name: 'Confirmar y guardar datos fiscales' })).toBeEnabled();
   });
 
@@ -105,7 +114,8 @@ describe('Generador contextual de prefacturas', () => {
     vi.mocked(financeService.extractCsf).mockResolvedValue({rfc:'QAFA010101QA1',
       razon_social:'PERSONA FISICA SINTETICA',codigo_postal:'63735',sha256:'hash-qa',status:'EXTRACTED',
       source:'DETERMINISTIC_PDF_TEXT',requiresReview:true,
-      regimenes_fiscales:[{clave:'901',descripcion:'Sintético A'},{clave:'902',descripcion:'Sintético B'}],
+      regimenes_fiscales:[{clave:'612',descripcion:'Personas Físicas con Actividades Empresariales y Profesionales'},
+        {clave:'626',descripcion:'Régimen Simplificado de Confianza'}],
     } as never);
     vi.mocked(financeService.confirmFiscalReceiver).mockResolvedValue({} as never);
     const user=userEvent.setup();
@@ -114,11 +124,12 @@ describe('Generador contextual de prefacturas', () => {
     await user.upload(within(dialog).getByLabelText('Cargar CSF para extraer datos'),
       new File(['%PDF-'], 'CSF_SINTETICA_SIN_VALIDEZ_FISCAL.pdf', {type:'application/pdf'}));
     await within(dialog).findByText('Se conservarán los 2 regímenes detectados; después elegirás uno para esta factura.');
-    await user.selectOptions(within(dialog).getByLabelText('Régimen'),'902');
+    await user.selectOptions(within(dialog).getByLabelText('Régimen'),'626');
     await user.click(within(dialog).getByRole('button',{name:'Confirmar y guardar datos fiscales'}));
     await waitFor(()=>expect(financeService.confirmFiscalReceiver).toHaveBeenCalledWith('income-1','party-1',
-      expect.objectContaining({csf_documento_id:'csf-doc-1',csf_sha256:'hash-qa',regimen_fiscal:'902',
-        regimenes_fiscales:[{clave:'901',descripcion:'Sintético A'},{clave:'902',descripcion:'Sintético B'}]})));
+      expect.objectContaining({csf_documento_id:'csf-doc-1',csf_sha256:'hash-qa',regimen_fiscal:'626',
+        regimenes_fiscales:[{clave:'612',descripcion:'Personas Físicas con Actividades Empresariales y Profesionales'},
+          {clave:'626',descripcion:'Régimen Simplificado de Confianza'}]})));
   });
 
   it('precarga concepto y valor unitario desde el ingreso y la tasa fiscal configurada, sin presumir IVA fijo', async () => {
@@ -139,8 +150,8 @@ describe('Generador contextual de prefacturas', () => {
   it('exige elegir un régimen confirmado para la factura sin borrar los demás del perfil', async () => {
     vi.mocked(financeService.fiscalIncomeContext).mockResolvedValue({...context,receivers:[{
       id:'receiver-link-1',compareciente:{id:'party-1',nombre_busqueda:'Cliente QA',fiscalProfile:{
-        rfc:'XAXX010101000',razon_social:'Cliente QA',regimen_fiscal:'901',codigo_postal:'63735',version:2,
-        regimenes_fiscales:[{clave:'901',descripcion:'Régimen sintético A'},{clave:'902',descripcion:'Régimen sintético B'}],
+        rfc:'XAXX010101000',razon_social:'Cliente QA',regimen_fiscal:'612',codigo_postal:'63735',version:2,
+        regimenes_fiscales:[{clave:'612',descripcion:'Actividades empresariales'},{clave:'626',descripcion:'Confianza'}],
       }},
     }]} as never);
     vi.mocked(financeService.createFiscalDraft).mockResolvedValue({cfdi:{id:'draft-regime'}} as never);
@@ -150,21 +161,21 @@ describe('Generador contextual de prefacturas', () => {
     const selector=within(dialog).getByLabelText('Régimen para esta factura');
     expect(within(selector).getAllByRole('option')).toHaveLength(3);
     expect(selector).toHaveValue('');
-    await user.selectOptions(selector,'902');
-    await user.type(within(dialog).getByLabelText('Uso CFDI'),'G03');
+    await user.selectOptions(selector,'626');
+    await user.selectOptions(within(dialog).getByLabelText('Uso CFDI'),'G03');
     await user.selectOptions(within(dialog).getByLabelText('Concepto 1'),'concept-1');
     await user.clear(within(dialog).getByLabelText('Valor unitario sin impuestos'));
     await user.type(within(dialog).getByLabelText('Valor unitario sin impuestos'),'500');
     await user.click(within(dialog).getByRole('button',{name:'Guardar borrador'}));
     await waitFor(()=>expect(financeService.createFiscalDraft).toHaveBeenCalledWith(expect.objectContaining({
-      receptor_regimen:'902',receptor_compareciente_id:'party-1',
+      receptor_regimen:'626',receptor_compareciente_id:'party-1',
     })));
   });
   it('no habilita un botón de timbrado sin operación real aunque el proveedor informe conexión', async () => {
     vi.mocked(financeService.fiscalStatus).mockResolvedValue({configured:true,realStampingVerified:true} as never);
     vi.mocked(financeService.fiscalIncomeContext).mockResolvedValue({...context,documents:[{
       id:'draft-qa',estado:'PREFACTURA',entidad_fiscal_id:'entity-1',receptor_compareciente_id:'party-1',
-      receptor_regimen:'616',uso_cfdi:'G03',metodo_pago:'PPD',forma_pago:'99',moneda:'MXN',
+      receptor_regimen:'612',uso_cfdi:'G03',metodo_pago:'PPD',forma_pago:'99',moneda:'MXN',
       draft_payload:{fiscal_comprobante:{lugar_expedicion:'63735'},concepts:[{
         concepto_fiscal_id:'concept-1',cantidad:'1',valor_unitario:'1000.00',
       }]},

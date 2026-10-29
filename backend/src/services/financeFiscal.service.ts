@@ -8,6 +8,7 @@ import { FISCAL_UPLOAD_MAX_BYTES, uploadLimitLabel } from '../config/uploadLimit
 import { cfdiIncomeBalance, RESERVING_CFDI_DRAFT_STATES } from '../domain/cfdiIncomeBalance';
 import { renderPrefacturaPdf, type PrefacturaSnapshot } from '../domain/prefacturaPdf';
 import { FiscalDocumentExtractionService, FiscalExtractionError } from './fiscalDocumentExtraction.service';
+import { SAT_CFDI_USES, SAT_FISCAL_REGIMES, SAT_FISCAL_REGIME_SOURCE, mapLiteralSatRegime, satCfdiUse, satCfdiUseCompatible, satRegime } from '../domain/satFiscalRegimes';
 
 type Database = PrismaClient;
 
@@ -46,15 +47,25 @@ function fiscalRegimeCodes(value: unknown, fallback: string): string[] {
     ? [clean((item as Record<string, unknown>).clave)] : []).filter((code) => /^\d{3}$/.test(code));
 }
 
+export function validateUseCfdi(useCode: string, receiverRegime: string, receiverRfc: string) {
+  if (!useCode) return;
+  if (!satCfdiUse(useCode)) throw new FinanceFiscalError(422, 'CFDI_USE_INVALID', 'El Uso CFDI no existe o no está vigente en el catálogo SAT.');
+  if (!receiverRegime) return;
+  const personType = receiverRfc.length === 12 ? 'MORAL' : receiverRfc.length === 13 ? 'FISICA' : null;
+  if (!personType || !satCfdiUseCompatible(useCode, receiverRegime, personType)) {
+    throw new FinanceFiscalError(422, 'CFDI_USE_REGIME_INCOMPATIBLE', 'El Uso CFDI no corresponde al régimen y tipo de persona del receptor.');
+  }
+}
+
 function required(value: unknown, field: string) {
   const result = clean(value);
   if (!result) throw new FinanceFiscalError(400, 'CFDI_REQUIRED_FIELD', `${field} es obligatorio.`);
   return result;
 }
 
-function rfc(value: unknown, field = 'RFC') {
+function rfc(value: unknown, field = 'RFC', status = 400) {
   const result = upper(value);
-  if (!RFC.test(result)) throw new FinanceFiscalError(400, 'CFDI_RFC_INVALID', `${field} no tiene un formato válido.`);
+  if (!RFC.test(result)) throw new FinanceFiscalError(status, 'CFDI_RFC_INVALID', `${field} no tiene un formato válido.`);
   return result;
 }
 
@@ -83,7 +94,8 @@ export function draftFiscalDetails(input: Record<string, unknown>, previous: Rec
   const condiciones = clean(value('condiciones_pago'));
   if (condiciones.length > 300) throw new FinanceFiscalError(400, 'CFDI_PAYMENT_TERMS_INVALID', 'Las condiciones de pago no pueden superar 300 caracteres.');
   return { moneda, fiscal_comprobante: { tipo_cambio: tipoCambio || null, exportacion: exportacion || null,
-    lugar_expedicion: lugarExpedicion || null, condiciones_pago: condiciones || null } };
+    lugar_expedicion: lugarExpedicion || null, condiciones_pago: condiciones || null,
+    regimen_emisor: clean(value('regimen_emisor')) || null } };
 }
 
 function decimal(value: unknown, field: string, allowZero = false) {
@@ -134,11 +146,18 @@ function publicEntity<T extends Record<string, unknown>>(entity: T) {
     csd_key_secret_ref: key,
     csd_password_secret_ref: password,
     siguiente_folio: nextFolio,
+    csf_extraction: extraction,
     ...safe
   } = entity;
+  const csfSummary = extraction && typeof extraction === 'object' && !Array.isArray(extraction)
+    ? extraction as Record<string, unknown> : null;
   return {
     ...safe,
     siguiente_folio: typeof nextFolio === 'bigint' ? nextFolio.toString() : nextFolio,
+    csf_extraction: csfSummary ? { source: csfSummary.source || null,
+      extraction_status: csfSummary.extraction_status || null,
+      confirmation_status: csfSummary.confirmation_status || null,
+      corrected_fields: csfSummary.corrected_fields || [] } : null,
     pac_secret_configured: Boolean(pac),
     csd_key_configured: Boolean(key),
     csd_password_configured: Boolean(password),
@@ -214,7 +233,7 @@ async function storeCanonicalDocument(tx: Prisma.TransactionClient, actor: Fisca
     tipo: kind, categoria: 'OTROS', storage_key: storageKey, mime_type: kind === 'CFDI_XML' ? 'application/xml' : kind === 'CFDI_PDF' ? 'application/pdf' : file.mimetype,
     ...(kind === 'CONSTANCIA_FISCAL' ? { estatus: 'VIGENTE' as const } : {}),
     size_bytes: file.buffer.length, checksum_sha256: createHash('sha256').update(file.buffer).digest('hex'),
-    observaciones: kind === 'CFDI_XML' ? 'XML fiscal cargado manualmente' : kind === 'CFDI_PDF' ? 'Representación impresa asociada al CFDI' : 'Constancia fiscal de proveedor; extracción revisada por usuario', subido_por_id: actor.id,
+    observaciones: kind === 'CFDI_XML' ? 'XML fiscal cargado manualmente' : kind === 'CFDI_PDF' ? 'Representación impresa asociada al CFDI' : 'Constancia fiscal privada; requiere revisión humana', subido_por_id: actor.id,
     expediente_id: expedienteId || null,
   } });
 }
@@ -262,6 +281,95 @@ export class FinanceFiscalService {
     return { configured: this.provider.configured, provider: this.provider.configured ? this.provider.id : null, cfdiEnabled: this.provider.configured, manualUploadEnabled: true, localDraftsEnabled: true, realStampingVerified: false, message: this.provider.configured ? 'Proveedor configurado; requiere certificación externa antes de habilitarse en producción.' : 'PAC no configurado. Borradores y carga manual XML/PDF permanecen disponibles.' };
   }
 
+  fiscalRegimes() {
+    return { source: SAT_FISCAL_REGIME_SOURCE, complete: true, items: SAT_FISCAL_REGIMES };
+  }
+
+  fiscalUses() {
+    return { source: SAT_FISCAL_REGIME_SOURCE, complete: true, items: SAT_CFDI_USES };
+  }
+
+  private async pendingEntityCsf(actor: FiscalActor, documentId: string) {
+    const document = await this.db.documento.findFirst({ where: {
+      id: documentId, organization_id: actor.organizationId, subido_por_id: actor.id,
+      tipo: 'CONSTANCIA_FISCAL', estatus: 'VIGENTE',
+    } });
+    if (!document) throw new FinanceFiscalError(404, 'CFDI_CSF_NOT_FOUND', 'La constancia de esta operación no está disponible.');
+    return document;
+  }
+
+  async uploadEntityCsf(actor: FiscalActor, file: UploadedFiscalFile, correlationId?: string) {
+    if (!actor.permissions.includes('documentos.write')) throw new FinanceFiscalError(403, 'CFDI_CSF_UPLOAD_DENIED', 'No tienes permiso para cargar documentos.');
+    const filename = file.originalname.toLowerCase();
+    if (file.size !== file.buffer.length || file.size < 1 || file.size > FISCAL_UPLOAD_MAX_BYTES ||
+      !filename.endsWith('.pdf') || file.buffer.subarray(0, 5).toString('latin1') !== '%PDF-') {
+      throw new FinanceFiscalError(400, 'CFDI_CSF_FILE_INVALID', `La constancia debe ser un PDF válido de máximo ${uploadLimitLabel(FISCAL_UPLOAD_MAX_BYTES)}.`);
+    }
+    const sha256 = createHash('sha256').update(file.buffer).digest('hex');
+    const prior = await this.db.documento.findFirst({ where: { organization_id: actor.organizationId,
+      subido_por_id: actor.id, tipo: 'CONSTANCIA_FISCAL', estatus: 'VIGENTE', checksum_sha256: sha256,
+      observaciones: 'Constancia fiscal de entidad emisora; pendiente de revisión' }, orderBy: { fecha_carga: 'desc' } });
+    if (prior) return { id: prior.id, sha256, filename: prior.nombre_original, size_bytes: prior.size_bytes, idempotent: true };
+    const storageKey = `organizations/${actor.organizationId}/fiscal/entity-csf/${randomUUID()}.pdf`;
+    await uploadFile(file.buffer, storageKey, 'application/pdf');
+    try {
+      const document = await this.db.$transaction(async (tx) => {
+        const created = await storeCanonicalDocument(tx, actor, file, storageKey, 'CONSTANCIA_FISCAL');
+        await tx.documento.update({ where: { id: created.id }, data: { observaciones: 'Constancia fiscal de entidad emisora; pendiente de revisión' } });
+        await audit(tx, actor, 'UPLOAD_FISCAL_ENTITY_CSF', 'Documento', created.id,
+          { sha256, size_bytes: file.size }, correlationId);
+        return created;
+      });
+      return { id: document.id, sha256, filename: document.nombre_original, size_bytes: document.size_bytes, idempotent: false };
+    } catch (error) {
+      await deleteFile(storageKey).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async extractEntityCsf(actor: FiscalActor, documentId: string, correlationId?: string) {
+    const document = await this.pendingEntityCsf(actor, documentId);
+    const buffer = await downloadFile(document.storage_key);
+    const result = await new FiscalDocumentExtractionService().extract({ buffer, originalname: document.nombre_original,
+      mimetype: document.mime_type, size: buffer.length });
+    const mapped = result.regimenes_documentales.map((item) => ({ ...item,
+      match: mapLiteralSatRegime(item.descripcion) }));
+    const extracted = { ...result, regimenes_documentales: mapped,
+      catalog_source: SAT_FISCAL_REGIME_SOURCE };
+    await this.db.$transaction(async (tx) => {
+      await tx.documento.update({ where: { id: document.id }, data: { datos_extraidos: extracted as unknown as Prisma.InputJsonValue } });
+      await audit(tx, actor, 'EXTRACT_FISCAL_ENTITY_CSF', 'Documento', document.id,
+        { sha256: result.sha256, status: result.status, source: result.source, catalog_source: SAT_FISCAL_REGIME_SOURCE }, correlationId);
+    });
+    return extracted;
+  }
+
+  async pendingEntityCsfState(actor: FiscalActor) {
+    const document = await this.db.documento.findFirst({ where: { organization_id: actor.organizationId,
+      subido_por_id: actor.id, tipo: 'CONSTANCIA_FISCAL', estatus: 'VIGENTE',
+      observaciones: 'Constancia fiscal de entidad emisora; pendiente de revisión' }, orderBy: { fecha_carga: 'desc' } });
+    if (!document) return null;
+    const extraction = document.datos_extraidos && typeof document.datos_extraidos === 'object' &&
+      !Array.isArray(document.datos_extraidos) ? document.datos_extraidos : null;
+    return { id: document.id, sha256: document.checksum_sha256, filename: document.nombre_original,
+      size_bytes: document.size_bytes, extraction };
+  }
+
+  async entityCsfUrl(actor: FiscalActor, entityId: string, correlationId?: string) {
+    if (!actor.permissions.includes('documentos.read')) throw new FinanceFiscalError(403, 'CFDI_CSF_READ_DENIED', 'No tienes permiso para consultar documentos.');
+    const entity = await this.db.entidadFiscalCfdi.findFirst({ where: { id: entityId, organization_id: actor.organizationId },
+      select: { id: true, csf_documento_id: true } });
+    if (!entity?.csf_documento_id) throw new FinanceFiscalError(404, 'CFDI_CSF_NOT_FOUND', 'La entidad no tiene una constancia asociada.');
+    const document = await this.db.documento.findFirst({ where: { id: entity.csf_documento_id,
+      organization_id: actor.organizationId, tipo: 'CONSTANCIA_FISCAL', estatus: 'VIGENTE' } });
+    if (!document) throw new FinanceFiscalError(404, 'CFDI_CSF_NOT_FOUND', 'La constancia ya no está disponible.');
+    const url = await getSignedUrl(document.storage_key, 300);
+    await this.db.$transaction((tx) => audit(tx, actor, 'VIEW_FISCAL_ENTITY_CSF', 'Documento', document.id,
+      { entidad_fiscal_id: entity.id, checksum_sha256: document.checksum_sha256 }, correlationId));
+    return { url, filename: document.nombre_original, mimeType: document.mime_type,
+      sha256: document.checksum_sha256, sizeBytes: document.size_bytes };
+  }
+
   async listEntities(actor: FiscalActor) {
     const rows = await this.db.entidadFiscalCfdi.findMany({ where: { organization_id: actor.organizationId }, include: { cuentas: { include: { cuenta: { select: { id: true, alias: true, institucion: true, ultimos_cuatro: true, moneda: true } } } } }, orderBy: [{ activa: 'desc' }, { razon_social: 'asc' }] });
     return rows.map((row) => publicEntity(row as unknown as Record<string, unknown>));
@@ -269,9 +377,33 @@ export class FinanceFiscalService {
 
   async createEntity(actor: FiscalActor, input: Record<string, unknown>, correlationId?: string) {
     ensureNoRawSecrets(input);
+    const csfDocumentId = clean(input.csf_documento_id);
+    const manualReason = clean(input.manual_exception_reason);
+    if (csfDocumentId && !UUID.test(csfDocumentId)) throw new FinanceFiscalError(400, 'CFDI_CSF_ID_INVALID', 'La referencia de constancia no es válida.');
+    if (!csfDocumentId && manualReason.length < 20) throw new FinanceFiscalError(400, 'CFDI_CSF_REQUIRED',
+      'Carga una constancia fiscal o justifica expresamente el alta manual excepcional.');
+    if (csfDocumentId && input.csf_reviewed !== true) throw new FinanceFiscalError(400, 'CFDI_CSF_REVIEW_REQUIRED',
+      'Confirma los datos detectados en la constancia antes de guardar.');
+    const fiscalRfc = rfc(input.rfc, 'RFC', 422);
+    const contributorType = fiscalRfc.length === 12 ? 'MORAL' : 'FISICA';
+    if (clean(input.tipo_contribuyente) && clean(input.tipo_contribuyente) !== contributorType) {
+      throw new FinanceFiscalError(422, 'CFDI_TAXPAYER_TYPE_INVALID', 'El tipo de contribuyente no corresponde al formato del RFC.');
+    }
+    const selectedRegime = required(input.regimen_fiscal, 'Régimen fiscal');
+    const inputRegimes = Array.isArray(input.regimenes_fiscales) ? input.regimenes_fiscales as Array<{ clave?: unknown }> : [];
+    const requestedCodes = inputRegimes.map((item) => clean(item?.clave));
+    if (!requestedCodes.length || requestedCodes.length > 20 || new Set(requestedCodes).size !== requestedCodes.length ||
+      requestedCodes.some((code) => !satRegime(code) ||
+        (satRegime(code)!.tipo !== 'AMBAS' && satRegime(code)!.tipo !== contributorType))) {
+      throw new FinanceFiscalError(422, 'CFDI_REGIME_INVALID', 'Selecciona regímenes compatibles del catálogo fiscal verificado.');
+    }
+    if (!requestedCodes.includes(selectedRegime)) throw new FinanceFiscalError(422, 'CFDI_REGIME_SELECTION_INVALID',
+      'El régimen principal debe estar entre los confirmados.');
+    const confirmedRegimes = requestedCodes.map((code) => ({ clave: code, descripcion: satRegime(code)!.descripcion }));
     const data = {
-      organization_id: actor.organizationId, razon_social: required(input.razon_social, 'Razón social'), rfc: rfc(input.rfc),
-      tipo_contribuyente: clean(input.tipo_contribuyente) || null, regimen_fiscal: required(input.regimen_fiscal, 'Régimen fiscal'),
+      organization_id: actor.organizationId, razon_social: required(input.razon_social, 'Razón social'), rfc: fiscalRfc,
+      tipo_contribuyente: contributorType, regimen_fiscal: selectedRegime,
+      regimenes_fiscales: confirmedRegimes as Prisma.InputJsonValue,
       codigo_postal: postalCode(input.codigo_postal)!, pac_provider: clean(input.pac_provider) || null,
       pac_secret_ref: clean(input.pac_secret_ref) || null, csd_cer_storage_ref: clean(input.csd_cer_storage_ref) || null,
       csd_key_secret_ref: clean(input.csd_key_secret_ref) || null, csd_password_secret_ref: clean(input.csd_password_secret_ref) || null,
@@ -279,16 +411,178 @@ export class FinanceFiscalService {
       csd_vigente_hasta: input.csd_vigente_hasta ? new Date(clean(input.csd_vigente_hasta)) : null,
       serie: clean(input.serie) || null, plantilla_id: clean(input.plantilla_id) || null, created_by_id: actor.id,
     };
+    try {
     const result = await this.db.$transaction(async (tx) => {
-      const created = await tx.entidadFiscalCfdi.create({ data });
+      const document = csfDocumentId ? await tx.documento.findFirst({ where: {
+        id: csfDocumentId, organization_id: actor.organizationId, subido_por_id: actor.id,
+        tipo: 'CONSTANCIA_FISCAL', estatus: 'VIGENTE' } }) : null;
+      if (csfDocumentId && !document) throw new FinanceFiscalError(403, 'CFDI_CSF_DOCUMENT_SCOPE_DENIED',
+        'La constancia fiscal no pertenece a esta operación.');
+      if (document && clean(input.csf_sha256) !== document.checksum_sha256) throw new FinanceFiscalError(409,
+        'CFDI_CSF_FILE_CHANGED', 'La constancia cambió después de extraerla. Vuelve a revisar el archivo.');
+      const extraction = document?.datos_extraidos && typeof document.datos_extraidos === 'object' &&
+        !Array.isArray(document.datos_extraidos) ? document.datos_extraidos as Record<string, unknown> : null;
+      if (document && !extraction && manualReason.length < 20) throw new FinanceFiscalError(422, 'CFDI_CSF_EXTRACTION_REQUIRED',
+        'El archivo está guardado, pero falta extraerlo. Reintenta la extracción o justifica la revisión manual.');
+      const numericDetected = Array.isArray(extraction?.regimenes_fiscales) ? extraction.regimenes_fiscales as Array<{ clave?: string }> : [];
+      const literalDetected = Array.isArray(extraction?.regimenes_documentales) ? extraction.regimenes_documentales as Array<{ descripcion?: string }> : [];
+      const mappedCodes = new Set([...numericDetected.map((item) => item.clave || ''),
+        ...literalDetected.map((item) => mapLiteralSatRegime(item.descripcion || '')?.clave || '')].filter(Boolean));
+      if (document && mappedCodes.size && [...mappedCodes].some((code) => !requestedCodes.includes(code))) {
+        throw new FinanceFiscalError(422, 'CFDI_CSF_REGIMES_INCOMPLETE', 'Confirma todos los regímenes identificados en la constancia.');
+      }
+      if (document && requestedCodes.some((code) => !mappedCodes.has(code)) && manualReason.length < 20) {
+        throw new FinanceFiscalError(422, 'CFDI_CSF_REGIME_UNVERIFIED',
+          'La clave no se identificó en la constancia. Documenta la corrección tras revisar el catálogo.');
+      }
+      const detected = extraction ? { rfc: extraction.rfc, razon_social: extraction.razon_social,
+        codigo_postal: extraction.codigo_postal, domicilio_fiscal: extraction.domicilio_fiscal,
+        fecha_csf: extraction.fecha_csf, regimenes_fiscales: extraction.regimenes_fiscales,
+        regimenes_documentales: extraction.regimenes_documentales,
+        actividades_economicas: extraction.actividades_economicas } : null;
+      const correctedFields = extraction ? (['rfc', 'razon_social', 'codigo_postal'] as const).filter((field) =>
+        extraction[field] && upper(extraction[field]) !== upper(data[field])) : [];
+      if (correctedFields.length && manualReason.length < 20) throw new FinanceFiscalError(422,
+        'CFDI_CSF_CORRECTION_REASON_REQUIRED', 'Documenta la corrección de los datos detectados antes de guardar.');
+      const existing = await tx.entidadFiscalCfdi.findFirst({ where: { organization_id: actor.organizationId, rfc: fiscalRfc } });
+      if (existing) {
+        if (csfDocumentId && existing.csf_documento_id === csfDocumentId) return existing;
+        throw new FinanceFiscalError(409, 'CFDI_ENTITY_EXISTS', 'Ya existe una entidad fiscal con este RFC en la organización. Ábrela para revisar sus datos.');
+      }
+      const created = await tx.entidadFiscalCfdi.create({ data: { ...data,
+        csf_documento_id: document?.id || null,
+        csf_extraction: document ? { sha256: document.checksum_sha256, source: extraction?.source || null,
+          extraction_status: extraction?.status || 'REVIEW_REQUIRED', catalog_source: SAT_FISCAL_REGIME_SOURCE,
+          confirmation_status: correctedFields.length || manualReason ? 'CORRECTED' : 'CONFIRMED',
+          detected, confirmed: { rfc: fiscalRfc, razon_social: data.razon_social,
+            codigo_postal: data.codigo_postal, regimenes_fiscales: confirmedRegimes },
+          corrected_fields: correctedFields, manual_exception_reason: manualReason || null,
+          confirmed_by_id: actor.id, confirmed_at: new Date().toISOString() } as Prisma.InputJsonValue : Prisma.JsonNull,
+      } });
+      if (document) await tx.entidadFiscalCsfVersion.create({ data: {
+        organization_id: actor.organizationId, entidad_fiscal_id: created.id, documento_id: document.id,
+        version: 1, extraction: created.csf_extraction as Prisma.InputJsonValue, confirmed_by_id: actor.id,
+      } });
+      if (document) await tx.documento.update({ where: { id: document.id }, data: {
+        observaciones: 'Constancia fiscal de entidad emisora; vinculada y confirmada' } });
       const accountIds = Array.isArray(input.cuenta_ids) ? input.cuenta_ids.map(clean).filter(Boolean) : [];
       const accounts = accountIds.length ? await tx.cuentaFinanciera.findMany({ where: { id: { in: accountIds }, organization_id: actor.organizationId, activa: true }, select: { id: true } }) : [];
       if (accounts.length !== new Set(accountIds).size) throw new FinanceFiscalError(403, 'CFDI_ACCOUNT_SCOPE_DENIED', 'Una cuenta bancaria no pertenece a la organización activa.');
       if (accounts.length) await tx.entidadFiscalCuenta.createMany({ data: accounts.map((account, index) => ({ organization_id: actor.organizationId, entidad_fiscal_id: created.id, cuenta_id: account.id, predeterminada: index === 0 })) });
-      await audit(tx, actor, 'CREATE_FISCAL_ENTITY', 'EntidadFiscalCfdi', created.id, { rfc: created.rfc, razon_social: created.razon_social, secret_references_configured: Boolean(data.pac_secret_ref || data.csd_key_secret_ref || data.csd_password_secret_ref), account_ids: accountIds }, correlationId);
+      await audit(tx, actor, 'CREATE_FISCAL_ENTITY', 'EntidadFiscalCfdi', created.id, {
+        rfc: created.rfc, csf_documento_id: created.csf_documento_id,
+        csf_sha256: document?.checksum_sha256 || null, corrected_fields: correctedFields,
+        catalog_source: SAT_FISCAL_REGIME_SOURCE, manual_exception: Boolean(manualReason),
+        secret_references_configured: Boolean(data.pac_secret_ref || data.csd_key_secret_ref || data.csd_password_secret_ref), account_ids: accountIds }, correlationId);
       return tx.entidadFiscalCfdi.findUniqueOrThrow({ where: { id: created.id }, include: { cuentas: true } });
     });
     return publicEntity(result as unknown as Record<string, unknown>);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        if (csfDocumentId) {
+          const committed = await this.db.entidadFiscalCfdi.findFirst({ where: {
+            organization_id: actor.organizationId, rfc: fiscalRfc, csf_documento_id: csfDocumentId,
+          } });
+          if (committed) return publicEntity(committed as unknown as Record<string, unknown>);
+        }
+        throw new FinanceFiscalError(409, 'CFDI_ENTITY_EXISTS', 'Ya existe una entidad fiscal con este RFC en la organización.');
+      }
+      throw error;
+    }
+  }
+
+  async entityCsfVersions(actor: FiscalActor, entityId: string) {
+    if (!actor.permissions.includes('documentos.read')) throw new FinanceFiscalError(403, 'CFDI_CSF_READ_DENIED', 'No tienes permiso para consultar documentos.');
+    const entity = await this.db.entidadFiscalCfdi.findFirst({ where: { id: entityId, organization_id: actor.organizationId }, select: { id: true } });
+    if (!entity) throw new FinanceFiscalError(404, 'CFDI_ENTITY_NOT_FOUND', 'Entidad fiscal no encontrada.');
+    return this.db.entidadFiscalCsfVersion.findMany({ where: { organization_id: actor.organizationId, entidad_fiscal_id: entity.id },
+      select: { id: true, version: true, confirmed_at: true,
+        documento: { select: { id: true, nombre_original: true, checksum_sha256: true, size_bytes: true, fecha_carga: true } } },
+      orderBy: { version: 'desc' } });
+  }
+
+  async entityCsfVersionUrl(actor: FiscalActor, entityId: string, version: number, correlationId?: string) {
+    if (!actor.permissions.includes('documentos.read')) throw new FinanceFiscalError(403, 'CFDI_CSF_READ_DENIED', 'No tienes permiso para consultar documentos.');
+    if (!Number.isSafeInteger(version) || version < 1) throw new FinanceFiscalError(400, 'CFDI_CSF_VERSION_INVALID', 'La versión de la constancia no es válida.');
+    const found = await this.db.entidadFiscalCsfVersion.findFirst({ where: {
+      organization_id: actor.organizationId, entidad_fiscal_id: entityId, version,
+    }, include: { documento: true } });
+    if (!found || found.documento.estatus !== 'VIGENTE') throw new FinanceFiscalError(404, 'CFDI_CSF_NOT_FOUND', 'Esta versión de la constancia no está disponible.');
+    const url = await getSignedUrl(found.documento.storage_key, 300);
+    await this.db.$transaction((tx) => audit(tx, actor, 'VIEW_FISCAL_ENTITY_CSF_VERSION', 'Documento', found.documento_id,
+      { entidad_fiscal_id: entityId, version, checksum_sha256: found.documento.checksum_sha256 }, correlationId));
+    return { url, filename: found.documento.nombre_original, mimeType: found.documento.mime_type,
+      sha256: found.documento.checksum_sha256, sizeBytes: found.documento.size_bytes };
+  }
+
+  async replaceEntityCsf(actor: FiscalActor, entityId: string, input: Record<string, unknown>, correlationId?: string) {
+    ensureNoRawSecrets(input);
+    const documentId = clean(input.csf_documento_id);
+    const reason = clean(input.manual_exception_reason);
+    if (!UUID.test(entityId) || !UUID.test(documentId)) throw new FinanceFiscalError(400, 'CFDI_CSF_ID_INVALID', 'La referencia fiscal no es válida.');
+    if (input.csf_reviewed !== true) throw new FinanceFiscalError(400, 'CFDI_CSF_REVIEW_REQUIRED', 'Confirma la nueva constancia antes de sustituirla.');
+    const fiscalRfc = rfc(input.rfc, 'RFC', 422);
+    const name = required(input.razon_social, 'Razón social');
+    const cp = postalCode(input.codigo_postal)!;
+    const selected = required(input.regimen_fiscal, 'Régimen fiscal');
+    const inputRegimes = Array.isArray(input.regimenes_fiscales) ? input.regimenes_fiscales as Array<{ clave?: unknown }> : [];
+    const codes = inputRegimes.map((item) => clean(item?.clave));
+    const type = fiscalRfc.length === 12 ? 'MORAL' : 'FISICA';
+    if (!codes.length || codes.length > 20 || new Set(codes).size !== codes.length || !codes.includes(selected) ||
+      codes.some((code) => !satRegime(code) || (satRegime(code)!.tipo !== 'AMBAS' && satRegime(code)!.tipo !== type))) {
+      throw new FinanceFiscalError(422, 'CFDI_REGIME_INVALID', 'Confirma regímenes compatibles con el catálogo fiscal.');
+    }
+    return this.db.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT "id" FROM pravia_os."entidades_fiscales_cfdi"
+        WHERE "id" = ${entityId}::uuid AND "organization_id" = ${actor.organizationId}::uuid FOR UPDATE`);
+      const entity = await tx.entidadFiscalCfdi.findFirst({ where: { id: entityId, organization_id: actor.organizationId } });
+      if (!entity) throw new FinanceFiscalError(404, 'CFDI_ENTITY_NOT_FOUND', 'Entidad fiscal no encontrada.');
+      if (fiscalRfc !== entity.rfc) throw new FinanceFiscalError(409, 'CFDI_CSF_RFC_CHANGED', 'La nueva CSF tiene un RFC distinto. Revisa la identidad jurídica antes de crear otra entidad.');
+      if (entity.csf_documento_id === documentId) return publicEntity(entity as unknown as Record<string, unknown>);
+      const document = await tx.documento.findFirst({ where: { id: documentId, organization_id: actor.organizationId,
+        subido_por_id: actor.id, tipo: 'CONSTANCIA_FISCAL', estatus: 'VIGENTE',
+        observaciones: 'Constancia fiscal de entidad emisora; pendiente de revisión' } });
+      if (!document) throw new FinanceFiscalError(403, 'CFDI_CSF_DOCUMENT_SCOPE_DENIED', 'La nueva constancia no pertenece a esta operación.');
+      if (clean(input.csf_sha256) !== document.checksum_sha256) throw new FinanceFiscalError(409, 'CFDI_CSF_FILE_CHANGED', 'El archivo cambió después de extraerlo.');
+      const extraction = document.datos_extraidos && typeof document.datos_extraidos === 'object' &&
+        !Array.isArray(document.datos_extraidos) ? document.datos_extraidos as Record<string, unknown> : null;
+      if (!extraction && reason.length < 20) throw new FinanceFiscalError(422, 'CFDI_CSF_EXTRACTION_REQUIRED', 'Extrae la CSF o justifica la revisión manual.');
+      const numeric = Array.isArray(extraction?.regimenes_fiscales) ? extraction.regimenes_fiscales as Array<{ clave?: string }> : [];
+      const literal = Array.isArray(extraction?.regimenes_documentales) ? extraction.regimenes_documentales as Array<{ descripcion?: string }> : [];
+      const mapped = new Set([...numeric.map((item) => item.clave || ''),
+        ...literal.map((item) => mapLiteralSatRegime(item.descripcion || '')?.clave || '')].filter(Boolean));
+      if ([...mapped].some((code) => !codes.includes(code))) throw new FinanceFiscalError(422, 'CFDI_CSF_REGIMES_INCOMPLETE', 'Confirma todos los regímenes detectados.');
+      const corrected = extraction ? (['rfc', 'razon_social', 'codigo_postal'] as const).filter((field) =>
+        extraction[field] && upper(extraction[field]) !== upper(field === 'rfc' ? fiscalRfc : field === 'razon_social' ? name : cp)) : [];
+      if ((corrected.length || codes.some((code) => !mapped.has(code))) && reason.length < 20) {
+        throw new FinanceFiscalError(422, 'CFDI_CSF_CORRECTION_REASON_REQUIRED', 'Documenta la corrección o correspondencia fiscal.');
+      }
+      const confirmedRegimes = codes.map((code) => ({ clave: code, descripcion: satRegime(code)!.descripcion }));
+      const lineage = { sha256: document.checksum_sha256, source: extraction?.source || null,
+        extraction_status: extraction?.status || 'REVIEW_REQUIRED', catalog_source: SAT_FISCAL_REGIME_SOURCE,
+        confirmation_status: corrected.length || reason ? 'CORRECTED' : 'CONFIRMED',
+        detected: extraction, confirmed: { rfc: fiscalRfc, razon_social: name, codigo_postal: cp, regimenes_fiscales: confirmedRegimes },
+        corrected_fields: corrected, manual_exception_reason: reason || null,
+        confirmed_by_id: actor.id, confirmed_at: new Date().toISOString() };
+      const previous = await tx.entidadFiscalCsfVersion.aggregate({ where: { organization_id: actor.organizationId,
+        entidad_fiscal_id: entity.id }, _max: { version: true } });
+      const version = (previous._max.version || 0) + 1;
+      const updated = await tx.entidadFiscalCfdi.update({ where: { id: entity.id }, data: {
+        razon_social: name, codigo_postal: cp, regimen_fiscal: selected,
+        regimenes_fiscales: confirmedRegimes as Prisma.InputJsonValue,
+        csf_documento_id: document.id, csf_extraction: lineage as Prisma.InputJsonValue,
+      } });
+      await tx.entidadFiscalCsfVersion.create({ data: { organization_id: actor.organizationId,
+        entidad_fiscal_id: entity.id, documento_id: document.id, version,
+        extraction: lineage as Prisma.InputJsonValue, confirmed_by_id: actor.id } });
+      await tx.documento.update({ where: { id: document.id }, data: {
+        observaciones: 'Constancia fiscal de entidad emisora; vinculada y confirmada' } });
+      await audit(tx, actor, 'REPLACE_FISCAL_ENTITY_CSF', 'EntidadFiscalCfdi', entity.id,
+        { previous_document_id: entity.csf_documento_id, new_document_id: document.id,
+          previous_sha256: (entity.csf_extraction as Record<string, unknown> | null)?.sha256 || null,
+          new_sha256: document.checksum_sha256, version, corrected_fields: corrected }, correlationId);
+      return publicEntity(updated as unknown as Record<string, unknown>);
+    });
   }
 
   async updateEntity(actor: FiscalActor, id: string, input: Record<string, unknown>, correlationId?: string) {
@@ -577,6 +871,7 @@ export class FinanceFiscalService {
 
   async confirmIncomeReceiver(actor: FiscalActor, incomeId: string, comparecienteId: string, input: Record<string, unknown>, correlationId?: string) {
     const fiscalRfc = rfc(input.rfc);
+    const personType = fiscalRfc.length === 12 ? 'MORAL' : 'FISICA';
     const fiscalName = required(input.razon_social, 'Nombre fiscal');
     const regime = required(input.regimen_fiscal, 'Régimen fiscal');
     if (!/^\d{3}$/.test(regime)) throw new FinanceFiscalError(400, 'CFDI_REGIME_INVALID', 'El régimen fiscal debe tener una clave de tres dígitos.');
@@ -647,6 +942,11 @@ export class FinanceFiscalService {
           regimes.push({ clave: code, descripcion: '' });
         }
       }
+      if (regimes.some((item) => !satRegime(item.clave)?.tiposPersona.includes(personType))) {
+        throw new FinanceFiscalError(422, 'CFDI_REGIME_INVALID',
+          'Uno o más regímenes no existen, no están vigentes o no corresponden al tipo de persona del receptor. Revisa la selección SAT.');
+      }
+      for (const item of regimes) item.descripcion = satRegime(item.clave)!.descripcion;
       const previousLineage = priorProfile?.csf_extraction && typeof priorProfile.csf_extraction === 'object' &&
         !Array.isArray(priorProfile.csf_extraction) ? priorProfile.csf_extraction as Record<string, unknown> : null;
       const detected = actualExtraction ? {
@@ -733,6 +1033,13 @@ export class FinanceFiscalService {
     if (clean(input.receptor_compareciente_id) && !receiver) throw new FinanceFiscalError(403, 'CFDI_RECEIVER_SCOPE_DENIED', 'El receptor no pertenece a la organización activa.');
     const emisorRfc = direction === 'EMITIDO' ? entity?.rfc || '' : (supplier?.rfc || (incompleteCentralDraft && !clean(input.emisor_rfc) ? '' : rfc(input.emisor_rfc, 'RFC emisor')));
     const emisorName = direction === 'EMITIDO' ? entity?.razon_social || '' : (supplier?.razon_social || (incompleteCentralDraft ? clean(input.emisor_nombre) : required(input.emisor_nombre, 'Nombre del emisor')));
+    if (direction === 'EMITIDO' && entity) {
+      const choices = fiscalRegimeCodes(entity.regimenes_fiscales, entity.regimen_fiscal);
+      const selected = clean(input.regimen_emisor) || (choices.length === 1 ? choices[0] : '');
+      if (selected && !choices.includes(selected)) throw new FinanceFiscalError(422, 'CFDI_EMITTER_REGIME_INVALID',
+        'Selecciona un régimen confirmado de la entidad emisora.');
+      details.fiscal_comprobante.regimen_emisor = selected || null;
+    }
     const receptorRfc = incomeId ? '' : direction === 'EMITIDO' ? (incompleteCentralDraft && !clean(input.receptor_rfc) ? '' : rfc(input.receptor_rfc, 'RFC receptor')) : (entity?.rfc || (incompleteCentralDraft && !clean(input.receptor_rfc) ? '' : rfc(input.receptor_rfc, 'RFC receptor')));
     const receptorName = incomeId ? '' : direction === 'EMITIDO' ? (incompleteCentralDraft ? clean(input.receptor_nombre) : required(input.receptor_nombre, 'Nombre del receptor')) : (entity?.razon_social || (incompleteCentralDraft ? clean(input.receptor_nombre) : required(input.receptor_nombre, 'Nombre del receptor')));
     const result = await this.db.$transaction(async (tx) => {
@@ -789,6 +1096,8 @@ export class FinanceFiscalService {
         }
         canonicalConcepts = calculated.canonicalConcepts;
       }
+      validateUseCfdi(upper(input.uso_cfdi), incomeId ? selectedReceiverRegime : clean(input.receptor_regimen),
+        incomeId ? receiverProfile?.rfc || '' : receptorRfc);
       const [{ value: nextFolio }] = await tx.$queryRaw<Array<{ value: bigint }>>(Prisma.sql`SELECT nextval('pravia_os.cfdi_internal_folio_seq') AS value`);
       const cfdi = await tx.documentoCfdi.create({ data: {
         organization_id: actor.organizationId, direccion: direction, tipo: type, estado: 'DRAFT', source: 'LOCAL_DRAFT',
@@ -797,7 +1106,7 @@ export class FinanceFiscalService {
         receptor_compareciente_id: receiver?.id || null, emisor_rfc: emisorRfc, emisor_nombre: emisorName,
         receptor_rfc: receiverProfile?.rfc || receptorRfc, receptor_nombre: receiverProfile?.razon_social || receptorName,
         receptor_regimen: incomeId ? selectedReceiverRegime || null : clean(input.receptor_regimen) || null,
-        receptor_codigo_postal: receiverProfile?.codigo_postal || postalCode(input.receptor_codigo_postal, true), uso_cfdi: clean(input.uso_cfdi) || null,
+        receptor_codigo_postal: receiverProfile?.codigo_postal || postalCode(input.receptor_codigo_postal, true), uso_cfdi: upper(input.uso_cfdi) || null,
         metodo_pago: method || null, forma_pago: clean(input.forma_pago) || null, moneda: details.moneda,
         subtotal, impuestos_trasladados: transferred, impuestos_retenidos: retained, total, saldo: total,
         draft_payload: { source: incomeId ? 'EXP008_INCOME' : clean(input.source_context) || 'CENTRAL', incomplete_income: incompleteIncomeDraft,
@@ -843,6 +1152,17 @@ export class FinanceFiscalService {
       }, select: { id: true, rfc: true, razon_social: true } }) : null;
       if (clean(input.entidad_fiscal_id) && !selectedEntity) throw new FinanceFiscalError(403, 'CFDI_ENTITY_SCOPE_DENIED', 'La entidad fiscal no está disponible para esta organización.');
       const effectiveEntityId = selectedEntity?.id || existing.entidad_fiscal_id;
+      if (existing.direccion === 'EMITIDO' && effectiveEntityId) {
+        const profile = await tx.entidadFiscalCfdi.findFirst({ where: { id: effectiveEntityId, organization_id: actor.organizationId, activa: true },
+          select: { regimen_fiscal: true, regimenes_fiscales: true } });
+        if (!profile) throw new FinanceFiscalError(403, 'CFDI_ENTITY_SCOPE_DENIED', 'La entidad fiscal no está disponible para esta organización.');
+        const choices = fiscalRegimeCodes(profile.regimenes_fiscales, profile.regimen_fiscal);
+        const selected = clean(input.regimen_emisor === undefined && selectedEntity?.id !== existing.entidad_fiscal_id
+          ? '' : details.fiscal_comprobante.regimen_emisor) || (choices.length === 1 ? choices[0] : '');
+        if (selected && !choices.includes(selected)) throw new FinanceFiscalError(422, 'CFDI_EMITTER_REGIME_INVALID',
+          'Selecciona un régimen confirmado de la entidad emisora.');
+        details.fiscal_comprobante.regimen_emisor = selected || null;
+      }
       let canonicalConcepts: Array<Record<string, string>> | null = null;
       let confirmedReceiver: { rfc: string; razon_social: string; codigo_postal: string } | null = null;
       let selectedRegime = '';
@@ -910,6 +1230,9 @@ export class FinanceFiscalService {
       const receiverName = input.receptor_nombre === undefined ? existing.receptor_nombre : clean(input.receptor_nombre);
       const receiverCp = input.receptor_codigo_postal === undefined ? existing.receptor_codigo_postal
         : postalCode(input.receptor_codigo_postal, true);
+      validateUseCfdi(upper(input.uso_cfdi === undefined ? existing.uso_cfdi : input.uso_cfdi),
+        existing.ingreso_reportado_id ? selectedRegime : clean(input.receptor_regimen === undefined ? existing.receptor_regimen : input.receptor_regimen),
+        confirmedReceiver?.rfc || receiverRfc);
       const row = await tx.documentoCfdi.update({ where: { id }, data: { subtotal, impuestos_trasladados: transferred, impuestos_retenidos: retained, total, saldo: total,
         estado: 'DRAFT', pdf_documento_id: null,
         moneda: details.moneda,
@@ -926,7 +1249,7 @@ export class FinanceFiscalService {
           receptor_regimen: selectedRegime || null } : {}),
         draft_payload: { ...savedPayload, incomplete_income: Boolean(existing.ingreso_reportado_id && incomeIncomplete),
           concepts: canonicalConcepts || [], fiscal_comprobante: details.fiscal_comprobante } as Prisma.InputJsonValue,
-        ...(input.metodo_pago !== undefined ? { metodo_pago: upper(input.metodo_pago) || null } : {}), ...(input.forma_pago !== undefined ? { forma_pago: clean(input.forma_pago) || null } : {}), ...(input.uso_cfdi !== undefined ? { uso_cfdi: clean(input.uso_cfdi) || null } : {}) } });
+        ...(input.metodo_pago !== undefined ? { metodo_pago: upper(input.metodo_pago) || null } : {}), ...(input.forma_pago !== undefined ? { forma_pago: clean(input.forma_pago) || null } : {}), ...(input.uso_cfdi !== undefined ? { uso_cfdi: upper(input.uso_cfdi) || null } : {}) } });
       if (existing.cuentaPorCobrar) await tx.cuentaPorCobrarCfdi.update({ where: { id: existing.cuentaPorCobrar.id }, data: { monto_total: total, saldo: total.minus(existing.cuentaPorCobrar.monto_cobrado) } });
       if (existing.cuentaPorPagar) await tx.cuentaPorPagarCfdi.update({ where: { id: existing.cuentaPorPagar.id }, data: { monto_total: total, saldo: total.minus(existing.cuentaPorPagar.monto_pagado) } });
       if (!existing.ingreso_reportado_id && total.greaterThan(0) && row.direccion === 'EMITIDO' && !existing.cuentaPorCobrar) {
@@ -1008,6 +1331,8 @@ export class FinanceFiscalService {
         const concepts = Array.isArray(payload.concepts) ? payload.concepts.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && !Array.isArray(item))) : [];
         const missing = [
           !draft.entidadFiscal && 'entidad fiscal', !draft.emisor_rfc && 'RFC emisor', !draft.emisor_nombre && 'nombre emisor',
+          draft.entidadFiscal && !clean(fiscal.regimen_emisor) &&
+            fiscalRegimeCodes(draft.entidadFiscal.regimenes_fiscales, draft.entidadFiscal.regimen_fiscal).length > 1 && 'régimen emisor',
           !draft.receptor_rfc && 'RFC receptor', !draft.receptor_nombre && 'nombre receptor', !draft.receptor_regimen && 'régimen receptor',
           !draft.receptor_codigo_postal && 'CP receptor', !draft.uso_cfdi && 'Uso CFDI', !draft.metodo_pago && 'método de pago',
           !draft.forma_pago && 'forma de pago', !clean(fiscal.lugar_expedicion) && 'lugar de expedición',
@@ -1015,6 +1340,11 @@ export class FinanceFiscalService {
           draft.moneda !== 'MXN' && !clean(fiscal.tipo_cambio) && 'tipo de cambio',
         ].filter(Boolean);
         if (missing.length) throw new FinanceFiscalError(409, 'CFDI_PDF_FIELDS_MISSING', `Para generar el PDF faltan: ${missing.join(', ')}.`);
+        validateUseCfdi(draft.uso_cfdi || '', draft.receptor_regimen || '', draft.receptor_rfc);
+        const emitterRegime = clean(fiscal.regimen_emisor) || draft.entidadFiscal!.regimen_fiscal;
+        if (!fiscalRegimeCodes(draft.entidadFiscal!.regimenes_fiscales, draft.entidadFiscal!.regimen_fiscal).includes(emitterRegime)) {
+          throw new FinanceFiscalError(422, 'CFDI_EMITTER_REGIME_INVALID', 'El régimen emisor del borrador no pertenece a la ficha fiscal confirmada.');
+        }
         const version = (draft.prefacturaRepresentaciones[0]?.version || 0) + 1;
         const folio = draft.internal_folio || `FAC-BOR-${(await tx.$queryRaw<Array<{ value: bigint }>>(Prisma.sql`SELECT nextval('pravia_os.cfdi_internal_folio_seq') AS value`))[0].value.toString().padStart(6, '0')}`;
         const normalizedConcepts = concepts.map((item) => ({
@@ -1028,7 +1358,7 @@ export class FinanceFiscalService {
         const fx = clean(fiscal.tipo_cambio) || null;
         const snapshot: PrefacturaSnapshot = {
           folio, version, generated_at: new Date().toISOString(),
-          emitter: { name: draft.emisor_nombre, rfc: draft.emisor_rfc, regimen: draft.entidadFiscal?.regimen_fiscal || '', postal_code: draft.entidadFiscal?.codigo_postal || '' },
+          emitter: { name: draft.emisor_nombre, rfc: draft.emisor_rfc, regimen: emitterRegime, postal_code: draft.entidadFiscal?.codigo_postal || '' },
           receiver: { name: draft.receptor_nombre, rfc: draft.receptor_rfc, regimen: draft.receptor_regimen!, postal_code: draft.receptor_codigo_postal!, uso_cfdi: draft.uso_cfdi! },
           currency: draft.moneda, exchange_rate: fx, equivalent_mxn: fx ? draft.total.mul(new Prisma.Decimal(fx)).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).toFixed(2) : null,
           payment: { method: draft.metodo_pago!, form: draft.forma_pago!, terms: clean(fiscal.condiciones_pago) || null },

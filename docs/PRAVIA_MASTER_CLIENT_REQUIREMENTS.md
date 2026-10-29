@@ -1,5 +1,9 @@
 # PRAVIA OS — registro maestro de requisitos del cliente
 
+## Alta fiscal CSF-first — corrección P0 posterior (29-10-2026)
+
+La orden P0 posterior al corte anterior sustituye el alta manual operativa de Entidad Fiscal por carga privada de CSF → extracción común → revisión/confirmación → persistencia → reutilización como emisor. La [matriz P0 de 45 pasos y 15 casos complementarios](FACTURACION_ENTIDAD_FISCAL_P0_20261029.md) contiene evidencia Chrome/PostgreSQL/Storage **local sintética** y brechas explícitas. No se reprodujo el error exacto de producción. El XLS oficial `catCFDI_V_4_20261029.xls`, adjuntado además por el usuario con SHA idéntico, se importó como snapshot versionado: 19 regímenes, 24 usos CFDI y compatibilidad régimen/persona/Uso en backend y selectores; no certifica una CSF auténtica ni otros catálogos SAT. La matriz global [FDR01–FDR90](FACTURACION_DEMO_READY_GAP_AND_CERTIFICATION.md) y [EXT01–EXT60](PRAVIA_UNIVERSAL_EXTRACTION_CERTIFICATION.md) conservan sus gates independientes. Estado: **NO-GO producción**, sin migración ni deploy productivos por esta corrección.
+
 ## Colaboración organizacional — corrección posterior (27-10-2026)
 
 La regla de una notaría como equipo compartido añade lectura por organización y edición controlada por responsable, colaborador o Dirección/Administración. La matriz individual [COL01–COL70](PRAVIA_ORGANIZATION_COLLABORATION_CERTIFICATION.md) conserva por separado cada prueba requerida; su implementación local no equivale a certificación integral. No sustituye FDR01–FDR90, EXT01–EXT60 ni las matrices históricas. Estado: **NO-GO producción** hasta cerrar los casos pendientes y los gates generales.

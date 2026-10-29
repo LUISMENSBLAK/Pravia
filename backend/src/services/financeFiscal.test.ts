@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import { describe, expect, it, vi } from 'vitest';
 import { ContractTestCfdiProvider, DisabledCfdiProvider } from './cfdiProvider';
-import { FinanceFiscalError, FinanceFiscalService, calculateFiscalLine, draftFiscalDetails, parseCfdi40Xml } from './financeFiscal.service';
+import { FinanceFiscalError, FinanceFiscalService, calculateFiscalLine, draftFiscalDetails, parseCfdi40Xml, validateUseCfdi } from './financeFiscal.service';
 import { parseFiscalCsfText } from './fiscalDocumentExtraction.service';
 
 const xml = (overrides = '') => Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
@@ -13,6 +13,13 @@ const xml = (overrides = '') => Buffer.from(`<?xml version="1.0" encoding="UTF-8
 </cfdi:Comprobante>`);
 
 describe('B3 · dominio fiscal local seguro', () => {
+  it('rechaza Uso CFDI inexistente o incompatible también en backend', () => {
+    expect(() => validateUseCfdi('G03', '612', 'QAFA010101QA1')).not.toThrow();
+    expect(() => validateUseCfdi('G03', '605', 'QAFA010101QA1')).toThrowError(expect.objectContaining({ code: 'CFDI_USE_REGIME_INCOMPATIBLE', status: 422 }));
+    expect(() => validateUseCfdi('ZZZ', '612', 'QAFA010101QA1')).toThrowError(expect.objectContaining({ code: 'CFDI_USE_INVALID', status: 422 }));
+    expect(() => validateUseCfdi('G03', '601', 'QAFA010101QA1')).toThrowError(expect.objectContaining({ code: 'CFDI_USE_REGIME_INCOMPATIBLE', status: 422 }));
+    expect(() => validateUseCfdi('', '612', 'QAFA010101QA1')).not.toThrow();
+  });
   it('parsea CFDI 4.0 de forma determinista sin usar IA para importes', () => {
     const result = parseCfdi40Xml(xml());
     expect(result).toMatchObject({ version: '4.0', uuid: '123E4567-E89B-42D3-A456-426614174000', metodoPago: 'PPD', emisor: { rfc: 'AAA010101AAA' }, receptor: { rfc: 'BBB010101BBB' } });
@@ -76,11 +83,13 @@ describe('B3 · dominio fiscal local seguro', () => {
   it('conserva los datos del comprobante al editar y valida moneda, tipo de cambio y lugar de expedición', () => {
     const saved = draftFiscalDetails({ moneda: 'MXN', exportacion: '01', lugar_expedicion: '63735', condiciones_pago: 'CONTADO' });
     expect(draftFiscalDetails({ condiciones_pago: 'CRÉDITO' }, { ...saved, complemento_notarios: { clave: 'QA' } })).toEqual({
-      moneda: 'MXN', fiscal_comprobante: { tipo_cambio: null, exportacion: '01', lugar_expedicion: '63735', condiciones_pago: 'CRÉDITO' },
+      moneda: 'MXN', fiscal_comprobante: { tipo_cambio: null, exportacion: '01', lugar_expedicion: '63735', condiciones_pago: 'CRÉDITO', regimen_emisor: null },
     });
     expect(() => draftFiscalDetails({ moneda: 'USD' })).toThrowError(expect.objectContaining({ code: 'CFDI_EXCHANGE_RATE_REQUIRED' }));
     expect(draftFiscalDetails({ moneda: 'USD' }, {}, true).fiscal_comprobante.tipo_cambio).toBeNull();
     expect(() => draftFiscalDetails({ lugar_expedicion: '6373' })).toThrowError(expect.objectContaining({ code: 'CFDI_ISSUE_PLACE_INVALID' }));
     expect(draftFiscalDetails({ moneda: 'USD', tipo_cambio: '17.123456' }).fiscal_comprobante.tipo_cambio).toBe('17.123456');
+    const emitter = draftFiscalDetails({ regimen_emisor: '612' });
+    expect(draftFiscalDetails({ condiciones_pago: 'CRÉDITO' }, emitter).fiscal_comprobante.regimen_emisor).toBe('612');
   });
 });

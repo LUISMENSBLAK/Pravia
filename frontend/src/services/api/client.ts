@@ -212,6 +212,38 @@ export const apiRequest = async <T>(path: string, options: RequestOptions = {}):
   return payload as T;
 };
 
+export const apiUploadWithProgress = async <T>(path: string, form: FormData,
+  onProgress: (loaded: number, total: number) => void): Promise<T> => {
+  await preflightUploadSize(path, form);
+  return new Promise<T>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', apiUrl(path));
+    request.withCredentials = true;
+    request.setRequestHeader('Accept', 'application/json');
+    const token = tokenStore.get();
+    if (token) request.setRequestHeader('Authorization', `Bearer ${token}`);
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) onProgress(event.loaded, event.total);
+    };
+    request.onerror = () => reject(new ApiError('No se pudo conectar con el servidor de documentos. El archivo sigue seleccionado para reintentar.', 0));
+    request.onload = () => {
+      let payload: unknown;
+      try { payload = JSON.parse(request.responseText); }
+      catch { payload = null; }
+      if (request.status < 200 || request.status >= 300) {
+        const body = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+        const message = typeof body.error === 'string' ? body.error :
+          `No se pudo guardar el archivo. Código de referencia: ${request.getResponseHeader('x-correlation-id') || 'HTTP-' + request.status}.`;
+        reject(new ApiError(message, request.status, payload));
+        return;
+      }
+      emitDataChange({ method: 'POST', path, source: 'local' });
+      resolve(payload as T);
+    };
+    request.send(form);
+  });
+};
+
 export const apiBlobRequest = async (path: string, options: RequestOptions = {}): Promise<Blob> => {
   const { retryOnUnauthorized = true, headers, ...init } = options;
   const requestHeaders = new Headers(headers);

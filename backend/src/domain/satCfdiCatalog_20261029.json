@@ -1,0 +1,727 @@
+{
+  "fuente": {
+    "pagina": "https://www.sat.gob.mx/minisitio/Factura/emite_quenecesitoparafacturar.htm",
+    "archivo": "catCFDI_V_4_20261029.xls",
+    "url": "http://omawww.sat.gob.mx/tramitesyservicios/Paginas/documentos/catCFDI_V_4_20261029.xls",
+    "sha256": "ca9536cc4e4af64e2f2e0afc527f08bd0d1601e9d30a25d93dc4dcc4e256573b",
+    "bytes": 48773632,
+    "fechaArchivo": "2026-10-29",
+    "versionCFDI": "4.0"
+  },
+  "regimenFiscal": {
+    "versionCatalogo": "1.0",
+    "revision": "0",
+    "vigenteDesde": "2022-01-01",
+    "items": [
+      {
+        "clave": "601",
+        "descripcion": "General de Ley Personas Morales",
+        "tiposPersona": [
+          "MORAL"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "603",
+        "descripcion": "Personas Morales con Fines no Lucrativos",
+        "tiposPersona": [
+          "MORAL"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "605",
+        "descripcion": "Sueldos y Salarios e Ingresos Asimilados a Salarios",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "606",
+        "descripcion": "Arrendamiento",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "607",
+        "descripcion": "Régimen de Enajenación o Adquisición de Bienes",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "608",
+        "descripcion": "Demás ingresos",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "610",
+        "descripcion": "Residentes en el Extranjero sin Establecimiento Permanente en México",
+        "tiposPersona": [
+          "FISICA",
+          "MORAL"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "611",
+        "descripcion": "Ingresos por Dividendos (socios y accionistas)",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "612",
+        "descripcion": "Personas Físicas con Actividades Empresariales y Profesionales",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "614",
+        "descripcion": "Ingresos por intereses",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "615",
+        "descripcion": "Régimen de los ingresos por obtención de premios",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "616",
+        "descripcion": "Sin obligaciones fiscales",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "620",
+        "descripcion": "Sociedades Cooperativas de Producción que optan por diferir sus ingresos",
+        "tiposPersona": [
+          "MORAL"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "621",
+        "descripcion": "Incorporación Fiscal",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "622",
+        "descripcion": "Actividades Agrícolas, Ganaderas, Silvícolas y Pesqueras",
+        "tiposPersona": [
+          "MORAL"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "623",
+        "descripcion": "Opcional para Grupos de Sociedades",
+        "tiposPersona": [
+          "MORAL"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "624",
+        "descripcion": "Coordinados",
+        "tiposPersona": [
+          "MORAL"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "625",
+        "descripcion": "Régimen de las Actividades Empresariales con ingresos a través de Plataformas Tecnológicas",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "626",
+        "descripcion": "Régimen Simplificado de Confianza",
+        "tiposPersona": [
+          "FISICA",
+          "MORAL"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      }
+    ]
+  },
+  "usoCFDI": {
+    "versionCatalogo": "2.0",
+    "revision": "0",
+    "fechaPublicacion": "2023-04-22",
+    "vigenteDesde": "2022-01-01",
+    "items": [
+      {
+        "clave": "G01",
+        "descripcion": "Adquisición de mercancías.",
+        "tiposPersona": [
+          "FISICA",
+          "MORAL"
+        ],
+        "regimenesReceptor": [
+          "601",
+          "603",
+          "606",
+          "612",
+          "620",
+          "621",
+          "622",
+          "623",
+          "624",
+          "625",
+          "626"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "G02",
+        "descripcion": "Devoluciones, descuentos o bonificaciones.",
+        "tiposPersona": [
+          "FISICA",
+          "MORAL"
+        ],
+        "regimenesReceptor": [
+          "601",
+          "603",
+          "606",
+          "612",
+          "616",
+          "620",
+          "621",
+          "622",
+          "623",
+          "624",
+          "625",
+          "626"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "G03",
+        "descripcion": "Gastos en general.",
+        "tiposPersona": [
+          "FISICA",
+          "MORAL"
+        ],
+        "regimenesReceptor": [
+          "601",
+          "603",
+          "606",
+          "612",
+          "620",
+          "621",
+          "622",
+          "623",
+          "624",
+          "625",
+          "626"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "I01",
+        "descripcion": "Construcciones.",
+        "tiposPersona": [
+          "FISICA",
+          "MORAL"
+        ],
+        "regimenesReceptor": [
+          "601",
+          "603",
+          "606",
+          "612",
+          "620",
+          "621",
+          "622",
+          "623",
+          "624",
+          "625",
+          "626"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "I02",
+        "descripcion": "Mobiliario y equipo de oficina por inversiones.",
+        "tiposPersona": [
+          "FISICA",
+          "MORAL"
+        ],
+        "regimenesReceptor": [
+          "601",
+          "603",
+          "606",
+          "612",
+          "620",
+          "621",
+          "622",
+          "623",
+          "624",
+          "625",
+          "626"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "I03",
+        "descripcion": "Equipo de transporte.",
+        "tiposPersona": [
+          "FISICA",
+          "MORAL"
+        ],
+        "regimenesReceptor": [
+          "601",
+          "603",
+          "606",
+          "612",
+          "620",
+          "621",
+          "622",
+          "623",
+          "624",
+          "625",
+          "626"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "I04",
+        "descripcion": "Equipo de computo y accesorios.",
+        "tiposPersona": [
+          "FISICA",
+          "MORAL"
+        ],
+        "regimenesReceptor": [
+          "601",
+          "603",
+          "606",
+          "612",
+          "620",
+          "621",
+          "622",
+          "623",
+          "624",
+          "625",
+          "626"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "I05",
+        "descripcion": "Dados, troqueles, moldes, matrices y herramental.",
+        "tiposPersona": [
+          "FISICA",
+          "MORAL"
+        ],
+        "regimenesReceptor": [
+          "601",
+          "603",
+          "606",
+          "612",
+          "620",
+          "621",
+          "622",
+          "623",
+          "624",
+          "625",
+          "626"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "I06",
+        "descripcion": "Comunicaciones telefónicas.",
+        "tiposPersona": [
+          "FISICA",
+          "MORAL"
+        ],
+        "regimenesReceptor": [
+          "601",
+          "603",
+          "606",
+          "612",
+          "620",
+          "621",
+          "622",
+          "623",
+          "624",
+          "625",
+          "626"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "I07",
+        "descripcion": "Comunicaciones satelitales.",
+        "tiposPersona": [
+          "FISICA",
+          "MORAL"
+        ],
+        "regimenesReceptor": [
+          "601",
+          "603",
+          "606",
+          "612",
+          "620",
+          "621",
+          "622",
+          "623",
+          "624",
+          "625",
+          "626"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "I08",
+        "descripcion": "Otra maquinaria y equipo.",
+        "tiposPersona": [
+          "FISICA",
+          "MORAL"
+        ],
+        "regimenesReceptor": [
+          "601",
+          "603",
+          "606",
+          "612",
+          "620",
+          "621",
+          "622",
+          "623",
+          "624",
+          "625",
+          "626"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "D01",
+        "descripcion": "Honorarios médicos, dentales y gastos hospitalarios.",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "regimenesReceptor": [
+          "605",
+          "606",
+          "608",
+          "611",
+          "612",
+          "614",
+          "607",
+          "615",
+          "625"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "D02",
+        "descripcion": "Gastos médicos por incapacidad o discapacidad.",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "regimenesReceptor": [
+          "605",
+          "606",
+          "608",
+          "611",
+          "612",
+          "614",
+          "607",
+          "615",
+          "625"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "D03",
+        "descripcion": "Gastos funerales.",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "regimenesReceptor": [
+          "605",
+          "606",
+          "608",
+          "611",
+          "612",
+          "614",
+          "607",
+          "615",
+          "625"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "D04",
+        "descripcion": "Donativos.",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "regimenesReceptor": [
+          "605",
+          "606",
+          "608",
+          "611",
+          "612",
+          "614",
+          "607",
+          "615",
+          "625"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "D05",
+        "descripcion": "Intereses reales efectivamente pagados por créditos hipotecarios (casa habitación).",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "regimenesReceptor": [
+          "605",
+          "606",
+          "608",
+          "611",
+          "612",
+          "614",
+          "607",
+          "615",
+          "625"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "D06",
+        "descripcion": "Aportaciones voluntarias al SAR.",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "regimenesReceptor": [
+          "605",
+          "606",
+          "608",
+          "611",
+          "612",
+          "614",
+          "607",
+          "615",
+          "625"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "D07",
+        "descripcion": "Primas por seguros de gastos médicos.",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "regimenesReceptor": [
+          "605",
+          "606",
+          "608",
+          "611",
+          "612",
+          "614",
+          "607",
+          "615",
+          "625"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "D08",
+        "descripcion": "Gastos de transportación escolar obligatoria.",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "regimenesReceptor": [
+          "605",
+          "606",
+          "608",
+          "611",
+          "612",
+          "614",
+          "607",
+          "615",
+          "625"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "D09",
+        "descripcion": "Depósitos en cuentas para el ahorro, primas que tengan como base planes de pensiones.",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "regimenesReceptor": [
+          "605",
+          "606",
+          "608",
+          "611",
+          "612",
+          "614",
+          "607",
+          "615",
+          "625"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "D10",
+        "descripcion": "Pagos por servicios educativos (colegiaturas).",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "regimenesReceptor": [
+          "605",
+          "606",
+          "608",
+          "611",
+          "612",
+          "614",
+          "607",
+          "615",
+          "625"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "S01",
+        "descripcion": "Sin efectos fiscales.",
+        "tiposPersona": [
+          "FISICA",
+          "MORAL"
+        ],
+        "regimenesReceptor": [
+          "601",
+          "603",
+          "605",
+          "606",
+          "608",
+          "610",
+          "611",
+          "612",
+          "614",
+          "616",
+          "620",
+          "621",
+          "622",
+          "623",
+          "624",
+          "607",
+          "615",
+          "625",
+          "626"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "CP01",
+        "descripcion": "Pagos",
+        "tiposPersona": [
+          "FISICA",
+          "MORAL"
+        ],
+        "regimenesReceptor": [
+          "601",
+          "603",
+          "605",
+          "606",
+          "608",
+          "610",
+          "611",
+          "612",
+          "614",
+          "616",
+          "620",
+          "621",
+          "622",
+          "623",
+          "624",
+          "607",
+          "615",
+          "625",
+          "626"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      },
+      {
+        "clave": "CN01",
+        "descripcion": "Nómina",
+        "tiposPersona": [
+          "FISICA"
+        ],
+        "regimenesReceptor": [
+          "605"
+        ],
+        "vigenteDesde": "2022-01-01",
+        "vigenteHasta": null
+      }
+    ]
+  }
+}

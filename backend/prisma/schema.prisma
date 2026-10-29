@@ -180,6 +180,7 @@ model OrganizationMembership {
   agendaParticipations                      EventoAgendaParticipante[]                  @relation("EventoAgendaParticipanteMembership")
   prospectosCotizacionAsignada              Prospecto[]                                 @relation("ProspectQuoteAssigneeMembership")
   entidadesFiscalesCfdiCreadas              EntidadFiscalCfdi[]                         @relation("EntidadFiscalCfdiCreadorMembership")
+  entidadFiscalCsfVersionesConfirmadas       EntidadFiscalCsfVersion[]                  @relation("EntidadFiscalCsfVersionActor")
   perfilesFiscalesComparecientesConfirmados ComparecienteFiscalProfile[]                @relation("ComparecienteFiscalProfileConfirmer")
   conceptosFiscalesCfdiCreados              ConceptoFiscalCfdi[]                        @relation("ConceptoFiscalCfdiCreadorMembership")
   proveedoresFiscalesCreados                ProveedorFiscal[]                           @relation("ProveedorFiscalCreadorMembership")
@@ -2642,6 +2643,8 @@ model Documento {
   documentosCfdiXml                DocumentoCfdi[]                          @relation("DocumentoCfdiXml")
   documentosCfdiPdf                DocumentoCfdi[]                          @relation("DocumentoCfdiPdf")
   prefacturaRepresentaciones       PrefacturaRepresentacion[]              @relation("PrefacturaRepresentacionDocumento")
+  entidadesFiscalesCsf             EntidadFiscalCfdi[]                      @relation("EntidadFiscalCsfActual")
+  entidadFiscalCsfVersiones         EntidadFiscalCsfVersion[]                @relation("EntidadFiscalCsfVersionDocumento")
 
   @@unique([id, organization_id], map: "h2_documentos_id_tenant_key")
   @@index([compareciente_id], map: "idx_documentos_compareciente_fk")
@@ -7963,7 +7966,10 @@ model EntidadFiscalCfdi {
   rfc                     String                 @db.VarChar(13)
   tipo_contribuyente      String?                @db.VarChar(20)
   regimen_fiscal          String                 @db.VarChar(8)
+  regimenes_fiscales      Json?
   codigo_postal           String                 @db.VarChar(5)
+  csf_documento_id        String?                @db.Uuid
+  csf_extraction          Json?
   pac_provider            String?                @db.VarChar(80)
   pac_secret_ref          String?                @db.VarChar(500)
   csd_cer_storage_ref     String?                @db.VarChar(500)
@@ -7981,6 +7987,8 @@ model EntidadFiscalCfdi {
   updated_at              DateTime               @default(now()) @updatedAt @db.Timestamptz(6)
   organization            Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_org_fkey")
   createdBy               OrganizationMembership @relation("EntidadFiscalCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_creator_fkey")
+  csfDocumento            Documento?             @relation("EntidadFiscalCsfActual", fields: [csf_documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_csf_documento_fkey")
+  csfVersiones             EntidadFiscalCsfVersion[]
   cuentas                 EntidadFiscalCuenta[]
   documentosCfdi          DocumentoCfdi[]
   conceptosFiscales       ConceptoFiscalCfdi[]
@@ -7990,6 +7998,25 @@ model EntidadFiscalCfdi {
   @@index([organization_id, activa], map: "idx_entidades_fiscales_cfdi_org_active")
   @@index([organization_id, created_by_id], map: "idx_entidades_fiscales_cfdi_creator")
   @@map("entidades_fiscales_cfdi")
+}
+
+model EntidadFiscalCsfVersion {
+  id                String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id   String                 @db.Uuid
+  entidad_fiscal_id String                 @db.Uuid
+  documento_id      String                 @db.Uuid
+  version           Int
+  extraction        Json
+  confirmed_by_id   String                 @db.Uuid
+  confirmed_at      DateTime               @default(now()) @db.Timestamptz(6)
+  entidadFiscal     EntidadFiscalCfdi      @relation(fields: [entidad_fiscal_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_csf_version_entidad_fkey")
+  documento         Documento              @relation("EntidadFiscalCsfVersionDocumento", fields: [documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_csf_version_documento_fkey")
+  confirmedBy       OrganizationMembership @relation("EntidadFiscalCsfVersionActor", fields: [organization_id, confirmed_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_csf_version_actor_fkey")
+
+  @@unique([organization_id, entidad_fiscal_id, version], map: "uq_cfdi_csf_version_number")
+  @@unique([documento_id, organization_id], map: "uq_cfdi_csf_version_document")
+  @@index([organization_id, entidad_fiscal_id, confirmed_at], map: "idx_cfdi_csf_version_history")
+  @@map("entidad_fiscal_csf_versiones")
 }
 
 model EntidadFiscalCuenta {

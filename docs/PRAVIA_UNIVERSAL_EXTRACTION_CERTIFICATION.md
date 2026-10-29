@@ -2,6 +2,8 @@
 
 Estado: **NO CERTIFICADO / NO-GO**, 27-10-2026. Esta matriz se inicia con las pruebas efectivamente ejecutadas; `PARCIAL` no cuenta como PASS. Los PDF privados aportados por el cliente no se copian aquí y sus valores personales no se publican.
 
+Actualización de emisor fiscal (29-10-2026): [prueba P0 de entidad fiscal](FACTURACION_ENTIDAD_FISCAL_P0_20261029.md) cubre Chrome/API/PostgreSQL/Storage locales con CSF **sintéticas** digital, parcial y escaneada mediante OCR real; confirma RFC, nombre, CP, domicilio, regímenes, versiones/SHA, reload y emisor reutilizado en PDF. La ruta usa `FiscalDocumentExtractionService` existente. Además, se importó el snapshot íntegro verificable de `c_RegimenFiscal` y `c_UsoCFDI` del XLS oficial del 29-10-2026. Esto añade evidencia a EXT04, EXT11–20 y EXT46–53/58/60, pero **no certifica la extracción universal**: faltan una CSF auténtica autorizada para este flujo, proveedor OCR externo (no configurado) y las demás superficies. No se subieron documentos reales ni se hizo escritura productiva.
+
 La procedencia por página y los regímenes descriptivos sin clave se conservan en `csf_extraction` JSON de Proveedor/Compareciente cuando existe confirmación. La CURP tiene parser PDF local determinístico, SHA, página, bloque y fragmento; la ficha existente conserva original/propuestas en PostgreSQL/Storage locales y muestra la revisión en Chrome con PDF **sintético**. El PDF CURP privado sólo se leyó en memoria local. Esto no equivale a extracción INE, verificación RENAPO ni certificación universal.
 
 | ID | Criterio | Estado | Evidencia o brecha |
@@ -9,7 +11,7 @@ La procedencia por página y los regímenes descriptivos sin clave se conservan 
 | EXT01 | Inventario de módulos | PARCIAL | Inventario inicial en `PRAVIA_UNIVERSAL_DOCUMENT_EXTRACTION_INVENTORY.md`; faltan Biblioteca, CFG-002 y migración detalladas. |
 | EXT02 | Botones reales | NOT VERIFIED | Falta recorrido de todas las pantallas en Chrome. |
 | EXT03 | Servicios canónicos | PARCIAL | Fiscal local y `openaiDocument`/Gateway identificados; no consolidados en una sola arquitectura. |
-| EXT04 | Sin duplicados fiscales | NOT VERIFIED | Emisor no usa extractor CSF; comparación transversal pendiente. |
+| EXT04 | Sin duplicados fiscales | PARCIAL | Emisor usa ahora `FiscalDocumentExtractionService`, como Proveedor/Compareciente; persisten diferencias de UX/persistencia entre superficies. |
 | EXT05 | Gateway sin bypass | NOT VERIFIED | Call sites incompletamente auditados. |
 | EXT06 | Contratos por documento | PARCIAL | CURP PDF tiene contrato local `CURP_PDF_LAYOUT_V1` y propuestas persistidas; INE y demás tipos pendientes. |
 | EXT07 | Ejecuciones persistidas | NOT VERIFIED | Falta cotejo por superficie. |
@@ -24,7 +26,7 @@ La procedencia por página y los regímenes descriptivos sin clave se conservan 
 | EXT16 | Domicilio CSF | PARCIAL | Componentes detectados; falta cotejo completo y persistencia. |
 | EXT17 | Actividad/fechas | PARCIAL | Actividad económica tabular y fechas detectadas con página en PDF real local; persistencia/confirmación UI integral pendientes. |
 | EXT18 | Régimen único | PARCIAL | Descripción/fecha detectadas, clave SAT no explícita: Chrome muestra revisión requerida, no selecciona una clave. |
-| EXT19 | Multirégimen sintético | PARCIAL | Chrome/API/PostgreSQL/Storage QA: dos códigos sintéticos leídos de CSF privada y visibles tras reload; una sustitución conserva los anteriores y registra el tercero. Selección/confirmación de régimen y catálogo SAT siguen pendientes. |
+| EXT19 | Multirégimen sintético | PARCIAL | Chrome/API/PostgreSQL/Storage QA: fixture sintética con códigos SAT 605/612, selección/confirmación y persistencia tras reload; sustitución conserva historial. El catálogo versionado oficial ya está integrado, pero falta CSF auténtica autorizada y aceptación integral de extracción. |
 | EXT20 | Confirmación/persistencia fiscal | PARCIAL | RFC de CSF sintética confirmado en UI y persistido con actor; lectura compartida, SHA y procedencia sobreviven a reload. No se confirmó un régimen ni se probó reutilización fiscal transversal en factura/Proveedor/Emisor. |
 | EXT21 | CURP real PDF | PARCIAL | PDF privado leído localmente sin guardarlo; carga Chrome/Storage se probó con PDF sintético, no con el privado. |
 | EXT22 | Texto CURP | PARCIAL | Parser espacial local extrae etiquetas/valores, página y bloque; test unitario y Chrome sintético. |
@@ -63,7 +65,7 @@ La procedencia por página y los regímenes descriptivos sin clave se conservan 
 | EXT55 | Expedientes | NOT VERIFIED | Falta Chrome/DB/Storage. |
 | EXT56 | Cotizaciones | NOT VERIFIED | Falta Chrome/DB/Storage. |
 | EXT57 | Biblioteca Jurídica | NOT VERIFIED | Inventario detallado pendiente. |
-| EXT58 | Facturación/Proveedor/Emisor | NOT VERIFIED | Emisor aún sin carga CSF canónica; faltan E2E. |
+| EXT58 | Facturación/Proveedor/Emisor | PARCIAL | Emisor CSF-first y prefactura con fixture sintética pasan Chrome/API/PostgreSQL/Storage; falta E2E transversal Proveedor/Receptor, SAT íntegro y CSF auténtica autorizada. |
 | EXT59 | Migración/otros | NOT VERIFIED | Inventario detallado pendiente. |
 | EXT60 | Seguridad/regresión | NOT VERIFIED | Prueba dirigida CURP PostgreSQL/Storage y Chrome PASS; suites completas y seguridad transversal pendientes de este corte. |
 
