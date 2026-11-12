@@ -8,6 +8,7 @@ import { canAttachDocumento } from '../services/objectAccess.service';
 import { logAudit } from '../utils/auditLogger';
 import { prospectDocumentFlagsForType } from '../domain/prospectCatalog';
 import { canonicalUploadedDocumentMime } from '../services/documentUploadValidation';
+import { headFile } from '../storage/storage.service';
 
 /**
  * Subir un documento a Supabase Storage y crear registro en DB
@@ -166,19 +167,24 @@ export const uploadDocumento = async (req: Request, res: Response) => {
 };
 
 /**
- * Obtener una URL firmada temporal (2h) para un documento
+ * Obtener una URL firmada temporal sólo cuando el objeto físico está disponible.
  */
 export const getDocumentoUrl = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const doc = await prisma.documento.findUnique({ where: { id } });
+    if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Tu sesión no es válida.' });
+    const doc = await prisma.documento.findFirst({ where: { id, organization_id: req.user.organizationId } });
     if (!doc) return res.status(404).json({ error: 'Documento no encontrado' });
+
+    if (!await headFile(doc.storage_key)) {
+      return res.status(404).json({ code: 'DOCUMENT_FILE_UNAVAILABLE', error: 'El archivo no está disponible en el almacenamiento. Su referencia se conserva para revisión.' });
+    }
 
     const url = await getSignedUrl(doc.storage_key);
     res.json({ url });
-  } catch (error: any) {
-    res.status(500).json({ error: 'Error al obtener URL del documento', detail: error.message });
+  } catch {
+    res.status(503).json({ code: 'DOCUMENT_STORAGE_UNAVAILABLE', error: 'No pudimos verificar el archivo en este momento. Intenta nuevamente.' });
   }
 };
 
