@@ -276,6 +276,11 @@ test.describe.serial('Facturación Demo-Ready en Chrome local aislado', () => {
     }
     await expect(dialog.getByText(/Perfil fiscal confirmado/)).toBeVisible();
     await dialog.getByRole('combobox', { name: 'Entidad fiscal' }).selectOption(qaEntityId!);
+    const issuerRegime = dialog.getByRole('combobox', { name: 'Régimen emisor para esta factura' });
+    const issuerOptions = issuerRegime.locator('option[value]:not([value=""])');
+    expect(await issuerOptions.count()).toBeGreaterThan(1);
+    await expect(issuerRegime).toHaveValue('');
+    const [selectedIssuerRegime] = await issuerRegime.selectOption({ index: 2 });
     await dialog.getByRole('combobox', { name: 'Régimen para esta factura' }).selectOption('612');
     await dialog.getByRole('combobox', { name: 'Uso CFDI' }).selectOption('G03');
     await dialog.getByRole('combobox', { name: 'Exportación SAT' }).selectOption('01');
@@ -299,6 +304,7 @@ test.describe.serial('Facturación Demo-Ready en Chrome local aislado', () => {
     expect(draft.expediente_id).toBe(source.income.expediente_id);
     expect(Number(draft.total)).toBe(40);
     expect(draft.draft_payload.concepts).toHaveLength(20);
+    expect(draft.draft_payload.fiscal_comprobante.regimen_emisor).toBe(selectedIssuerRegime);
     await expect(dialog.getByRole('button', { name: 'Generar prefactura PDF' })).toBeEnabled();
     const generated = page.waitForResponse(response => response.url().endsWith(`/api/finanzas/facturacion/borradores/${draft.id}/prefacturas`) && response.request().method() === 'POST');
     await dialog.getByRole('button', { name: 'Generar prefactura PDF' }).click();
@@ -321,6 +327,7 @@ test.describe.serial('Facturación Demo-Ready en Chrome local aislado', () => {
     await page.locator(`#income-${qaIncomeId}`).getByRole('button', { name: 'Completar factura' }).click();
     const reopened = page.getByRole('dialog', { name: 'Generar factura CFDI' });
     await reopened.getByRole('combobox', { name: 'Continuar prefactura' }).selectOption(draft.id);
+    await expect(reopened.getByRole('combobox', { name: 'Régimen emisor para esta factura' })).toHaveValue(selectedIssuerRegime);
     await expect(reopened.getByRole('textbox', { name: 'Descripción para esta factura' }).last()).toHaveValue(/Línea sintética 20/);
     await expect(reopened.getByRole('button', { name: 'Ver PDF versión 1' })).toBeVisible();
   });

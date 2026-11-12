@@ -66,9 +66,9 @@ describe('Factura_PRAVIA.docx original → prefactura segura', () => {
     } finally { await extracted.destroy(); }
   });
 
-  it.skipIf(!process.env.PRAVIA_DOC_CONVERTER_BIN)('repite 20 líneas largas en un PDF multipágina sin perder la última', async () => {
+  it.skipIf(!process.env.PRAVIA_DOC_CONVERTER_BIN).each([5, 12])('conserva la última línea y los totales juntos con 20 conceptos de longitud %i', async (length) => {
     const longSnapshot = { ...snapshot, concepts: Array.from({ length: 20 }, (_, index) => ({
-      ...snapshot.concepts[0], description: `LÍNEA SINTÉTICA ${index + 1} ` + 'TEXTO JURÍDICO DE PRUEBA '.repeat(12),
+      ...snapshot.concepts[0], description: `LÍNEA SINTÉTICA ${index + 1} ` + 'TEXTO JURÍDICO DE PRUEBA '.repeat(length),
     })) };
     const { bytes } = await renderClientPrefacturaDocx(longSnapshot);
     const pdf = await convertDocxToPdf(bytes);
@@ -84,7 +84,8 @@ describe('Factura_PRAVIA.docx original → prefactura segura', () => {
     const document = await getDocument({ data: new Uint8Array(pdf), useSystemFonts: true }).promise;
     const finalPage = await document.getPage(document.numPages);
     const lastPageText = (await finalPage.getTextContent()).items.map((item) => 'str' in item ? item.str : '').join(' ');
-    expect(lastPageText).toContain('LÍNEA SINTÉTICA');
+    expect(lastPageText).toContain('LÍNEA SINTÉTICA 20');
+    expect(lastPageText).toContain(snapshot.amounts.total);
   });
 
   it('sustituye sólo la imagen de cabecera por un logotipo QA válido', async () => {

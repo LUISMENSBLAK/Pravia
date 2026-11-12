@@ -87,7 +87,13 @@ function directChildren(parent: Element, tag: string): Element[] {
 function keepWithNext(doc: Document, paragraph: Element) {
   const properties = directChildren(paragraph, 'w:pPr')[0] || doc.createElementNS(WORD_NS, 'w:pPr');
   if (!properties.parentNode) paragraph.insertBefore(properties, paragraph.firstChild);
-  if (!directChildren(properties, 'w:keepNext').length) properties.appendChild(doc.createElementNS(WORD_NS, 'w:keepNext'));
+  let keep = directChildren(properties, 'w:keepNext')[0];
+  if (!keep) {
+    keep = doc.createElementNS(WORD_NS, 'w:keepNext');
+    const style = directChildren(properties, 'w:pStyle')[0];
+    properties.insertBefore(keep, style ? style.nextSibling : properties.firstChild);
+  }
+  keep.setAttributeNS(WORD_NS, 'w:val', '1');
 }
 
 function conceptValues(concept: PrefacturaSnapshot['concepts'][number]): Record<string, string> {
@@ -124,8 +130,23 @@ function expandConceptRows(doc: Document, snapshot: PrefacturaSnapshot) {
   // independent lines. Keep the per-line SAT keys in the repeated table instead.
   const detail = tables.find((table) => allText(table).includes('DETALLE DEL CONCEPTO:'));
   if (detail) removeNode(detail);
-  const spacer = conceptTable.nextSibling;
-  if (spacer?.nodeType === 1 && (spacer as Element).tagName === 'w:p') keepWithNext(doc, spacer as Element);
+  // Chain through the tax/totals rows and their spacers, not only the first
+  // spacer. A break inside that table can otherwise leave only totals behind.
+  const closingBlocks: Element[] = [];
+  for (let sibling = conceptTable.nextSibling; sibling; sibling = sibling.nextSibling) {
+    if (sibling.nodeType !== 1) continue;
+    const block = sibling as Element;
+    if (block.tagName === 'w:tbl' && allText(block).includes('{{TOTAL_EN_LETRA}}')) {
+      for (const preceding of closingBlocks) {
+        if (preceding.tagName === 'w:p') keepWithNext(doc, preceding);
+        if (preceding.tagName === 'w:tbl') {
+          for (const paragraph of Array.from(preceding.getElementsByTagNameNS(WORD_NS, 'p'))) keepWithNext(doc, paragraph);
+        }
+      }
+      break;
+    }
+    closingBlocks.push(block);
+  }
 }
 
 function removeFiscalStamping(doc: Document) {
