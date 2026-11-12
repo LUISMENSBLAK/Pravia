@@ -29,7 +29,53 @@ const alternativeQuoteTemplate = () => {
   return zip.generate({ type: 'nodebuffer' }) as Buffer;
 };
 
+const sectionedQuoteTemplate = () => {
+  const zip = new PizZip(minimalDoubleBraceTemplate());
+  const cell = (value: string) => `<w:tc><w:p><w:r><w:t>${value}</w:t></w:r></w:p></w:tc>`;
+  const row = (...values: string[]) => `<w:tr>${values.map(cell).join('')}</w:tr>`;
+  const content = row('CLIENTE:', '[NOMBRE / RAZÓN SOCIAL]') + row('ACTO:', '[TIPO DE ACTO]')
+    + row('ESTADO:', 'EJEMPLO ESTADO', 'MUNICIPIO', 'EJEMPLO MUNICIPIO')
+    + row('ABOGADO', '[NOMBRE DEL ABOGADO]') + row('VALOR AVALÚO $[0.00]')
+    + row('#', 'CONCEPTO', 'IMPORTE') + row('1', '[ESCRIBA EL IMPUESTO O DERECHO]', '$[0.00]')
+    + row('SUBTOTAL IMPUESTOS Y DERECHOS', '$[0.00]') + row('1', '[ESCRIBA EL CONCEPTO DE HONORARIOS]', '$[0.00]')
+    + row('IVA 16%', '$[0.00]') + row('SUBTOTAL HONORARIOS', '$[0.00]') + row('TOTAL GENERAL', '$[0.00]');
+  zip.file('word/document.xml', zip.file('word/document.xml')!.asText().replace('<w:sectPr/>', `<w:tbl>${content}</w:tbl><w:p><w:r><w:t>CONDICIONES ORIGINALES QA</w:t></w:r></w:p><w:sectPr/>`));
+  return zip.generate({ type: 'nodebuffer' }) as Buffer;
+};
+
 describe('Corrección 002 · datos canónicos de la cotización generada', () => {
+  it('conserva saltos y formato entre variables fragmentadas y rellena referencia e importe del bloque bancario', () => {
+    const source = new PizZip(sectionedQuoteTemplate());
+    source.file('word/document.xml', source.file('word/document.xml')!.asText().replace('<w:sectPr/>', '<w:p><w:r><w:t>PRESUPUESTO [0</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>00]</w:t><w:br/><w:t>[DD/MM/AAAA]</w:t></w:r></w:p><w:p><w:r><w:t>REFERENCIA/CONCEPTO:</w:t><w:br/><w:t>CANTIDAD: $</w:t><w:br/><w:t>TITULAR: ORIGINAL QA</w:t></w:r></w:p><w:sectPr/>'));
+    const xml = new PizZip(renderQuoteTemplate(source.generate({ type: 'nodebuffer' }), { 'cotizacion.folio': 'COT-QA', 'cotizacion.fecha': '12/11/2026' }, [{ concepto: 'Honorarios', categoria: 'HONORARIOS', importeCents: 10000n }])).file('word/document.xml')!.asText();
+    expect((xml.match(/<w:br\s*\/>/g) || [])).toHaveLength(3);
+    expect(xml).toContain('PRESUPUESTO COT-QA'); expect(xml).toContain('12/11/2026');
+    expect(xml).toContain('REFERENCIA/CONCEPTO: COT-QA'); expect(xml).toContain('CANTIDAD: $100.00');
+    expect(xml).toContain('<w:b/>'); expect(xml).toContain('TITULAR: ORIGINAL QA');
+  });
+  it('rellena el presupuesto seccionado sin sustituir el machote ni conservar cifras de ejemplo', () => {
+    const source = sectionedQuoteTemplate();
+    const before = Buffer.from(source);
+    const concepts = [
+      { concepto: 'Honorario QA', categoria: 'HONORARIOS' as const, importeCents: 10000n },
+      { concepto: 'IVA QA', categoria: 'IVA_HONORARIOS' as const, importeCents: 1600n },
+      { concepto: 'Derecho QA', categoria: 'IMPUESTOS_DERECHOS' as const, importeCents: 2300n },
+      { concepto: 'Otro gasto QA', categoria: 'OTRO_GASTO' as const, importeCents: 500n, tratamiento_iva: 'GRAVADO' as const, iva_tasa: '0.16' },
+    ];
+    const data = quoteTemplateData({ folio: 'COT-QA', date: new Date('2026-11-12T12:00:00Z'), client: 'Cliente sintético', act: 'Acto QA', notary: 'Notaría QA', responsible: 'Responsable QA', concepts, validatedAdvanceCents: 0n });
+    const xml = new PizZip(renderQuoteTemplate(source, data, concepts)).file('word/document.xml')!.asText();
+    for (const text of ['Cliente sintético', 'Responsable QA', 'Honorario QA', 'Derecho QA', 'Otro gasto QA', '144.80', 'IVA DE OTROS GASTOS', 'CONDICIONES ORIGINALES QA', 'POR CONFIRMAR']) expect(xml).toContain(text);
+    expect(xml).not.toContain('EJEMPLO ESTADO'); expect(xml).not.toContain('IVA 16%'); expect(xml).not.toContain('[ESCRIBA');
+    expect((xml.match(/TOTAL GENERAL/g) || [])).toHaveLength(1);
+    expect((xml.match(/<w:tbl>/g) || [])).toHaveLength(1); expect(source.equals(before)).toBe(true);
+  });
+
+  it('mantiene cero real sólo en secciones económicas sin partidas y no inventa avalúos', () => {
+    const source = sectionedQuoteTemplate();
+    const xml = new PizZip(renderQuoteTemplate(source, {}, [{ concepto: 'Único honorario', categoria: 'HONORARIOS', importeCents: 100n }])).file('word/document.xml')!.asText();
+    expect(xml).toContain('Sin impuestos ni derechos'); expect(xml).toContain('POR CONFIRMAR'); expect(xml).toContain('1.00');
+    expect(xml).not.toContain('$[0.00]');
+  });
   it('combina las variables de doble llave usadas por la biblioteca CFG-002', () => {
     const rendered = renderQuoteTemplate(standardQuoteTemplate(), {
       'cotizacion.folio': 'COT-0042-2026',

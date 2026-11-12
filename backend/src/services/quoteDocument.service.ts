@@ -80,7 +80,7 @@ export function quoteStructuredBudget(concepts: QuoteBudgetConcept[]) {
 }
 
 /** Fill the economic table already present in ADM-001; never append a second quote. */
-export function fillStructuredQuoteBudget(documentBuffer: Buffer, concepts: QuoteBudgetConcept[], mapping?: QuoteEconomicMapping | null) {
+export function fillStructuredQuoteBudget(documentBuffer: Buffer, concepts: QuoteBudgetConcept[], mapping?: QuoteEconomicMapping | null, data: Record<string, string> = {}) {
   const zip = new PizZip(documentBuffer);
   const file = zip.file('word/document.xml');
   const documentXml = file?.asText();
@@ -125,6 +125,89 @@ export function fillStructuredQuoteBudget(documentBuffer: Buffer, concepts: Quot
     }
     parent.removeChild(detail);
     setText(totalCells[mapping.amount_column], money(quoteStructuredBudget(concepts).totalCents));
+    zip.file('word/document.xml', new XMLSerializer().serializeToString(xmlDoc));
+    return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' }) as Buffer;
+  }
+  const sectioned = tables.find((candidate) => {
+    const text = textIn(candidate);
+    return text.includes('[ESCRIBA EL IMPUESTO O DERECHO]') && text.includes('[ESCRIBA EL CONCEPTO DE HONORARIOS]') && text.includes('TOTAL GENERAL');
+  });
+  if (sectioned) {
+    const rows = Array.from(sectioned.getElementsByTagName('w:tr'));
+    const cells = (row: Element) => Array.from(row.getElementsByTagName('w:tc'));
+    const find = (label: string) => rows.find((row) => textIn(row).includes(label));
+    const taxRow = find('[ESCRIBA EL IMPUESTO O DERECHO]')!;
+    const feeRow = find('[ESCRIBA EL CONCEPTO DE HONORARIOS]')!;
+    const taxTotal = find('SUBTOTAL IMPUESTOS Y DERECHOS');
+    const feeTotal = find('SUBTOTAL HONORARIOS');
+    const iva = rows.find((row) => /^IVA\s/i.test(textIn(row)));
+    const total = find('TOTAL GENERAL');
+    if (!taxTotal || !feeTotal || !iva || !total || [taxRow, feeRow].some((row) => cells(row).length !== 3)) {
+      throw new QuoteDocumentError(422, 'QUOTE_TEMPLATE_BUDGET_STRUCTURE_MISSING', 'Revisa las filas económicas del presupuesto configurado.');
+    }
+    const write = (cell: Element, value: string) => {
+      const nodes = Array.from(cell.getElementsByTagName('w:t'));
+      if (!nodes.length) throw new QuoteDocumentError(422, 'QUOTE_TEMPLATE_BUDGET_STRUCTURE_MISSING', 'La celda del presupuesto no contiene texto editable.');
+      nodes[0].textContent = value;
+      for (const node of nodes.slice(1)) node.textContent = '';
+    };
+    const details = (model: Element, items: QuoteBudgetConcept[], empty: string) => {
+      for (const [index, item] of (items.length ? items : [{ concepto: empty, importeCents: 0n }]).entries()) {
+        const row = model.cloneNode(true) as Element;
+        const tc = cells(row); write(tc[0], String(index + 1)); write(tc[1], item.concepto); write(tc[2], money(item.importeCents));
+        model.parentNode!.insertBefore(row, model);
+      }
+      model.parentNode!.removeChild(model);
+    };
+    const totals = budgetTotals(concepts);
+    const extras = concepts.filter((row) => row.categoria === 'OTRO_GASTO');
+    if (extras.length) {
+      const extraModel = feeRow.cloneNode(true) as Element;
+      total.parentNode!.insertBefore(extraModel, total);
+      details(extraModel, extras, 'Sin otros gastos');
+      if (totals.ivaOtrosGastosCents) {
+        const extraIva = iva.cloneNode(true) as Element;
+        write(cells(extraIva)[0], 'IVA DE OTROS GASTOS'); write(cells(extraIva).at(-1)!, money(totals.ivaOtrosGastosCents));
+        total.parentNode!.insertBefore(extraIva, total);
+      }
+    }
+    details(taxRow, concepts.filter((row) => row.categoria === 'IMPUESTOS_DERECHOS'), 'Sin impuestos ni derechos');
+    details(feeRow, concepts.filter((row) => row.categoria === 'HONORARIOS'), 'Sin honorarios');
+    for (const [row, amount] of [[taxTotal, totals.impuestosDerechosCents], [feeTotal, totals.honorariosCents + totals.ivaHonorariosCents], [iva, totals.ivaHonorariosCents], [total, moneyToCents(totals.total)]] as const) write(cells(row).at(-1)!, money(amount));
+    write(cells(iva)[0], 'IVA SOBRE HONORARIOS');
+    const territoryRow = rows.find((row) => cells(row).length === 4 && textIn(cells(row)[0]) === 'ESTADO:');
+    if (territoryRow) {
+      write(cells(territoryRow)[1], data['operacion.estado'] || 'Pendiente');
+      write(cells(territoryRow)[3], data['operacion.municipio'] || 'Pendiente');
+    }
+    const replacements: Record<string, string> = { '[000]': data['cotizacion.folio'] || 'Pendiente', '[DD/MM/AAAA]': data['cotizacion.fecha'] || 'Pendiente', '[TIPO DE ACTO]': data['expediente.acto'] || 'Pendiente', '[NOMBRE DEL ABOGADO]': data['responsable.nombre'] || 'Pendiente', '[NOMBRE / RAZÓN SOCIAL]': data['cliente.nombre'] || 'Pendiente', '[EXPEDIENTE / CLIENTE]': data['cotizacion.folio'] || 'Pendiente', '$[0.00]': 'POR CONFIRMAR', '[0.00]': 'POR CONFIRMAR' };
+    // Replace only token spans: collapsing a whole paragraph loses Word line breaks,
+    // tabs and run-level formatting (the client's header and bank block use them).
+    const replaceSpan = (paragraph: Element, token: string, replacement: string) => {
+      const original = Array.from(paragraph.getElementsByTagName('w:t')).map((node) => node.textContent || '').join('');
+      const positions: number[] = [];
+      for (let at = original.indexOf(token); at >= 0; at = original.indexOf(token, at + token.length)) positions.push(at);
+      for (const start of positions.reverse()) {
+        const end = start + token.length;
+        let offset = 0;
+        for (const node of Array.from(paragraph.getElementsByTagName('w:t'))) {
+          const value = node.textContent || '';
+          const next = offset + value.length;
+          if (offset < end && next > start) {
+            node.textContent = value.slice(0, Math.max(0, start - offset))
+              + (offset <= start ? replacement : '') + value.slice(Math.min(value.length, end - offset));
+            node.setAttribute('xml:space', 'preserve');
+          }
+          offset = next;
+        }
+      }
+    };
+    for (const paragraph of Array.from(xmlDoc.getElementsByTagName('w:p'))) {
+      const original = textIn(paragraph);
+      for (const [token, replacement] of Object.entries(replacements)) replaceSpan(paragraph, token, replacement);
+      if (/REFERENCIA\/CONCEPTO:\s*(?:CANTIDAD:|$)/.test(original)) replaceSpan(paragraph, 'REFERENCIA/CONCEPTO:', `REFERENCIA/CONCEPTO: ${data['cotizacion.folio'] || 'Pendiente'}`);
+      if (/CANTIDAD:\s*\$\s*(?:TITULAR:|$)/.test(original)) replaceSpan(paragraph, 'CANTIDAD: $', `CANTIDAD: $${money(moneyToCents(totals.total))}`);
+    }
     zip.file('word/document.xml', new XMLSerializer().serializeToString(xmlDoc));
     return zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' }) as Buffer;
   }
@@ -254,6 +337,7 @@ export function appendAccountStatement(documentBuffer: Buffer, statement: Accoun
 
 export function quoteTemplateData(input: {
   folio: string; date: Date; client: string; act: string; notary: string;
+  responsible?: string; state?: string; municipality?: string;
   concepts: QuoteBudgetConcept[];
   validatedAdvanceCents: bigint;
 }) {
@@ -269,6 +353,9 @@ export function quoteTemplateData(input: {
     'cotizacion.fecha': new Intl.DateTimeFormat('es-MX', { dateStyle: 'long' }).format(input.date),
     'cliente.nombre': input.client,
     'expediente.acto': input.act,
+    'responsable.nombre': input.responsible || 'Pendiente',
+    'operacion.estado': input.state || 'Pendiente',
+    'operacion.municipio': input.municipality || 'Pendiente',
     'inmueble.referencia|[PENDIENTE/NO APLICA]': 'Pendiente / no aplica',
     'cotizacion.base_honorarios': names(input.concepts.filter((row) => row.categoria === 'HONORARIOS')),
     'cotizacion.honorarios': money(totals.honorariosCents),
@@ -299,7 +386,7 @@ export function renderQuoteTemplate(template: Buffer, data: Record<string, strin
   });
   document.render(data);
   const rendered = document.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' }) as Buffer;
-  return fillStructuredQuoteBudget(rendered, concepts, mapping);
+  return fillStructuredQuoteBudget(rendered, concepts, mapping, data);
 }
 
 export class QuoteDocumentService {
@@ -431,6 +518,7 @@ export class QuoteDocumentService {
       where: { id: cotizacionId, organization_id: actor.organizationId },
       include: {
         prospecto: true,
+        creada_por: { select: { nombre: true, apellido: true } },
         conceptos: { orderBy: { orden: 'asc' } },
         pagos: { where: { estatus: 'VALIDADO' } },
       },
@@ -456,6 +544,11 @@ export class QuoteDocumentService {
       folio: quote.numero_cotizacion || quote.numero_solicitud || quote.id,
       date: new Date(), client: quote.prospecto?.nombre || 'Cliente pendiente',
       act: quote.prospecto?.tipo_acto || 'Acto pendiente', notary: organization.name, concepts,
+      responsible: [quote.creada_por?.nombre, quote.creada_por?.apellido].filter(Boolean).join(' '),
+      state: quote.territorio_operacion && typeof quote.territorio_operacion === 'object' && !Array.isArray(quote.territorio_operacion)
+        ? String(quote.territorio_operacion.state || '') : '',
+      municipality: quote.territorio_operacion && typeof quote.territorio_operacion === 'object' && !Array.isArray(quote.territorio_operacion)
+        ? String(quote.territorio_operacion.municipality || '') : '',
       validatedAdvanceCents: quote.pagos.reduce((sum, row) => sum + BigInt(Math.round(Number(row.monto) * 100)), 0n),
     });
     let output: Buffer;

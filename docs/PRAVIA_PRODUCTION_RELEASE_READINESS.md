@@ -1,5 +1,9 @@
 # PRAVIA OS — preparación verificable de release
 
+## Decisión posterior del propietario · 12-11-2026
+
+La orden final del propietario confirma que todos los datos actuales son de prueba y autoriza publicar en los servicios existentes. Este cambio **sustituye el NO-GO histórico por recuperación independiente/26 objetos ausentes únicamente para pruebas técnicas**; no certifica datos notariales reales. La evidencia vigente y las limitaciones se registran en [release técnico](PRAVIA_TECHNICAL_RELEASE_20261112.md). No se crean servicios, no se resetea NOTARYPROY ni se fabrican archivos históricos.
+
 Actualización 12-11-2026: el [preflight vigente](PRAVIA_RELEASE_VERIFICATION_20261111.md) reemplaza los conteos históricos de esta página. NOTARYPROY responde por Session pooler con TLS verificado; 124 migraciones canónicas aplicadas más una línea base histórica, 2 pendientes y ningún checksum canónico divergente. Dump de `pravia_os` restaurado en PostgreSQL aislado sin red; ambos SQL pendientes pasaron sobre el restore. Los 278 objetos accesibles de Storage se copiaron y verificaron por SHA. **NO-GO**: la restauración independiente y los 26 objetos históricos no se han demostrado; no se autorizó ni ejecutó la promoción de `main` sin esos controles.
 
 Estado al 28-10-2026: **NO-GO / preparación en curso**. Se creó `codex/release-pravia-20261028` desde HEAD `5ca8ad675853c3e5a2a2be1930bd9b8b279ad0c2`, conservando el worktree acumulado; `main` no se modificó. El candidato funcional auditado es `6307b39a93d066233382f942c14d6fd50981b9ad`, con CI remoto completo PASS. NOTARYPROY ya fue confirmado y auditado en modo read-only; el restore local representativo aplicó las nueve migraciones pendientes con éxito. Persisten bloqueos indispensables de integridad histórica, recuperación independiente y staging externo aislado.

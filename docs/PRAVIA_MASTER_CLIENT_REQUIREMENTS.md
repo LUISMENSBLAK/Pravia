@@ -1,5 +1,9 @@
 # PRAVIA OS — registro maestro de requisitos del cliente
 
+## Publicación técnica con datos de prueba · 12-11-2026
+
+La orden final del propietario modifica el criterio de publicación, no los requisitos funcionales: autoriza el release técnico en los servicios actuales sin recuperación independiente de fixtures. Véase [estado y evidencia](PRAVIA_TECHNICAL_RELEASE_20261112.md). NOTARYPROY ya tiene 126/126 migraciones canónicas; los 26 objetos ausentes se conservan referenciados y no se declaran recuperados. Las matrices históricas no pasan automáticamente a PASS y la admisión de datos reales sigue no certificada.
+
 ## Correcciones de cliente — noviembre 2026
 
 La orden y los cuatro archivos de cotización, comparecientes, proyección y facturación recibidos el 03-11-2026 se registran en [la matriz NOV-COT/COM/PRO/FIN/CON/PDF/LOG/SEG](CLIENT_NOV2026_CORRECTIONS_CERTIFICATION.md). La orden enumera 135 casos distintos aunque su texto dice 125; se conservaron todos. Estado: **NO CERTIFICADO / NO-GO** hasta pruebas dirigidas y gates de release reales. Esta fuente posterior no borra ni eleva a PASS ninguna matriz histórica.

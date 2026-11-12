@@ -252,7 +252,11 @@ export class AuthController {
 
   static async switchOrganization(req: Request, res: Response) {
     if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
-    const organizationId = String(req.body?.organizationId || '').trim();
+    const organizationId = typeof req.body?.organizationId === 'string' ? req.body.organizationId.trim() : '';
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(organizationId)) {
+      return res.status(400).json({ code: 'ORGANIZATION_ID_INVALID', error: 'Selecciona una organización válida.' });
+    }
+    try {
     const membership = await runWithPlatformOperation('AUTH_ORGANIZATION_SWITCH', async () => await prisma.organizationMembership.findFirst({
       where: { user_id: req.user!.id, organization_id: organizationId, status: 'ACTIVE', organization: { status: 'ACTIVE' } },
       include: { organization: true },
@@ -273,6 +277,9 @@ export class AuthController {
       user: { id: req.user.id, email: req.user.email, nombre: req.user.nombre, apellido: req.user.apellido, rol: membership.rol,
         permissions, organization: { id: membership.organization.id, name: membership.organization.name }, membership_id: membership.id, scope },
     });
+    } catch {
+      return res.status(503).json({ code: 'ORGANIZATION_SWITCH_UNAVAILABLE', error: 'No fue posible cambiar de organización. Conserva tu sesión e intenta de nuevo.' });
+    }
   }
 
   static async changePassword(req: Request, res: Response) {
