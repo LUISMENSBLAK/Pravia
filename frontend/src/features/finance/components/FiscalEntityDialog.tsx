@@ -162,10 +162,41 @@ export function FiscalEntityDialog({onClose,onSaved,replacingEntity}:{onClose:()
   </Modal>;
 }
 
-export function FiscalEntityDetailDialog({entity,canReadDocument,canReplace,onReplace,onClose}:{entity:FiscalEntity;canReadDocument:boolean;canReplace:boolean;onReplace:()=>void;onClose:()=>void}) {
+export function FiscalEntityDetailDialog({entity,canReadDocument,canReplace,canManageTemplate,onReplace,onChanged,onClose}:{entity:FiscalEntity;canReadDocument:boolean;canReplace:boolean;canManageTemplate:boolean;onReplace:()=>void;onChanged:()=>void;onClose:()=>void}) {
   const [error,setError]=useState('');
+  const [logoBusy,setLogoBusy]=useState(false);
+  const [logoProgress,setLogoProgress]=useState<number|null>(null);
+  const [templates,setTemplates]=useState<Awaited<ReturnType<typeof financeService.fiscalInvoiceTemplates>>>([]);
+  const [selectedTemplate,setSelectedTemplate]=useState(entity.plantilla_id||'');
+  const [templateBusy,setTemplateBusy]=useState(false);
   const [versions,setVersions]=useState<Awaited<ReturnType<typeof financeService.fiscalEntityCsfVersions>>>([]);
   useEffect(()=>{if(canReadDocument)void financeService.fiscalEntityCsfVersions(entity.id).then(setVersions).catch(reason=>setError(errorText(reason)));},[canReadDocument,entity.id]);
+  useEffect(()=>{void financeService.fiscalInvoiceTemplates().then(setTemplates).catch(reason=>setError(errorText(reason)));},[]);
+  const saveTemplate=async()=>{
+    setError('');setTemplateBusy(true);
+    try {await financeService.selectFiscalInvoiceTemplate(entity.id,selectedTemplate||null);onChanged();}
+    catch(reason){setError(errorText(reason));}
+    finally {setTemplateBusy(false);}
+  };
+  const openLogo=async()=>{
+    const preview=window.open('','_blank');
+    try {const logo=await financeService.fiscalEntityLogoUrl(entity.id);
+      if(!logo)throw new Error('Esta entidad no tiene logotipo configurado.');
+      if(preview)preview.location.href=logo.url;else window.location.href=logo.url;
+    }catch(reason){preview?.close();setError(errorText(reason));}
+  };
+  const uploadLogo=async(file:File)=>{
+    setError('');setLogoBusy(true);setLogoProgress(0);
+    try {await financeService.uploadFiscalEntityLogo(entity.id,file,(loaded,total)=>setLogoProgress(total?Math.round(loaded*100/total):null));onChanged();}
+    catch(reason){setError(errorText(reason));}
+    finally {setLogoBusy(false);setLogoProgress(null);}
+  };
+  const removeLogo=async()=>{
+    setError('');setLogoBusy(true);
+    try {await financeService.removeFiscalEntityLogo(entity.id);onChanged();}
+    catch(reason){setError(errorText(reason));}
+    finally {setLogoBusy(false);}
+  };
   const open=async(download:boolean,version?:number)=>{
     const preview=download?null:window.open('','_blank');
     try{
@@ -181,6 +212,28 @@ export function FiscalEntityDetailDialog({entity,canReadDocument,canReplace,onRe
       <p>Regímenes: {(entity.regimenes_fiscales?.length?entity.regimenes_fiscales:[{clave:entity.regimen_fiscal,descripcion:'Histórico'}]).map(item=>`${item.clave} ${item.descripcion}`).join('; ')}</p>
       <p>Régimen principal: {entity.regimen_fiscal} · Serie: {entity.serie||'sin configurar'}</p>
       <p>Timbrado: {entity.csd_key_configured&&entity.csd_password_configured&&entity.pac_secret_configured?'referencias registradas':'no disponible · falta PAC/CSD'}</p>
+      <section aria-label="Plantilla de prefactura">
+        <h4>Machote de prefactura</h4>
+        <p>{entity.plantilla_id?'Versión privada de CFG-002 asignada a este emisor.':'Sin versión privada asignada. El machote incorporado sólo es respaldo legacy; falta configuración del tenant.'}</p>
+        {canManageTemplate&&<div>
+          <select aria-label="Versión Word de prefactura" value={selectedTemplate} onChange={event=>setSelectedTemplate(event.target.value)} disabled={templateBusy}>
+            <option value="">Sin versión privada (legacy)</option>
+            {templates.map(item=><option key={item.id} value={item.id}>{item.nombre} · v{item.version} · {item.nombre_original||'Word'}</option>)}
+          </select>
+          <button type="button" disabled={templateBusy||selectedTemplate===(entity.plantilla_id||'')} onClick={()=>void saveTemplate()}>{templateBusy?'Guardando…':'Guardar machote'}</button>
+        </div>}
+      </section>
+      <section aria-label="Logotipo de la entidad fiscal">
+        <h4>Logotipo de prefactura</h4>
+        <p>{entity.logo_documento_id?'Logotipo privado configurado para esta entidad.':'Sin logotipo de entidad; se usará el de la Notaría si está configurado.'}</p>
+        {entity.logo_documento_id&&canReadDocument&&<button type="button" onClick={()=>void openLogo()} disabled={logoBusy}>Ver logotipo</button>}
+        {canReplace&&<label className={styles.fiscalLogoUpload}>Subir logotipo PNG/JPG (máx. 2 MiB)
+          <input type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" disabled={logoBusy}
+            onChange={event=>{const file=event.currentTarget.files?.[0];if(file)void uploadLogo(file);event.currentTarget.value='';}}/>
+        </label>}
+        {entity.logo_documento_id&&canReplace&&<button type="button" disabled={logoBusy} onClick={()=>void removeLogo()}>Quitar logotipo</button>}
+        {logoBusy&&<p role="status">{logoProgress===null?'Guardando logotipo…':`Cargando logotipo ${logoProgress}%…`}</p>}
+      </section>
       {entity.csf_documento_id&&canReadDocument&&<div><button type="button" onClick={()=>void open(false)}>Ver CSF original</button><button type="button" onClick={()=>void open(true)}><Download/> Descargar CSF</button></div>}
       {canReplace&&<button type="button" onClick={onReplace}>Sustituir CSF</button>}
       {versions.length>0&&<section aria-label="Historial de constancias fiscales"><h4>Versiones de la CSF</h4><ul>{versions.map(item=><li key={item.id}>

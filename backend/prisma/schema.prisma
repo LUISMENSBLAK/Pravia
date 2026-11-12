@@ -935,6 +935,7 @@ model Cotizacion {
   correo_cc                      String?
   correo_asunto                  String?
   contexto_operacion             String?
+  territorio_operacion           Json?
   cuerpo_correo_notaria          String?
   fecha_aceptacion_cliente       DateTime?
   fecha_enviada_cliente          DateTime?
@@ -2644,6 +2645,7 @@ model Documento {
   documentosCfdiPdf                DocumentoCfdi[]                          @relation("DocumentoCfdiPdf")
   prefacturaRepresentaciones       PrefacturaRepresentacion[]              @relation("PrefacturaRepresentacionDocumento")
   entidadesFiscalesCsf             EntidadFiscalCfdi[]                      @relation("EntidadFiscalCsfActual")
+  entidadesFiscalesLogo            EntidadFiscalCfdi[]                      @relation("EntidadFiscalLogoActual")
   entidadFiscalCsfVersiones         EntidadFiscalCsfVersion[]                @relation("EntidadFiscalCsfVersionDocumento")
 
   @@unique([id, organization_id], map: "h2_documentos_id_tenant_key")
@@ -7969,6 +7971,7 @@ model EntidadFiscalCfdi {
   regimenes_fiscales      Json?
   codigo_postal           String                 @db.VarChar(5)
   csf_documento_id        String?                @db.Uuid
+  logo_documento_id       String?                @db.Uuid
   csf_extraction          Json?
   pac_provider            String?                @db.VarChar(80)
   pac_secret_ref          String?                @db.VarChar(500)
@@ -7988,6 +7991,7 @@ model EntidadFiscalCfdi {
   organization            Organization           @relation(fields: [organization_id], references: [id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_org_fkey")
   createdBy               OrganizationMembership @relation("EntidadFiscalCfdiCreadorMembership", fields: [organization_id, created_by_id], references: [organization_id, user_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_creator_fkey")
   csfDocumento            Documento?             @relation("EntidadFiscalCsfActual", fields: [csf_documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_csf_documento_fkey")
+  logoDocumento           Documento?             @relation("EntidadFiscalLogoActual", fields: [logo_documento_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "cfdi_entidad_logo_documento_fkey")
   csfVersiones             EntidadFiscalCsfVersion[]
   cuentas                 EntidadFiscalCuenta[]
   documentosCfdi          DocumentoCfdi[]

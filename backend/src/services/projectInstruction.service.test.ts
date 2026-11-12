@@ -18,5 +18,10 @@ describe('indicaciones dirigidas EXP-010',()=>{
     expect(reconciled.contradiction_observations).toEqual([{document_value:'Otro dato'}]);
   });
   it('bloquea texto ambiguo',async()=>{const source=await docx('<w:p><w:r><w:t>Duplicado</w:t></w:r></w:p><w:p><w:r><w:t>Duplicado</w:t></w:r></w:p>');await expect(applyDirectedDocxPatches(source,[{find:'Duplicado',replace:'Único'}])).rejects.toThrow(/más de una vez/);});
+  it('no borra una fecha desconocida del conteo por corregir texto ajeno a la fecha',()=>{
+    const metadata={pending_count:2};
+    expect(reconcileProjectMetadataAfterPatches(metadata,[{find:'Antes',replace:'Después'}],'Después [PENDIENTE: SUPERFICIE] ** de **** de *******').pending_count).toBe(2);
+    expect(reconcileProjectMetadataAfterPatches(metadata,[{find:'** de **** de *******',replace:'12 de noviembre de 2026'}],'Después [PENDIENTE: SUPERFICIE] 12 de noviembre de 2026').pending_count).toBe(1);
+  });
   it('bloquea objetivo ausente',async()=>{const source=await docx('<w:p><w:r><w:t>Texto</w:t></w:r></w:p>');await expect(applyDirectedDocxPatches(source,[{find:'Ausente',replace:'Nuevo'}])).rejects.toThrow(/No se encontró/);});
 });

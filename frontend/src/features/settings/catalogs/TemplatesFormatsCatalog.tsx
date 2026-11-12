@@ -74,6 +74,15 @@ const ownerLabel = (owner: CatalogOwner) =>
   owner.numero_notaria
     ? `Notaría ${owner.numero_notaria} · ${owner.nombre}`
     : owner.nombre;
+
+type QuoteEconomicMappingDraft = { table_index: number; detail_row_index: number; total_row_index: number; label_column: number; amount_column: number; base_column?: number };
+const quoteVersionMappings = (value: unknown): Record<string, QuoteEconomicMappingDraft> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const quote = (value as Record<string, unknown>).quote_economic;
+  if (!quote || typeof quote !== "object" || Array.isArray(quote)) return {};
+  const versions = (quote as Record<string, unknown>).versions;
+  return versions && typeof versions === "object" && !Array.isArray(versions) ? versions as Record<string, QuoteEconomicMappingDraft> : {};
+};
 const RepositorySkeleton = () => (
   <div
     className={styles.repositorySkeleton}
@@ -123,6 +132,7 @@ export function TemplatesFormatsCatalog() {
   const [manageName, setManageName] = useState("");
   const [manageFolderId, setManageFolderId] = useState("");
   const [destinationDraft, setDestinationDraft] = useState<ArtifactDestination[]>([]);
+  const [quoteMappingVersionId, setQuoteMappingVersionId] = useState("");
   const [importFiles, setImportFiles] = useState<File[]>([]);
   const [preview, setPreview] = useState<CatalogImportPreview | null>(null);
   const [viewer, setViewer] = useState<{ version: ArtifactVersion; url?: string; loading?: boolean; error?: string } | null>(null);
@@ -390,6 +400,21 @@ export function TemplatesFormatsCatalog() {
     event.preventDefault();
     if (!modal || typeof modal === "string" || !("destinations" in modal)) return;
     void run(() => settingsService.assignFunctionalDestinations(modal.destinations.id, destinationDraft), "Conexiones funcionales actualizadas.");
+  };
+  const updateQuoteMapping = (value: QuoteEconomicMappingDraft | null) => {
+    if (!quoteMappingVersionId) return;
+    setDestinationDraft((current) => current.map((item) => {
+      if (item.destino !== "COTIZACION_SERVICIOS") return item;
+      const original = item.mapeo_datos_json && typeof item.mapeo_datos_json === "object" && !Array.isArray(item.mapeo_datos_json)
+        ? item.mapeo_datos_json as Record<string, unknown> : {};
+      const versions = { ...quoteVersionMappings(original) };
+      if (value) versions[quoteMappingVersionId] = value;
+      else delete versions[quoteMappingVersionId];
+      const { quote_economic: _previous, ...otherMappings } = original;
+      return { ...item, mapeo_datos_json: Object.keys(versions).length
+        ? { ...otherMappings, quote_economic: { schema_version: 1, versions } }
+        : Object.keys(otherMappings).length ? otherMappings : null };
+    }));
   };
   const openVersion = async (version: ArtifactVersion) => {
     setViewer({ version, loading: true });
@@ -906,7 +931,7 @@ export function TemplatesFormatsCatalog() {
               <FolderInput />
               Organizar
             </button>
-            <button type="button" onClick={() => { setDestinationDraft(artifact.destinosFuncionales || []); setModal({ destinations: artifact }); }}>
+            <button type="button" onClick={() => { setDestinationDraft(artifact.destinosFuncionales || []); setQuoteMappingVersionId(artifact.versiones[0]?.id || ""); setModal({ destinations: artifact }); }}>
               Conectar a módulos
             </button>
             {projectAssignment && <button type="button" onClick={() => {
@@ -1073,6 +1098,22 @@ export function TemplatesFormatsCatalog() {
                 </div>;
               })}
             </fieldset>
+            {destinationDraft.some((item) => item.destino === "COTIZACION_SERVICIOS") && <fieldset className={styles.choiceList}>
+              <legend>Tabla económica de Cotización</legend>
+              <p>El mapeo se guarda por versión del Word. Indica la tabla, la fila modelo de partidas, la fila del total y sus columnas; todos los números comienzan en 1. Si el ADM-001 histórico funciona, puedes conservar su detección automática.</p>
+              <label>Versión del formato<select value={quoteMappingVersionId} onChange={(event) => setQuoteMappingVersionId(event.target.value)}>{modal.destinations.versiones.map((version) => <option key={version.id} value={version.id}>Versión {version.version} · {version.nombre_original}</option>)}</select></label>
+              {(() => {
+                const current = destinationDraft.find((item) => item.destino === "COTIZACION_SERVICIOS");
+                const mapping = quoteVersionMappings(current?.mapeo_datos_json)[quoteMappingVersionId];
+                if (!mapping) return <Button type="button" variant="secondary" onClick={() => updateQuoteMapping({ table_index: 0, detail_row_index: 1, total_row_index: 2, label_column: 0, amount_column: 1 })}>Configurar correspondencia de esta versión</Button>;
+                const numeric = ([field, label]: [keyof QuoteEconomicMappingDraft, string]) => <label key={field}>{label}<input type="number" min="1" step="1" required value={Number(mapping[field]) + 1} onChange={(event) => updateQuoteMapping({ ...mapping, [field]: Number(event.target.value) - 1 })} /></label>;
+                return <>
+                  {([['table_index', 'Tabla económica'], ['detail_row_index', 'Fila modelo de partidas'], ['total_row_index', 'Fila del total'], ['label_column', 'Columna del concepto'], ['amount_column', 'Columna del importe']] as Array<[keyof QuoteEconomicMappingDraft, string]>).map(numeric)}
+                  <label>Columna de base u observación, si existe<input type="number" min="1" step="1" value={mapping.base_column === undefined ? '' : mapping.base_column + 1} onChange={(event) => { const next = { ...mapping }; if (!event.target.value) delete next.base_column; else next.base_column = Number(event.target.value) - 1; updateQuoteMapping(next); }} /></label>
+                  <Button type="button" variant="secondary" onClick={() => updateQuoteMapping(null)}>Quitar mapeo de esta versión</Button>
+                </>;
+              })()}
+            </fieldset>}
             <footer><Button type="button" variant="secondary" onClick={() => setModal(null)}>Cancelar</Button><Button type="submit" disabled={busy}>Guardar conexiones</Button></footer>
           </form>
         </CatalogModal>

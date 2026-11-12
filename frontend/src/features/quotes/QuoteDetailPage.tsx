@@ -9,6 +9,7 @@ import { ConvertQuoteDialog } from './components/ConvertQuoteDialog';
 import { QuoteActivity } from './components/QuoteActivity';
 import { QuoteConcepts } from './components/QuoteConcepts';
 import { QuoteContractActionDialog } from './components/QuoteContractActionDialog';
+import type { QuoteAcceptanceResume } from './components/QuoteContractActionDialog';
 import { QuoteProgress } from './components/QuoteProgress';
 import { QuoteStatusBadge } from './components/QuoteStatusBadge';
 import { QuotesLoading } from './components/QuotesLoading';
@@ -32,6 +33,7 @@ export function QuoteDetailPage() {
   const [toast, setToast] = useState('');
   const [delivery, setDelivery] = useState<'NOTARIA' | 'CLIENTE' | null>(null);
   const [contractAction, setContractAction] = useState<ContractDialogAction | null>(null);
+  const [acceptanceResume, setAcceptanceResume] = useState<QuoteAcceptanceResume | null>(null);
   const [convert, setConvert] = useState(false);
   const [viewer, setViewer] = useState<{ document: QuoteDocument; url?: string; loading?: boolean; error?: string; source?: boolean } | null>(null);
   const canWrite = Boolean(user?.permissions?.includes('cotizaciones.write') && quote &&
@@ -57,6 +59,28 @@ export function QuoteDetailPage() {
       .catch((cause) => notify(cause instanceof Error ? cause.message : 'El acto se creó, pero no pudo vincularse a la cotización.'))
       .finally(() => navigate(`/cotizaciones/${id}`, { replace: true, state: null }));
   }, [id, load, location.state, navigate, status]);
+  useEffect(() => {
+    const returned = location.state as {
+      quoteNewComparecienteId?: unknown;
+      quoteNewComparecienteName?: unknown;
+      quoteAcceptanceDraft?: { effectiveAt?: unknown; reason?: unknown; confirmedActIds?: unknown };
+    } | null;
+    if (status !== 'ready' || !quote || !canWrite || typeof returned?.quoteNewComparecienteId !== 'string') return;
+    const actions = quote.workflow?.actions?.map((action) => typeof action === 'string' ? action : action.code) ?? [];
+    if (actions.includes('ACEPTAR')) {
+      const prior = returned.quoteAcceptanceDraft;
+      setAcceptanceResume({
+        applicantId: returned.quoteNewComparecienteId,
+        applicantName: typeof returned.quoteNewComparecienteName === 'string' ? returned.quoteNewComparecienteName : 'Nuevo compareciente',
+        effectiveAt: typeof prior?.effectiveAt === 'string' ? prior.effectiveAt : new Date().toISOString().slice(0, 23),
+        reason: typeof prior?.reason === 'string' ? prior.reason : '',
+        confirmedActIds: Array.isArray(prior?.confirmedActIds) && prior.confirmedActIds.every((value) => typeof value === 'string')
+          ? prior.confirmedActIds : quote.actos?.map((item) => item.id) ?? [],
+      });
+      setContractAction('ACEPTAR');
+    }
+    navigate(`/cotizaciones/${id}`, { replace: true, state: null });
+  }, [canWrite, id, location.state, navigate, quote, status]);
   const updateLegacyState = async (state: QuoteState) => {
     if (!quote) return;
     setBusy(state);
@@ -105,9 +129,28 @@ export function QuoteDetailPage() {
   };
   const generateDocument = async () => {
     if (!quote) return;
-    setBusy('generate');
-    try { await quotesService.generateDocument(quote.id); await load(); notify('Documento de cotización generado desde ADM-001.'); }
+    setBusy('generate-word');
+    try {
+      const word = await quotesService.generateDocument(quote.id);
+      setBusy('convert-pdf');
+      try {
+        await quotesService.generateDocumentPdf(quote.id, word.id);
+        setBusy('saving-documents');
+        await load();
+        notify('Word y PDF de cotización disponibles.');
+      } catch (cause) {
+        await load();
+        notify(cause instanceof Error ? `Word guardado. Falló el PDF: ${cause.message}` : 'Word guardado. No se pudo convertir a PDF; puedes reintentar.');
+      }
+    }
     catch (cause) { notify(cause instanceof Error ? cause.message : 'No fue posible generar la cotización.'); }
+    finally { setBusy(''); }
+  };
+  const retryPdf = async (document: QuoteDocument) => {
+    if (!quote) return;
+    setBusy(`pdf:${document.id}`);
+    try { await quotesService.generateDocumentPdf(quote.id, document.id); await load(); notify('PDF de cotización disponible.'); }
+    catch (cause) { await load(); notify(cause instanceof Error ? cause.message : 'No fue posible convertir a PDF. El Word permanece disponible.'); }
     finally { setBusy(''); }
   };
 
@@ -127,7 +170,7 @@ export function QuoteDetailPage() {
     <header className={styles.detailHeader}>
       <div><div className={styles.detailEyebrow}><QuoteStatusBadge quote={quote} />{!canonical && <span>Registro histórico</span>}</div><h1>{quote.numero_cotizacion || quote.numero_solicitud || 'Cotización'}</h1><p>{quote.prospecto?.nombre || 'Prospecto no disponible'} · {quote.actos?.map((item) => item.tipo_acto.nombre).join(', ') || quote.prospecto?.tipo_acto || 'Acto sin especificar'}</p></div>
       <div className={styles.detailActions}>
-        {canWrite && (quote.presupuesto?.concepts?.length ?? 0) > 0 && <button type="button" className={styles.primaryButton} onClick={() => void generateDocument()} disabled={busy === 'generate'}>{busy === 'generate' ? <LoaderCircle className={styles.spin} size={17} /> : <FilePlus2 size={17} />}Generar cotización</button>}
+        {canWrite && (quote.presupuesto?.concepts?.length ?? 0) > 0 && <button type="button" className={styles.primaryButton} onClick={() => void generateDocument()} disabled={Boolean(busy)}>{busy ? <LoaderCircle className={styles.spin} size={17} /> : <FilePlus2 size={17} />}{busy === 'generate-word' ? 'Generando Word…' : busy === 'convert-pdf' ? 'Convirtiendo a PDF…' : busy === 'saving-documents' ? 'Guardando documentos…' : 'Generar cotización'}</button>}
         {canonical && canWrite && actions.includes('REENVIAR_CLIENTE') && <button type="button" className={styles.secondaryButton} onClick={() => setDelivery('CLIENTE')}><Send size={17} />Registrar reenvío</button>}
         {!canonical && canWrite && legacyAllowed.includes('ENVIADA_NOTARIA') && <button type="button" className={styles.secondaryButton} onClick={() => setDelivery('NOTARIA')}><Send size={17} />Enviar a notaría</button>}
         {!canonical && canWrite && legacyAllowed.includes('ENVIADA_CLIENTE') && <button type="button" className={styles.secondaryButton} onClick={() => setDelivery('CLIENTE')}><Send size={17} />Enviar a cliente</button>}
@@ -139,7 +182,7 @@ export function QuoteDetailPage() {
       {nextAction === 'COMENZAR_ELABORACION' && <button type="button" className={styles.primaryButton} onClick={() => setContractAction('COMENZAR_ELABORACION')}>Comenzar elaboración</button>}
       {nextAction === 'ENVIAR_CLIENTE' && <button type="button" className={styles.primaryButton} onClick={() => setDelivery('CLIENTE')}><Send size={17} />Registrar envío al cliente</button>}
       {nextAction === 'INICIAR_SEGUIMIENTO' && <button type="button" className={styles.primaryButton} onClick={() => setContractAction('INICIAR_SEGUIMIENTO')}>Iniciar seguimiento</button>}
-      {nextAction === 'ACEPTAR' && <button type="button" className={styles.primaryButton} onClick={() => setContractAction('ACEPTAR')}><Check size={17} />Marcar como aceptada</button>}
+      {nextAction === 'ACEPTAR' && <button type="button" className={styles.primaryButton} onClick={() => { setAcceptanceResume(null); setContractAction('ACEPTAR'); }}><Check size={17} />Marcar como aceptada</button>}
       {nextAction === 'CONVERTIR' && <button type="button" className={styles.primaryButton} onClick={() => setConvert(true)}>Convertir en expediente</button>}
       {quote.expediente && <Link className={styles.secondaryButton} to={`/expedientes/${quote.expediente.id}`}>Ir al expediente</Link>}
     </div>}
@@ -171,12 +214,12 @@ export function QuoteDetailPage() {
           {!canonical && quote.expediente && <Link className={styles.secondaryButton} to={`/expedientes/${quote.expediente.id}`}>Ir al expediente</Link>}
           {!actions.some((action) => ['RECHAZAR', 'SUSPENDER', 'CANCELAR'].includes(action)) && !legacyAllowed.length && <p>No hay acciones excepcionales disponibles en el estado actual.</p>}
         </div></section>
-        <section className={styles.detailSection}><header><div><h2>Documentos</h2><p>Archivos operativos y cotizaciones generadas conservadas como evidencia.</p></div></header>{quote.documentos?.length ? <ul className={styles.documentList}>{quote.documentos.map((document) => <li key={document.id}><FileText size={17} /><span><strong>{document.nombre_original}</strong><small>{document.origen_etiqueta || 'Cotización'} · {document.tipo || 'Documento'}</small></span><div className={styles.documentActions}>{canReadDocuments && <button type="button" aria-label={`Ver ${document.nombre_original}`} onClick={() => void view(document)} disabled={Boolean(busy)}>{busy === `view:${document.id}` ? <LoaderCircle className={styles.spin} size={16} /> : <Eye size={16} />}Ver</button>}{canReadDocuments && <button type="button" aria-label={`Descargar ${document.nombre_original}`} onClick={() => void download(document)} disabled={Boolean(busy)}>{busy === `download:${document.id}` ? <LoaderCircle className={styles.spin} size={16} /> : <Download size={16} />}Descargar</button>}{canDeleteDocuments && document.can_delete && <button type="button" className={styles.documentDelete} aria-label={`Eliminar ${document.nombre_original}`} onClick={() => void removeDocument(document)} disabled={Boolean(busy)}>{busy === `delete:${document.id}` ? <LoaderCircle className={styles.spin} size={16} /> : <Trash2 size={16} />}Eliminar</button>}</div></li>)}</ul> : <p className={styles.sectionEmpty}>Sin documentos vinculados.</p>}</section>
+        <section className={styles.detailSection}><header><div><h2>Documentos</h2><p>Archivos operativos y cotizaciones generadas conservadas como evidencia.</p></div></header>{quote.documentos?.length ? <ul className={styles.documentList}>{quote.documentos.map((document) => <li key={document.id}><FileText size={17} /><span><strong>{document.nombre_original}</strong><small>{document.origen_etiqueta || 'Cotización'} · {document.tipo || 'Documento'}{document.tipo === 'COTIZACION_GENERADA' && document.datos_extraidos?.generation?.pdf_status === 'ERROR' ? ' · Error de conversión PDF' : document.tipo === 'COTIZACION_GENERADA' && document.datos_extraidos?.generation?.pdf_status === 'PENDING' ? ' · PDF pendiente' : ''}</small></span><div className={styles.documentActions}>{canWrite && document.tipo === 'COTIZACION_GENERADA' && <button type="button" aria-label={`${document.datos_extraidos?.generation?.pdf_status === 'READY' ? 'Verificar PDF de' : 'Reintentar PDF de'} ${document.nombre_original}`} onClick={() => void retryPdf(document)} disabled={Boolean(busy)}>{busy === `pdf:${document.id}` ? <LoaderCircle className={styles.spin} size={16} /> : <FilePlus2 size={16} />}{document.datos_extraidos?.generation?.pdf_status === 'READY' ? 'Verificar PDF' : 'Reintentar PDF'}</button>}{canReadDocuments && <button type="button" aria-label={`Ver ${document.nombre_original}`} onClick={() => void view(document)} disabled={Boolean(busy)}>{busy === `view:${document.id}` ? <LoaderCircle className={styles.spin} size={16} /> : <Eye size={16} />}Ver</button>}{canReadDocuments && <button type="button" aria-label={`Descargar ${document.nombre_original}`} onClick={() => void download(document)} disabled={Boolean(busy)}>{busy === `download:${document.id}` ? <LoaderCircle className={styles.spin} size={16} /> : <Download size={16} />}Descargar</button>}{canDeleteDocuments && document.can_delete && <button type="button" className={styles.documentDelete} aria-label={`Eliminar ${document.nombre_original}`} onClick={() => void removeDocument(document)} disabled={Boolean(busy)}>{busy === `delete:${document.id}` ? <LoaderCircle className={styles.spin} size={16} /> : <Trash2 size={16} />}Eliminar</button>}</div></li>)}</ul> : <p className={styles.sectionEmpty}>Sin documentos vinculados.</p>}</section>
       </aside>
     </div>
 
     {delivery && <RegisterDeliveryDialog quote={quote} target={delivery} onClose={() => setDelivery(null)} onDone={() => { setDelivery(null); void load(); notify(canonical && quote.workflow?.stage === 'ENVIADA_CLIENTE' ? 'Reenvío registrado sin cambiar el primer envío.' : 'Envío registrado con evidencia.'); }} />}
-    {contractAction && <QuoteContractActionDialog quote={quote} action={contractAction} onClose={() => setContractAction(null)} onDone={() => { const completed = contractAction; setContractAction(null); void load(); notify(completed === 'ACEPTAR' ? 'Aceptación registrada.' : completed === 'SUSPENDER' ? 'Cotización suspendida.' : 'Acción registrada.'); }} />}
+    {contractAction && <QuoteContractActionDialog quote={quote} action={contractAction} resume={contractAction === 'ACEPTAR' ? acceptanceResume : null} onClose={() => { setContractAction(null); setAcceptanceResume(null); }} onDone={() => { const completed = contractAction; setContractAction(null); setAcceptanceResume(null); setStatus('loading'); void load(); notify(completed === 'ACEPTAR' ? 'Aceptación registrada.' : completed === 'SUSPENDER' ? 'Cotización suspendida.' : 'Acción registrada.'); }} />}
     {convert && <ConvertQuoteDialog quote={quote} onClose={() => setConvert(false)} onDone={(result) => { setConvert(false); notify(result.idempotent ? 'La cotización ya tenía expediente.' : 'Expediente creado correctamente.'); navigate(`/expedientes/${result.id}`); }} />}
     {viewer && <DocumentViewer open name={viewer.document.nombre_original} mimeType={viewer.document.mime_type} url={viewer.url} loading={viewer.loading} error={viewer.error} onClose={closeViewer} onDownload={() => void (viewer.source ? downloadSource(viewer.document) : download(viewer.document))} />}
     <div className={`${styles.toast} ${toast ? styles.toastVisible : ''}`} role="status" aria-live="polite">{toast}</div>

@@ -95,8 +95,19 @@ describe('Configuración y acceso', () => {
 
   it('auditoría selecciona metadatos y omite valores sensibles', async () => {
     db.auditLog.findMany.mockResolvedValue([]); db.auditLog.count.mockResolvedValue(0); const res = response();
-    await SettingsController.audit({ query: {} } as any, res);
+    await SettingsController.audit({ user, query: {} } as any, res);
+    expect(db.auditLog.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
+      organization_id: user.organizationId,
+    } }));
+    expect(db.auditLog.count).toHaveBeenCalledWith({ where: { organization_id: user.organizationId } });
     const select = db.auditLog.findMany.mock.calls[0][0].select;
     expect(select.valores_anteriores).toBeUndefined(); expect(select.valores_nuevos).toBeUndefined(); expect(select.detalles).toBeUndefined();
+  });
+
+  it('auditoría no consulta eventos sin tenant autenticado', async () => {
+    const res = response();
+    await SettingsController.audit({ query: {} } as any, res);
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(db.auditLog.findMany).not.toHaveBeenCalled();
   });
 });

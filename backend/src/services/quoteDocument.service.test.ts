@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import PizZip from 'pizzip';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { quoteStructuredBudget, quoteTemplateData, renderQuoteTemplate } from './quoteDocument.service';
+import { quoteStructuredBudget, quoteTemplateData, renderQuoteTemplate, resolveQuoteEconomicMapping } from './quoteDocument.service';
 
 const minimalDoubleBraceTemplate = () => {
   const zip = new PizZip();
@@ -18,6 +18,15 @@ const standardQuoteTemplate = () => {
   const name = Object.keys(library.files).find((entry) => entry.endsWith('/ADM-001_Cotizacion_Servicios_Notariales.docx'));
   if (!name) throw new Error('ADM-001 original missing from CFG-002 library');
   return Buffer.from(library.file(name)!.asUint8Array());
+};
+
+const alternativeQuoteTemplate = () => {
+  const zip = new PizZip(minimalDoubleBraceTemplate());
+  const current = zip.file('word/document.xml')!.asText();
+  const cell = (value: string) => `<w:tc><w:p><w:r><w:t>${value}</w:t></w:r></w:p></w:tc>`;
+  const row = (a: string, b: string) => `<w:tr>${cell(a)}${cell(b)}</w:tr>`;
+  zip.file('word/document.xml', current.replace('<w:sectPr/>', `<w:tbl><w:tblPr/><w:tblGrid><w:gridCol w:w="5000"/><w:gridCol w:w="3000"/></w:tblGrid>${row('Partida', 'Monto')}${row('DETALLE EDITABLE', '0.00')}${row('IMPORTE FINAL', '0.00')}</w:tbl><w:sectPr/>`));
+  return zip.generate({ type: 'nodebuffer' }) as Buffer;
 };
 
 describe('Corrección 002 · datos canónicos de la cotización generada', () => {
@@ -141,5 +150,41 @@ describe('Corrección 002 · datos canónicos de la cotización generada', () =>
     expect(() => renderQuoteTemplate(minimalDoubleBraceTemplate(), { 'cotizacion.folio': 'COT-0042-2026' }, [
       { concepto: 'Honorarios', categoria: 'HONORARIOS', importeCents: 10000n },
     ])).toThrowError(expect.objectContaining({ code: 'QUOTE_TEMPLATE_BUDGET_STRUCTURE_MISSING' }));
+  });
+
+  it('configura una tabla alternativa de dos columnas por versión, sin alterar el machote original ni duplicar el total', () => {
+    const original = alternativeQuoteTemplate();
+    const versionId = 'e1695831-f112-4d94-a39d-080593a0e8d0';
+    const mapping = resolveQuoteEconomicMapping({ quote_economic: { schema_version: 1, versions: { [versionId]: {
+      table_index: 0, detail_row_index: 1, total_row_index: 2, label_column: 0, amount_column: 1,
+    } } } }, versionId);
+    expect(mapping).toBeTruthy();
+    const rendered = renderQuoteTemplate(original, { 'cotizacion.folio': 'COT-0088-2026', 'cliente.nombre': 'Cliente QA' }, [
+      { concepto: 'Honorarios A', categoria: 'HONORARIOS', importeCents: 10000n },
+      { concepto: 'Honorarios B', categoria: 'HONORARIOS', importeCents: 20000n },
+      { concepto: 'IVA derivado', categoria: 'IVA_HONORARIOS', importeCents: 4800n },
+      { concepto: 'Impuesto QA', categoria: 'IMPUESTOS_DERECHOS', importeCents: 3000n },
+    ], mapping);
+    const originalZip = new PizZip(original);
+    const outputZip = new PizZip(rendered);
+    const documentXml = outputZip.file('word/document.xml')!.asText();
+    expect(documentXml).toContain('Honorarios A');
+    expect(documentXml).toContain('Honorarios B');
+    expect(documentXml).toContain('Impuesto QA');
+    expect(documentXml).toContain('IVA sobre honorarios');
+    expect(documentXml).toContain('378.00');
+    expect((documentXml.match(/IMPORTE FINAL/g) ?? [])).toHaveLength(1);
+    expect((documentXml.match(/<w:tbl>/g) ?? [])).toHaveLength(1);
+    expect(outputZip.file('[Content_Types].xml')!.asText()).toBe(originalZip.file('[Content_Types].xml')!.asText());
+    expect(originalZip.file('word/document.xml')!.asText()).toContain('DETALLE EDITABLE');
+  });
+
+  it('no reutiliza un mapeo de otra versión ni permite índices inválidos', () => {
+    const versionId = 'e1695831-f112-4d94-a39d-080593a0e8d0';
+    const config = { quote_economic: { schema_version: 1, versions: { [versionId]: {
+      table_index: 0, detail_row_index: 1, total_row_index: 2, label_column: 0, amount_column: 1,
+    } } } };
+    expect(() => resolveQuoteEconomicMapping(config, '9d433d56-422a-48d6-a02e-9773a9720c97')).toThrowError(expect.objectContaining({ code: 'QUOTE_TEMPLATE_MAPPING_VERSION_MISSING' }));
+    expect(() => renderQuoteTemplate(alternativeQuoteTemplate(), {}, [], { table_index: 2, detail_row_index: 1, total_row_index: 2, label_column: 0, amount_column: 1 })).toThrowError(expect.objectContaining({ code: 'QUOTE_TEMPLATE_MAPPING_STRUCTURE_INVALID' }));
   });
 });

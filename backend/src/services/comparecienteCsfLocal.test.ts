@@ -8,7 +8,7 @@ async function syntheticPdf() {
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const lines = [
     'CONSTANCIA DE SITUACION FISCAL - SINTETICA / SIN VALIDEZ FISCAL',
-    'RFC: QAFA010101QA1', 'Nombre completo: PERSONA FISICA SINTETICA',
+    'RFC: QAFA010101QA1', 'Nombre(s): PERSONA', 'Primer Apellido: PRUEBA', 'Segundo Apellido: SINTETICA',
     'Codigo Postal: 63735', 'Domicilio Fiscal: CALLE DE PRUEBA 10',
     'Fecha de emision: 2026-10-26',
     'Regimen Fiscal: 901 REGIMEN SINTETICO A',
@@ -38,7 +38,10 @@ describe('Compareciente · CSF local compartible', () => {
     expect(result.proveedor).toBe('LOCAL_DETERMINISTIC');
     expect(result.campos).toEqual(expect.arrayContaining([expect.objectContaining({
       campo: 'rfc', valor: 'QAFA010101QA1', documento_id: '11111111-1111-4111-8111-111111111111',
-    })]));
+    }), expect.objectContaining({ campo: 'nombre', valor: 'PERSONA', pagina: 1 }),
+    expect.objectContaining({ campo: 'apellido_paterno', valor: 'PRUEBA', pagina: 1 }),
+    expect.objectContaining({ campo: 'apellido_materno', valor: 'SINTETICA', pagina: 1 })]));
+    expect(result.domicilios_detectados).toEqual([expect.objectContaining({ tipo_sugerido: 'FISCAL', codigo_postal: '63735' })]);
     expect(result.documentos_csf?.[0]?.regimenes_fiscales.map((item) => item.clave)).toEqual(['901', '902']);
     expect(result.documentos_csf?.[0]?.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(result.usos || []).toHaveLength(0);

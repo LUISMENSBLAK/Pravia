@@ -408,33 +408,6 @@ export class ComparecienteAltaSessionService {
       }
     }
 
-    // ── 4b. VIGENCIA INE: EXPEDICIÓN Y VENCIMIENTO (NORMALIZACIÓN PRAVIA) ─────
-    if (camposCombinados.vigencia_ine) {
-      const matchVig = camposCombinados.vigencia_ine.match(/(\d{4})\s*[-–]\s*(\d{4})/);
-      if (matchVig) {
-        const startYear = matchVig[1];
-        const endYear = matchVig[2];
-        if (!camposCombinados.fecha_expedicion_identificacion) {
-          camposCombinados.fecha_expedicion_identificacion = `01/01/${startYear}`;
-          propuestaRespuesta.fecha_expedicion_identificacion = {
-            valor: `01/01/${startYear}`,
-            fuente: 'Vigencia INE',
-            confianza: 'LECTURA_CLARA',
-            estado: 'DETECTADO'
-          };
-        }
-        if (!camposCombinados.fecha_vencimiento_identificacion) {
-          camposCombinados.fecha_vencimiento_identificacion = `31/12/${endYear}`;
-          propuestaRespuesta.fecha_vencimiento_identificacion = {
-            valor: `31/12/${endYear}`,
-            fuente: 'Vigencia INE',
-            confianza: 'LECTURA_CLARA',
-            estado: 'DETECTADO'
-          };
-        }
-      }
-    }
-
     // ── 4c. DATOS DE CONTACTO (TELÉFONO Y CORREO ELECTRONICO) ─────────────────
     const telVal = camposCombinados.telefono || camposCombinados.celular || camposCombinados.telefono_1 || camposCombinados.numero_contacto;
     if (telVal) {

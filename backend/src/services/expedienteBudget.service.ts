@@ -12,7 +12,7 @@ import {
   DOCX_MIME_TYPE,
   resolveAdministrativeQuoteTemplate,
 } from './administrativeQuoteTemplate.service';
-import { quoteTemplateData, renderQuoteTemplate } from './quoteDocument.service';
+import { quoteTemplateData, renderQuoteTemplate, resolveQuoteEconomicMapping } from './quoteDocument.service';
 
 export type BudgetActor = { id: string; organizationId: string; sessionId: string; rol: any; permissions: string[] };
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -152,7 +152,7 @@ export class ExpedienteBudgetService {
     try { buffer = renderQuoteTemplate(resolvedTemplate.source, templateData, budget.conceptos.map((item) => ({
       concepto: item.concepto, categoria: item.categoria, importeCents: moneyToCents(String(item.importe)),
       tratamiento_iva: item.tratamiento_iva, iva_tasa: item.iva_tasa == null ? null : String(item.iva_tasa),
-    }))); }
+    })), resolveQuoteEconomicMapping(resolvedTemplate.mapping, resolvedTemplate.version.id)); }
     catch { throw new ExpedienteBudgetError(422, 'EXP007_TEMPLATE_RENDER_FAILED', 'El formato configurado para Presupuesto no pudo combinarse con los datos estructurados.'); }
     const fileName = `Presupuesto_${safeName(expediente.numero_pravia)}_${generatedAt.toISOString().slice(0, 10)}.docx`;
     const storageKey = `organizations/${actor.organizationId}/expedientes/${expedienteId}/presupuestos/${randomUUID()}_${fileName}`;

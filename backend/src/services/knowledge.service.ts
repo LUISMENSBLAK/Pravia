@@ -23,6 +23,48 @@ export class KnowledgeValidationError extends Error {
 
 const clean = (value: unknown, max: number) => String(value ?? '').trim().slice(0, max);
 const allowedIngestion = new Set(['INVENTARIADA', 'PENDIENTE_ORIGINAL', 'PENDIENTE_TEXTO_OFICIAL', 'LISTA_PARA_INGESTA']);
+const criterionKinds = new Set(['CRITERIO_INTERNO', 'ARANCEL_PROPIO', 'TABLA_HONORARIOS', 'REGLA_FORMULA']);
+const reviewStatuses = new Set(['PENDIENTE', 'REVISADO']);
+const approvalStatuses = new Set(['BORRADOR', 'APROBADO', 'RECHAZADO']);
+
+export function normalizeCriterionScope(value: unknown, version = 1) {
+  const scope = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const kind = clean(scope.kind, 40).toUpperCase();
+  const jurisdiction = clean(scope.jurisdiction, 80).toUpperCase();
+  const source = clean(scope.source, 500);
+  const author = clean(scope.author, 240);
+  const reviewStatus = clean(scope.review_status || 'PENDIENTE', 30).toUpperCase();
+  const approvalStatus = clean(scope.approval_status || 'BORRADOR', 30).toUpperCase();
+  if (!criterionKinds.has(kind) || !jurisdiction || !source || !author) {
+    throw new KnowledgeValidationError('KNOW_CRITERION_SCOPE_REQUIRED', 'Define tipo, jurisdicción, fuente y autor del criterio interno.');
+  }
+  if (!reviewStatuses.has(reviewStatus) || !approvalStatuses.has(approvalStatus)) {
+    throw new KnowledgeValidationError('KNOW_CRITERION_STATUS_INVALID', 'El estado de revisión o aprobación no es válido.');
+  }
+  const effectiveFrom = clean(scope.effective_from, 10);
+  const effectiveTo = clean(scope.effective_to, 10);
+  if ((effectiveFrom && !/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)) ||
+      (effectiveTo && !/^\d{4}-\d{2}-\d{2}$/.test(effectiveTo)) ||
+      (effectiveFrom && effectiveTo && effectiveFrom > effectiveTo)) {
+    throw new KnowledgeValidationError('KNOW_CRITERION_VALIDITY_INVALID', 'La vigencia del criterio no es válida.');
+  }
+  const amount = clean(scope.fixed_honorarium, 30);
+  if (amount && (!/^\d+(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0)) {
+    throw new KnowledgeValidationError('KNOW_CRITERION_AMOUNT_INVALID', 'El honorario fijo debe ser un importe positivo con máximo dos decimales.');
+  }
+  if (['ARANCEL_PROPIO', 'TABLA_HONORARIOS'].includes(kind) && !amount) {
+    throw new KnowledgeValidationError('KNOW_CRITERION_AMOUNT_REQUIRED', 'El arancel propio requiere un honorario explícito; PRAVIA no lo inventará.');
+  }
+  return {
+    kind, jurisdiction, state: clean(scope.state, 120).toUpperCase() || null,
+    municipality: clean(scope.municipality, 160).toUpperCase() || null,
+    act: clean(scope.act, 240).toUpperCase() || null,
+    effective_from: effectiveFrom || null, effective_to: effectiveTo || null,
+    source, author, review_status: reviewStatus, approval_status: approvalStatus,
+    fixed_honorarium: amount || null,
+    version: Math.max(1, Math.floor(Number(version) || 1)),
+  };
+}
 
 export function normalizeInventoryRow(value: unknown): InventoryRow {
   const row = value && typeof value === 'object' ? value as Record<string, unknown> : {};
@@ -105,9 +147,7 @@ export class KnowledgeService {
     const title = clean(input.title, 300);
     const content = clean(input.content, 20_000);
     if (!code || !title || !content) throw new KnowledgeValidationError('KNOW_CRITERION_REQUIRED', 'El criterio requiere código, título y contenido.');
-    const scope = input.scope && typeof input.scope === 'object' && !Array.isArray(input.scope)
-      ? input.scope as Prisma.InputJsonValue
-      : {};
+    const scope = normalizeCriterionScope(input.scope, 1) as Prisma.InputJsonValue;
     try {
       return await this.db.$transaction(async (tx) => {
         const created = await tx.knowledgeCriterion.create({ data: {
@@ -117,7 +157,7 @@ export class KnowledgeService {
         await tx.auditLog.create({ data: {
           organization_id: actor.organizationId, user_id: actor.id,
           accion: 'CREAR_CRITERIO_INTERNO_CONOCIMIENTO', entidad: 'KnowledgeCriterion', entidad_id: created.id,
-          detalles: { code, distinction: 'CRITERIO_INTERNO_NO_ES_NORMA' },
+          detalles: { code, distinction: 'CRITERIO_INTERNO_NO_ES_NORMA' }, valores_nuevos: { title, content, scope },
         } });
         return created;
       });
@@ -135,9 +175,10 @@ export class KnowledgeService {
     const title = input.title === undefined ? current.title : clean(input.title, 300);
     const content = input.content === undefined ? current.content : clean(input.content, 20_000);
     if (!title || !content) throw new KnowledgeValidationError('KNOW_CRITERION_REQUIRED', 'El criterio requiere título y contenido.');
-    const scope = input.scope === undefined
-      ? JSON.parse(JSON.stringify(current.scope)) as Prisma.InputJsonValue
-      : input.scope && typeof input.scope === 'object' && !Array.isArray(input.scope) ? input.scope as Prisma.InputJsonValue : {};
+    const currentScope = current.scope && typeof current.scope === 'object' && !Array.isArray(current.scope)
+      ? current.scope as Record<string, unknown> : {};
+    const nextScope = input.scope === undefined ? currentScope : input.scope;
+    const scope = normalizeCriterionScope(nextScope, Number(currentScope.version || 0) + 1) as Prisma.InputJsonValue;
     return this.db.$transaction(async (tx) => {
       const updated = await tx.knowledgeCriterion.update({ where: { id: criterionId }, data: {
         title, content, scope,
@@ -147,6 +188,8 @@ export class KnowledgeService {
         organization_id: actor.organizationId, user_id: actor.id,
         accion: 'ACTUALIZAR_CRITERIO_INTERNO_CONOCIMIENTO', entidad: 'KnowledgeCriterion', entidad_id: criterionId,
         detalles: { code: current.code, active: updated.active, distinction: 'CRITERIO_INTERNO_NO_ES_NORMA' },
+        valores_anteriores: { title: current.title, content: current.content, scope: current.scope, active: current.active },
+        valores_nuevos: { title: updated.title, content: updated.content, scope: updated.scope, active: updated.active },
       } });
       return updated;
     });

@@ -108,6 +108,15 @@ describe('EXP-001 conversión canónica y atómica', () => {
     expect(tx.domainEventOutbox.create).toHaveBeenCalledTimes(1);
   });
 
+  it('respeta el responsable elegido explícitamente al abrir el expediente', async () => {
+    const { prisma, tx } = database();
+    const result = await new CotizacionConversionService(prisma).convert({
+      cotizacionId: 'quote-1', actorUserId: 'user-1', actorOrganizationId: 'org-1', abogadoId: 'user-2',
+    });
+    expect(result.expediente.abogado_id).toBe('user-2');
+    expect(dependencies.open).toHaveBeenCalledWith(tx, expect.objectContaining({ actorUserId: 'user-1', abogadoId: 'user-2' }));
+  });
+
   it('dos solicitudes concurrentes producen como máximo un expediente', async () => {
     const { prisma } = database(); const service = new CotizacionConversionService(prisma);
     const [first, second] = await Promise.all([

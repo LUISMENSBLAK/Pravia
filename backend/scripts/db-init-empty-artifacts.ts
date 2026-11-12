@@ -6,6 +6,7 @@ export type HistoricalArtifactKind =
   | 'FUNCTION'
   | 'TRIGGER'
   | 'DYNAMIC_TRIGGER_BLOCK'
+  | 'DYNAMIC_RLS_BLOCK'
   | 'INDEX'
   | 'CHECK'
   | 'SEQUENCE'
@@ -220,6 +221,9 @@ function classify(statement: string, migration: string): HistoricalArtifact[] {
   const artifacts = [...embeddedChecks(statement, migration), ...alteredChecks(statement, migration)];
   if (/^CREATE\s+EXTENSION\b/i.test(normalized)) artifacts.push({ migration, kind: 'EXTENSION', sql: normalized });
   else if (/^CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\b/i.test(normalized)) artifacts.push({ migration, kind: 'FUNCTION', sql: normalized });
+  else if (migration === '20261016010000_saas_control_plane_foundation' && /^DO\s+\$rls\$/i.test(normalized)) {
+    artifacts.push({ migration, kind: 'DYNAMIC_RLS_BLOCK', sql: normalized });
+  }
   else if (/^DO\s+\$/i.test(normalized) && /CREATE\s+TRIGGER/i.test(normalized)) artifacts.push({ migration, kind: 'DYNAMIC_TRIGGER_BLOCK', sql: normalized });
   else if (/^CREATE\s+(?:CONSTRAINT\s+)?TRIGGER\b/i.test(normalized)) artifacts.push({ migration, kind: 'TRIGGER', sql: normalized });
   else if (/^CREATE\s+(?:UNIQUE\s+)?INDEX\b/i.test(normalized)) {
@@ -285,6 +289,14 @@ export function historicalArtifactObjectNames(artifacts: HistoricalArtifact[]) {
     } else if (artifact.kind === 'RLS') {
       const match = artifact.sql.match(new RegExp(`^ALTER\\s+TABLE\\s+(${qualifiedIdentifier})\\s+ENABLE\\s+ROW\\s+LEVEL\\s+SECURITY`, 'i'));
       if (match) rlsTables.push(postgresIdentifier(match[1].split('.').at(-1)!));
+    } else if (artifact.kind === 'DYNAMIC_RLS_BLOCK') {
+      const list = artifact.sql.match(/\btenant_tables\s+text\[\]\s*:=\s*ARRAY\[([\s\S]*?)\]/i)?.[1];
+      const tables = list?.split(',').map((item) => item.trim().match(/^'([a-z_][a-z0-9_]*)'$/i)?.[1]);
+      if (!tables?.length || tables.some((table) => !table)) throw new Error('Inventario RLS del Control Plane inválido.');
+      for (const table of tables as string[]) {
+        rlsTables.push(postgresIdentifier(table));
+        policies.push(postgresIdentifier(`tenant_isolation_${table}`));
+      }
     } else if (artifact.kind === 'POLICY') {
       const match = artifact.sql.match(new RegExp(`^CREATE\\s+POLICY\\s+(${identifier})`, 'i'));
       if (match) policies.push(postgresIdentifier(match[1]));

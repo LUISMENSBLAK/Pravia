@@ -84,6 +84,10 @@ export class ComparecienteController {
       return res.status(200).json({ success: true, data });
     } catch (err: any) {
       if (err.code === 'COMPARECIENTE_VERSION_CONFLICT') return res.status(409).json({ success: false, code: err.code, error: err.message });
+      if (err.code === 'P2002') return res.status(409).json({
+        success: false, code: 'COMPARECIENTE_DATOS_DUPLICADOS',
+        error: 'Uno de los datos ya está registrado. Revisa la ficha y los posibles duplicados antes de guardar.',
+      });
       return res.status(400).json({ success: false, error: err.message || 'No pudimos actualizar este compareciente.' });
     }
   }

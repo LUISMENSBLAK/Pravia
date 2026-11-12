@@ -1,14 +1,37 @@
 import { createHash } from 'node:crypto';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { validateCurp } from '../domain/mexicanIdentity';
+import { extractIdentityImageWithLocalOcr, extractIdentityPdfWithLocalOcr, type OcrIdentityDocumentResult } from './identityDocumentOcr.service';
 
 type PositionedText = { text: string; page: number; x: number; y: number; width: number };
 type CurpField = 'curp' | 'nombre_literal' | 'folio_documental' | 'entidad_registro' | 'fecha_inscripcion' | 'certificacion_literal';
 type Detection = { literal: string; normalized: string; document_id: string; page: number;
-  block: { x: number; y: number; width: number }; method: 'DETERMINISTIC_PDF_TEXT'; status: 'DETECTED_UNCONFIRMED' };
+  block: { x: number; y: number; width: number } | null; method: 'DETERMINISTIC_PDF_TEXT' | OcrIdentityDocumentResult['method']; status: 'DETECTED_UNCONFIRMED' };
 
 export class CurpDocumentExtractionError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
+}
+
+function curpOcrResult(fallback: OcrIdentityDocumentResult) {
+  if (!fallback.recognized) throw new CurpDocumentExtractionError('CURP_DOCUMENT_NOT_RECOGNIZED', 'El escaneo no se pudo identificar como constancia CURP.');
+  const detected = fallback.fields.find((field) => field.campo === 'curp');
+  const documentId = fallback.document_id;
+  const curpDetection: Detection | null = detected ? { literal: detected.valor, normalized: detected.valor, document_id: documentId,
+    page: detected.page, block: null, method: fallback.method, status: 'DETECTED_UNCONFIRMED' } : null;
+  return { schema: 'CURP_LOCAL_OCR_V1', source: fallback.method,
+    sha256: fallback.sha256, document_id: documentId, status: 'REVIEW_REQUIRED' as const,
+    requires_human_confirmation: true,
+    fields: { curp: curpDetection, nombre_literal: null, folio_documental: null,
+      entidad_registro: null, fecha_inscripcion: null, certificacion_literal: null,
+      apellido_paterno: null, apellido_materno: null, fecha_emision: null },
+    warnings: [...fallback.warnings, 'OCR_LOCAL_SIN_CONSULTA_RENAPO'] };
+}
+
+export async function extractCurpImage(buffer: Buffer, documentId: string, mimeType: string) {
+  const fallback = await extractIdentityImageWithLocalOcr(buffer, documentId, 'CURP', mimeType).catch(() => {
+    throw new CurpDocumentExtractionError('CURP_OCR_UNREADABLE', 'No se pudo leer la foto de CURP. El original se conserva para revisión manual.');
+  });
+  return curpOcrResult(fallback);
 }
 
 const normal = (value: string) => value.normalize('NFC').replace(/\s+/g, ' ').trim();
@@ -65,6 +88,9 @@ export async function extractCurpPdf(buffer: Buffer, documentId: string) {
     }
     if (!items.some((item) => /Clave [ÚU]nica de Registro de Poblaci[oó]n/i.test(item.text)) &&
       !items.some((item) => /CURP Certificada/i.test(item.text))) {
+      if (items.map((item) => item.text).join('').length < 20) {
+        throw new CurpDocumentExtractionError('CURP_PDF_NEEDS_OCR', 'El PDF requiere lectura óptica.');
+      }
       throw new CurpDocumentExtractionError('CURP_DOCUMENT_NOT_RECOGNIZED',
         'El PDF no se identifica como constancia CURP; no se aplicaron datos.');
     }
@@ -97,6 +123,12 @@ export async function extractCurpPdf(buffer: Buffer, documentId: string) {
       ],
     };
   } catch (error) {
+    if (error instanceof CurpDocumentExtractionError && error.code === 'CURP_PDF_NEEDS_OCR') {
+      const fallback = await extractIdentityPdfWithLocalOcr(buffer, documentId, 'CURP').catch(() => {
+        throw new CurpDocumentExtractionError('CURP_OCR_UNREADABLE', 'No se pudo leer el escaneo de CURP. El original se conserva para revisión manual.');
+      });
+      return curpOcrResult(fallback);
+    }
     if (error instanceof CurpDocumentExtractionError) throw error;
     throw new CurpDocumentExtractionError('CURP_PDF_UNREADABLE',
       'No se pudo leer el PDF CURP. El original debe conservarse para revisión manual.');

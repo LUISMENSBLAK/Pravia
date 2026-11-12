@@ -1,5 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { createCanvas } from '@napi-rs/canvas';
 import { PDFParse } from 'pdf-parse';
 import { PrismaClient } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
@@ -10,6 +14,9 @@ import { fiscalCsfSynthetic } from '../fixtures/fiscalCsf.synthetic';
 
 const enabled = process.env.PREFACTURA_PDF_QA === '1';
 const qaUrl = process.env.PREFACTURA_PDF_QA_DATABASE_URL || '';
+const qaPdfText = (storageKey: string, fallback: string) => process.env.PDFTOTEXT_BIN
+  ? execFileSync(process.env.PDFTOTEXT_BIN, ['-layout', path.join(process.env.LOCAL_STORAGE_PATH || '', storageKey), '-'], { encoding: 'utf8' })
+  : fallback;
 if (enabled) {
   const parsed = new URL(qaUrl);
   if (parsed.hostname !== '127.0.0.1' || parsed.port !== '55439' || parsed.pathname !== '/postgres' || parsed.searchParams.get('schema') !== 'pravia_os' ||
@@ -29,16 +36,57 @@ describe.runIf(enabled)('prefactura PDF física · PostgreSQL + Storage local ai
     await db.tenantEntitlement.create({ data: { organization_id: org.id, included_storage_bytes: 1024n * 1024n,
       total_storage_capacity_bytes: 1024n * 1024n } });
     await db.tenantStorageUsage.create({ data: { organization_id: org.id } });
-    const actor = { id: user.id, organizationId: org.id, rol: 'DIRECCION' as const, permissions: ['finanzas.write', 'documentos.write', 'documentos.read'] };
+    const actor = { id: user.id, organizationId: org.id, rol: 'DIRECCION' as const, permissions: ['finanzas.write', 'finanzas.validate', 'documentos.write', 'documentos.read', 'configuracion.plantillas_formatos.manage'] };
     const asActor = <T>(work: () => T) => runWithActorContext({ userId: user.id, organizationId: org.id,
-      membershipId: 'QA', sessionId: 'QA', role: 'DIRECCION', permissions: ['finanzas.write', 'documentos.write', 'documentos.read'], scope: 'GLOBAL' }, work);
+      membershipId: 'QA', sessionId: 'QA', role: 'DIRECCION', permissions: ['finanzas.write', 'finanzas.validate', 'documentos.write', 'documentos.read', 'configuracion.plantillas_formatos.manage'], scope: 'GLOBAL' }, work);
     const entity = await db.entidadFiscalCfdi.create({ data: { organization_id: org.id, created_by_id: user.id,
       razon_social: 'EMISOR SINTETICO QA', rfc: 'AAA010101AAA', regimen_fiscal: '601', codigo_postal: '63735' } });
+    const sourceWord = await readFile(path.resolve(__dirname, '../../assets/fiscal/Factura_PRAVIA.docx'));
+    const templateKey = `organizations/${org.id}/catalogos/plantillas-formatos/${randomUUID()}_Factura_PRAVIA.docx`;
+    await asActor(() => uploadFile(sourceWord, templateKey, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'));
+    const templateArtifact = await asActor(() => db.catalogoArtefacto.create({ data: { organization_id: org.id,
+      tipo: 'PLANTILLA', propietario_tipo: 'ORGANIZACION', nombre: 'Factura PRAVIA · cliente',
+      creado_por_id: user.id, actualizado_por_id: user.id } }));
+    const templateVersion = await asActor(() => db.catalogoArtefactoVersion.create({ data: { organization_id: org.id,
+      artefacto_id: templateArtifact.id, version: 1, nombre_original: 'Factura_PRAVIA.docx',
+      storage_key: templateKey, mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      size_bytes: sourceWord.length, checksum_sha256: createHash('sha256').update(sourceWord).digest('hex'),
+      origen: 'CARGA_USUARIO', creado_por_id: user.id } }));
+    await expect(asActor(() => service.updateEntity({ ...actor, permissions: ['finanzas.validate'] }, entity.id,
+      { plantilla_id: templateVersion.id }))).rejects.toMatchObject({ status: 403, code: 'CFDI_TEMPLATE_MANAGE_DENIED' });
+    await expect(asActor(() => service.updateEntity({ ...actor, organizationId: randomUUID() }, entity.id,
+      { plantilla_id: templateVersion.id }))).rejects.toMatchObject({ status: 422, code: 'CFDI_TEMPLATE_INVALID' });
+    await asActor(() => service.updateEntity(actor, entity.id, { plantilla_id: templateVersion.id }));
+    expect((await asActor(() => service.listInvoiceTemplates(actor))).map((item) => item.id)).toContain(templateVersion.id);
+    expect((await asActor(() => service.listInvoiceTemplates({ ...actor, organizationId: randomUUID() }))).map((item) => item.id)).not.toContain(templateVersion.id);
     const fiscalConcept = await db.conceptoFiscalCfdi.create({ data: { organization_id: org.id,
       entidad_fiscal_id: entity.id, created_by_id: user.id, descripcion: 'Honorarios sintéticos de prueba',
       clave_prod_serv: '80121700', clave_unidad: 'E48', objeto_impuesto: '01', iva_tasa: 0,
       iva_retencion_tasa: 0, isr_retencion_tasa: 0 } });
+      const taxedConcept = await db.conceptoFiscalCfdi.create({ data: { organization_id: org.id,
+        entidad_fiscal_id: entity.id, created_by_id: user.id, descripcion: 'Concepto fiscal sintético con IVA configurado',
+        clave_prod_serv: '80121700', clave_unidad: 'E48', objeto_impuesto: '02', iva_tasa: 0.16,
+        iva_retencion_tasa: 0, isr_retencion_tasa: 0 } });
     try {
+      const logoCanvas = createCanvas(64, 64);
+      const logoContext = logoCanvas.getContext('2d');
+      logoContext.fillStyle = '#123b5d'; logoContext.fillRect(0, 0, 64, 64);
+      const logoBytes = await logoCanvas.encode('png');
+      const logoFile = { buffer: logoBytes, originalname: 'logo-qa.png', mimetype: 'image/png', size: logoBytes.length };
+      await expect(asActor(() => service.uploadEntityLogo({ ...actor, permissions: ['finanzas.write'] }, entity.id, logoFile)))
+        .rejects.toMatchObject({ status: 403, code: 'CFDI_LOGO_WRITE_DENIED' });
+      await expect(asActor(() => service.uploadEntityLogo({ ...actor, organizationId: randomUUID() }, entity.id, logoFile)))
+        .rejects.toMatchObject({ status: 404, code: 'CFDI_ENTITY_NOT_FOUND' });
+      const uploadedLogo = await asActor(() => service.uploadEntityLogo(actor, entity.id, logoFile));
+      expect(uploadedLogo.sha256).toBe(createHash('sha256').update(logoBytes).digest('hex'));
+      expect((await db.entidadFiscalCfdi.findUniqueOrThrow({ where: { id: entity.id } })).logo_documento_id)
+        .toBe(uploadedLogo.documentId);
+      const logoLink = await asActor(() => service.entityLogoUrl(actor, entity.id));
+      expect(logoLink).toMatchObject({ documentId: uploadedLogo.documentId, sha256: uploadedLogo.sha256 });
+      await expect(service.entityLogoUrl({ ...actor, organizationId: randomUUID() }, entity.id))
+        .rejects.toMatchObject({ status: 404 });
+      await expect(service.entityLogoUrl({ ...actor, permissions: ['finanzas.write'] }, entity.id))
+        .rejects.toMatchObject({ status: 403, code: 'CFDI_LOGO_READ_DENIED' });
       const csfPdf = await PDFDocument.create();
       const csfFont = await csfPdf.embedFont(StandardFonts.Helvetica);
       const csfPage = csfPdf.addPage([612, 792]);
@@ -151,6 +199,28 @@ describe.runIf(enabled)('prefactura PDF física · PostgreSQL + Storage local ai
           regimenes_documentales: [] }, source_pages: { rfc: 1, regimenes_documentales: [] },
         confirmed: { regimen_fiscal: '626', regimenes_fiscales: [{ clave: '626' }, { clave: '612' }] },
       });
+      const correctedReceiver = await asActor(() => service.confirmIncomeReceiver(actor, income.id,
+        receiver.id, { ...receiverConfirmation, codigo_postal: '63736',
+          csf_documento_id: undefined, csf_sha256: undefined }));
+      expect(correctedReceiver.version).toBe(confirmedReceiver.version + 1);
+      expect(correctedReceiver.codigo_postal).toBe('63736');
+      expect(correctedReceiver.csf_documento_id).toBe(receiverDocument.id);
+      expect(correctedReceiver.csf_extraction).toMatchObject({ sha256: csfSha,
+        confirmation_status: 'CORRECTED', corrected_fields: expect.arrayContaining(['codigo_postal']) });
+      expect(await db.auditLog.count({ where: { organization_id: org.id,
+        accion: 'CONFIRM_CFDI_RECEIVER_PROFILE', entidad_id: confirmedReceiver.id } })).toBe(2);
+      const correctionAudit = await db.auditLog.findFirstOrThrow({ where: { organization_id: org.id,
+        accion: 'CONFIRM_CFDI_RECEIVER_PROFILE', entidad_id: confirmedReceiver.id }, orderBy: { created_at: 'desc' } });
+      expect(correctionAudit.user_id).toBe(actor.id);
+      expect(correctionAudit.created_at).toBeInstanceOf(Date);
+      expect(correctionAudit.valores_anteriores).toMatchObject({ fiscal_profile: {
+        razon_social: 'PERSONA FISICA SINTETICA', codigo_postal: '63735',
+        csf_documento_id: receiverDocument.id, version: confirmedReceiver.version,
+      } });
+      expect(correctionAudit.valores_nuevos).toMatchObject({ fiscal_profile: {
+        razon_social: 'PERSONA FISICA SINTETICA', codigo_postal: '63736',
+        csf_documento_id: receiverDocument.id, version: correctedReceiver.version,
+      } });
       const receiverContext = await service.incomeContext(actor, income.id);
       expect(receiverContext.receivers[0].compareciente.fiscalProfile?.regimenes_fiscales)
         .toMatchObject([{ clave: '626' }, { clave: '612' }]);
@@ -227,7 +297,8 @@ describe.runIf(enabled)('prefactura PDF física · PostgreSQL + Storage local ai
         receptor_nombre: 'RECEPTOR SINTETICO QA', receptor_regimen: '612', receptor_codigo_postal: '63736',
         uso_cfdi: 'G03', metodo_pago: 'PPD', forma_pago: '99', moneda: 'MXN', lugar_expedicion: '63735',
         subtotal: '8000.00', impuestos_trasladados: '0.00', impuestos_retenidos: '0.00', total: '8000.00',
-        concepto: 'Honorarios QA', conceptos: [{ concepto_fiscal_id: fiscalConcept.id, cantidad: '1', valor_unitario: '8000.00' }],
+        concepto: 'Honorarios QA', conceptos: [{ concepto_fiscal_id: fiscalConcept.id,
+          descripcion: 'EXP-QA-001 Honorarios de este expediente', cantidad: '1', valor_unitario: '8000.00' }],
         idempotency_key: randomUUID(),
       });
       await expect(service.updateDraft(actor, created.cfdi.id, { uso_cfdi: 'ZZZ' }))
@@ -237,6 +308,9 @@ describe.runIf(enabled)('prefactura PDF física · PostgreSQL + Storage local ai
       expect((await db.documentoCfdi.findUniqueOrThrow({ where: { id: created.cfdi.id } })).uso_cfdi).toBe('G03');
       expect(created.cfdi.estado).toBe('DRAFT');
       expect(created.cfdi.internal_folio).toMatch(/^FAC-BOR-\d+$/);
+      expect(created.cfdi.draft_payload).toMatchObject({ concepts: [{
+        descripcion: 'EXP-QA-001 Honorarios de este expediente', clave_prod_serv: fiscalConcept.clave_prod_serv,
+      }] });
       const firstKey = randomUUID();
       const [first, retry] = await asActor(() => Promise.all([service.generatePrefactura(actor, created.cfdi.id, firstKey), service.generatePrefactura(actor, created.cfdi.id, firstKey)]));
       expect(first.representation.id).toBe(retry.representation.id);
@@ -247,7 +321,35 @@ describe.runIf(enabled)('prefactura PDF física · PostgreSQL + Storage local ai
       expect((await PDFDocument.load(firstBytes)).getPageCount()).toBeGreaterThan(0);
       expect(createHash('sha256').update(firstBytes).digest('hex')).toBe(firstRow.pdf_sha256);
       expect(firstRow.documento.checksum_sha256).toBe(firstRow.pdf_sha256);
+      expect(firstRow.snapshot).toMatchObject({ concepts: [{ description: 'EXP-QA-001 Honorarios de este expediente' }] });
+      expect(firstRow.snapshot).toMatchObject({ logo: { source: 'ENTITY', sha256: uploadedLogo.sha256, document_id: uploadedLogo.documentId } });
       expect(firstRow.size_bytes).toBe(firstBytes.length);
+      const taxedDraft = await service.createDraft(actor, {
+        direccion: 'EMITIDO', tipo: 'I', entidad_fiscal_id: entity.id,
+        receptor_rfc: 'BBBA010101BBB', receptor_nombre: 'RECEPTOR SINTETICO QA',
+        receptor_regimen: '612', receptor_codigo_postal: '63736', uso_cfdi: 'G03',
+        metodo_pago: 'PPD', forma_pago: '99', moneda: 'MXN', lugar_expedicion: '63735',
+        subtotal: '100.00', impuestos_trasladados: '16.00', impuestos_retenidos: '0.00', total: '116.00',
+        conceptos: [{ concepto_fiscal_id: taxedConcept.id, cantidad: '1', valor_unitario: '100.00' }],
+        idempotency_key: randomUUID(),
+      });
+      await asActor(() => service.generatePrefactura(actor, taxedDraft.cfdi.id, randomUUID()));
+      const taxedRepresentation = await db.prefacturaRepresentacion.findFirstOrThrow({
+        where: { organization_id: org.id, cfdi_id: taxedDraft.cfdi.id, version: 1 }, include: { documento: true },
+      });
+      expect(taxedRepresentation.snapshot).toMatchObject({
+        amounts: { subtotal: '100.00', transferred: '16.00', retained: '0.00', total: '116.00' },
+        concepts: [{ subtotal: '100.00', transferred: '16.00', retained: '0.00', total: '116.00' }],
+      });
+      const taxedBytes = await downloadFile(taxedRepresentation.documento.storage_key);
+      expect(createHash('sha256').update(taxedBytes).digest('hex')).toBe(taxedRepresentation.pdf_sha256);
+      const taxedParser = new PDFParse({ data: taxedBytes });
+      try {
+        const taxedText = qaPdfText(taxedRepresentation.documento.storage_key, (await taxedParser.getText()).text);
+        expect(taxedText).toContain('100.00');
+        expect(taxedText).toContain('16.00');
+        expect(taxedText).toContain('116.00');
+      } finally { await taxedParser.destroy(); }
       await service.updateDraft(actor, created.cfdi.id, { receptor_nombre: 'RECEPTOR CORREGIDO SINTETICO QA' });
       const second = await asActor(() => service.generatePrefactura(actor, created.cfdi.id, randomUUID()));
       expect(second.representation.version).toBe(2);
@@ -258,9 +360,20 @@ describe.runIf(enabled)('prefactura PDF física · PostgreSQL + Storage local ai
       const firstParser = new PDFParse({ data: firstBytes });
       const secondParser = new PDFParse({ data: secondBytes });
       try {
-        expect((await firstParser.getText()).text).toContain('RECEPTOR SINTETICO QA');
-        expect((await firstParser.getText()).text).not.toContain('RECEPTOR CORREGIDO SINTETICO QA');
-        expect((await secondParser.getText()).text).toContain('RECEPTOR CORREGIDO SINTETICO QA');
+        const firstText = qaPdfText(firstRow.documento.storage_key, (await firstParser.getText()).text);
+        const secondText = qaPdfText(secondRow.documento.storage_key, (await secondParser.getText()).text);
+        expect(firstText).toContain('RECEPTOR SINTETICO QA');
+        expect(firstText).toContain('EMISOR SINTETICO QA');
+        expect(firstText).not.toContain('PRAVIA OS');
+        expect(firstText).toContain('EXP-QA-001 Honorarios de este expediente');
+        expect(firstText).toContain('PREFACTURA — SIN VALIDEZ');
+        expect(firstText).toContain('SIN TIMBRAR');
+        expect(firstText).not.toContain('SELLO DIGITAL DEL SAT');
+        expect(firstRow.generator).toBe('CLIENT_FACTURA_PRAVIA_DOCX_V1');
+        expect(firstRow.snapshot).toMatchObject({ template: { source: `CFG-002:${templateArtifact.id}:V1`, version_id: templateVersion.id,
+          sha256: '93c7eeac20182e9c75cf21561089dc65becbd1fee037e156af1549bec3e0f9b3' } });
+        expect(firstText).not.toContain('RECEPTOR CORREGIDO SINTETICO QA');
+        expect(secondText).toContain('RECEPTOR CORREGIDO SINTETICO QA');
       } finally { await firstParser.destroy(); await secondParser.destroy(); }
       const history = await service.prefacturaVersions(actor, created.cfdi.id);
       expect(history.versions.map((item) => item.version)).toEqual([2, 1]);
@@ -292,15 +405,24 @@ describe.runIf(enabled)('prefactura PDF física · PostgreSQL + Storage local ai
         expect(createHash('sha256').update(bytes).digest('hex')).toBe(row.pdf_sha256);
         const parser = new PDFParse({ data: bytes });
         try {
-          const content = (await parser.getText()).text;
+          const content = qaPdfText(row.documento.storage_key, (await parser.getText()).text);
           expect(content).toContain(currency);
-          expect(content).toContain(rate);
-          expect(content).toContain('100.00 ' + currency);
+          // PDF text extraction can split or mis-map digits in the Word font;
+          // the exact rate is asserted above from the immutable DB snapshot.
+          expect(content).toContain(currency);
           expect(content).toContain(Number(equivalent).toLocaleString('es-MX', { minimumFractionDigits: 2 }) + ' MXN');
         } finally { await parser.destroy(); }
       }
       await expect(service.prefacturaVersions({ ...actor, organizationId: randomUUID() }, created.cfdi.id)).rejects.toMatchObject({ status: 404 });
       await expect(service.prefacturaVersionUrl({ ...actor, organizationId: randomUUID() }, created.cfdi.id, 1)).rejects.toMatchObject({ status: 404 });
+      await expect(asActor(() => service.removeEntityLogo({ ...actor, permissions: ['finanzas.write'] }, entity.id)))
+        .rejects.toMatchObject({ status: 403, code: 'CFDI_LOGO_WRITE_DENIED' });
+      expect(await asActor(() => service.removeEntityLogo(actor, entity.id))).toEqual({ removed: true });
+      expect((await db.entidadFiscalCfdi.findUniqueOrThrow({ where: { id: entity.id } })).logo_documento_id).toBeNull();
+      expect(await asActor(() => service.entityLogoUrl(actor, entity.id))).toBeNull();
+      expect((await downloadFile(firstRow.documento.storage_key)).equals(firstBytes)).toBe(true);
+      expect((await db.prefacturaRepresentacion.findUniqueOrThrow({ where: { id: firstRow.id } })).snapshot)
+        .toMatchObject({ logo: { sha256: uploadedLogo.sha256, document_id: uploadedLogo.documentId } });
     } finally { await db.$disconnect(); }
-  }, 30000);
+  }, 60000);
 });

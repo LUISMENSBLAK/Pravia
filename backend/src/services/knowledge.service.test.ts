@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
-import { buildEvidencePacket, exactArticleHeadingPattern, INSUFFICIENT_LEGAL_FOUNDATION, KnowledgeService, normalizeInventoryRow, splitLegalArticles } from './knowledge.service';
+import { buildEvidencePacket, exactArticleHeadingPattern, INSUFFICIENT_LEGAL_FOUNDATION, KnowledgeService, normalizeCriterionScope, normalizeInventoryRow, splitLegalArticles } from './knowledge.service';
 
 describe('KNOW-001 domain',()=>{
   it('normaliza metadata sin declarar una versión verificada',()=>expect(normalizeInventoryRow({ID:'x',codigo:'nay-1',titulo:'Ley',jurisdiccion:'nayarit',tipo:'ley',estado_ingesta:'obtener original oficial'})).toMatchObject({inventory_code:'NAY-1',jurisdiction:'NAYARIT',category:'LEY',ingestion_status:'PENDIENTE_ORIGINAL'}));
@@ -27,10 +27,22 @@ describe('KNOW-001 domain',()=>{
     const auditCreate = vi.fn().mockResolvedValue({ id: 'audit-1' });
     const tx = { knowledgeCriterion: { create }, auditLog: { create: auditCreate } };
     const service = new KnowledgeService({ $transaction: (callback: (value: typeof tx) => unknown) => callback(tx) } as unknown as PrismaClient);
-    const result = await service.createCriterion({ id: 'user-a', organizationId: 'org-a' }, { code: 'int-001', title: 'Revisión interna', content: 'Requiere segunda revisión.', scope: { act: 'COMPRAVENTA' } });
+    const result = await service.createCriterion({ id: 'user-a', organizationId: 'org-a' }, { code: 'int-001', title: 'Revisión interna', content: 'Requiere segunda revisión.', scope: {
+      kind: 'CRITERIO_INTERNO', jurisdiction: 'NAYARIT', source: 'Acuerdo interno aprobado', author: 'Dirección', act: 'COMPRAVENTA', approval_status: 'APROBADO',
+    } });
     expect(result).toMatchObject({ id: 'criterion-1', code: 'INT-001' });
     expect(create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ organization_id: 'org-a', created_by_id: 'user-a', code: 'INT-001' }) }));
     expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ detalles: expect.objectContaining({ distinction: 'CRITERIO_INTERNO_NO_ES_NORMA' }) }) }));
+  });
+
+  it('registra arancel propio versionado sólo con importe explícito y sin presentarlo como norma', () => {
+    expect(normalizeCriterionScope({ kind: 'ARANCEL_PROPIO', jurisdiction: 'NAYARIT', source: 'Acuerdo comercial interno',
+      author: 'Dirección', act: 'COMPRAVENTA', effective_from: '2026-01-01', review_status: 'REVISADO',
+      approval_status: 'APROBADO', fixed_honorarium: '12500.00' }, 3)).toMatchObject({
+      kind: 'ARANCEL_PROPIO', fixed_honorarium: '12500.00', version: 3, approval_status: 'APROBADO',
+    });
+    expect(() => normalizeCriterionScope({ kind: 'ARANCEL_PROPIO', jurisdiction: 'NAYARIT', source: 'Interna', author: 'Dirección' }))
+      .toThrowError(expect.objectContaining({ code: 'KNOW_CRITERION_AMOUNT_REQUIRED' }));
   });
 
   it('no actualiza un criterio perteneciente a otra organización', async () => {

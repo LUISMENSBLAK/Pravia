@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { App } from './app/App';
+import { listenForServiceWorkerUpdate } from './services/serviceWorkerUpdates';
 import './styles/tokens.css';
 import './styles/global.css';
 
@@ -29,10 +30,5 @@ if (serviceWorkerAllowed && 'serviceWorker' in navigator) {
       });
     });
   });
-  let refreshing = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (refreshing) return;
-    refreshing = true;
-    window.location.reload();
-  });
+  listenForServiceWorkerUpdate(navigator.serviceWorker, () => window.location.reload());
 }

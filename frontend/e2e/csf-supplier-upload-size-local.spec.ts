@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { expect, test } from '@playwright/test';
+import { PDFDocument } from 'pdf-lib';
 
 test('CFDI guarda una CSF de proveedor de 100 KB desde Chrome y la conserva tras recarga', async ({ page, request }, testInfo) => {
   const base = new URL(String(testInfo.project.use.baseURL || ''));
@@ -21,16 +22,23 @@ test('CFDI guarda una CSF de proveedor de 100 KB desde Chrome y la conserva tras
 
   const suffix = randomBytes(2).toString('hex').slice(0, 3).toUpperCase();
   const rfc = `QAA260101${suffix}`;
-  const supplierName = `Proveedor QA CSF 100 KB ${suffix}`;
-  const content = Buffer.from(`RFC: ${rfc}\nDenominación/Razón Social: ${supplierName}\nCódigo Postal: 63735\nRégimen Fiscal: 601\n`);
-  const file = Buffer.concat([content, Buffer.alloc(100 * 1024 - content.length, 0x20)]);
+  const supplierName = `PROVEEDOR SINTETICO QA CSF ${suffix}`;
+  const pdf = await PDFDocument.create();
+  pdf.addPage().drawText(`CONSTANCIA DE SITUACION FISCAL\nSINTETICA - SIN VALIDEZ FISCAL\nRFC: ${rfc}\nDenominación/Razón Social: ${supplierName}\nCódigo Postal: 63735\nRégimen Fiscal: 601 General de Ley Personas Morales`, { x:30, y:780, size:11, lineHeight:24 });
+  const content = Buffer.from(await pdf.save());
+  const start = content.lastIndexOf(Buffer.from('startxref'));
+  expect(start).toBeGreaterThan(0);
+  const padding = Buffer.alloc(100 * 1024 - content.length, 0x20); padding[0] = 0x25; padding[padding.length - 1] = 0x0a;
+  const file = Buffer.concat([content.subarray(0,start),padding,content.subarray(start)]);
   const extracted = page.waitForResponse((response) => response.url().endsWith('/facturacion/proveedores/csf/extraer') && response.request().method() === 'POST');
-  await dialog.getByLabel('Constancia de situación fiscal').setInputFiles({ name: `csf-${suffix}.txt`, mimeType: 'text/plain', buffer: file });
-  expect((await extracted).status()).toBe(200);
-  await dialog.getByLabel('Razón social').fill(supplierName);
-  await dialog.getByLabel('RFC').fill(rfc);
-  await dialog.getByLabel('Código postal fiscal').fill('63735');
-  await dialog.getByLabel('Régimen fiscal').fill('601');
+  await dialog.getByLabel('Constancia de situación fiscal').setInputFiles({ name: `csf-${suffix}.pdf`, mimeType: 'application/pdf', buffer: file });
+  const extraction = await extracted;
+  expect(extraction.status(), await extraction.text()).toBe(200);
+  expect((await extraction.json()).data).toMatchObject({ rfc, codigo_postal:'63735', source:'DETERMINISTIC_PDF_TEXT' });
+  await expect(dialog.getByLabel('Razón social')).toHaveValue(supplierName);
+  await expect(dialog.getByLabel('RFC')).toHaveValue(rfc);
+  await expect(dialog.getByLabel('Código postal fiscal')).toHaveValue('63735');
+  await expect(dialog.getByLabel('Régimen fiscal')).toHaveValue('601');
   await dialog.getByRole('checkbox', { name: 'Confirmé los datos fiscales con el documento' }).check();
 
   const saved = page.waitForResponse((response) => response.url().endsWith('/facturacion/proveedores') && response.request().method() === 'POST');
@@ -48,9 +56,9 @@ test('CFDI guarda una CSF de proveedor de 100 KB desde Chrome y la conserva tras
   const apiLogin = await request.post('/api/auth/login', { data: { email: 'adrian.hernandez@pravia.test', password } });
   expect(apiLogin.status()).toBe(200);
   const authorization = { Authorization: `Bearer ${(await apiLogin.json()).access_token}` };
-  const document = await request.get(`/api/documentos/${supplier.csf_documento_id}/url`, { headers: authorization });
+  const document = await request.get(`/api/finanzas/facturacion/proveedores/${supplier.id}/csf`, { headers: authorization });
   expect(document.status()).toBe(200);
-  const downloadUrl = new URL((await document.json()).url, base);
+  const downloadUrl = new URL((await document.json()).data.url, base);
   expect(['localhost', '127.0.0.1']).toContain(downloadUrl.hostname);
   const downloaded = await request.get(downloadUrl.toString());
   expect(downloaded.status()).toBe(200);

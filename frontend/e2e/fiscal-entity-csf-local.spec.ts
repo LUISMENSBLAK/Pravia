@@ -53,19 +53,24 @@ test('P0 entidad fiscal: CSF privada, extracción real, confirmación, persisten
     await page.getByRole('button', { name: 'Agregar entidad fiscal' }).click();
     const dialog = page.getByRole('dialog', { name: 'Agregar entidad fiscal' });
     await expect(dialog.getByRole('button', { name: 'Guardar entidad fiscal' })).toBeDisabled();
+    let resumeUpload!: () => void;
+    const uploadGate = new Promise<void>(resolve => { resumeUpload = resolve; });
     await page.route('**/api/finanzas/facturacion/entidades/csf', async route => {
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await uploadGate;
       await route.continue();
-    });
+    }, { times: 1 });
     const uploaded = page.waitForResponse((response) => response.url().endsWith('/api/finanzas/facturacion/entidades/csf') && response.request().method() === 'POST');
-    await dialog.getByLabel('Cargar Constancia de Situación Fiscal').setInputFiles({ name: 'CSF_SINTETICA_SIN_VALIDEZ.pdf', mimeType: 'application/pdf', buffer: pdf });
-    await expect(dialog.getByRole('status')).toContainText('Subiendo constancia');
+    const extracted = page.waitForResponse((response) => /\/api\/finanzas\/facturacion\/entidades\/csf\/[^/]+\/extraer$/.test(response.url()));
+    try {
+      await dialog.getByLabel('Cargar Constancia de Situación Fiscal').setInputFiles({ name: 'CSF_SINTETICA_SIN_VALIDEZ.pdf', mimeType: 'application/pdf', buffer: pdf });
+      await expect(dialog.getByRole('status')).toContainText('Subiendo constancia');
+    } finally { resumeUpload(); }
     const uploadResponse = await uploaded;
     expect(uploadResponse.status(), await uploadResponse.text()).toBe(201);
     const uploadedData = (await uploadResponse.json()).data as { id: string; sha256: string };
     expect(uploadedData.sha256).toBe(sha);
-    const extracted = page.waitForResponse((response) => response.url().endsWith(`/api/finanzas/facturacion/entidades/csf/${uploadedData.id}/extraer`));
     const extractResponse = await extracted;
+    expect(extractResponse.url()).toContain(`/entidades/csf/${uploadedData.id}/extraer`);
     expect(extractResponse.status(), await extractResponse.text()).toBe(200);
     const extraction = (await extractResponse.json()).data;
     expect(extraction.rfc).toBe(rfc);
@@ -154,7 +159,7 @@ test('P0 entidad fiscal: CSF privada, extracción real, confirmación, persisten
     await draftDialog.getByLabel('Código postal fiscal').fill('63735');
     await draftDialog.getByLabel('Uso CFDI').selectOption('G03');
     await draftDialog.getByLabel('Método de pago').selectOption('PUE');
-    await draftDialog.getByLabel('Forma de pago').fill('01');
+    await draftDialog.getByLabel('Forma de pago').selectOption('01');
     await draftDialog.getByLabel('Concepto fiscal configurado').selectOption(configuredConceptId);
     await draftDialog.getByLabel('Valor unitario').fill('100.00');
     const draftCreated = page.waitForResponse(response => response.url().endsWith('/api/finanzas/facturacion/borradores') && response.request().method() === 'POST');
@@ -193,12 +198,14 @@ test('P0 entidad fiscal: CSF privada, extracción real, confirmación, persisten
     try {
       const text = (await parsed.getText()).text;
       expect(text).toContain(rfc);
+      expect(text).toContain('QAFB010101ABC');
       expect(text).toContain('63735');
       expect(text).toContain('605');
+      expect(text).toContain('84111506');
       expect(text).toContain('100.00');
-      expect(text).toContain('Subtotal');
-      expect(text).toContain('Impuestos trasladados');
-      expect(text).toContain('Impuestos retenidos');
+      expect(text).toMatch(/subtotal/i);
+      expect(text).toMatch(/impuestos trasladados/i);
+      expect(text).toMatch(/impuestos retenidos/i);
       expect(text).toContain('TOTAL');
     } finally { await parsed.destroy(); }
     await pdfArea.getByRole('button', { name: 'Versiones PDF' }).click();
@@ -256,7 +263,7 @@ test('P0 entidad fiscal: CSF privada, extracción real, confirmación, persisten
     await secondDraftDialog.getByLabel('Código postal fiscal').fill('63735');
     await secondDraftDialog.getByLabel('Uso CFDI').selectOption('G03');
     await secondDraftDialog.getByLabel('Método de pago').selectOption('PUE');
-    await secondDraftDialog.getByLabel('Forma de pago').fill('01');
+    await secondDraftDialog.getByLabel('Forma de pago').selectOption('01');
     await secondDraftDialog.getByLabel('Concepto fiscal configurado').selectOption(configuredConceptId);
     await secondDraftDialog.getByLabel('Valor unitario').fill('100.00');
     const secondCreated = page.waitForResponse(response => response.url().endsWith('/api/finanzas/facturacion/borradores') && response.request().method() === 'POST');

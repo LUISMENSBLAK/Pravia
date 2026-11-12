@@ -70,6 +70,18 @@ const input = {
 };
 
 describe('Corrección 002 v2 · presupuesto único editable', () => {
+  it('confirma territorio en el mismo registro sin tocar presupuesto y audita actor y fecha del servidor', async () => {
+    const { tx, service } = harness();
+    await service.save(actor(), quote().id, { operationTerritory: { jurisdiction:'Nayarit', state:'Nayarit', municipality:'Tepic', confirm:true }, expectedUpdatedAt: timestamp.toISOString() });
+    expect(tx.cotizacion.update).toHaveBeenCalledWith({ where:{ id:quote().id }, data:{ territorio_operacion: expect.objectContaining({ jurisdiction:'NAYARIT',state:'NAYARIT',municipality:'TEPIC',confirmedById:actor().id,confirmedAt:expect.any(String) }) } });
+    expect(tx.cotizacionConcepto.deleteMany).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data:expect.objectContaining({ accion:'QUOTE_OPERATION_TERRITORY_CONFIRMED',valores_nuevos:{ operationTerritory:expect.objectContaining({ confirmedById:actor().id }) },detalles:{ budget_changed:false,stage_changed:false } }) }));
+  });
+  it.each([{ jurisdiction:'Nayarit',state:'Nayarit',confirm:false }, { jurisdiction:'Nayarit',state:'',confirm:true }, { jurisdiction:'Nayarit',state:'Nayarit',confirm:true,confirmedById:'spoof' }])('rechaza confirmación ausente o metadatos inyectados %j', async (operationTerritory) => {
+    const { tx, service } = harness();
+    await expect(service.save(actor(), quote().id, { operationTerritory,expectedUpdatedAt:timestamp.toISOString() })).rejects.toMatchObject({ code:'QUOTE_TERRITORY_CONFIRMATION_REQUIRED' });
+    expect(tx.cotizacion.update).not.toHaveBeenCalled();
+  });
   it('permite previsualizar a un colega del mismo tenant sin asignación, pero no le permite guardar', async () => {
     const colleague = { ...actor(['cotizaciones.read', 'cotizaciones.write']), rol: 'ABOGADO' as const,
       id: '20000000-0000-4000-8000-000000000099' };

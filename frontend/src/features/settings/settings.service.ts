@@ -153,5 +153,7 @@ export const settingsService = {
   reorderQuestionnaireBank: (bank: string, questionIds: string[]) => apiRequest(`/settings/catalogs/questionnaire-banks/${encodeURIComponent(bank)}/order`, { method: 'PUT', body: JSON.stringify({ question_ids: questionIds }) }),
   knowledgeSources: (params: { search?: string; jurisdiction?: string; category?: string; page?: number; page_size?: number }) => apiRequest<any>(`/settings/knowledge/sources?${qs(params)}`),
   knowledgeCriteria: () => apiRequest<any>('/settings/knowledge/criteria'),
+  createKnowledgeCriterion: (input: Record<string, unknown>) => apiRequest<any>('/settings/knowledge/criteria', { method: 'POST', body: JSON.stringify(input) }),
+  updateKnowledgeCriterion: (id: string, input: Record<string, unknown>) => apiRequest<any>(`/settings/knowledge/criteria/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
   retrieveKnowledge: (input: { query: string; jurisdiction?: string; category?: string; legal_date?: string }) => apiRequest<any>('/settings/knowledge/retrieve', { method: 'POST', body: JSON.stringify(input) }),
 };

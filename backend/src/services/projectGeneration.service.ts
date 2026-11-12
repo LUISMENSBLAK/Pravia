@@ -655,7 +655,7 @@ export function buildProjectFactSheet(
 
 function highlightPendingRuns(xml: string) {
   return xml.replace(/<w:r(\s[^>]*)?>([\s\S]*?)<\/w:r>/g, (run, attrs = '', body) => {
-    if (!body.includes('[PENDIENTE:')) return run;
+    if (!body.includes('[PENDIENTE:') && !body.includes('** de **** de *******')) return run;
     if (/<w:rPr[\s>]/.test(body)) return `<w:r${attrs}>${body.replace(/<w:rPr([^>]*)>/, '<w:rPr$1><w:highlight w:val="yellow"/>')}</w:r>`;
     return `<w:r${attrs}><w:rPr><w:highlight w:val="yellow"/></w:rPr>${body}</w:r>`;
   });
@@ -744,8 +744,13 @@ export async function renderProjectTemplate(source: Buffer, values: Record<strin
   const originalMedia = Object.fromEntries(await Promise.all(originalEntries.filter((name) => name.startsWith('word/media/') && !original.files[name].dir).map(async (name) => [name, checksum(await original.files[name].async('nodebuffer'))])));
   let document: Docxtemplater;
   try {
-    document = new Docxtemplater(new PizZip(source), { paragraphLoop: true, linebreaks: true, delimiters: { start: '{{', end: '}}' }, nullGetter: (part) => pending(String(part.value || 'DATO')) });
-    document.render(values);
+    const missingDisplay = (field: string) => /(^|[_.])(?:fecha|date)(?:[_.]|$)/i.test(field)
+      ? '** de **** de *******' : pending(field);
+    const renderValues = Object.fromEntries(Object.entries(values).map(([field, value]) => [
+      field, typeof value === 'string' && value.startsWith('[PENDIENTE:') ? missingDisplay(field) : value,
+    ]));
+    document = new Docxtemplater(new PizZip(source), { paragraphLoop: true, linebreaks: true, delimiters: { start: '{{', end: '}}' }, nullGetter: (part) => missingDisplay(String(part.value || 'DATO')) });
+    document.render(renderValues);
   } catch (error: any) {
     throw new ProjectGenerationError(422, 'PROJECT_TEMPLATE_RENDER_FAILED', error?.message || 'No fue posible combinar el machote.');
   }
@@ -768,7 +773,7 @@ export async function renderProjectTemplate(source: Buffer, values: Record<strin
   const residual = resultXml.flatMap((xml) => [...xml.matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)].map((match) => match[1]));
   if (residual.length) throw new ProjectGenerationError(422, 'PROJECT_TEMPLATE_RESIDUAL_FIELDS', `Quedaron campos técnicos sin resolver: ${[...new Set(residual)].join(', ')}.`);
   const fidelity = await assertDocxStructuralFidelity(original, result);
-  return { buffer: output, pendingCount: resultXml.reduce((total, xml) => total + (xml.match(/PENDIENTE:/g) || []).length, 0), fidelity };
+  return { buffer: output, pendingCount: resultXml.reduce((total, xml) => total + (xml.match(/PENDIENTE:|\*\* de \*\*\*\* de \*\*\*\*\*\*\*/g) || []).length, 0), fidelity };
 }
 
 export function validateLiteralProjectPatches(

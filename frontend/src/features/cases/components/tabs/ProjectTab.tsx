@@ -86,7 +86,7 @@ export function ProjectTab({ expediente, project, onChanged }: { expediente: Exp
       const next = manualTemplate
         ? await expedientesService.generateProjectFromTemplate(expediente.id, manualTemplate, { instructions, sourceDocumentIds: selectedSourceIds })
         : await expedientesService.generateProject(expediente.id, { templateVersionId, instructions, sourceDocumentIds: selectedSourceIds });
-      setResult(next); setNotice('Proyecto generado y persistido. La revisión automática terminó sin modificar silenciosamente el documento.'); onChanged();
+      setResult(next); setNotice('Proyecto generado y guardado. Revisa el Word y sus pendientes antes de validarlo.'); onChanged();
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'No fue posible proyectar la escritura. Revisa el expediente y el machote e intenta de nuevo.'); }
     finally { setBusy(null); }
   };
@@ -150,7 +150,7 @@ export function ProjectTab({ expediente, project, onChanged }: { expediente: Exp
         <div className={styles.projectSuggestedTemplate}><span>Machote</span><strong>{selectedTemplateLabel}</strong>{workspace && workspace.pending_detectable_count > 0 && <small>{workspace.pending_detectable_count} dato(s) detectable(s) podrían quedar marcados como [PENDIENTE].</small>}</div>
         <label className={styles.projectInstructions}>Indicaciones para la proyección <span>(opcional)</span><textarea rows={4} value={instructions} onChange={(event) => setInstructions(event.target.value)} placeholder="Escribe aquí cualquier indicación especial para este proyecto." maxLength={4000}/><small>Por ejemplo: poner especial atención al antecedente de subdivisión o conservar literalmente una cláusula determinada.</small></label>
         <button className={`${styles.primaryButton} ${styles.projectPrimaryAction}`} type="button" disabled={!canGenerate || busy !== null || (!manualTemplate && !templateVersionId)} onClick={() => void generate()}>{busy === 'GENERATE' ? <LoaderCircle className={styles.spin} aria-hidden="true"/> : <Sparkles aria-hidden="true"/>}{busy === 'GENERATE' ? 'Preparando proyecto…' : 'PROYECTAR CON IA'}</button>
-        {busy === 'GENERATE' && <AIProcessingStatus label="Proyectando escritura con IA" detail="Integrando expediente, documentos seleccionados y machote sin alterar su estructura; después se ejecutará la revisión final."/>}
+        {busy === 'GENERATE' && <AIProcessingStatus label="Proyectando escritura con IA" detail="Integrando los datos del expediente y las fuentes seleccionadas en el machote. La revisión notarial es un paso separado."/>}
         {!canGenerate && <p className={styles.projectPermissionNote}>Tu función actual no permite generar proyectos.</p>}
         <details id="project-advanced-options" className={styles.projectAdvanced}><summary><Settings2 aria-hidden="true"/>Opciones avanzadas</summary><div className={styles.projectAdvancedBody}>
           <label>Cambiar machote<select value={templateVersionId} disabled={Boolean(manualTemplate)} onChange={(event) => { setTemplateVersionId(event.target.value); setManualTemplate(undefined); }}><option value="">Resolver machote sugerido</option>{workspace?.templates.flatMap((item) => item.versions.map((version) => <option key={version.id} value={version.id}>{item.name} · v{version.version}{item.default ? ' · sugerido' : ''}</option>))}</select></label>

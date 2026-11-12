@@ -1,5 +1,5 @@
 import { Building2, Download, Eye, FilePlus2, FileText, Landmark, LoaderCircle, Plus, RefreshCw, ShieldCheck, UploadCloud, UsersRound, WalletCards, X } from 'lucide-react';
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthProvider';
@@ -94,7 +94,7 @@ export function FiscalWorkspace() {
     {dialog==='draft'&&<DraftDialog entities={entities} suppliers={suppliers} concepts={concepts} initial={editingDraft} onClose={()=>setDialog(null)} onSaved={()=>changed('Borrador fiscal guardado; no se invocó al PAC.')}/>}
     {dialog==='entity'&&<FiscalEntityDialog onClose={()=>setDialog(null)} onSaved={()=>changed('Entidad fiscal guardada.')}/>}
     {dialog==='entityReplace'&&selectedEntity&&<FiscalEntityDialog replacingEntity={selectedEntity} onClose={()=>setDialog('entityDetail')} onSaved={()=>changed('Nueva versión de CSF guardada.')}/>}
-    {dialog==='entityDetail'&&selectedEntity&&<FiscalEntityDetailDialog entity={selectedEntity} canReadDocument={canReadDocuments} canReplace={canValidate&&Boolean(user?.permissions?.includes('documentos.write'))} onReplace={()=>setDialog('entityReplace')} onClose={()=>setDialog(null)}/>}
+    {dialog==='entityDetail'&&selectedEntity&&<FiscalEntityDetailDialog entity={selectedEntity} canReadDocument={canReadDocuments} canReplace={canValidate&&Boolean(user?.permissions?.includes('documentos.write'))} canManageTemplate={canValidate&&Boolean(user?.permissions?.includes('configuracion.plantillas_formatos.manage'))} onReplace={()=>setDialog('entityReplace')} onChanged={()=>changed('Configuración de entidad fiscal actualizada.')} onClose={()=>setDialog(null)}/>}
     {dialog==='concept'&&<FiscalConceptDialog entities={entities} acts={actOptions} onClose={()=>setDialog(null)} onSaved={()=>changed('Concepto fiscal configurado para esta organización.')}/>}
     {dialog==='supplier'&&<SupplierDialog onClose={()=>setDialog(null)} onSaved={changed}/>}
     {notice&&<div className={styles.fiscalToast} role="status">{notice}</div>}
@@ -187,6 +187,8 @@ function DraftDialog({entities,suppliers,concepts,initial,onClose,onSaved}:{enti
   const [currency,setCurrency]=useState(initial?.moneda||'MXN');
   const [exchangeRate,setExchangeRate]=useState(String(initial?.draft_payload?.fiscal_comprobante?.tipo_cambio||''));
   const [conceptId,setConceptId]=useState(initial?.draft_payload?.concepts?.length===1?initial.draft_payload.concepts[0].concepto_fiscal_id||'':'');
+  const [description,setDescription]=useState(initial?.draft_payload?.concepts?.length===1
+    ?initial.draft_payload.concepts[0].descripcion||concepts.find(item=>item.id===initial.draft_payload?.concepts?.[0]?.concepto_fiscal_id)?.descripcion||'':'');
   const [quantity,setQuantity]=useState(initial?.draft_payload?.concepts?.length===1?initial.draft_payload.concepts[0].cantidad||'1':'1');
   const [unitPrice,setUnitPrice]=useState(initial?.draft_payload?.concepts?.length===1?initial.draft_payload.concepts[0].valor_unitario||'':'');
   const [busy,setBusy]=useState(false);
@@ -197,8 +199,14 @@ function DraftDialog({entities,suppliers,concepts,initial,onClose,onSaved}:{enti
   const [regimeQuery,setRegimeQuery]=useState('');
   const [regimes,setRegimes]=useState<Array<{clave:string;descripcion:string;tipo:string}>>([]);
   const [uses,setUses]=useState<Array<{clave:string;descripcion:string;tiposPersona:string[];regimenesReceptor:string[]}>>([]);
-  useEffect(()=>{let active=true;void Promise.all([financeService.fiscalRegimes(),financeService.fiscalUses()])
-    .then(([nextRegimes,nextUses])=>{if(active){setRegimes(nextRegimes?.items || []);setUses(nextUses?.items || []);}})
+  const [comprobanteCatalog,setComprobanteCatalog]=useState<{formasPago:Array<{clave:string;descripcion:string}>;
+    exportaciones:Array<{clave:string;descripcion:string}>;monedasHabilitadas:Array<{clave:string;descripcion:string}>}>({
+      formasPago:[],exportaciones:[],monedasHabilitadas:[],
+    });
+  useEffect(()=>{let active=true;void Promise.all([financeService.fiscalRegimes(),financeService.fiscalUses(),financeService.fiscalComprobanteCatalog()])
+    .then(([nextRegimes,nextUses,nextComprobante])=>{if(active){setRegimes(nextRegimes?.items || []);setUses(nextUses?.items || []);
+      setComprobanteCatalog({formasPago:nextComprobante?.formasPago || [],exportaciones:nextComprobante?.exportaciones || [],
+        monedasHabilitadas:nextComprobante?.monedasHabilitadas || []});}})
     .catch(()=>{if(active)setError('No pudimos cargar los catálogos SAT. Puedes guardar un borrador incompleto y reintentar.');});
     return()=>{active=false;};},[]);
   const receiverType=receiverRfc.trim().length===12?'MORAL':receiverRfc.trim().length===13?'FISICA':'';
@@ -226,12 +234,12 @@ function DraftDialog({entities,suppliers,concepts,initial,onClose,onSaved}:{enti
       receptor_rfc:value('receptor_rfc'),receptor_nombre:value('receptor_nombre'),
       receptor_regimen:value('receptor_regimen'),receptor_codigo_postal:value('receptor_cp'),
       uso_cfdi:value('uso_cfdi'),metodo_pago:value('metodo'),forma_pago:value('forma'),
-      moneda:currency,tipo_cambio:currency==='MXN'?'':exchangeRate,
+      moneda:currency,tipo_cambio:currency==='MXN'?'':exchangeRate,exportacion:value('exportacion'),
       lugar_expedicion:value('lugar_expedicion'),condiciones_pago:value('condiciones_pago'),
     };
     if(conceptId&&direction==='EMITIDO'){
       if(!amounts){setError('Indica cantidad y valor unitario válidos para el concepto fiscal configurado.');return;}
-      payload.conceptos=[{concepto_fiscal_id:conceptId,cantidad:quantity,valor_unitario:unitPrice}];
+      payload.conceptos=[{concepto_fiscal_id:conceptId,descripcion:description,cantidad:quantity,valor_unitario:unitPrice}];
       payload.subtotal=amounts.subtotal;payload.impuestos_trasladados=amounts.transferred;
       payload.impuestos_retenidos=amounts.retained;payload.total=amounts.total;
     }
@@ -257,7 +265,7 @@ function DraftDialog({entities,suppliers,concepts,initial,onClose,onSaved}:{enti
             const nextEntity=entities.find(item=>item.id===nextId);
             const choices=nextEntity?.regimenes_fiscales?.length?nextEntity.regimenes_fiscales.map(item=>item.clave):nextEntity?[nextEntity.regimen_fiscal]:[];
             setEmitterRegime(choices.length===1?choices[0]:'');
-            setEntityId(nextId);}}><option value="">Por definir</option>{entities.filter(item=>item.activa).map(item=><option key={item.id} value={item.id}>{item.razon_social} · {item.rfc}</option>)}</select></Field>
+            setEntityId(nextId);setConceptId('');setDescription('');}}><option value="">Por definir</option>{entities.filter(item=>item.activa).map(item=><option key={item.id} value={item.id}>{item.razon_social} · {item.rfc}</option>)}</select></Field>
           {direction==='EMITIDO'&&entityId&&<Field label="Régimen emisor para esta factura"><select value={emitterRegime} onChange={event=>setEmitterRegime(event.target.value)}>
             <option value="">Seleccionar régimen confirmado</option>
             {(entities.find(item=>item.id===entityId)?.regimenes_fiscales?.length
@@ -283,19 +291,20 @@ function DraftDialog({entities,suppliers,concepts,initial,onClose,onSaved}:{enti
       </fieldset>
       <fieldset className={styles.fiscalEditorSection}><legend>Comprobante y pago</legend>
         <div className={styles.fiscalFormGrid}>
-          <Field label="Moneda"><select value={currency} onChange={event=>setCurrency(event.target.value)}><option value="MXN">MXN</option><option value="USD">USD</option><option value="CAD">CAD</option></select></Field>
+          <Field label="Moneda"><select value={currency} onChange={event=>setCurrency(event.target.value)}>{currency&&!comprobanteCatalog.monedasHabilitadas.some(item=>item.clave===currency)&&<option value={currency} disabled>{currency} · Dato histórico por revisar</option>}{comprobanteCatalog.monedasHabilitadas.map(item=><option key={item.clave} value={item.clave}>{item.clave} — {item.descripcion}</option>)}</select></Field>
           {currency!=='MXN'&&<Field label="Tipo de cambio a MXN"><input name="tipo_cambio" inputMode="decimal" value={exchangeRate} onChange={event=>setExchangeRate(event.target.value)} placeholder="Captura una tasa comprobada antes de generar PDF"/></Field>}
+          <Field label="Exportación SAT"><select name="exportacion" defaultValue={source?.exportacion||''}><option value="">Por confirmar</option>{source?.exportacion&&!comprobanteCatalog.exportaciones.some(item=>item.clave===source.exportacion)&&<option value={source.exportacion} disabled>{source.exportacion} · Dato histórico por revisar</option>}{comprobanteCatalog.exportaciones.map(item=><option key={item.clave} value={item.clave}>{item.clave} — {item.descripcion}</option>)}</select></Field>
           <Field label="Método de pago"><select name="metodo" defaultValue={initial?.metodo_pago||''}><option value="">Por definir</option><option value="PUE">PUE</option><option value="PPD">PPD</option></select></Field>
-          <Field label="Forma de pago"><input name="forma" defaultValue={initial?.forma_pago||''} placeholder="Por confirmar"/></Field>
-          <Field label="Condiciones de pago (opcional)"><input name="condiciones_pago" defaultValue={source?.condiciones_pago||''}/></Field>
+          <Field label="Forma de pago"><select name="forma" defaultValue={initial?.forma_pago||''}><option value="">Por confirmar</option>{initial?.forma_pago&&!comprobanteCatalog.formasPago.some(item=>item.clave===initial.forma_pago)&&<option value={initial.forma_pago} disabled>{initial.forma_pago} · Dato histórico por revisar</option>}{comprobanteCatalog.formasPago.map(item=><option key={item.clave} value={item.clave}>{item.clave} — {item.descripcion}</option>)}</select></Field>
+          <Field label="Condiciones de pago (opcional)"><select name="condiciones_pago" defaultValue={source?.condiciones_pago||''}><option value="">Por confirmar</option>{source?.condiciones_pago&&!['CONTADO','CREDITO'].includes(source.condiciones_pago)&&<option value={source.condiciones_pago} disabled>{source.condiciones_pago} · Dato histórico por revisar</option>}<option value="CONTADO">Contado</option><option value="CREDITO">Crédito</option></select></Field>
         </div>
         {currency!=='MXN'&&<p className={styles.fiscalHint} role="status">{equivalentCents===null?'Indica un concepto y un tipo de cambio positivo para ver la equivalencia informativa.':`${money(amounts!.total,currency)} × ${exchangeRate} = MXN ${new Intl.NumberFormat('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(equivalentCents)/100)} equivalentes (informativo; no crea otra factura).`}</p>}
       </fieldset>
       <fieldset className={styles.fiscalEditorSection}><legend>Concepto e importe</legend>
         <p className={styles.fiscalHint}>El importe se verifica en el servidor contra el concepto fiscal configurado; no se toma una tasa escrita libremente.</p>
         <div className={styles.fiscalFormGrid}>
-          <Field label="Concepto fiscal configurado"><select value={conceptId} disabled={direction==='RECIBIDO'} onChange={event=>setConceptId(event.target.value)}><option value="">Sin concepto: guardar sin importe</option>{eligibleConcepts.map(item=><option key={item.id} value={item.id}>{item.descripcion} · {item.clave_prod_serv}</option>)}</select></Field>
-          {conceptId&&direction==='EMITIDO'&&<><Field label="Cantidad"><input inputMode="decimal" value={quantity} onChange={event=>setQuantity(event.target.value)}/></Field><Field label="Valor unitario"><input inputMode="decimal" value={unitPrice} onChange={event=>setUnitPrice(event.target.value)}/></Field></>}
+          <Field label="Concepto fiscal configurado"><select value={conceptId} disabled={direction==='RECIBIDO'} onChange={event=>{const next=eligibleConcepts.find(item=>item.id===event.target.value);setConceptId(event.target.value);setDescription(next?.descripcion||'');}}><option value="">Sin concepto: guardar sin importe</option>{eligibleConcepts.map(item=><option key={item.id} value={item.id}>{item.descripcion} · {item.clave_prod_serv}</option>)}</select></Field>
+          {conceptId&&direction==='EMITIDO'&&<><Field label="Descripción para esta factura"><input value={description} maxLength={1000} onChange={event=>setDescription(event.target.value)} placeholder="Describe el servicio de esta factura"/></Field><Field label="Cantidad"><input inputMode="decimal" value={quantity} onChange={event=>setQuantity(event.target.value)}/></Field><Field label="Valor unitario"><input inputMode="decimal" value={unitPrice} onChange={event=>setUnitPrice(event.target.value)}/></Field></>}
         </div>
         {amounts&&<p className={styles.fiscalHint} role="status">Subtotal {money(amounts.subtotal,currency)} · Impuestos {money(amounts.transferred,currency)} · Retenciones {money(amounts.retained,currency)} · Total {money(amounts.total,currency)}.</p>}
         {direction==='EMITIDO'&&!eligibleConcepts.length&&entityId&&<p className={styles.fiscalHint}>No hay concepto fiscal general activo para este emisor. Puedes guardar el borrador sin importe; no se generará PDF hasta configurar uno.</p>}
@@ -309,6 +318,7 @@ function DraftDialog({entities,suppliers,concepts,initial,onClose,onSaved}:{enti
 
 function SupplierDialog({onClose,onSaved}:{onClose:()=>void;onSaved:(message:string)=>void}) {
   const [csf,setCsf]=useState<File|null>(null);
+  const extractionRevision=useRef(0);
   const [fields,setFields]=useState({razon_social:'',rfc:'',codigo_postal:'',regimen_fiscal:'',correo:''});
   const [extracting,setExtracting]=useState(false);
   const [busy,setBusy]=useState(false);
@@ -319,30 +329,33 @@ function SupplierDialog({onClose,onSaved}:{onClose:()=>void;onSaved:(message:str
   const [csfSha256,setCsfSha256]=useState('');
   const [error,setError]=useState('');
   const choose=async(file:File|null)=>{
+    const revision=++extractionRevision.current;
     setCsf(file);setReviewed(false);setError('');setRegimes([]);setUnmappedRegimes([]);setExtractionStatus('');setCsfSha256('');
+    setFields(previous=>({...previous,razon_social:'',rfc:'',codigo_postal:'',regimen_fiscal:''}));
+    setExtracting(Boolean(file));
     if(!file)return;
-    setExtracting(true);
     try{
       const result=await financeService.extractCsf(file);
+      if(revision!==extractionRevision.current)return;
       setRegimes(result.regimenes_fiscales||[]);
       setUnmappedRegimes(result.regimenes_documentales||[]);
       setExtractionStatus(result.status==='EXTRACTED'?'Datos detectados':result.status==='PARTIALLY_EXTRACTED'?'Datos parciales':'Revisión requerida');
       setCsfSha256(result.sha256);
       setFields(previous=>({
         ...previous,
-        razon_social:result.razon_social||previous.razon_social,
-        rfc:result.rfc||previous.rfc,
-        codigo_postal:result.codigo_postal||previous.codigo_postal,
+        razon_social:result.razon_social||'',
+        rfc:result.rfc||'',
+        codigo_postal:result.codigo_postal||'',
         regimen_fiscal:result.regimenes_fiscales?.length===1?result.regimenes_fiscales[0].clave:'',
       }));
-    }catch(reason){setError(reason instanceof Error?reason.message:'No se pudo extraer la CSF. Revisa el archivo.');}
-    finally{setExtracting(false);}
+    }catch(reason){if(revision===extractionRevision.current)setError(reason instanceof Error?reason.message:'No se pudo extraer la CSF. Revisa el archivo.');}
+    finally{if(revision===extractionRevision.current)setExtracting(false);}
   };
   const update=(key:keyof typeof fields,value:string)=>setFields(previous=>({...previous,[key]:value}));
   return <Dialog title="Agregar proveedor" subtitle="Carga la constancia fiscal y confirma los datos extraídos antes de guardarlos." onClose={onClose}>
     <form onSubmit={async(event)=>{event.preventDefault();if(!csf||!reviewed||!csfSha256)return;setBusy(true);setError('');try{const result=await financeService.createFiscalSupplier({...fields,regimenes_fiscales:regimes,csf_sha256:csfSha256,csf_reviewed:true},csf) as {idempotent?:boolean};onSaved(result?.idempotent?'Proveedor existente reutilizado; no se guardó una segunda CSF.':'Proveedor fiscal y constancia guardados.');}catch(reason){setError(reason instanceof Error?reason.message:'No pudimos guardar el proveedor.');}finally{setBusy(false);}}}>
       <div className={styles.fiscalFormGrid}>
-        <Field label="Constancia de situación fiscal"><input type="file" accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" onChange={event=>void choose(event.target.files?.[0]||null)}/></Field>
+        <Field label="Constancia de situación fiscal"><input type="file" disabled={busy} accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg" onChange={event=>void choose(event.target.files?.[0]||null)}/></Field>
         <Field label="Razón social"><input required value={fields.razon_social} onChange={event=>update('razon_social',event.target.value)}/></Field>
         <Field label="RFC"><input required value={fields.rfc} onChange={event=>update('rfc',event.target.value.toUpperCase())}/></Field>
         <Field label="Código postal fiscal"><input required inputMode="numeric" maxLength={5} value={fields.codigo_postal} onChange={event=>update('codigo_postal',event.target.value)}/></Field>

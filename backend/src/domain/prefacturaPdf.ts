@@ -4,6 +4,8 @@ export type PrefacturaSnapshot = {
   folio: string;
   version: number;
   generated_at: string;
+  template?: { source: string; sha256: string; mode: 'PREFACTURA'; version_id?: string | null };
+  logo?: { source: 'ENTITY' | 'ORGANIZATION'; sha256: string; document_id: string | null };
   emitter: { name: string; rfc: string; regimen: string; postal_code: string };
   receiver: { name: string; rfc: string; regimen: string; postal_code: string; uso_cfdi: string };
   currency: string;
@@ -12,8 +14,10 @@ export type PrefacturaSnapshot = {
   payment: { method: string; form: string; terms: string | null };
   export_code: string | null;
   issue_place: string;
-  concepts: Array<{ description: string; product_code: string; unit_code: string; quantity: string; unit_price: string; subtotal: string; transferred: string; retained: string; total: string }>;
-  amounts: { subtotal: string; transferred: string; retained: string; total: string };
+  expediente_reference?: string | null;
+  total_in_words?: string | null;
+  concepts: Array<{ description: string; product_code: string; unit_code: string; quantity: string; unit_price: string; subtotal: string; transferred: string; retained: string; total: string; discount?: string | null; tax_object?: string | null; identification?: string | null }>;
+  amounts: { subtotal: string; transferred: string; retained: string; total: string; discount?: string | null };
 };
 
 const navy = rgb(0.035, 0.102, 0.184);
@@ -44,12 +48,17 @@ export async function renderPrefacturaPdf(snapshot: PrefacturaSnapshot): Promise
   const startPage = () => {
     page = pdf.addPage(pageSize);
     pageNumber += 1;
-    page.drawRectangle({ x: 0, y: pageSize[1] - 87, width: pageSize[0], height: 87, color: navy });
-    page.drawText('PRAVIA OS', { x: margin, y: pageSize[1] - 40, size: 17, font: bold, color: rgb(1, 1, 1) });
-    page.drawText('PREFACTURA — DOCUMENTO SIN VALIDEZ FISCAL', { x: margin, y: pageSize[1] - 64, size: 10, font: bold, color: rgb(1, 0.88, 0.63) });
-    page.drawRectangle({ x: 0, y: pageSize[1] - 91, width: pageSize[0], height: 4, color: gold });
+    const issuerLines = wrap(snapshot.emitter.name, bold, 13, width);
+    const headerHeight = Math.max(87, 59 + issuerLines.length * 16);
+    page.drawRectangle({ x: 0, y: pageSize[1] - headerHeight, width: pageSize[0], height: headerHeight, color: navy });
+    issuerLines.forEach((line, index) => page.drawText(line, {
+      x: margin, y: pageSize[1] - 34 - index * 16, size: 13, font: bold, color: rgb(1, 1, 1),
+    }));
+    page.drawText('PREFACTURA — DOCUMENTO SIN VALIDEZ FISCAL', { x: margin,
+      y: pageSize[1] - headerHeight + 18, size: 10, font: bold, color: rgb(1, 0.88, 0.63) });
+    page.drawRectangle({ x: 0, y: pageSize[1] - headerHeight - 4, width: pageSize[0], height: 4, color: gold });
     page.drawText(`Documento de trabajo · página ${pageNumber}`, { x: margin, y: 26, size: 8, font: regular, color: muted });
-    y = pageSize[1] - 116;
+    y = pageSize[1] - headerHeight - 29;
   };
   const ensure = (height: number) => { if (y - height < 54) startPage(); };
   const wrap = (value: string, font: PDFFont, size: number, maxWidth: number) => {

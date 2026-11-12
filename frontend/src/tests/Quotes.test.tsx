@@ -40,6 +40,10 @@ const mockApi = (options: MockOptions = {}) => {
     });
     if (url.endsWith('/auth/me')) return response(session(options.permissions));
     if (url.endsWith('/cotizaciones/expediente-series')) return response([{ code: '', label: 'Ordinaria' }]);
+    if (url.endsWith('/cotizaciones/quote-1/responsables-expediente')) return response([
+      { id: 'user-1', nombre: 'Andrea', apellido: 'Ruiz' },
+      { id: 'user-2', nombre: 'Javier', apellido: 'Tapia' },
+    ]);
     if (url.includes('/collaboration/cotizacion/quote-1/asistentes')) return response({ data: [] });
     if (url.includes('/comparecientes?')) return response({ data: [{ id: 'party-1', nombre: 'CLIENTE FORMAL', tipo_persona: 'FISICA' }], meta: { total: 1 } });
     if (url.endsWith('/expedientes/tipos-acto')) return response([{ id: 'act-compraventa', nombre: 'Compraventa', tipoActoCaracteresCompareciente: [{ caracter_id: 'char-comprador', caracter: { nombre: 'Comprador' } }, { caracter_id: 'char-vendedor', caracter: { nombre: 'Vendedor' } }] }, { id: 'act-donacion', nombre: 'Donación' }]);
@@ -50,6 +54,7 @@ const mockApi = (options: MockOptions = {}) => {
     if (url.endsWith('/cotizaciones/quote-1/correo-ia') && init?.method === 'POST') return response({ recipient: 'cliente@horizonte.mx', cc: 'archivo@notaria.test', subject: 'Cotización COT-2026-001 preparada con IA', messageBody: 'Estimada persona cliente: adjuntamos la cotización por $120,000.00 para su revisión.', provider: 'OPENAI', model: 'gpt-test', promptVersion: 'COT-EMAIL-IA-001-v1' });
     if (url.endsWith('/cotizaciones/extraer-presupuesto')) return response({ rubros: [{ id: 'row-1', concepto: 'Derecho registral', nombre_original: 'Derecho registral', monto: 8500, categoria: 'PENDIENTE_CLASIFICACION' }], total_notaria: 8500, total_pdf_declarado: 8500, suma_valida: true, mensaje_validacion: 'Suma verificada', diferencia_monto: 0 });
     if (url.endsWith('/cotizaciones/quote-1/generar-documento')) return response({ id: 'generated-doc', nombre_original: 'COT-2026-001-v1.docx', mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }, 201);
+    if (url.endsWith('/cotizaciones/quote-1/documentos/generated-doc/generar-pdf') && init?.method === 'POST') return response({ id: 'generated-pdf', nombre_original: 'COT-2026-001-v1.pdf', mime_type: 'application/pdf' }, 201);
     if (url.endsWith('/cotizaciones/quote-1/seguimientos')) return response(quotes[0]?.seguimientos ?? []);
     if (url.endsWith('/cotizaciones/quote-1/documentos')) return response(quotes[0]?.documentos ?? []);
     if (url.endsWith('/cotizaciones/quote-1/registrar-envio')) return response({ cotizacion: quote({ estado: 'ENVIADA_CLIENTE' }), deliveryConfirmedByProvider: false }, 201);
@@ -199,7 +204,8 @@ describe('Cotizaciones', () => {
     await screen.findByRole('heading', { name: 'COT-2026-001' });
     await user.click(screen.getByRole('button', { name: 'Generar cotización' }));
     await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/generar-documento'), expect.objectContaining({ method: 'POST' })));
-    expect(await screen.findByText('Documento de cotización generado desde ADM-001.')).toBeInTheDocument();
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/documentos/generated-doc/generar-pdf'), expect.objectContaining({ method: 'POST' })));
+    expect(await screen.findByText('Word y PDF de cotización disponibles.')).toBeInTheDocument();
   });
 
   it('ofrece ver, descargar y eliminar el documento real según permisos', async () => {
@@ -241,6 +247,61 @@ describe('Cotizaciones', () => {
     expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/estado'), expect.anything());
   });
 
+  it('busca al solicitante formal en servidor más allá de los primeros resultados', async () => {
+    mockApi({ quotes: [quote({ workflow: workflow('EN_SEGUIMIENTO', ['ACEPTAR'], 2) })] });
+    const previous = fetch;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/comparecientes?')) {
+        const search = new URL(url, 'http://localhost').searchParams.get('search');
+        return Promise.resolve(response({ data: search === 'ZETA'
+          ? [{ id: 'party-z', nombre: 'ZETA PRUEBA', tipo_persona: 'MORAL' }]
+          : [{ id: 'party-1', nombre: 'CLIENTE FORMAL', tipo_persona: 'FISICA' }], meta: { total: 1 } }));
+      }
+      return previous(input, init);
+    }));
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'COT-2026-001' });
+    await user.click(screen.getByRole('button', { name: 'Marcar como aceptada' }));
+    await user.type(screen.getByLabelText('Buscar compareciente'), 'ZETA');
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('search=ZETA'), expect.anything()));
+    await screen.findByRole('option', { name: 'ZETA PRUEBA · Persona moral' });
+    await user.selectOptions(screen.getByLabelText('Solicitante formal'), 'party-z');
+    await user.click(screen.getByRole('button', { name: 'Confirmar aceptación' }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/acciones'), expect.objectContaining({ method: 'POST' })));
+    const action = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/cotizaciones/quote-1/acciones'));
+    expect(JSON.parse(String(action?.[1]?.body)).formalApplicantId).toBe('party-z');
+  });
+
+  it('reanuda la aceptación tras alta contextual conservando fecha, nota, actos y solicitante', async () => {
+    mockApi({ quotes: [quote({ workflow: workflow('EN_SEGUIMIENTO', ['ACEPTAR'], 2) })] });
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={[{
+      pathname: '/cotizaciones/quote-1',
+      state: {
+        quoteNewComparecienteId: 'party-new',
+        quoteNewComparecienteName: 'COMPARECIENTE QA NUEVO',
+        quoteAcceptanceDraft: {
+          effectiveAt: '2026-08-05T10:00:00.000',
+          reason: 'Aceptación QA conservada',
+          confirmedActIds: ['quote-act-1'],
+        },
+      },
+    }]}><App /></MemoryRouter>);
+    const dialog = await screen.findByRole('dialog', { name: 'Registrar aceptación' });
+    expect(within(dialog).getByLabelText('Fecha y hora efectiva')).toHaveValue('2026-08-05T10:00');
+    expect(within(dialog).getByLabelText('Nota opcional')).toHaveValue('Aceptación QA conservada');
+    expect(within(dialog).getByRole('checkbox', { name: 'Compraventa' })).toBeChecked();
+    expect(within(dialog).getByLabelText('Solicitante formal')).toHaveValue('party-new');
+    await user.click(within(dialog).getByRole('button', { name: 'Confirmar aceptación' }));
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/acciones'), expect.objectContaining({ method: 'POST' })));
+    const action = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/cotizaciones/quote-1/acciones'));
+    expect(JSON.parse(String(action?.[1]?.body))).toMatchObject({
+      action: 'ACEPTAR', reason: 'Aceptación QA conservada', confirmedActIds: ['quote-act-1'], formalApplicantId: 'party-new',
+    });
+  });
+
   it('mantiene el foco dentro del diálogo contractual y lo restaura al cerrar', async () => {
     mockApi({ quotes: [quote({ workflow: workflow('ENVIADA_CLIENTE', ['ACEPTAR'], 2) })] });
     const user = userEvent.setup();
@@ -265,7 +326,24 @@ describe('Cotizaciones', () => {
   it('confirma y ejecuta conversión idempotente por endpoint real', async () => {
     const accepted = quote({ estado: 'ACEPTADA', workflow: workflow('ACEPTO_ANTICIPO', ['CONVERTIR'], 3), transiciones_permitidas: [], conversion: { eligible: true, accepted: true, approvedVersion: true, validatedAdvance: false, validatedAdvanceTotal: 0, notConverted: true, linkedProspect: true, failures: [] } }); mockApi({ quotes: [accepted] }); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>); await screen.findByRole('heading', { name: 'COT-2026-001' }); await user.click(screen.getByRole('button', { name: 'Convertir en expediente' })); const dialog = screen.getByRole('dialog'); expect(within(dialog).getByText('Constructora Horizonte')).toBeInTheDocument(); expect(within(dialog).getByText(/sin aplicar movimientos financieros/i)).toBeInTheDocument(); const submit = within(dialog).getByRole('button', { name: 'Convertir en expediente' }); await waitFor(() => expect(within(dialog).getByLabelText('Carácter del solicitante en Compraventa')).toBeEnabled()); expect(submit).toBeDisabled(); await user.selectOptions(within(dialog).getByLabelText('Carácter del solicitante en Compraventa'), 'char-comprador'); await waitFor(() => expect(submit).toBeEnabled()); await user.click(submit); await waitFor(() => expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/cotizaciones/quote-1/convertir'), expect.objectContaining({ method: 'POST' })));
     const call = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/cotizaciones/quote-1/convertir'));
-    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ expectedVersion: 3, confirm: true, tipo_acto_id: 'act-compraventa', solicitante_caracter_por_acto: { 'quote-act-1': 'char-comprador' } });
+    expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({ expectedVersion: 3, confirm: true, tipo_acto_id: 'act-compraventa', abogado_id: 'user-1', solicitante_caracter_por_acto: { 'quote-act-1': 'char-comprador' } });
+  });
+
+  it('permite elegir explícitamente otro responsable autorizado antes de crear el expediente', async () => {
+    const accepted = quote({ estado: 'ACEPTADA', workflow: workflow('ACEPTADA', ['CONVERTIR'], 3), conversion: { eligible: true, accepted: true, approvedVersion: true, validatedAdvance: false, validatedAdvanceTotal: 0, notConverted: true, linkedProspect: true, failures: [] } });
+    mockApi({ quotes: [accepted] });
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'COT-2026-001' });
+    await user.click(screen.getByRole('button', { name: 'Convertir en expediente' }));
+    const dialog = screen.getByRole('dialog');
+    const responsible = within(dialog).getByRole('combobox', { name: 'Responsable del expediente' });
+    await waitFor(() => expect(responsible).toHaveValue('user-1'));
+    await user.selectOptions(responsible, 'user-2');
+    await user.selectOptions(within(dialog).getByLabelText('Carácter del solicitante en Compraventa'), 'NO_PARTICIPA');
+    await user.click(within(dialog).getByRole('button', { name: 'Convertir en expediente' }));
+    const call = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/cotizaciones/quote-1/convertir'));
+    expect(JSON.parse(String(call?.[1]?.body)).abogado_id).toBe('user-2');
   });
 
   it('bloquea la conversión canónica cuando faltan actos estructurados', async () => {

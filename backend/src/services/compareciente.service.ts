@@ -1326,11 +1326,19 @@ export class ComparecienteService {
         for (const [field, proposal] of Object.entries(consolidated.proposals)) {
           const alternatives = proposal.estado === 'EN_CONFLICTO' ? proposal.alternativas : [proposal];
           for (const alternative of alternatives) {
+            const curpSource = extraction.documentos_curp?.find((document) => document.document_id === alternative.documento_id);
+            const ineSource = extraction.documentos_ine?.some((document) => document.document_id === alternative.documento_id);
+            const csfSource = extraction.documentos_csf?.find((document) => document.document_id === alternative.documento_id);
+            const origin = curpSource
+              ? { provider: curpSource.source === 'DETERMINISTIC_PDF_TEXT' ? 'LOCAL_DETERMINISTIC' : 'LOCAL_OCR', model: curpSource.schema }
+              : ineSource ? { provider: 'LOCAL_OCR', model: 'TESSERACT_SPA_IDENTITY_V1' }
+              : csfSource ? { provider: csfSource.source.startsWith('LOCAL_OCR') ? 'LOCAL_OCR' : 'LOCAL_DETERMINISTIC', model: 'FISCAL_CSF_LOCAL_V1' }
+              : { provider: extraction.proveedor, model: extraction.modelo };
             await tx.comparecienteDatoFuente.create({ data: {
               organization_id: actorOrganizationId, compareciente_id: comparecienteId, campo: field, entidad_destino: 'ComparecienteWorkspace',
               valor_detectado: alternative.valor || null, documento_id: alternative.documento_id || null,
               pagina: alternative.pagina || null, fragmento_fuente: alternative.fragmento || null,
-              proveedor_ia: extraction.proveedor, modelo_ia: extraction.modelo, confianza: alternative.confianza || null,
+              proveedor_ia: origin.provider, modelo_ia: origin.model, confianza: alternative.confianza || null,
               estado: proposal.estado === 'EN_CONFLICTO' ? 'EN_CONFLICTO' : 'PENDIENTE_CONFIRMACION', correlation_id: correlationId,
             } });
           }
@@ -1380,6 +1388,20 @@ export class ComparecienteService {
             } });
           }
         }
+        for (const document of extraction.documentos_ine || []) {
+          const existing = await tx.comparecienteDatoFuente.findFirst({ where: {
+            organization_id: actorOrganizationId, compareciente_id: comparecienteId,
+            documento_id: document.document_id, campo: 'ine_ocr_processing_status', archived_at: null,
+          }, select: { id: true } });
+          if (!existing) await tx.comparecienteDatoFuente.create({ data: {
+            organization_id: actorOrganizationId, compareciente_id: comparecienteId,
+            documento_id: document.document_id, campo: 'ine_ocr_processing_status',
+            entidad_destino: 'IDENTITY_DOCUMENT_REVIEW', valor_detectado: document.status,
+            fragmento_fuente: document.method, proveedor_ia: 'LOCAL_OCR', modelo_ia: 'TESSERACT_SPA_IDENTITY_V1',
+            confianza: document.identificadores_ine.cic || document.identificadores_ine.ocr ? 'LECTURA_DUDOSA' : 'LECTURA_DEFICIENTE',
+            estado: 'PENDIENTE_CONFIRMACION', correlation_id: correlationId,
+          } });
+        }
         for (const [field, value] of Object.entries({ ine_cic: ineIdentifiers.cic, ine_ocr: ineIdentifiers.ocr })) {
           if (!value) continue;
           const existing = await tx.comparecienteDatoFuente.findFirst({ where: { organization_id: actorOrganizationId, compareciente_id: comparecienteId, campo: field, archived_at: null, valor_detectado: value }, select: { id: true } });
@@ -1394,6 +1416,7 @@ export class ComparecienteService {
           valores_nuevos: { campos_propuestos: Object.keys(consolidated.proposals), conflictos: consolidated.conflicts.length, faltantes: faltantes.length, errores_lectura: skipped.length, documentos: readable.length },
           detalles: { modulo: 'COMPARECIENTES', persistencia_maestra: false,
             documentos_csf_locales: extraction.documentos_csf?.length || 0,
+            identificaciones_ocr_local: extraction.documentos_ine?.length || 0,
             reextraccion: true }, correlation_id: correlationId, session_id: actor.sessionId,
         } });
       });
@@ -1402,6 +1425,7 @@ export class ComparecienteService {
         domicilios_detectados: extraction.domicilios_detectados || [], documentos_omitidos: skipped,
         documentos_curp: extraction.documentos_curp || [],
         documentos_csf: extraction.documentos_csf || [],
+        documentos_ine: extraction.documentos_ine || [],
         identificadores_ine: ineIdentifiers,
         faltantes,
         resumen_ejecutivo: extraction.resumen_ejecutivo || '',

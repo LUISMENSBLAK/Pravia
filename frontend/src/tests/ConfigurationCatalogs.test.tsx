@@ -408,6 +408,27 @@ describe("Catálogos contractuales accesibles", () => {
     ]));
   });
 
+  it("configura la correspondencia económica ADM-001 ligada a una versión sin alterar otros destinos", async () => {
+    const user = userEvent.setup();
+    render(<TemplatesFormatsCatalog />);
+    await user.click(await screen.findByRole("button", { name: /Organización A/ }));
+    await user.click(screen.getByRole("button", { name: /MACHOTE JURÍDICO/ }));
+    await user.click(await screen.findByRole("button", { name: "Conectar a módulos" }));
+    const dialog = screen.getByRole("dialog", { name: "Destinos funcionales · Machote" });
+    await user.click(within(dialog).getByRole("checkbox", { name: "Cotización de servicios" }));
+    await user.click(within(dialog).getByRole("button", { name: "Configurar correspondencia de esta versión" }));
+    await user.clear(within(dialog).getByLabelText("Tabla económica"));
+    await user.type(within(dialog).getByLabelText("Tabla económica"), "2");
+    await user.clear(within(dialog).getByLabelText("Columna del importe"));
+    await user.type(within(dialog).getByLabelText("Columna del importe"), "3");
+    await user.click(within(dialog).getByRole("button", { name: "Guardar conexiones" }));
+    await waitFor(() => expect(api.assignFunctionalDestinations).toHaveBeenCalledWith("artifact-a", [
+      expect.objectContaining({ destino: "COTIZACION_SERVICIOS", mapeo_datos_json: {
+        quote_economic: { schema_version: 1, versions: { v1: { table_index: 1, detail_row_index: 1, total_row_index: 2, label_column: 0, amount_column: 2 } } },
+      } }),
+    ]));
+  });
+
   it("crea una plantilla contextual en la carpeta actual con destino funcional controlado", async () => {
     const user = userEvent.setup();
     render(<TemplatesFormatsCatalog />);

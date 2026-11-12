@@ -157,7 +157,7 @@ test('X12/X14/X15 · ingreso aplicado y prefactura alteran las tarjetas exactas 
     }
     await generator.getByLabel('Entidad fiscal').selectOption(fiscalConcepts[0].entidad_fiscal_id);
     await generator.getByLabel('Uso CFDI').fill('G03');
-    await generator.getByLabel('Exportación SAT').fill('01');
+    await generator.getByLabel('Exportación SAT').selectOption('01');
     await generator.getByLabel('Concepto 1').selectOption(fiscalConcepts[0].id);
     await generator.getByLabel('Cantidad').fill('1');
     await generator.getByLabel('Valor unitario sin impuestos').fill('50.00');

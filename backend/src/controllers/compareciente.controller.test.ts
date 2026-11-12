@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const service = vi.hoisted(() => ({ buscarDuplicados: vi.fn(), listarMaster: vi.fn(), obtenerPorId: vi.fn(), eliminarDocumentoMaster: vi.fn(), extraerDocumentosExistentesConIA: vi.fn() }));
+const service = vi.hoisted(() => ({ buscarDuplicados: vi.fn(), listarMaster: vi.fn(), obtenerPorId: vi.fn(), eliminarDocumentoMaster: vi.fn(), extraerDocumentosExistentesConIA: vi.fn(), actualizarMaster: vi.fn() }));
 const access = vi.hoisted(() => ({ canAccessCompareciente: vi.fn() }));
-vi.mock('../services/compareciente.service', () => ({ ComparecienteService: class { buscarDuplicados = service.buscarDuplicados; listarMaster = service.listarMaster; obtenerPorId = service.obtenerPorId; eliminarDocumentoMaster = service.eliminarDocumentoMaster; extraerDocumentosExistentesConIA = service.extraerDocumentosExistentesConIA; } }));
+vi.mock('../services/compareciente.service', () => ({ ComparecienteService: class { buscarDuplicados = service.buscarDuplicados; listarMaster = service.listarMaster; obtenerPorId = service.obtenerPorId; eliminarDocumentoMaster = service.eliminarDocumentoMaster; extraerDocumentosExistentesConIA = service.extraerDocumentosExistentesConIA; actualizarMaster = service.actualizarMaster; } }));
 vi.mock('../config/prisma', () => ({ default: {}, prisma: {} }));
 vi.mock('../services/objectAccess.service', () => ({ comparecienteObjectWhere: vi.fn(() => ({})), canAccessCompareciente: access.canAccessCompareciente }));
 import { ComparecienteController } from './compareciente.controller';
@@ -20,4 +20,12 @@ describe('ComparecienteController endpoints', () => {
   it('devuelve propuestas IA sin persistencia maestra', async()=>{access.canAccessCompareciente.mockResolvedValue(true);service.extraerDocumentosExistentesConIA.mockResolvedValue({values:{rfc:'ABC'},proposals:{rfc:{estado:'PENDIENTE_CONFIRMACION'}}});const req:any={params:{id:'party-1'},user,header:vi.fn(()=> 'extract-party-1')};const res=response();await ComparecienteController.extraerDocumentosConIA(req,res);expect(service.extraerDocumentosExistentesConIA).toHaveBeenCalledWith('party-1',user,'extract-party-1');expect(res.json.mock.calls[0][0].data.values).toEqual({rfc:'ABC'})});
 
   it('deniega extracción IA fuera del alcance del actor', async()=>{access.canAccessCompareciente.mockResolvedValue(false);const req:any={params:{id:'party-2'},user};const res=response();await ComparecienteController.extraerDocumentosConIA(req,res);expect(res.status).toHaveBeenCalledWith(404);expect(service.extraerDocumentosExistentesConIA).not.toHaveBeenCalled()});
+  it('responde conflicto de duplicado sin exponer detalles de Prisma', async () => {
+    service.actualizarMaster.mockRejectedValue(Object.assign(new Error('Invalid Prisma invocation at /internal/path'), { code: 'P2002' }));
+    const res = response();
+    await ComparecienteController.actualizarMaster({ user, params: { id: 'party-1' }, body: {} } as any, res);
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith({ success: false, code: 'COMPARECIENTE_DATOS_DUPLICADOS',
+      error: 'Uno de los datos ya está registrado. Revisa la ficha y los posibles duplicados antes de guardar.' });
+  });
 });

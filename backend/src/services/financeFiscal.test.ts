@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import { describe, expect, it, vi } from 'vitest';
 import { ContractTestCfdiProvider, DisabledCfdiProvider } from './cfdiProvider';
-import { FinanceFiscalError, FinanceFiscalService, calculateFiscalLine, draftFiscalDetails, parseCfdi40Xml, validateUseCfdi } from './financeFiscal.service';
+import { FinanceFiscalError, FinanceFiscalService, calculateFiscalLine, draftFiscalDetails, invoiceLineDescription, parseCfdi40Xml, validatePaymentForm, validateUseCfdi } from './financeFiscal.service';
 import { parseFiscalCsfText } from './fiscalDocumentExtraction.service';
 
 const xml = (overrides = '') => Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
@@ -13,6 +13,16 @@ const xml = (overrides = '') => Buffer.from(`<?xml version="1.0" encoding="UTF-8
 </cfdi:Comprobante>`);
 
 describe('B3 · dominio fiscal local seguro', () => {
+  it('guarda una descripción por línea sin cambiar el concepto fiscal maestro', () => {
+    const configured = 'Honorarios notariales';
+    expect(invoiceLineDescription(undefined, configured)).toBe(configured);
+    expect(invoiceLineDescription('EXP-001-2026 Honorarios', configured)).toBe('EXP-001-2026 Honorarios');
+    expect(invoiceLineDescription('EXP-002-2026 Honorarios', configured)).toBe('EXP-002-2026 Honorarios');
+    expect(configured).toBe('Honorarios notariales');
+    expect(() => invoiceLineDescription('', configured)).toThrowError(expect.objectContaining({ code: 'CFDI_LINE_DESCRIPTION_INVALID' }));
+    expect(() => invoiceLineDescription({ html: '<script>' }, configured)).toThrowError(expect.objectContaining({ code: 'CFDI_LINE_DESCRIPTION_INVALID' }));
+    expect(() => invoiceLineDescription('x'.repeat(1001), configured)).toThrowError(expect.objectContaining({ code: 'CFDI_LINE_DESCRIPTION_INVALID' }));
+  });
   it('rechaza Uso CFDI inexistente o incompatible también en backend', () => {
     expect(() => validateUseCfdi('G03', '612', 'QAFA010101QA1')).not.toThrow();
     expect(() => validateUseCfdi('G03', '605', 'QAFA010101QA1')).toThrowError(expect.objectContaining({ code: 'CFDI_USE_REGIME_INCOMPATIBLE', status: 422 }));
@@ -82,14 +92,25 @@ describe('B3 · dominio fiscal local seguro', () => {
 
   it('conserva los datos del comprobante al editar y valida moneda, tipo de cambio y lugar de expedición', () => {
     const saved = draftFiscalDetails({ moneda: 'MXN', exportacion: '01', lugar_expedicion: '63735', condiciones_pago: 'CONTADO' });
-    expect(draftFiscalDetails({ condiciones_pago: 'CRÉDITO' }, { ...saved, complemento_notarios: { clave: 'QA' } })).toEqual({
-      moneda: 'MXN', fiscal_comprobante: { tipo_cambio: null, exportacion: '01', lugar_expedicion: '63735', condiciones_pago: 'CRÉDITO', regimen_emisor: null },
+    expect(draftFiscalDetails({ condiciones_pago: 'CREDITO' }, { ...saved, complemento_notarios: { clave: 'QA' } })).toEqual({
+      moneda: 'MXN', fiscal_comprobante: { tipo_cambio: null, exportacion: '01', lugar_expedicion: '63735', condiciones_pago: 'CREDITO', regimen_emisor: null },
     });
     expect(() => draftFiscalDetails({ moneda: 'USD' })).toThrowError(expect.objectContaining({ code: 'CFDI_EXCHANGE_RATE_REQUIRED' }));
     expect(draftFiscalDetails({ moneda: 'USD' }, {}, true).fiscal_comprobante.tipo_cambio).toBeNull();
     expect(() => draftFiscalDetails({ lugar_expedicion: '6373' })).toThrowError(expect.objectContaining({ code: 'CFDI_ISSUE_PLACE_INVALID' }));
     expect(draftFiscalDetails({ moneda: 'USD', tipo_cambio: '17.123456' }).fiscal_comprobante.tipo_cambio).toBe('17.123456');
     const emitter = draftFiscalDetails({ regimen_emisor: '612' });
-    expect(draftFiscalDetails({ condiciones_pago: 'CRÉDITO' }, emitter).fiscal_comprobante.regimen_emisor).toBe('612');
+    expect(draftFiscalDetails({ condiciones_pago: 'CREDITO' }, emitter).fiscal_comprobante.regimen_emisor).toBe('612');
+  });
+
+  it('valida claves de exportación, moneda y forma de pago contra el XLS versionado', () => {
+    expect(draftFiscalDetails({ exportacion: '04' }).fiscal_comprobante.exportacion).toBe('04');
+    expect(() => draftFiscalDetails({ exportacion: '99' })).toThrowError(expect.objectContaining({ code: 'CFDI_EXPORT_INVALID' }));
+    expect(() => draftFiscalDetails({ moneda: 'ZZZ' }, {}, true)).toThrowError(expect.objectContaining({ code: 'CFDI_CURRENCY_INVALID' }));
+    expect(() => validatePaymentForm('03')).not.toThrow();
+    expect(() => validatePaymentForm('')).not.toThrow();
+    expect(() => validatePaymentForm('07')).toThrowError(expect.objectContaining({ code: 'CFDI_PAYMENT_FORM_INVALID' }));
+    expect(() => draftFiscalDetails({ condiciones_pago: '15 DÍAS' })).toThrowError(expect.objectContaining({ code: 'CFDI_PAYMENT_TERMS_INVALID' }));
+    expect(new FinanceFiscalService({} as never).fiscalComprobanteCatalog().formasPago.find((item) => item.clave === '99')?.descripcion).toBe('Por definir');
   });
 });

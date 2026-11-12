@@ -11,7 +11,7 @@ import { FinancialMovementService } from './financialMovement.service';
 import { centsToMoney, moneyToCents } from '../domain/expedienteBudget';
 import { legacyFinanceAllocations } from '../domain/financeCore';
 import { AdministrativeQuoteTemplateError, DOCX_MIME_TYPE, resolveAdministrativeQuoteTemplate } from './administrativeQuoteTemplate.service';
-import { appendAccountStatement, quoteTemplateData, renderQuoteTemplate } from './quoteDocument.service';
+import { appendAccountStatement, quoteTemplateData, renderQuoteTemplate, resolveQuoteEconomicMapping } from './quoteDocument.service';
 import {
   closePaymentRequestTiming,
   closeReceiptApplicationTiming,
@@ -212,7 +212,7 @@ export class ExpedienteFinanceService {
     const templateData = quoteTemplateData({ folio: expediente.numero_pravia, date: generatedAt, client: expediente.cliente_alias || 'Cliente pendiente', act: expediente.actos.map((row) => row.tipo_acto.nombre).join(', ') || 'Acto pendiente', notary: expediente.notaria?.nombre || 'Notaría', concepts, validatedAdvanceCents: moneyToCents(statement.totals.collected) });
     let buffer: Buffer;
     try {
-      const base = renderQuoteTemplate(resolved.source, templateData, concepts);
+      const base = renderQuoteTemplate(resolved.source, templateData, concepts, resolveQuoteEconomicMapping(resolved.mapping, resolved.version.id));
       buffer = appendAccountStatement(base, { generatedAt: new Intl.DateTimeFormat('es-MX', { dateStyle: 'long', timeStyle: 'short' }).format(generatedAt), budgetVersion: statement.budget.version, sections: statement.sections, totals: statement.totals });
     } catch { throw new ExpedienteFinanceError(422, 'EXP_ACCOUNT_STATEMENT_RENDER_FAILED', 'El formato configurado para Presupuesto no pudo generar el estado de cuenta.'); }
     const fileName = `Estado_de_cuenta_${safeName(expediente.numero_pravia)}_${generatedAt.toISOString().slice(0, 10)}.docx`;

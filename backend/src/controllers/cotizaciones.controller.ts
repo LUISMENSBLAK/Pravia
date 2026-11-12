@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import prisma from '../config/prisma';
-import { CotizacionEtapaContractual, CotizacionEstado, Prisma } from '@prisma/client';
+import { CotizacionEtapaContractual, CotizacionEstado, Prisma, Role } from '@prisma/client';
 import { logAudit } from '../utils/auditLogger';
 import {
   CotizacionBusinessError,
@@ -22,6 +22,7 @@ import { QuoteBudgetError, QuoteBudgetService } from '../services/quoteBudget.se
 import { downloadFile } from '../services/supabase.service';
 import { ExpedienteOpeningError } from '../services/expedienteOpening.service';
 import { OrganizationFolioError } from '../services/organizationFolio.service';
+import { activeOrganizationMembershipWhere } from '../auth/organizationMembership';
 import { quoteAIProposalService, QuoteAIError } from '../services/quoteAIProposal.service';
 import { quoteEmailAIService, QuoteEmailAIError } from '../services/quoteEmailAI.service';
 
@@ -679,6 +680,18 @@ export const generateCotizacionDocument = async (req: Request, res: Response) =>
   }
 };
 
+export const generateCotizacionDocumentPdf = async (req: Request, res: Response) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
+    const document = await quoteDocumentService.generatePdf(req.user, req.params.id, req.params.documentoId);
+    return res.status(201).json(document);
+  } catch (error) {
+    if (error instanceof QuoteDocumentError) return res.status(error.status).json({ error: error.message, code: error.code });
+    console.error('Quote PDF generation failed', error);
+    return res.status(500).json({ error: 'No fue posible generar el PDF. El Word permanece disponible.', code: 'QUOTE_PDF_GENERATION_FAILED' });
+  }
+};
+
 export const updateCotizacionPresupuesto = async (req: Request, res: Response) => {
   try {
     if (!req.user) return res.status(401).json({ error: 'Tu sesión no es válida.', code: 'AUTH_REQUIRED' });
@@ -830,6 +843,20 @@ export const convertToExpediente = async (req: Request, res: Response) => {
   } catch (error: any) {
     return quoteWorkflowError(res, error);
   }
+};
+
+export const getExpedienteResponsiblesForCotizacion = async (req: Request, res: Response) => {
+  if (!req.user?.permissions.includes('expedientes.write')) return res.status(403).json({ code: 'PERMISSION_DENIED' });
+  if (!(await canAccessCotizacion(req.user, req.params.id))) {
+    return res.status(403).json({ code: 'COTIZACION_ACCESS_DENIED', error: 'No tienes acceso a esta cotización.' });
+  }
+  const members = await prisma.organizationMembership.findMany({
+    where: { ...activeOrganizationMembershipWhere(req.user.organizationId,
+      [Role.DIRECCION, Role.ADMINISTRACION, Role.ABOGADO]), user: { activo: true } },
+    select: { user: { select: { id: true, nombre: true, apellido: true } } },
+  });
+  return res.json(members.map((membership) => membership.user)
+    .sort((left, right) => `${left.nombre} ${left.apellido || ''}`.localeCompare(`${right.nombre} ${right.apellido || ''}`, 'es-MX')));
 };
 
 export const getExpedienteFolioSeries = async (req: Request, res: Response) => {

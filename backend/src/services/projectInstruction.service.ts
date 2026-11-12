@@ -39,7 +39,7 @@ export function reconcileProjectMetadataAfterPatches(metadata: Record<string, an
   const reconcile = (value: unknown) => Array.isArray(value) ? value.filter(stillApplicable) : [];
   return {
     ...metadata,
-    pending_count: (renderedText.match(/\[PENDIENTE(?::[^\]]*)?\]/g) || []).length,
+    pending_count: (renderedText.match(/\[PENDIENTE(?::[^\]]*)?\]|\*\* de \*\*\*\* de \*\*\*\*\*\*\*/g) || []).length,
     contradiction_observations: reconcile(metadata.contradiction_observations),
     generation_observations: reconcile(metadata.generation_observations),
     residual_observations: reconcile(metadata.residual_observations),

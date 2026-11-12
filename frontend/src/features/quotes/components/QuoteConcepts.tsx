@@ -28,6 +28,8 @@ export function QuoteConcepts({ quote, canWrite: canWriteInput, onSaved, notify 
   const [baseline, setBaseline] = useState(() => fingerprint(fromQuote(quote)));
   const [origin, setOrigin] = useState<'MANUAL' | 'IMPORTADO'>('MANUAL');
   const [operationContext, setOperationContext] = useState(quote.contexto_operacion ?? '');
+  const [territory, setTerritory] = useState({ jurisdiction: quote.territorio_operacion?.jurisdiction ?? '', state: quote.territorio_operacion?.state ?? '', municipality: quote.territorio_operacion?.municipality ?? '' });
+  const [territoryConfirmed, setTerritoryConfirmed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState('');
@@ -44,6 +46,7 @@ export function QuoteConcepts({ quote, canWrite: canWriteInput, onSaved, notify 
   useEffect(() => {
     const next = fromQuote(quote);
     setRows(next); setBaseline(fingerprint(next)); setOperationContext(quote.contexto_operacion ?? ''); setOrigin('MANUAL'); setError('');
+    setTerritory({ jurisdiction: quote.territorio_operacion?.jurisdiction ?? '', state: quote.territorio_operacion?.state ?? '', municipality: quote.territorio_operacion?.municipality ?? '' }); setTerritoryConfirmed(false);
   }, [quote.id, quote.updated_at, quote.presupuesto]);
 
   const dirty = fingerprint(rows) !== baseline || operationContext.trim() !== (quote.contexto_operacion ?? '').trim();
@@ -110,10 +113,22 @@ export function QuoteConcepts({ quote, canWrite: canWriteInput, onSaved, notify 
     finally { setSaving(false); }
   };
   const generateAI = async () => {
+    if (dirty || (['jurisdiction', 'state', 'municipality'] as const).some((field) => territory[field].trim() !== (quote.territorio_operacion?.[field] ?? '').trim())) {
+      setError('Guarda el presupuesto y confirma el territorio antes de generar la propuesta.'); return;
+    }
     setAiBusy('generate'); setError('');
     try { await quotesService.generateAIProposal(quote.id); await onSaved(); notify('Propuesta preparada. Revisa cada concepto antes de aplicarla.'); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'No fue posible generar la propuesta.'); }
     finally { setAiBusy(''); }
+  };
+  const saveTerritory = async () => {
+    if (dirty) { setError('Guarda o descarta los cambios del presupuesto antes de confirmar el territorio.'); return; }
+    setSaving(true); setError('');
+    try {
+      await quotesService.updateOperationTerritory(quote.id, { ...territory, municipality: territory.municipality.trim() || null, confirm: true }, quote.updated_at);
+      await onSaved(); notify('Territorio de la operación confirmado. El presupuesto no cambió.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'No pudimos confirmar el territorio.'); }
+    finally { setSaving(false); }
   };
   const decideAI = async (action: 'APLICAR' | 'DESCARTAR') => {
     if (!proposal) return;
@@ -140,6 +155,14 @@ export function QuoteConcepts({ quote, canWrite: canWriteInput, onSaved, notify 
     {previewError && <div className={styles.formError} role="alert">{previewError}</div>}
     {!canWrite && canWriteInput && <div className={styles.importNotice} role="status">La cotización aceptada o convertida conserva su presupuesto histórico. No se recalcula automáticamente.</div>}
     <form onSubmit={submit}>
+      <fieldset className={styles.operationTerritory} disabled={!canWrite || saving || Boolean(aiBusy)}>
+        <legend>Territorio de la operación</legend>
+        <p>{quote.territorio_operacion ? 'Territorio confirmado y guardado. Cada cambio requiere confirmación.' : 'Sin información confirmada. No se aplicarán aranceles territoriales sin coincidencia.'}</p>
+        <div className={styles.operationTerritoryFields}>
+          {(['jurisdiction', 'state', 'municipality'] as const).map((field) => <label key={field}><span>{field === 'jurisdiction' ? 'Jurisdicción de la operación' : field === 'state' ? 'Estado de la operación' : 'Municipio de la operación'}</span><input value={territory[field]} maxLength={field === 'jurisdiction' ? 80 : field === 'state' ? 160 : 240} onChange={(event) => { setTerritory((current) => ({ ...current, [field]: event.target.value })); setTerritoryConfirmed(false); }} /></label>)}
+        </div>
+        {canWrite && <><label className={styles.territoryConfirmation}><input type="checkbox" checked={territoryConfirmed} onChange={(event) => setTerritoryConfirmed(event.target.checked)} /><span>Confirmo el territorio de esta operación; no el domicilio de la Notaría.</span></label><button type="button" className={styles.secondaryButton} disabled={!territoryConfirmed || !territory.jurisdiction.trim() || !territory.state.trim() || dirty} onClick={() => void saveTerritory()}>Confirmar territorio</button></>}
+      </fieldset>
       <label className={styles.operationContextField}><span>Contexto de la operación</span><textarea rows={3} value={operationContext} disabled={!canWrite || saving} onChange={(event) => setOperationContext(event.target.value)} placeholder="Describe los datos que deben considerarse en esta cotización." maxLength={4000} /><small>Este mismo contexto alimenta la captura manual, el ejemplo cargado y la propuesta con IA.</small></label>
       <div className={styles.inlineConceptHeader} aria-hidden="true"><span>Categoría</span><span>Concepto</span><span>Importe MXN</span><span>Orden</span><span /></div>
       <div className={styles.inlineConceptRows}>

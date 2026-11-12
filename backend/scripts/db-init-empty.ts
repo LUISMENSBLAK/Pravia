@@ -120,7 +120,7 @@ async function restoreHistoricalArtifacts(url: URL, plan: HistoricalArtifactPlan
           await transaction.$executeRawUnsafe(`RELEASE SAVEPOINT ${savepoint}`);
         } catch (error) {
           await transaction.$executeRawUnsafe(`ROLLBACK TO SAVEPOINT ${savepoint}`);
-          if (!isObsoleteHistoricalArtifactError(error)) throw error;
+          if (artifact.kind === 'DYNAMIC_RLS_BLOCK' || !isObsoleteHistoricalArtifactError(error)) throw error;
           obsolete.push(artifact);
           await transaction.$executeRawUnsafe(`RELEASE SAVEPOINT ${savepoint}`);
         }

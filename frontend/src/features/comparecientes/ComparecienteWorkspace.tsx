@@ -177,6 +177,12 @@ const ownershipReturnContext = (search: string) => {
       }
     : null;
 };
+const quoteReturnContext = (search: string) => {
+  const quoteId = new URLSearchParams(search).get("fromQuote");
+  return quoteId && safeContextId.test(quoteId)
+    ? { returnPath: `/cotizaciones/${encodeURIComponent(quoteId)}` }
+    : null;
+};
 
 export function ComparecienteWorkspace() {
   const { id = "" } = useParams();
@@ -193,13 +199,18 @@ export function ComparecienteWorkspace() {
     () => (createMode ? ownershipReturnContext(location.search) : null),
     [createMode, location.search],
   );
+  const quoteContext = useMemo(
+    () => (createMode ? quoteReturnContext(location.search) : null),
+    [createMode, location.search],
+  );
   const safeReturn = useMemo(
     () =>
       createMode
         ? ownershipContext?.returnPath ||
+          quoteContext?.returnPath ||
           resolveExpedienteReturn(location.search)
         : null,
-    [createMode, location.search, ownershipContext],
+    [createMode, location.search, ownershipContext, quoteContext],
   );
   const [item, setItem] = useState<ComparecienteDetail | null>(null);
   const [draft, setDraft] = useState<NewComparecienteDraft>(initialDraft);
@@ -581,6 +592,21 @@ export function ComparecienteWorkspace() {
             state: {
               ownershipNewComparecienteId: response.compareciente.id,
               ownershipNodeId: ownershipContext.nodeId,
+            },
+          });
+          return;
+        }
+        if (quoteContext) {
+          const quoteAcceptanceDraft = (location.state as { quoteAcceptanceDraft?: unknown } | null)?.quoteAcceptanceDraft;
+          const applicantName = draft.tipo_persona === "FISICA"
+            ? [draft.nombre, draft.apellido_paterno, draft.apellido_materno].filter(Boolean).join(" ").trim()
+            : draft.razon_social.trim();
+          navigate(quoteContext.returnPath, {
+            replace: true,
+            state: {
+              quoteNewComparecienteId: response.compareciente.id,
+              quoteNewComparecienteName: applicantName,
+              quoteAcceptanceDraft,
             },
           });
           return;

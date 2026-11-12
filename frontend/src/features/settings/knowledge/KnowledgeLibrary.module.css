@@ -13,6 +13,9 @@
 .searchBar input { min-width: 0; min-height: 44px; padding: 0 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); font: inherit; }
 .searchBar button, .officialLink { min-height: 44px; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--color-navy-900); border-radius: var(--radius-md); color: white; background: var(--color-navy-900); font: inherit; font-size: .66rem; font-weight: 740; cursor: pointer; text-decoration: none; }
 .searchBar button:disabled { opacity: .45; cursor: not-allowed; }
+.criterionActions { display: flex; justify-content: flex-end; }
+.criterionActions button, .editCriterion { min-height: 40px; padding: 0 12px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--color-navy-900); border-radius: var(--radius-md); color: white; background: var(--color-navy-900); font: inherit; font-size: .65rem; font-weight: 760; cursor: pointer; }
+.editCriterion { margin-top: 10px; color: var(--color-navy-900); background: white; }
 .browser { min-width: 0; display: grid; grid-template-columns: minmax(280px,.8fr) minmax(300px,1.2fr); gap: 12px; }
 .sourceList { max-height: 650px; overflow: auto; }
 .sourceList > button { width: 100%; min-height: 72px; padding: 11px 12px; display: flex; align-items: flex-start; justify-content: space-between; gap: 9px; border: 0; border-bottom: 1px solid var(--color-border); background: transparent; text-align: left; cursor: pointer; }
@@ -48,6 +51,23 @@
 .evidence li p { margin: 4px 0; color: var(--color-text-secondary); font-size: .65rem; line-height: 1.45; white-space: pre-wrap; }
 .evidence a { color: var(--color-navy-800); font-size: .62rem; }
 .insufficient, .error { padding: 12px; border-radius: var(--radius-md); color: var(--color-danger-800); background: var(--color-danger-100); font-size: .68rem; font-weight: 760; }
+.criterionOverlay { position: fixed; z-index: 80; inset: 0; padding: 24px; display: grid; place-items: center; background: rgb(4 19 36 / .62); }
+.criterionForm { width: min(780px, 100%); max-height: calc(100vh - 48px); overflow: auto; padding: 18px; border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: 0 18px 60px rgb(0 0 0 / .22); }
+.criterionForm > header, .criterionForm > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.criterionForm > header { padding-bottom: 14px; border-bottom: 1px solid var(--color-border); }
+.criterionForm > header div { display: grid; gap: 3px; }
+.criterionForm > header small { color: var(--color-text-muted); }
+.criterionForm > header button { width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: white; cursor: pointer; }
+.formGrid { margin: 16px 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.formGrid label { display: grid; gap: 5px; color: var(--color-text-secondary); font-size: .64rem; font-weight: 720; }
+.formGrid .wide { grid-column: 1 / -1; }
+.formGrid input, .formGrid select, .formGrid textarea { width: 100%; min-height: 42px; padding: 8px 10px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); color: var(--color-text-primary); background: white; font: inherit; }
+.formGrid textarea { resize: vertical; }
+.criterionForm > footer { justify-content: flex-end; padding-top: 14px; border-top: 1px solid var(--color-border); }
+.criterionForm > footer button { min-height: 42px; padding: 0 15px; border: 1px solid var(--color-navy-900); border-radius: var(--radius-md); background: white; color: var(--color-navy-900); font: inherit; font-weight: 750; cursor: pointer; }
+.criterionForm > footer button[type="submit"] { color: white; background: var(--color-navy-900); }
+.criterionForm > footer button:disabled { opacity: .5; cursor: wait; }
 @container (max-width: 620px) { .browser { grid-template-columns: 1fr; } .sourceList { max-height: 320px; } }
 @media (max-width: 1024px) { .library { grid-template-columns: 1fr; } .collections { display: flex; overflow-x: auto; } .collections header { min-width: 220px; } .collections > button { width: auto; min-width: max-content; border-right: 1px solid var(--color-border); } }
 @media (max-width: 767px) { .explorer { padding: 10px; } .searchBar { grid-template-columns: auto minmax(0,1fr); } .searchBar button { grid-column: 1 / -1; } .browser { grid-template-columns: 1fr; } .sourceList { max-height: 320px; } .detail dl div { grid-template-columns: 1fr; gap: 3px; } }
+@media (max-width: 560px) { .criterionOverlay { padding: 0; place-items: stretch; } .criterionForm { max-height: 100vh; border-radius: 0; } .formGrid { grid-template-columns: 1fr; } .formGrid .wide { grid-column: auto; } }

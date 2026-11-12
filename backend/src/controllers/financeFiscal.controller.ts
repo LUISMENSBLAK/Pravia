@@ -34,12 +34,21 @@ export class FinanceFiscalController {
     catch (error) { return fail(res, error, 'No pudimos cargar las entidades fiscales.'); }
   }
 
+  static async invoiceTemplates(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await service.listInvoiceTemplates(actor(req)) }); }
+    catch (error) { return fail(res, error, 'No pudimos cargar las plantillas de facturación.'); }
+  }
+
   static fiscalRegimes(_req: Request, res: Response) {
     return res.json({ success: true, data: service.fiscalRegimes() });
   }
 
   static fiscalUses(_req: Request, res: Response) {
     return res.json({ success: true, data: service.fiscalUses() });
+  }
+
+  static fiscalComprobanteCatalog(_req: Request, res: Response) {
+    return res.json({ success: true, data: service.fiscalComprobanteCatalog() });
   }
 
   static async pendingEntityCsf(req: Request, res: Response) {
@@ -88,6 +97,23 @@ export class FinanceFiscalController {
   static async updateEntity(req: Request, res: Response) {
     try { return res.json({ success: true, data: await service.updateEntity(actor(req), req.params.id, req.body || {}, correlation(req)) }); }
     catch (error) { return fail(res, error, 'No pudimos actualizar la entidad fiscal.'); }
+  }
+
+  static async entityLogo(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await service.entityLogoUrl(actor(req), req.params.id) }); }
+    catch (error) { return fail(res, error, 'No pudimos abrir el logotipo fiscal.'); }
+  }
+
+  static async uploadEntityLogo(req: Request, res: Response) {
+    try {
+      if (!req.file) throw new FinanceFiscalError(400, 'CFDI_LOGO_REQUIRED', 'Selecciona una imagen PNG o JPG.');
+      return res.status(201).json({ success: true, data: await service.uploadEntityLogo(actor(req), req.params.id, file(req.file)!, correlation(req)) });
+    } catch (error) { return fail(res, error, 'No pudimos guardar el logotipo fiscal.'); }
+  }
+
+  static async removeEntityLogo(req: Request, res: Response) {
+    try { return res.json({ success: true, data: await service.removeEntityLogo(actor(req), req.params.id, correlation(req)) }); }
+    catch (error) { return fail(res, error, 'No pudimos quitar el logotipo fiscal.'); }
   }
 
   static async fiscalConcepts(req: Request, res: Response) {

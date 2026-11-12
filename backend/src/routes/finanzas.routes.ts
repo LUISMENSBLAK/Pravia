@@ -10,6 +10,7 @@ import { boundedDocumentBatchStorage } from '../config/documentBatchUpload';
 
 const router = Router();
 const fiscalUpload = multer({ storage: boundedDocumentBatchStorage, limits: { fileSize: FISCAL_UPLOAD_MAX_BYTES, files: 2, fields: 10 } });
+const fiscalLogoUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 0 } });
 
 // Lecturas canónicas. El router padre ya exige finanzas.read.
 router.get('/resumen', FinanceLedgerController.summary);
@@ -21,8 +22,11 @@ router.get('/cartera', FinanceLedgerController.receivables);
 router.get('/facturacion/estado', FinanceFiscalController.status);
 router.get('/facturacion/expedientes', FinanceLedgerController.expedienteInvoices);
 router.get('/facturacion/entidades', FinanceFiscalController.entities);
+router.get('/facturacion/plantillas', FinanceFiscalController.invoiceTemplates);
+router.get('/facturacion/entidades/:id/logo', requirePermission('documentos.read'), FinanceFiscalController.entityLogo);
 router.get('/facturacion/regimenes-fiscales', FinanceFiscalController.fiscalRegimes);
 router.get('/facturacion/usos-cfdi', FinanceFiscalController.fiscalUses);
+router.get('/facturacion/catalogos-comprobante', FinanceFiscalController.fiscalComprobanteCatalog);
 router.get('/facturacion/entidades/csf/pendiente', requirePermission('finanzas.validate'), FinanceFiscalController.pendingEntityCsf);
 router.get('/facturacion/entidades/:id/csf', requirePermission('documentos.read'), FinanceFiscalController.entityCsfUrl);
 router.get('/facturacion/entidades/:id/csf/versiones', requirePermission('documentos.read'), FinanceFiscalController.entityCsfVersions);
@@ -57,6 +61,8 @@ router.post('/facturacion/entidades/csf/:id/extraer', requirePermission('finanza
 router.patch('/facturacion/entidades/:id/csf', requirePermission('finanzas.validate'), requirePermission('documentos.write'), FinanceFiscalController.replaceEntityCsf);
 router.post('/facturacion/conceptos', requirePermission('finanzas.validate'), FinanceFiscalController.createFiscalConcept);
 router.patch('/facturacion/entidades/:id', requirePermission('finanzas.validate'), FinanceFiscalController.updateEntity);
+router.post('/facturacion/entidades/:id/logo', requirePermission('finanzas.validate'), requirePermission('documentos.write'), fiscalLogoUpload.single('file'), FinanceFiscalController.uploadEntityLogo);
+router.delete('/facturacion/entidades/:id/logo', requirePermission('finanzas.validate'), requirePermission('documentos.write'), FinanceFiscalController.removeEntityLogo);
 router.post('/facturacion/proveedores', requirePermission('finanzas.write'), fiscalUpload.single('csf'), FinanceFiscalController.createSupplier);
 router.patch('/facturacion/proveedores/:id', requirePermission('finanzas.write'), FinanceFiscalController.updateSupplier);
 router.post('/facturacion/proveedores/csf/extraer', requirePermission('finanzas.write'), fiscalUpload.single('file'), FinanceFiscalController.extractCsf);

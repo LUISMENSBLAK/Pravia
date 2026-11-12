@@ -111,6 +111,17 @@ describe('db:init-empty historical artifacts', () => {
       .rejects.toThrow('enforce_same_organization');
   });
 
+  it('replays and verifies the canonical dynamic Control Plane isolation policies', async () => {
+    const allMigrations = (await readdir(migrationsRoot, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+    const plan = await buildHistoricalArtifactPlan(migrationsRoot, allMigrations);
+    expect(plan.artifacts.filter((artifact) => artifact.kind === 'DYNAMIC_RLS_BLOCK')).toHaveLength(1);
+    for (const table of ['tenant_storage_usage', 'usage_alert_states', 'ai_wallets', 'ai_usage_events']) {
+      expect(plan.expected.rlsTables).toContain(table);
+      expect(plan.expected.policies).toContain(`tenant_isolation_${table}`);
+    }
+  });
+
   it('restores the latest replacement for a dropped and recreated CHECK constraint', async () => {
     const allMigrations = (await readdir(migrationsRoot, { withFileTypes: true }))
       .filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();

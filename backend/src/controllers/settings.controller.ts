@@ -189,9 +189,11 @@ export class SettingsController {
   }
 
   static async audit(req: Request, res: Response) {
+    if (!req.user) return res.status(401).json({ code: 'AUTH_REQUIRED', error: 'Inicia sesión para continuar.' });
     const page = pageNumber(req.query.page); const size = pageSize(req.query.page_size);
     const action = text(req.query.action, 80); const entity = text(req.query.entity, 80); const userId = text(req.query.user_id, 64);
-    const where = { ...(action ? { accion: action } : {}), ...(entity ? { entidad: entity } : {}), ...(userId ? { user_id: userId } : {}) };
+    const where: Prisma.AuditLogWhereInput = { organization_id: req.user.organizationId,
+      ...(action ? { accion: action } : {}), ...(entity ? { entidad: entity } : {}), ...(userId ? { user_id: userId } : {}) };
     const [items, total] = await Promise.all([
       prisma.auditLog.findMany({ where, select: { id: true, accion: true, entidad: true, entidad_id: true, correlation_id: true, session_id: true, created_at: true, usuario: { select: { id: true, nombre: true, apellido: true, email: true } } }, orderBy: { created_at: 'desc' }, skip: (page - 1) * size, take: size }),
       prisma.auditLog.count({ where }),

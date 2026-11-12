@@ -349,6 +349,23 @@ describe('EXP-010 · motor DOCX sobre machote real', () => {
     expect(rendered.pendingCount).toBe(1);
   });
 
+  it('muestra fechas desconocidas con el patrón aprobado, sin perder el conteo ni el highlight', async () => {
+    const source = await Packer.toBuffer(new Document({ sections: [{ children: [
+      new Paragraph('Fecha de firma: {{operacion.fecha_firma}}'),
+      new Paragraph('Fecha de antecedente: {{antecedente.fecha}}'),
+      new Paragraph('Importe: {{operacion.precio}}'),
+    ] }] }));
+    const rendered = await renderProjectTemplate(source, {
+      'operacion.fecha_firma': '[PENDIENTE: OPERACION FECHA FIRMA]',
+      'operacion.precio': '[PENDIENTE: OPERACION PRECIO]',
+    });
+    const xml = await (await JSZip.loadAsync(rendered.buffer)).file('word/document.xml')!.async('string');
+    expect(xml.match(/\*\* de \*\*\*\* de \*\*\*\*\*\*\*/g)).toHaveLength(2);
+    expect(xml.match(/<w:highlight w:val="yellow"\/>/g)).toHaveLength(3);
+    expect(xml).toContain('[PENDIENTE: OPERACION PRECIO]');
+    expect(rendered.pendingCount).toBe(3);
+  });
+
   it('prioriza una confirmación humana explícita y nunca inventa valores ausentes', () => {
     const values = buildProjectTemplateData({
       numero_pravia: 'EXP-0001-2026', descripcion: null, cliente_alias: 'Cliente estructurado', valor_operacion: null,

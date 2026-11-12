@@ -6,6 +6,7 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY prisma ./prisma
 COPY src ./src
+COPY assets ./assets
 RUN npx prisma generate && npm run build
 
 FROM build AS migrate
@@ -14,12 +15,13 @@ CMD ["node", "dist/cli/prismaSafe.js", "migrate", "deploy"]
 FROM node:22-alpine AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
-RUN apk add --no-cache openssl
+RUN apk add --no-cache openssl libreoffice-writer font-liberation
 COPY --from=build /app/package.json /app/package-lock.json ./
 COPY --from=build /app/node_modules ./node_modules
 RUN npm prune --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
+COPY --from=build /app/assets ./assets
 RUN addgroup -S pravia && adduser -S pravia -G pravia && mkdir -p /data/pravia-storage && chown -R pravia:pravia /app /data/pravia-storage
 USER pravia
 EXPOSE 3001

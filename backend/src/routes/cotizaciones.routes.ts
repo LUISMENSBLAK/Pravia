@@ -8,6 +8,7 @@ import {
   updateCotizacionEstado, 
   extractPresupuesto,
   generateCotizacionDocument,
+  generateCotizacionDocumentPdf,
   updateCotizacionPresupuesto,
   previewCotizacionPresupuesto,
   registrarAnticipo,
@@ -27,6 +28,7 @@ import {
   draftCotizacionEmailWithAI,
   getExpedienteFolioSeries,
   createExpedienteFolioSeries,
+  getExpedienteResponsiblesForCotizacion,
 } from '../controllers/cotizaciones.controller';
 import { requirePermission } from '../middleware/auth.middleware';
 import { requireCotizacionObjectAccess, requireDocumentoObjectAccess } from '../middleware/objectAccess.middleware';
@@ -48,9 +50,11 @@ router.post('/:id/propuestas-ia', requirePermission('ai.use'), generateCotizacio
 router.patch('/:id/propuestas-ia/:proposalId', decideCotizacionAIProposal);
 router.post('/:id/correo-ia', requirePermission('cotizaciones.write'), requirePermission('ai.use'), draftCotizacionEmailWithAI);
 router.post('/:id/generar-documento', generateCotizacionDocument);
+router.post('/:id/documentos/:documentoId/generar-pdf', requireDocumentoObjectAccess, generateCotizacionDocumentPdf);
 router.post('/:id/anticipo', requirePermission('finanzas.write'), registrarAnticipo);
 router.post('/pago/:pagoId/validar', requirePermission('finanzas.validate'), validarAnticipo);
 router.post('/:id/convertir', requirePermission('expedientes.write'), convertToExpediente);
+router.get('/:id/responsables-expediente', requirePermission('expedientes.write'), getExpedienteResponsiblesForCotizacion);
 router.get('/:id/seguimientos', getCotizacionSeguimientos);
 router.post('/:id/seguimientos', createCotizacionSeguimiento);
 router.post('/:id/registrar-envio', registerCotizacionDelivery);

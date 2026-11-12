@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const api = vi.hoisted(() => ({
   overview: vi.fn(), organization: vi.fn(), updateOrganization: vi.fn(), profile: vi.fn(), updateProfile: vi.fn(), preferences: vi.fn(), updatePreferences: vi.fn(), sessions: vi.fn(), revokeSession: vi.fn(), revokeOtherSessions: vi.fn(), changePassword: vi.fn(),
   users: vi.fn(), user: vi.fn(), userImpact: vi.fn(), updateUser: vi.fn(), invitations: vi.fn(), invite: vi.fn(), revokeInvitation: vi.fn(), roles: vi.fn(), audit: vi.fn(), aiDashboard: vi.fn(), notifications: vi.fn(), readNotification: vi.fn(), readAllNotifications: vi.fn(), dismissNotification: vi.fn(), markNotificationNotApplicable: vi.fn(), search: vi.fn(),
-  knowledgeSources: vi.fn(), knowledgeCriteria: vi.fn(), retrieveKnowledge: vi.fn(),
+  knowledgeSources: vi.fn(), knowledgeCriteria: vi.fn(), createKnowledgeCriterion: vi.fn(), updateKnowledgeCriterion: vi.fn(), retrieveKnowledge: vi.fn(),
 }));
 const auth = vi.hoisted(() => ({ user: { id: 'u1', name: 'María López', email: 'maria@pravia.mx', role: 'DIRECCION', permissions: ['usuarios.read', 'usuarios.manage', 'configuracion.manage', 'ai.admin.read'] } }));
 vi.mock('../features/settings/settings.service', () => ({ settingsService: api }));
@@ -30,7 +30,7 @@ describe('Configuración, usuarios y accesos', () => {
     api.roles.mockResolvedValue({ roles: [{ role: 'DIRECCION', permissions: ['expedientes.read', 'usuarios.manage', 'configuracion.manage', 'ai.admin.read'] }, { role: 'ABOGADO', permissions: ['expedientes.read'] }] });
     api.notifications.mockResolvedValue({ notifications: [], unread: 0 });
     api.knowledgeSources.mockResolvedValue({ data: [], pagination: { total: 85, page: 1, pages: 1 } });
-    api.knowledgeCriteria.mockResolvedValue({ data: [{ id: 'criterion-1', code: 'INT-QA-001', title: 'Revisión reforzada', content: 'Solicitar validación humana adicional.', scope: { act: 'COMPRAVENTA' }, active: true, created_at: '2026-09-26T12:00:00Z', updated_at: '2026-09-26T12:00:00Z' }], distinction: 'CRITERIO INTERNO — NO ES NORMA.' });
+    api.knowledgeCriteria.mockResolvedValue({ data: [{ id: 'criterion-1', code: 'INT-QA-001', title: 'Revisión reforzada', content: 'Solicitar validación humana adicional.', scope: { kind: 'CRITERIO_INTERNO', jurisdiction: 'NAYARIT', act: 'COMPRAVENTA', source: 'Acuerdo interno', author: 'Dirección', review_status: 'REVISADO', approval_status: 'APROBADO', version: 1 }, active: true, created_at: '2026-09-26T12:00:00Z', updated_at: '2026-09-26T12:00:00Z' }], distinction: 'CRITERIO INTERNO — NO ES NORMA.' });
   });
 
   it('presenta un resumen conectado con sesiones, notificaciones y organización', async () => {
@@ -134,5 +134,28 @@ describe('Configuración, usuarios y accesos', () => {
     expect(screen.getByText('CRITERIO INTERNO — NO ES NORMA.')).toBeInTheDocument();
     expect(screen.getByText(/nunca sustituye una fuente jurídica oficial/i)).toBeInTheDocument();
     expect(api.knowledgeCriteria).toHaveBeenCalledTimes(1);
+  });
+
+  it('registra un arancel propio explícito, revisado y aprobado sin tratarlo como norma', async () => {
+    api.createKnowledgeCriterion.mockResolvedValue({ data: { id: 'criterion-2' } });
+    const user = userEvent.setup(); renderSettings('/configuracion/biblioteca-conocimiento');
+    await user.click(await screen.findByRole('button', { name: /CRITERIOS INTERNOS/ }));
+    await user.click(screen.getByRole('button', { name: 'Registrar criterio o arancel propio' }));
+    const dialog = screen.getByRole('dialog', { name: 'Registrar criterio interno' });
+    await user.type(screen.getByLabelText('Código'), 'ARI-QA-001');
+    await user.selectOptions(screen.getByLabelText('Tipo'), 'ARANCEL_PROPIO');
+    await user.type(screen.getByLabelText('Título'), 'Honorarios compraventa QA');
+    await user.type(screen.getByLabelText('Regla, tabla o fórmula'), 'Honorario fijo interno autorizado para la prueba.');
+    await user.type(screen.getByLabelText('Acto aplicable'), 'COMPRAVENTA');
+    await user.type(screen.getByLabelText('Fuente interna'), 'Acuerdo de Dirección QA');
+    await user.type(screen.getByLabelText('Autor / aprobador'), 'Dirección');
+    await user.type(screen.getByLabelText('Honorario fijo MXN'), '12500.00');
+    await user.selectOptions(screen.getByLabelText('Revisión'), 'REVISADO');
+    await user.selectOptions(screen.getByLabelText('Aprobación'), 'APROBADO');
+    await user.click(screen.getByRole('button', { name: 'Guardar versión' }));
+    await waitFor(() => expect(api.createKnowledgeCriterion).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'ARI-QA-001', scope: expect.objectContaining({ kind: 'ARANCEL_PROPIO', fixed_honorarium: '12500.00', review_status: 'REVISADO', approval_status: 'APROBADO' }),
+    })));
+    expect(dialog).not.toBeInTheDocument();
   });
 });

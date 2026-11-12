@@ -6,7 +6,7 @@ import { financeService } from '../features/finance/finance.service';
 import { comparecientesService } from '../features/comparecientes/comparecientes.service';
 
 vi.mock('../features/finance/finance.service', () => ({ financeService: {
-  fiscalIncomeContext: vi.fn(), fiscalEntities: vi.fn(), fiscalConcepts: vi.fn(), fiscalStatus: vi.fn(), fiscalUses: vi.fn(), fiscalRegimes: vi.fn(),
+  fiscalIncomeContext: vi.fn(), fiscalEntities: vi.fn(), fiscalConcepts: vi.fn(), fiscalStatus: vi.fn(), fiscalUses: vi.fn(), fiscalRegimes: vi.fn(), fiscalComprobanteCatalog: vi.fn(),
   createFiscalDraft: vi.fn(), updateFiscalDraft: vi.fn(), deleteFiscalDraft: vi.fn(), extractCsf: vi.fn(),
   confirmFiscalReceiver: vi.fn(),
   prefacturaVersions: vi.fn(), prefacturaVersionUrl: vi.fn(), generatePrefactura: vi.fn(),
@@ -40,6 +40,11 @@ describe('Generador contextual de prefacturas', () => {
       {clave:'612',descripcion:'Personas Físicas con Actividades Empresariales y Profesionales',tipo:'FISICA'},
       {clave:'626',descripcion:'Régimen Simplificado de Confianza',tipo:'AMBAS'},
     ]});
+    vi.mocked(financeService.fiscalComprobanteCatalog).mockResolvedValue({source:{archivo:'SAT_QA',sha256:'qa'},
+      formasPago:[{clave:'03',descripcion:'Transferencia electrónica de fondos'},{clave:'99',descripcion:'Por definir'}],
+      exportaciones:[{clave:'01',descripcion:'No aplica'}],monedasHabilitadas:[
+        {clave:'MXN',descripcion:'Peso Mexicano'},{clave:'USD',descripcion:'Dólar americano'},{clave:'CAD',descripcion:'Dólar Canadiense'},
+      ]});
     vi.mocked(financeService.prefacturaVersions).mockResolvedValue({ draft_id: 'draft-1', internal_folio: 'FAC-BOR-000001', versions: [] });
   });
 
@@ -67,6 +72,42 @@ describe('Generador contextual de prefacturas', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Guardar borrador' }));
     await waitFor(() => expect(financeService.createFiscalDraft).toHaveBeenCalledTimes(2));
     expect(vi.mocked(financeService.createFiscalDraft).mock.calls[1][0].idempotency_key).toBe(firstKey);
+  });
+
+  it('precarga y guarda una descripción particular sin editar el concepto fiscal maestro', async () => {
+    vi.mocked(financeService.createFiscalDraft).mockResolvedValue({ cfdi: { id: 'draft-description' } } as never);
+    const user = userEvent.setup();
+    render(<IncomeInvoiceGenerator incomeId="income-1" onClose={vi.fn()} onChanged={vi.fn()}/>);
+    const dialog = await screen.findByRole('dialog', { name: 'Generar factura CFDI' });
+    await user.selectOptions(within(dialog).getByLabelText('Uso CFDI'), 'G03');
+    await user.selectOptions(within(dialog).getByLabelText('Concepto 1'), 'concept-1');
+    const description = within(dialog).getByLabelText('Descripción para esta factura');
+    expect(description).toHaveValue('Honorarios QA');
+    await user.clear(description);
+    await user.type(description, 'EXP-001-2026 Honorarios');
+    await user.clear(within(dialog).getByLabelText('Valor unitario sin impuestos'));
+    await user.type(within(dialog).getByLabelText('Valor unitario sin impuestos'), '500');
+    await user.click(within(dialog).getByRole('button', { name: 'Guardar borrador' }));
+    await waitFor(() => expect(financeService.createFiscalDraft).toHaveBeenCalledWith(expect.objectContaining({
+      conceptos: [expect.objectContaining({ concepto_fiscal_id: 'concept-1', descripcion: 'EXP-001-2026 Honorarios' })],
+    })));
+    expect(vi.mocked(financeService.fiscalConcepts).mock.results.length).toBeGreaterThan(0);
+  });
+
+  it('permite corregir un perfil fiscal confirmado sin perder sus regímenes', async () => {
+    vi.mocked(financeService.confirmFiscalReceiver).mockResolvedValue({} as never);
+    const user = userEvent.setup();
+    render(<IncomeInvoiceGenerator incomeId="income-1" onClose={vi.fn()} onChanged={vi.fn()}/>);
+    const dialog = await screen.findByRole('dialog', { name: 'Generar factura CFDI' });
+    await user.click(within(dialog).getByRole('button', { name: 'Editar datos fiscales' }));
+    expect(within(dialog).getByLabelText('RFC')).toHaveValue('XAXX010101000');
+    expect(within(dialog).getByLabelText('CP fiscal')).toHaveValue('63735');
+    await user.clear(within(dialog).getByLabelText('CP fiscal'));
+    await user.type(within(dialog).getByLabelText('CP fiscal'), '63736');
+    await user.click(within(dialog).getByRole('button', { name: 'Guardar corrección fiscal' }));
+    await waitFor(() => expect(financeService.confirmFiscalReceiver).toHaveBeenCalledWith('income-1', 'party-1',
+      expect.objectContaining({ codigo_postal: '63736', regimen_fiscal: '612',
+        regimenes_fiscales: [{ clave: '612', descripcion: '' }] })));
   });
 
   it('conserva la CSF y distingue un fallo posterior de extracción', async () => {
@@ -187,5 +228,17 @@ describe('Generador contextual de prefacturas', () => {
     const dialog=await screen.findByRole('dialog',{name:'Generar factura CFDI'});
     expect(within(dialog).getByRole('button',{name:'Timbrar CFDI'})).toBeDisabled();
     expect(within(dialog).getByText('Timbrado no disponible: La operación de timbrado real aún no está implementada ni certificada.')).toBeVisible();
+  });
+  it('ofrece claves SAT en selectores y no admite forma de pago inexistente en la UI', async () => {
+    render(<IncomeInvoiceGenerator incomeId="income-1" onClose={vi.fn()} onChanged={vi.fn()}/>);
+    const dialog = await screen.findByRole('dialog', { name: 'Generar factura CFDI' });
+    const exportSelector = within(dialog).getByLabelText('Exportación SAT');
+    expect(within(exportSelector).getByRole('option', { name: '01 — No aplica' })).toBeInTheDocument();
+    expect(within(exportSelector).queryByRole('option', { name: /99/ })).not.toBeInTheDocument();
+    const formSelector = within(dialog).getByLabelText('Forma de pago SAT');
+    expect(formSelector).toBeDisabled();
+    expect(within(formSelector).getByRole('option', { name: '99 — Por definir' })).toBeInTheDocument();
+    expect(within(formSelector).queryByRole('option', { name: /07/ })).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Moneda')).toHaveValue('MXN');
   });
 });

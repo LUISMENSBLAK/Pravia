@@ -6,9 +6,13 @@ import { CfdiProviderUnavailableError, runtimeCfdiProvider, type CfdiProvider } 
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { FISCAL_UPLOAD_MAX_BYTES, uploadLimitLabel } from '../config/uploadLimits';
 import { cfdiIncomeBalance, RESERVING_CFDI_DRAFT_STATES } from '../domain/cfdiIncomeBalance';
-import { renderPrefacturaPdf, type PrefacturaSnapshot } from '../domain/prefacturaPdf';
+import type { PrefacturaSnapshot } from '../domain/prefacturaPdf';
+import { renderClientPrefacturaDocx, validateFiscalLogoImage, ClientInvoiceTemplateError } from './clientInvoiceTemplate.service';
+import { convertDocxToPdf } from './docxPdfConverter.service';
+import { formatNotarialAmount } from './projectGeneration.service';
 import { FiscalDocumentExtractionService, FiscalExtractionError } from './fiscalDocumentExtraction.service';
 import { SAT_CFDI_USES, SAT_FISCAL_REGIMES, SAT_FISCAL_REGIME_SOURCE, mapLiteralSatRegime, satCfdiUse, satCfdiUseCompatible, satRegime } from '../domain/satFiscalRegimes';
+import { SAT_COMPROBANTE_CATALOG_SOURCE, SAT_ENABLED_CURRENCIES, SAT_EXPORT_CODES, SAT_PAYMENT_FORMS, satEnabledCurrency, satExportCode, satPaymentForm } from '../domain/satCfdiComprobanteCatalog';
 
 type Database = PrismaClient;
 
@@ -38,8 +42,21 @@ const CP = /^\d{5}$/;
 const SECRET_REFERENCE = /^secret:\/\/[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+$/;
 const XML_MIME = new Set(['application/xml', 'text/xml', 'application/octet-stream']);
 const PDF_MIME = new Set(['application/pdf', 'application/octet-stream']);
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const FISCAL_STATES = new Set(['VIGENTE', 'TIMBRADO', 'CANCELACION_SOLICITADA', 'CANCELADO', 'SUSTITUIDO']);
 const RESERVING_DRAFT_STATES = RESERVING_CFDI_DRAFT_STATES;
+
+async function fiscalTemplateVersion(db: Database | Prisma.TransactionClient, organizationId: string, versionId: string) {
+  if (!UUID.test(versionId)) throw new FinanceFiscalError(400, 'CFDI_TEMPLATE_ID_INVALID', 'Selecciona una versión de plantilla válida.');
+  const version = await db.catalogoArtefactoVersion.findFirst({ where: {
+    id: versionId, organization_id: organizationId, activa: true,
+    artefacto: { organization_id: organizationId, tipo: 'PLANTILLA', propietario_tipo: 'ORGANIZACION', activo: true },
+  }, include: { artefacto: { select: { id: true, nombre: true } } } });
+  if (!version || !version.storage_key || version.mime_type !== DOCX_MIME || !version.checksum_sha256 || !version.size_bytes || version.size_bytes > 10 * 1024 * 1024) {
+    throw new FinanceFiscalError(422, 'CFDI_TEMPLATE_INVALID', 'La plantilla fiscal debe ser una versión Word activa, íntegra y privada de esta organización.');
+  }
+  return version;
+}
 
 function fiscalRegimeCodes(value: unknown, fallback: string): string[] {
   if (!Array.isArray(value)) return fallback ? [fallback] : [];
@@ -57,10 +74,27 @@ export function validateUseCfdi(useCode: string, receiverRegime: string, receive
   }
 }
 
+export function validatePaymentForm(form: string) {
+  if (form && !satPaymentForm(form)) {
+    throw new FinanceFiscalError(422, 'CFDI_PAYMENT_FORM_INVALID', 'Selecciona una forma de pago del catálogo SAT.');
+  }
+}
+
 function required(value: unknown, field: string) {
   const result = clean(value);
   if (!result) throw new FinanceFiscalError(400, 'CFDI_REQUIRED_FIELD', `${field} es obligatorio.`);
   return result;
+}
+
+export function invoiceLineDescription(requested: unknown, configured: string) {
+  if (requested !== undefined && typeof requested !== 'string') {
+    throw new FinanceFiscalError(400, 'CFDI_LINE_DESCRIPTION_INVALID', 'La descripción de esta factura debe ser texto.');
+  }
+  const description = requested === undefined ? configured.trim() : clean(requested);
+  if (!description || description.length > 1000) {
+    throw new FinanceFiscalError(400, 'CFDI_LINE_DESCRIPTION_INVALID', 'La descripción de esta factura debe tener entre 1 y 1000 caracteres.');
+  }
+  return description;
 }
 
 function rfc(value: unknown, field = 'RFC', status = 400) {
@@ -81,18 +115,20 @@ export function draftFiscalDetails(input: Record<string, unknown>, previous: Rec
     ? previous.fiscal_comprobante as Record<string, unknown> : {};
   const value = (key: string) => input[key] === undefined ? prior[key] : input[key];
   const moneda = upper(input.moneda === undefined ? previous.moneda || 'MXN' : input.moneda);
-  if (!/^[A-Z]{3}$/.test(moneda)) throw new FinanceFiscalError(400, 'CFDI_CURRENCY_INVALID', 'La moneda debe tener una clave ISO de tres letras.');
+  if (!satEnabledCurrency(moneda)) throw new FinanceFiscalError(400, 'CFDI_CURRENCY_INVALID', 'Selecciona una moneda habilitada del catálogo SAT.');
   const tipoCambio = clean(value('tipo_cambio'));
   if (tipoCambio && (!/^\d+(?:\.\d{1,6})?$/.test(tipoCambio) || new Prisma.Decimal(tipoCambio).lessThanOrEqualTo(0))) {
     throw new FinanceFiscalError(400, 'CFDI_EXCHANGE_RATE_INVALID', 'El tipo de cambio debe ser positivo y tener máximo seis decimales.');
   }
   if (moneda !== 'MXN' && !tipoCambio && !allowIncomplete) throw new FinanceFiscalError(400, 'CFDI_EXCHANGE_RATE_REQUIRED', 'Confirma el tipo de cambio para una moneda distinta de MXN.');
   const exportacion = clean(value('exportacion'));
-  if (exportacion && !/^\d{2}$/.test(exportacion)) throw new FinanceFiscalError(400, 'CFDI_EXPORT_INVALID', 'La exportación debe utilizar una clave SAT de dos dígitos.');
+  if (exportacion && !satExportCode(exportacion)) throw new FinanceFiscalError(400, 'CFDI_EXPORT_INVALID', 'Selecciona una clave de exportación vigente en el catálogo SAT.');
   const lugarExpedicion = clean(value('lugar_expedicion'));
   if (lugarExpedicion && !CP.test(lugarExpedicion)) throw new FinanceFiscalError(400, 'CFDI_ISSUE_PLACE_INVALID', 'El lugar de expedición debe ser un código postal de cinco dígitos.');
   const condiciones = clean(value('condiciones_pago'));
-  if (condiciones.length > 300) throw new FinanceFiscalError(400, 'CFDI_PAYMENT_TERMS_INVALID', 'Las condiciones de pago no pueden superar 300 caracteres.');
+  if (input.condiciones_pago !== undefined && condiciones && !['CONTADO', 'CREDITO'].includes(condiciones)) {
+    throw new FinanceFiscalError(400, 'CFDI_PAYMENT_TERMS_INVALID', 'Selecciona CONTADO o CREDITO como condición de pago.');
+  }
   return { moneda, fiscal_comprobante: { tipo_cambio: tipoCambio || null, exportacion: exportacion || null,
     lugar_expedicion: lugarExpedicion || null, condiciones_pago: condiciones || null,
     regimen_emisor: clean(value('regimen_emisor')) || null } };
@@ -223,8 +259,10 @@ export function parseCfdi40Xml(buffer: Buffer): ParsedCfdiXml {
 
 function safeFileName(name: string) { return clean(name).normalize('NFKD').replace(/[^A-Za-z0-9._-]+/g, '_').slice(-180) || 'archivo'; }
 function correlation(value?: string) { return value && UUID.test(value) ? value : null; }
-function audit(tx: Prisma.TransactionClient, actor: FiscalActor, action: string, entity: string, entityId: string, values: Prisma.InputJsonValue, correlationId?: string) {
-  return tx.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: action, entidad: entity, entidad_id: entityId, valores_nuevos: values, correlation_id: correlation(correlationId) } });
+function audit(tx: Prisma.TransactionClient, actor: FiscalActor, action: string, entity: string, entityId: string, values: Prisma.InputJsonValue, correlationId?: string, previousValues?: Prisma.InputJsonValue) {
+  return tx.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: action, entidad: entity, entidad_id: entityId,
+    valores_nuevos: values, ...(previousValues === undefined ? {} : { valores_anteriores: previousValues }),
+    correlation_id: correlation(correlationId) } });
 }
 
 async function storeCanonicalDocument(tx: Prisma.TransactionClient, actor: FiscalActor, file: UploadedFiscalFile, storageKey: string, kind: 'CFDI_XML' | 'CFDI_PDF' | 'CONSTANCIA_FISCAL', expedienteId?: string | null) {
@@ -265,7 +303,7 @@ export class FinanceFiscalService {
       subtotal = subtotal.plus(calculated.subtotal);
       transferred = transferred.plus(calculated.iva);
       retained = retained.plus(calculated.ivaRetention).plus(calculated.isrRetention);
-      return { concepto_fiscal_id: config.id, descripcion: config.descripcion,
+      return { concepto_fiscal_id: config.id, descripcion: invoiceLineDescription(requested.descripcion, config.descripcion),
         clave_prod_serv: config.clave_prod_serv, clave_unidad: config.clave_unidad,
         objeto_impuesto: config.objeto_impuesto, cantidad: calculated.quantity.toString(),
         valor_unitario: calculated.unitPrice.toFixed(2), subtotal: calculated.subtotal.toFixed(2),
@@ -287,6 +325,11 @@ export class FinanceFiscalService {
 
   fiscalUses() {
     return { source: SAT_FISCAL_REGIME_SOURCE, complete: true, items: SAT_CFDI_USES };
+  }
+
+  fiscalComprobanteCatalog() {
+    return { source: SAT_COMPROBANTE_CATALOG_SOURCE, formasPago: SAT_PAYMENT_FORMS,
+      exportaciones: SAT_EXPORT_CODES, monedasHabilitadas: SAT_ENABLED_CURRENCIES };
   }
 
   private async pendingEntityCsf(actor: FiscalActor, documentId: string) {
@@ -375,8 +418,23 @@ export class FinanceFiscalService {
     return rows.map((row) => publicEntity(row as unknown as Record<string, unknown>));
   }
 
+  async listInvoiceTemplates(actor: FiscalActor) {
+    const versions = await this.db.catalogoArtefactoVersion.findMany({ where: {
+      organization_id: actor.organizationId, activa: true, mime_type: DOCX_MIME,
+      storage_key: { not: null }, checksum_sha256: { not: null }, size_bytes: { gt: 0, lte: 10 * 1024 * 1024 },
+      artefacto: { organization_id: actor.organizationId, tipo: 'PLANTILLA', propietario_tipo: 'ORGANIZACION', activo: true },
+    }, select: { id: true, version: true, nombre_original: true, checksum_sha256: true,
+      artefacto: { select: { id: true, nombre: true } } }, orderBy: [{ created_at: 'desc' }], take: 100 });
+    return versions.map((version) => ({ id: version.id, version: version.version, nombre: version.artefacto.nombre,
+      nombre_original: version.nombre_original, checksum_sha256: version.checksum_sha256 }));
+  }
+
   async createEntity(actor: FiscalActor, input: Record<string, unknown>, correlationId?: string) {
     ensureNoRawSecrets(input);
+    if (clean(input.plantilla_id) && !actor.permissions.includes('configuracion.plantillas_formatos.manage')) {
+      throw new FinanceFiscalError(403, 'CFDI_TEMPLATE_MANAGE_DENIED', 'No tienes permiso para asignar el machote fiscal.');
+    }
+    if (clean(input.plantilla_id)) await fiscalTemplateVersion(this.db, actor.organizationId, clean(input.plantilla_id));
     const csfDocumentId = clean(input.csf_documento_id);
     const manualReason = clean(input.manual_exception_reason);
     if (csfDocumentId && !UUID.test(csfDocumentId)) throw new FinanceFiscalError(400, 'CFDI_CSF_ID_INVALID', 'La referencia de constancia no es válida.');
@@ -587,6 +645,10 @@ export class FinanceFiscalService {
 
   async updateEntity(actor: FiscalActor, id: string, input: Record<string, unknown>, correlationId?: string) {
     ensureNoRawSecrets(input);
+    if (input.plantilla_id !== undefined && !actor.permissions.includes('configuracion.plantillas_formatos.manage')) {
+      throw new FinanceFiscalError(403, 'CFDI_TEMPLATE_MANAGE_DENIED', 'No tienes permiso para modificar el machote fiscal.');
+    }
+    if (clean(input.plantilla_id)) await fiscalTemplateVersion(this.db, actor.organizationId, clean(input.plantilla_id));
     const existing = await this.db.entidadFiscalCfdi.findFirst({ where: { id, organization_id: actor.organizationId } });
     if (!existing) throw new FinanceFiscalError(404, 'CFDI_ENTITY_NOT_FOUND', 'Entidad fiscal no encontrada.');
     const updated = await this.db.$transaction(async (tx) => {
@@ -601,6 +663,59 @@ export class FinanceFiscalService {
       return row;
     });
     return publicEntity(updated as unknown as Record<string, unknown>);
+  }
+
+  async entityLogoUrl(actor: FiscalActor, id: string) {
+    if (!actor.permissions.includes('documentos.read')) throw new FinanceFiscalError(403, 'CFDI_LOGO_READ_DENIED', 'No tienes permiso para ver el logotipo.');
+    const entity = await this.db.entidadFiscalCfdi.findFirst({ where: { id, organization_id: actor.organizationId },
+      include: { logoDocumento: true } });
+    if (!entity) throw new FinanceFiscalError(404, 'CFDI_ENTITY_NOT_FOUND', 'Entidad fiscal no encontrada.');
+    if (!entity.logoDocumento) return null;
+    return { url: await getSignedUrl(entity.logoDocumento.storage_key, 300), filename: entity.logoDocumento.nombre_original,
+      mimeType: entity.logoDocumento.mime_type, sha256: entity.logoDocumento.checksum_sha256,
+      sizeBytes: entity.logoDocumento.size_bytes, documentId: entity.logoDocumento.id };
+  }
+
+  async uploadEntityLogo(actor: FiscalActor, id: string, file: UploadedFiscalFile, correlationId?: string) {
+    if (!actor.permissions.includes('finanzas.validate') || !actor.permissions.includes('documentos.write')) {
+      throw new FinanceFiscalError(403, 'CFDI_LOGO_WRITE_DENIED', 'No tienes permiso para modificar el logotipo fiscal.');
+    }
+    try { await validateFiscalLogoImage(file.buffer, file.mimetype); }
+    catch (error) {
+      if (error instanceof ClientInvoiceTemplateError) throw new FinanceFiscalError(400, error.code, error.message);
+      throw error;
+    }
+    const entity = await this.db.entidadFiscalCfdi.findFirst({ where: { id, organization_id: actor.organizationId }, select: { id: true, logo_documento_id: true } });
+    if (!entity) throw new FinanceFiscalError(404, 'CFDI_ENTITY_NOT_FOUND', 'Entidad fiscal no encontrada.');
+    const sha = createHash('sha256').update(file.buffer).digest('hex');
+    const ext = file.mimetype === 'image/png' ? 'png' : 'jpg';
+    const key = `organizations/${actor.organizationId}/fiscal/entity-logos/${id}/${randomUUID()}.${ext}`;
+    await uploadFile(file.buffer, key, file.mimetype);
+    try {
+      return await this.db.$transaction(async (tx) => {
+        const document = await tx.documento.create({ data: { organization_id: actor.organizationId,
+          nombre_original: `logo-${id}.${ext}`, nombre_interno: key, storage_key: key, tipo: 'LOGO_ENTIDAD_FISCAL',
+          categoria: 'OTROS', mime_type: file.mimetype, size_bytes: file.buffer.length,
+          checksum_sha256: sha, subido_por_id: actor.id, estatus: 'VIGENTE' } });
+        await tx.entidadFiscalCfdi.update({ where: { id }, data: { logo_documento_id: document.id } });
+        await audit(tx, actor, 'UPDATE_FISCAL_ENTITY_LOGO', 'EntidadFiscalCfdi', id,
+          { previous_document_id: entity.logo_documento_id, document_id: document.id, sha256: sha }, correlationId);
+        return { documentId: document.id, sha256: sha, sizeBytes: file.buffer.length };
+      });
+    } catch (error) { await deleteFile(key).catch(() => undefined); throw error; }
+  }
+
+  async removeEntityLogo(actor: FiscalActor, id: string, correlationId?: string) {
+    if (!actor.permissions.includes('finanzas.validate') || !actor.permissions.includes('documentos.write')) throw new FinanceFiscalError(403, 'CFDI_LOGO_WRITE_DENIED', 'No tienes permiso para modificar el logotipo fiscal.');
+    return this.db.$transaction(async (tx) => {
+      const entity = await tx.entidadFiscalCfdi.findFirst({ where: { id, organization_id: actor.organizationId }, select: { id: true, logo_documento_id: true } });
+      if (!entity) throw new FinanceFiscalError(404, 'CFDI_ENTITY_NOT_FOUND', 'Entidad fiscal no encontrada.');
+      if (!entity.logo_documento_id) return { removed: false };
+      await tx.entidadFiscalCfdi.update({ where: { id }, data: { logo_documento_id: null } });
+      await audit(tx, actor, 'REMOVE_FISCAL_ENTITY_LOGO', 'EntidadFiscalCfdi', id,
+        { previous_document_id: entity.logo_documento_id }, correlationId);
+      return { removed: true };
+    });
   }
 
   async listFiscalConcepts(actor: FiscalActor, entityId?: string) {
@@ -935,8 +1050,11 @@ export class FinanceFiscalService {
       if (canonicalRfc && upper(canonicalRfc) !== fiscalRfc) throw new FinanceFiscalError(409, 'CFDI_RFC_CONFLICT', 'El RFC confirmado difiere del RFC canónico del compareciente; corrige primero su ficha.');
       const priorProfile = await tx.comparecienteFiscalProfile.findFirst({ where: {
         organization_id: actor.organizationId, compareciente_id: comparecienteId,
-      }, select: { csf_extraction: true, regimen_fiscal: true, regimenes_fiscales: true } });
-      if (receivedRegimes === undefined && priorProfile) {
+      }, select: { rfc: true, razon_social: true, codigo_postal: true, regimen_fiscal: true,
+        regimenes_fiscales: true, csf_documento_id: true, version: true, csf_extraction: true } });
+      // Editing one fiscal field must not silently remove other previously
+      // confirmed regimes from the shared receiver profile.
+      if (priorProfile) {
         const previousCodes = fiscalRegimeCodes(priorProfile.regimenes_fiscales, priorProfile.regimen_fiscal);
         for (const code of previousCodes) if (!regimes.some((item) => item.clave === code)) {
           regimes.push({ clave: code, descripcion: '' });
@@ -994,7 +1112,14 @@ export class FinanceFiscalService {
         { compareciente_id: comparecienteId, expediente_id: income.expediente_id, profile_version: profile.version,
           regimenes_confirmados: regimes.map((item) => item.clave), csf_sha256: actualExtraction?.sha256 || null,
           csf_source: actualExtraction?.source || null, csf_extraction_auto_applied: false,
-          canonical_identity_modified: false }, correlationId);
+          canonical_identity_modified: false,
+          fiscal_profile: { rfc: profile.rfc, razon_social: profile.razon_social, codigo_postal: profile.codigo_postal,
+            regimen_fiscal: profile.regimen_fiscal, regimenes_fiscales: regimes.map((item) => item.clave),
+            csf_documento_id: profile.csf_documento_id, version: profile.version } }, correlationId,
+        { fiscal_profile: priorProfile ? { rfc: priorProfile.rfc, razon_social: priorProfile.razon_social,
+          codigo_postal: priorProfile.codigo_postal, regimen_fiscal: priorProfile.regimen_fiscal,
+          regimenes_fiscales: fiscalRegimeCodes(priorProfile.regimenes_fiscales, priorProfile.regimen_fiscal),
+          csf_documento_id: priorProfile.csf_documento_id, version: priorProfile.version } : null });
       return profile;
     });
   }
@@ -1010,6 +1135,7 @@ export class FinanceFiscalService {
     if (incomeId && (direction !== 'EMITIDO' || type !== 'I')) throw new FinanceFiscalError(400, 'CFDI_INCOME_TYPE_INVALID', 'Un ingreso sólo puede generar una prefactura emitida de tipo ingreso.');
     const method = upper(input.metodo_pago);
     if (method && method !== 'PUE' && method !== 'PPD') throw new FinanceFiscalError(400, 'CFDI_PAYMENT_METHOD_INVALID', 'Selecciona PUE o PPD.');
+    validatePaymentForm(clean(input.forma_pago));
     const subtotal = decimal(input.subtotal ?? (incompleteRequested ? '0.00' : undefined), 'Subtotal', true);
     const transferred = decimal(input.impuestos_trasladados || 0, 'Impuestos trasladados', true);
     const retained = decimal(input.impuestos_retenidos || 0, 'Impuestos retenidos', true);
@@ -1138,6 +1264,7 @@ export class FinanceFiscalService {
       throw new FinanceFiscalError(409, 'CFDI_DRAFT_BELOW_PAID', 'El borrador no puede quedar por debajo de los pagos ya aplicados.');
     }
     const details = draftFiscalDetails(input, { ...savedPayload, moneda: existing.moneda }, !existing.ingreso_reportado_id || incomeIncomplete);
+    validatePaymentForm(clean(input.forma_pago === undefined ? existing.forma_pago : input.forma_pago));
     return this.db.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:cfdi-draft-id:${actor.organizationId}:${id}`}))`);
       const current = await tx.documentoCfdi.findFirst({ where: { id, organization_id: actor.organizationId },
@@ -1187,6 +1314,7 @@ export class FinanceFiscalService {
         const saved = savedPayload;
         const requestedLines = input.conceptos !== undefined ? input.conceptos : Array.isArray(saved.concepts)
           ? saved.concepts.map((line) => ({ concepto_fiscal_id: (line as Record<string, unknown>).concepto_fiscal_id,
+            descripcion: (line as Record<string, unknown>).descripcion,
             cantidad: (line as Record<string, unknown>).cantidad, valor_unitario: (line as Record<string, unknown>).valor_unitario })) : [];
         if (incomeIncomplete) {
           if (!subtotal.equals(0) || !transferred.equals(0) || !retained.equals(0) ||
@@ -1320,7 +1448,7 @@ export class FinanceFiscalService {
           select: { id: true, version: true, pdf_sha256: true, size_bytes: true, documento: { select: { nombre_original: true } } } });
         if (duplicate) return { representation: duplicate, idempotent: true };
         const draft = await tx.documentoCfdi.findFirst({ where: { id: cfdiId, organization_id: actor.organizationId },
-          include: { entidadFiscal: true, prefacturaRepresentaciones: { select: { version: true }, orderBy: { version: 'desc' }, take: 1 } } });
+          include: { entidadFiscal: { include: { logoDocumento: true } }, prefacturaRepresentaciones: { select: { version: true }, orderBy: { version: 'desc' }, take: 1 } } });
         if (!draft || draft.source !== 'LOCAL_DRAFT') throw new FinanceFiscalError(404, 'CFDI_DRAFT_NOT_FOUND', 'Borrador no encontrado.');
         if (!RESERVING_DRAFT_STATES.has(draft.estado)) throw new FinanceFiscalError(409, 'CFDI_FISCAL_IMMUTABLE', 'El documento ya no es un borrador editable.');
         await this.assertDraftExpedienteAccess(tx, actor, draft.expediente_id);
@@ -1351,11 +1479,23 @@ export class FinanceFiscalService {
           description: clean(item.descripcion), product_code: clean(item.clave_prod_serv), unit_code: clean(item.clave_unidad),
           quantity: clean(item.cantidad), unit_price: clean(item.valor_unitario), subtotal: clean(item.subtotal),
           transferred: clean(item.iva || '0.00'), retained: new Prisma.Decimal(clean(item.iva_retencion || '0')).plus(clean(item.isr_retencion || '0')).toFixed(2), total: clean(item.total),
+          discount: clean(item.descuento) || null, tax_object: clean(item.objeto_impuesto) || null,
+          identification: clean(item.no_identificacion) || null,
         }));
         if (normalizedConcepts.some((item) => !item.description || !item.product_code || !item.unit_code || !item.quantity || !item.unit_price || !item.subtotal || !item.total)) {
           throw new FinanceFiscalError(409, 'CFDI_PDF_CONCEPTS_INCOMPLETE', 'Los conceptos fiscales del borrador están incompletos. Revísalos antes de generar.');
         }
         const fx = clean(fiscal.tipo_cambio) || null;
+        const amountWords = formatNotarialAmount(draft.total.toFixed(2))?.words || null;
+        const invoiceAmountWords = amountWords && draft.moneda === 'USD'
+          ? amountWords.replace(/PESOS|PESO/, (word) => word === 'PESO' ? 'DÓLAR' : 'DÓLARES').replace('M.N.', 'USD')
+          : amountWords && draft.moneda === 'CAD'
+            ? amountWords.replace(/PESOS|PESO/, (word) => word === 'PESO' ? 'DÓLAR CANADIENSE' : 'DÓLARES CANADIENSES').replace('M.N.', 'CAD')
+            : amountWords;
+        const expedienteReference = draft.expediente_id ? await tx.expediente.findFirst({
+          where: { id: draft.expediente_id, organization_id: actor.organizationId },
+          select: { numero_pravia: true },
+        }) : null;
         const snapshot: PrefacturaSnapshot = {
           folio, version, generated_at: new Date().toISOString(),
           emitter: { name: draft.emisor_nombre, rfc: draft.emisor_rfc, regimen: emitterRegime, postal_code: draft.entidadFiscal?.codigo_postal || '' },
@@ -1363,9 +1503,43 @@ export class FinanceFiscalService {
           currency: draft.moneda, exchange_rate: fx, equivalent_mxn: fx ? draft.total.mul(new Prisma.Decimal(fx)).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).toFixed(2) : null,
           payment: { method: draft.metodo_pago!, form: draft.forma_pago!, terms: clean(fiscal.condiciones_pago) || null },
           export_code: clean(fiscal.exportacion) || null, issue_place: clean(fiscal.lugar_expedicion), concepts: normalizedConcepts,
+          total_in_words: invoiceAmountWords, expediente_reference: expedienteReference?.numero_pravia || null,
           amounts: { subtotal: draft.subtotal.toFixed(2), transferred: draft.impuestos_trasladados.toFixed(2), retained: draft.impuestos_retenidos.toFixed(2), total: draft.total.toFixed(2) },
         };
-        const pdf = await renderPrefacturaPdf(snapshot);
+        const orgLogo = draft.entidadFiscal?.logoDocumento ? null : await tx.organization.findFirst({
+          where: { id: actor.organizationId }, select: { logo_storage_key: true } });
+        const logoSource = draft.entidadFiscal?.logoDocumento;
+        const logoKey = logoSource?.storage_key || orgLogo?.logo_storage_key || null;
+        let logo: { bytes: Buffer; mimeType: string } | undefined;
+        if (logoKey) {
+          const bytes = await downloadFile(logoKey);
+          const mimeType = logoSource?.mime_type || (bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) ? 'image/png' : 'image/jpeg');
+          await validateFiscalLogoImage(bytes, mimeType);
+          const logoSha = createHash('sha256').update(bytes).digest('hex');
+          if (logoSource?.checksum_sha256 && logoSource.checksum_sha256 !== logoSha) throw new FinanceFiscalError(409, 'CFDI_LOGO_CHANGED', 'El logotipo cambió desde que se configuró.');
+          snapshot.logo = { source: logoSource ? 'ENTITY' : 'ORGANIZATION', sha256: logoSha,
+            document_id: logoSource?.id || null };
+          logo = { bytes, mimeType };
+        }
+        const selectedTemplate = draft.entidadFiscal!.plantilla_id
+          ? await fiscalTemplateVersion(tx, actor.organizationId, draft.entidadFiscal!.plantilla_id) : null;
+        let sourceDocx: Buffer | undefined;
+        if (selectedTemplate) {
+          try { sourceDocx = await downloadFile(selectedTemplate.storage_key!); }
+          catch { throw new FinanceFiscalError(409, 'CFDI_TEMPLATE_SOURCE_UNAVAILABLE', 'La versión configurada del machote no está disponible.'); }
+          if (sourceDocx.length !== selectedTemplate.size_bytes || createHash('sha256').update(sourceDocx).digest('hex') !== selectedTemplate.checksum_sha256) {
+            throw new FinanceFiscalError(409, 'CFDI_TEMPLATE_SOURCE_CHANGED', 'La versión configurada del machote no coincide con su tamaño y SHA registrados.');
+          }
+        }
+        let rendered: Awaited<ReturnType<typeof renderClientPrefacturaDocx>>;
+        try { rendered = await renderClientPrefacturaDocx(snapshot, logo, sourceDocx); }
+        catch (error) {
+          if (error instanceof ClientInvoiceTemplateError) throw new FinanceFiscalError(409, error.code, error.message);
+          throw error;
+        }
+        const pdf = await convertDocxToPdf(rendered.bytes);
+        snapshot.template = { source: selectedTemplate ? `CFG-002:${selectedTemplate.artefacto.id}:V${selectedTemplate.version}` : 'Factura_PRAVIA.docx',
+          sha256: rendered.templateSha256, mode: 'PREFACTURA', version_id: selectedTemplate?.id || null };
         if (pdf.subarray(0, 5).toString('latin1') !== '%PDF-') throw new FinanceFiscalError(500, 'CFDI_PDF_RENDER_INVALID', 'El generador no produjo un PDF válido.');
         const name = `${folio}-v${version}.pdf`;
         const key = `organizations/${actor.organizationId}/fiscal/prefacturas/${cfdiId}/v${version}_${randomUUID()}.pdf`;
@@ -1380,13 +1554,14 @@ export class FinanceFiscalService {
         const representation = await tx.prefacturaRepresentacion.create({ data: { organization_id: actor.organizationId,
           cfdi_id: draft.id, documento_id: document.id, version, idempotency_key: idempotencyKey,
           snapshot: snapshot as unknown as Prisma.InputJsonValue, snapshot_sha256: snapshotHash, pdf_sha256: pdfHash,
+          generator: 'CLIENT_FACTURA_PRAVIA_DOCX_V1',
           size_bytes: pdf.length, created_by_id: actor.id },
           select: { id: true, version: true, pdf_sha256: true, size_bytes: true, documento: { select: { nombre_original: true } } } });
         await tx.documentoCfdi.update({ where: { id: draft.id }, data: { internal_folio: folio, estado: 'PREFACTURA', pdf_documento_id: document.id } });
         await audit(tx, actor, 'GENERATE_PREFACTURA_PDF', 'PrefacturaRepresentacion', representation.id,
           { cfdi_id: draft.id, version, document_id: document.id, pdf_sha256: pdfHash, size_bytes: pdf.length, pac_invoked: false }, correlationId);
         return { representation, idempotent: false };
-      }, { timeout: 30000 });
+      }, { timeout: 60000 });
     } catch (error) {
       if (uploadedKey) await deleteFile(uploadedKey).catch(() => undefined);
       throw error;

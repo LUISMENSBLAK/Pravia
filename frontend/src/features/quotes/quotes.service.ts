@@ -58,6 +58,12 @@ export const quotesService = {
   async generateDocument(id: string): Promise<QuoteDocument> {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/generar-documento`, { method: 'POST' });
   },
+  async generateDocumentPdf(id: string, documentId: string): Promise<QuoteDocument> {
+    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/documentos/${encodeURIComponent(documentId)}/generar-pdf`, { method: 'POST' });
+  },
+  async updateOperationTerritory(id: string, operationTerritory: { jurisdiction: string; state: string; municipality: string | null; confirm: true } | null, expectedUpdatedAt: string): Promise<unknown> {
+    return apiRequest(`/cotizaciones/${id}/presupuesto`, { method: 'PUT', body: JSON.stringify({ operationTerritory, expectedUpdatedAt }) });
+  },
   async updateBudget(id: string, input: { concepts: Array<Pick<QuoteBudgetConcept, 'categoria' | 'concepto' | 'importe' | 'tratamiento_iva' | 'iva_tasa' | 'regla_fiscal_fuente' | 'regla_fiscal_version'>>; origin: 'MANUAL' | 'IMPORTADO'; operationContext: string; expectedUpdatedAt: string }): Promise<{ presupuesto: QuoteBudget; updated_at: string; stage: string | null }> {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/presupuesto`, { method: 'PUT', body: JSON.stringify(input) });
   },
@@ -95,9 +101,12 @@ export const quotesService = {
   async createExpedienteSeries(code: string): Promise<{ code: string }> {
     return apiRequest('/cotizaciones/expediente-series', { method: 'POST', body: JSON.stringify({ code }) });
   },
-  async convert(id: string, input?: { expectedVersion?: number; idempotencyKey?: string; confirm?: true; effectiveAt?: string; tipoActoId?: string; folioSeries?: string; solicitanteCaracterPorActo?: Record<string, string | null> }): Promise<{ id: string; numero_pravia?: string; idempotent?: boolean }> {
-    const { tipoActoId, folioSeries, solicitanteCaracterPorActo, ...contract } = input ?? {};
-    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/convertir`, { method: 'POST', body: JSON.stringify({ ...contract, ...(tipoActoId ? { tipo_acto_id: tipoActoId } : {}), ...(folioSeries ? { folio_serie: folioSeries } : {}), ...(solicitanteCaracterPorActo ? { solicitante_caracter_por_acto: solicitanteCaracterPorActo } : {}) }) });
+  async expedienteResponsibles(id: string): Promise<Array<{ id: string; nombre: string; apellido?: string | null }>> {
+    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/responsables-expediente`);
+  },
+  async convert(id: string, input?: { expectedVersion?: number; idempotencyKey?: string; confirm?: true; effectiveAt?: string; tipoActoId?: string; abogadoId?: string; folioSeries?: string; solicitanteCaracterPorActo?: Record<string, string | null> }): Promise<{ id: string; numero_pravia?: string; idempotent?: boolean }> {
+    const { tipoActoId, abogadoId, folioSeries, solicitanteCaracterPorActo, ...contract } = input ?? {};
+    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/convertir`, { method: 'POST', body: JSON.stringify({ ...contract, ...(tipoActoId ? { tipo_acto_id: tipoActoId } : {}), ...(abogadoId ? { abogado_id: abogadoId } : {}), ...(folioSeries ? { folio_serie: folioSeries } : {}), ...(solicitanteCaracterPorActo ? { solicitante_caracter_por_acto: solicitanteCaracterPorActo } : {}) }) });
   },
   async documentUrl(documentId: string): Promise<string> {
     const payload = await apiRequest<{ url: string }>(`/documentos/${encodeURIComponent(documentId)}/url`);

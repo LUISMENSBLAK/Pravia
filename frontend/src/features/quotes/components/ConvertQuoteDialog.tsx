@@ -26,6 +26,20 @@ export function ConvertQuoteDialog({ quote, onClose, onDone }: { quote: Quote; o
   const [selectedSeries, setSelectedSeries] = useState('');
   const [newSeries, setNewSeries] = useState('');
   const [seriesError, setSeriesError] = useState('');
+  const [responsibles, setResponsibles] = useState<Array<{ id: string; nombre: string; apellido?: string | null }>>([]);
+  const [responsibleId, setResponsibleId] = useState('');
+  const [responsibleStatus, setResponsibleStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+
+  useEffect(() => {
+    let active = true;
+    void quotesService.expedienteResponsibles(quote.id).then((rows) => {
+      if (!active) return;
+      setResponsibles(rows);
+      setResponsibleId(rows.some((row) => row.id === quote.user_id) ? quote.user_id : '');
+      setResponsibleStatus('ready');
+    }).catch(() => { if (active) setResponsibleStatus('error'); });
+    return () => { active = false; };
+  }, [quote.id, quote.user_id]);
 
   useEffect(() => {
     void quotesService.expedienteSeries().then(setSeries).catch(() => setSeriesError('No pudimos cargar las series configuradas. Sólo está disponible la ordinaria.'));
@@ -73,6 +87,7 @@ export function ConvertQuoteDialog({ quote, onClose, onDone }: { quote: Quote; o
   const rolesConfirmed = !canonical || Boolean(quote.actos?.every((item) => applicantRoles[item.id]));
   const convert = async () => {
     if (!selectedActId) { setError('Selecciona el tipo de acto que tendrá el expediente.'); return; }
+    if (!responsibles.some((row) => row.id === responsibleId)) { setError('Selecciona un responsable activo de esta Notaría.'); return; }
     if (!rolesConfirmed) { setError('Confirma la participación del solicitante formal en cada acto.'); return; }
     setSaving(true);
     setError('');
@@ -82,8 +97,9 @@ export function ConvertQuoteDialog({ quote, onClose, onDone }: { quote: Quote; o
       ]));
       onDone(await quotesService.convert(quote.id, canonical
         ? { expectedVersion: quote.workflow!.version, idempotencyKey: key, confirm: true,
-          effectiveAt: new Date(effectiveAt).toISOString(), tipoActoId: selectedActId, folioSeries: selectedSeries || undefined, solicitanteCaracterPorActo }
-        : { tipoActoId: selectedActId, folioSeries: selectedSeries || undefined }));
+          effectiveAt: new Date(effectiveAt).toISOString(), tipoActoId: selectedActId, abogadoId: responsibleId,
+          folioSeries: selectedSeries || undefined, solicitanteCaracterPorActo }
+        : { tipoActoId: selectedActId, abogadoId: responsibleId, folioSeries: selectedSeries || undefined }));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'No se pudo crear el expediente.');
       setSaving(false);
@@ -94,7 +110,7 @@ export function ConvertQuoteDialog({ quote, onClose, onDone }: { quote: Quote; o
 
   return <QuoteActionDialog title="Convertir a expediente" description="Se creará un expediente con todos los actos aceptados, sin aplicar movimientos financieros." onClose={onClose} footer={<>
     <button type="button" className={styles.secondaryButton} onClick={onClose}>Cancelar</button>
-    <button type="button" className={styles.primaryButton} disabled={saving || actsStatus !== 'ready' || !selectedActId || !rolesConfirmed || !quote.conversion?.eligible || (canonical && !effectiveAt)} onClick={convert}>
+    <button type="button" className={styles.primaryButton} disabled={saving || actsStatus !== 'ready' || responsibleStatus !== 'ready' || !responsibleId || !selectedActId || !rolesConfirmed || !quote.conversion?.eligible || (canonical && !effectiveAt)} onClick={convert}>
       {saving && <LoaderCircle className={styles.spin} size={17} />}Convertir en expediente
     </button>
   </>}>
@@ -103,8 +119,13 @@ export function ConvertQuoteDialog({ quote, onClose, onDone }: { quote: Quote; o
       <div><dt>Actos</dt><dd>{actTypes.length ? actTypes.map((item) => item.nombre).join(' · ') : quote.prospecto?.tipo_acto || 'Sin especificar'}</dd></div>
       <div><dt>Solicitante formal</dt><dd>{quote.solicitante_formal?.nombre_busqueda || 'Sin confirmar'}</dd></div>
       <div><dt>Cotización</dt><dd>{quote.numero_cotizacion || quote.numero_solicitud}</dd></div>
-      <div><dt>Responsable</dt><dd>{quote.creada_por?.nombre || 'Sin responsable visible'}</dd></div>
+      <div><dt>Responsable de cotización</dt><dd>{quote.creada_por?.nombre || 'Sin responsable visible'}</dd></div>
     </dl>
+    <label className={styles.confirmDate}><span>Responsable del expediente</span><select aria-label="Responsable del expediente" value={responsibleId} onChange={(event) => setResponsibleId(event.target.value)} disabled={responsibleStatus !== 'ready'}>
+      <option value="">{responsibleStatus === 'loading' ? 'Cargando responsables…' : 'Seleccionar responsable autorizado'}</option>
+      {responsibles.map((row) => <option key={row.id} value={row.id}>{[row.nombre, row.apellido].filter(Boolean).join(' ')}</option>)}
+    </select><small>Se conserva el responsable actual cuando está activo; puedes elegir otro de esta Notaría antes de confirmar.</small></label>
+    {responsibleStatus === 'error' && <p className={styles.formError} role="alert">No pudimos cargar responsables autorizados. Cierra y vuelve a intentar.</p>}
     <label className={styles.confirmDate}><span>Serie del expediente</span><select value={selectedSeries} onChange={(event) => setSelectedSeries(event.target.value)}>{series.map((item) => <option key={item.code || 'ordinary'} value={item.code}>{item.label}</option>)}</select><small>La serie ordinaria conserva el formato EXP-####-AAAA.</small></label>
     {['DIRECCION', 'ADMINISTRACION'].includes(user?.role ?? '') && <div className={styles.confirmDate}><label htmlFor="exp-new-series">Configurar nueva serie de expedientes</label><input id="exp-new-series" value={newSeries} maxLength={16} placeholder="ESP" onChange={(event) => setNewSeries(event.target.value.toUpperCase())} /><button type="button" className={styles.secondaryButton} onClick={() => void addSeries()}>Agregar serie</button></div>}
     {seriesError && <p className={styles.formError} role="alert">{seriesError}</p>}

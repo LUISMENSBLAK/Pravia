@@ -70,6 +70,7 @@ export type QuoteDocument = {
   fecha_carga?: string | null;
   origen_etiqueta?: string;
   can_delete?: boolean;
+  datos_extraidos?: { generation?: { pdf_status?: 'PENDING' | 'ERROR' | 'READY'; pdf_document_id?: string; pdf_error_code?: string; source_document_id?: string } } | null;
 };
 
 export type ConversionEligibility = {
@@ -123,6 +124,7 @@ export type Quote = {
   presupuesto?: QuoteBudget;
   propuestasIA?: QuoteAIProposal[];
   contexto_operacion?: string | null;
+  territorio_operacion?: { jurisdiction: string; state: string; municipality: string | null; confirmedById: string; confirmedAt: string } | null;
   correo_cc?: string | null;
   correo_asunto?: string | null;
   actos?: Array<{ id: string; tipo_acto_id: string; orden: number; confirmed_at?: string | null; tipo_acto: { id: string; nombre: string; codigo_catalogo?: string | null } }>;
