@@ -1,4 +1,4 @@
-import { apiConfig, apiUrl } from './config';
+import { apiConfig, apiUploadUrl, apiUrl } from './config';
 
 type TokenPayload = Record<string, unknown> | null;
 
@@ -182,9 +182,10 @@ export const apiRequest = async <T>(path: string, options: RequestOptions = {}):
   if (init.body && !(init.body instanceof FormData)) requestHeaders.set('Content-Type', 'application/json');
   if (token) requestHeaders.set('Authorization', `Bearer ${token}`);
 
-  const response = await fetchWithConnectionError(apiUrl(path), {
+  const requestUrl = init.body instanceof FormData ? apiUploadUrl(path) : apiUrl(path);
+  const response = await fetchWithConnectionError(requestUrl, {
     ...init,
-    credentials: 'include',
+    credentials: requestUrl === apiUrl(path) ? 'include' : 'omit',
     headers: requestHeaders,
   });
 
@@ -217,8 +218,9 @@ export const apiUploadWithProgress = async <T>(path: string, form: FormData,
   await preflightUploadSize(path, form);
   return new Promise<T>((resolve, reject) => {
     const request = new XMLHttpRequest();
-    request.open('POST', apiUrl(path));
-    request.withCredentials = true;
+    const requestUrl = apiUploadUrl(path);
+    request.open('POST', requestUrl);
+    request.withCredentials = requestUrl === apiUrl(path);
     request.setRequestHeader('Accept', 'application/json');
     const token = tokenStore.get();
     if (token) request.setRequestHeader('Authorization', `Bearer ${token}`);

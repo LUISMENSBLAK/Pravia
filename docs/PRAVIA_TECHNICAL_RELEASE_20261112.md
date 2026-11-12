@@ -34,3 +34,19 @@ Regresión del seguimiento: **2.388/2.388 backend**, incluyendo las conversiones
 - Las matrices integrales del cliente conservan sus pendientes. Publicar un entorno de prueba no convierte automáticamente 135 correcciones, FDR90, extracción universal o colaboración completa en PASS.
 - URLs existentes: [frontend](https://pravianetwork.netlify.app), [backend](https://pravia-api.onrender.com), [health](https://pravia-api.onrender.com/health).
 - La evidencia pública final y el SHA exacto se informarán tras CI y el rollout de este seguimiento. **READY FOR REAL CLIENT DATA: NO**.
+
+## Smoke público del seguimiento `ccc9ce9`
+
+- CI release y main: 4/4 PASS. Render `dep-dbqjovmc6qcc73fi7t50` Live; Netlify `6af53f5af36ae158b413a840` Published, después de reintento manual porque el build automático detectó que sólo cambiaban backend/docs. No se contrató nada.
+- Cinco usuarios sintéticos: login, organización, sesión tras renovación/reload, módulos, logout y denegaciones backend PASS. Roles persistidos: Javier/Alejandro/María `ABOGADO`, Adrián `DIRECCION`, Rosa `FINANCIERO`. La matriz sólo prueba esas acciones; no sustituye COL70 completo. El payload inválido devuelve 400 sin reiniciar el servicio; organización ajena denegada; ninguna respuesta 5xx en ese recorrido final.
+- Cotización QA creada por el flujo canónico: Word y PDF privados descargados con SHA coincidente; reintento devuelve el mismo PDF. Chrome abre Word maquetado y PDF, descarga ambos y los conserva después de reload. PostgreSQL confirma dos documentos de generación, uno de ellos PDF. La primera conversión superó la espera del proxy y devolvió 504; el resultado persistido se recuperó al reintentar, sin duplicado.
+- Prefactura central QA: borrador persistente, versiones PDF 1/2 conservadas, vista previa canvas Chrome y descarga con SHA PASS. Logo sintético cargado/persistido y materializado en v3, comprobado en los bytes renderizados; se restauró la configuración de logo vacía original sin eliminar versiones/documentos. PostgreSQL confirma tres versiones y auditoría del recorrido. Timbrado deshabilitado. Responsive sin overflow 1440/1366/1024/768/390/320.
+- Se inspeccionaron completamente los PDFs de cotización y prefactura generados en Render: tablas, importes, encabezado, logo y estado SIN VALIDEZ FISCAL sin recortes.
+
+## Remediación puntual del límite público de carga
+
+Una carga de 52.428.800 bytes por el proxy `/api` devolvió HTTP 400, cuerpo vacío y servidor Netlify, antes de entrar a la aplicación. El mismo archivo QA vía backend Render fue creado y leído del Storage privado con tamaño/SHA idénticos. Por tanto el bucket y backend permiten 50 MiB; la ruta proxy no lo demuestra.
+
+Se añade un destino multipart configurable al cliente API compartido (fetch y XHR/progreso). En producción Netlify se configura exclusivamente el Render existente; autenticación/refresh y JSON conservan el proxy original. La carga directa usa el Bearer canónico, omite cookies y mantiene preflight/tamaño, RBAC, tenant/object access y la misma API/Storage. No hay segundo backend ni cambio CORS: el origen Netlify ya estaba permitido explícitamente. Sin configuración adicional el comportamiento local permanece idéntico. Se prueban transporte, máximo exacto, exceso de un byte, progreso y renovación de token. No se declara la carga Chrome de 50 MiB PASS hasta publicarla y ejecutarla realmente.
+
+La validación de deploy también comprueba el destino multipart: HTTPS sin credenciales/parámetros ni localhost productivo; una preview no puede enviar archivos a la API productiva mientras su JSON apunta a staging. Regresión frontend del ajuste: **515/515 PASS**, 59 archivos; backend permanece sin cambios respecto a sus 2.388 pruebas aprobadas y vuelve a exigirse en CI del commit final.

@@ -2,6 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { validateFrontendDeployment } from '../config/deploymentGuard';
 
 describe('deployment guard del frontend', () => {
+  it('acepta cargas HTTPS al backend actual en producción, conservando /api para autenticación', () => {
+    expect(validateFrontendDeployment({ VITE_API_UPLOAD_BASE_URL: 'https://pravia-api.onrender.com/api' }, 'production')).toEqual([]);
+  });
+  it.each(['http://localhost:3001/api', 'https://user:password@example.test/api', 'not-a-url'])('rechaza un destino multipart inseguro: %s', (url) => {
+    expect(validateFrontendDeployment({ VITE_API_UPLOAD_BASE_URL: url }, 'production').length).toBeGreaterThan(0);
+  });
+  it('impide que una preview use la API staging pero envíe archivos a producción', () => {
+    expect(validateFrontendDeployment({ CONTEXT: 'deploy-preview', VITE_DEPLOY_ENV: 'staging',
+      VITE_API_BASE_URL: 'https://api.staging.example/api', VITE_EXPECTED_API_HOST: 'api.staging.example',
+      VITE_PRODUCTION_API_HOSTS: 'api.production.example', VITE_API_UPLOAD_BASE_URL: 'https://pravia-api.onrender.com/api' }, 'production'))
+      .toEqual(expect.arrayContaining([expect.stringMatching(/cargas staging/)]));
+  });
   it('permite same-origin y desarrollo local', () => {
     expect(validateFrontendDeployment({}, 'production')).toEqual([]);
     expect(validateFrontendDeployment({ VITE_API_BASE_URL: 'http://127.0.0.1:3001/api' }, 'development')).toEqual([]);

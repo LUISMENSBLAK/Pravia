@@ -1,0 +1,4 @@
+# Preserve the existing UI build settings and same-origin Auth/API proxy.
+# Only multipart file uploads go directly to the existing Render backend.
+[context.production.environment]
+  VITE_API_UPLOAD_BASE_URL = "https://pravia-api.onrender.com/api"

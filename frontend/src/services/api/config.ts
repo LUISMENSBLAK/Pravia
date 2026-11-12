@@ -2,6 +2,7 @@ const trimTrailingSlash = (value: string) => value.replace(/\/+$/, '');
 
 export const apiConfig = {
   baseUrl: trimTrailingSlash(import.meta.env.VITE_API_BASE_URL ?? '/api'),
+  uploadBaseUrl: trimTrailingSlash(import.meta.env.VITE_API_UPLOAD_BASE_URL ?? ''),
   loginPath: import.meta.env.VITE_AUTH_LOGIN_PATH ?? '/auth/login',
   refreshPath: import.meta.env.VITE_AUTH_REFRESH_PATH ?? '/auth/refresh',
   mePath: import.meta.env.VITE_AUTH_ME_PATH ?? '/auth/me',
@@ -19,3 +20,8 @@ export const apiUrl = (path: string) => {
   if (/^https?:\/\//i.test(path)) return path;
   return `${apiConfig.baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
 };
+
+// Large multipart bodies must not traverse a hosting proxy with a lower body
+// limit. Auth/session requests keep their existing same-origin cookie route.
+export const apiUploadUrl = (path: string) => apiConfig.uploadBaseUrl && !/^https?:\/\//i.test(path)
+  ? `${apiConfig.uploadBaseUrl}${path.startsWith('/') ? path : `/${path}`}` : apiUrl(path);

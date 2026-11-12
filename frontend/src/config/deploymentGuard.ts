@@ -21,6 +21,14 @@ export function validateFrontendDeployment(
   const netlifyContext = String(env.CONTEXT || '').trim().toLowerCase();
   const isNetlifyPreview = netlifyContext === 'deploy-preview' || netlifyContext === 'branch-deploy';
   const apiUrl = absoluteUrl(apiBase);
+  const uploadBase = String(env.VITE_API_UPLOAD_BASE_URL || '').trim();
+  const uploadUrl = absoluteUrl(uploadBase);
+  if (uploadBase && (!uploadUrl || uploadUrl.username || uploadUrl.password || uploadUrl.search || uploadUrl.hash)) {
+    errors.push('VITE_API_UPLOAD_BASE_URL debe ser una URL absoluta sin credenciales ni parámetros.');
+  }
+  if (viteMode === 'production' && uploadUrl && (uploadUrl.protocol !== 'https:' || localHosts.has(uploadUrl.hostname.toLowerCase()))) {
+    errors.push('VITE_API_UPLOAD_BASE_URL requiere HTTPS y no puede apuntar a localhost en producción.');
+  }
 
   if (viteMode === 'production' && apiUrl && localHosts.has(apiUrl.hostname.toLowerCase())) {
     errors.push('VITE_API_BASE_URL no puede apuntar a localhost en un build de producción.');
@@ -53,6 +61,9 @@ export function validateFrontendDeployment(
     }
     if (apiUrl && (knownProductionApiHosts.has(apiUrl.hostname.toLowerCase()) || productionHosts.includes(apiUrl.hostname.toLowerCase()))) {
       errors.push('Un deploy staging no puede apuntar a un host API de producción.');
+    }
+    if (uploadUrl && (uploadUrl.hostname.toLowerCase() !== expectedHost || knownProductionApiHosts.has(uploadUrl.hostname.toLowerCase()) || productionHosts.includes(uploadUrl.hostname.toLowerCase()))) {
+      errors.push('El destino de cargas staging debe coincidir con el host esperado y no puede ser producción.');
     }
   }
 
