@@ -9,7 +9,14 @@ let accessToken: string | null = null;
 const authChannel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('pravia.auth');
 const dataChannel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('pravia.data');
 
-type DataChangeDetail = { method: string; path: string; source: 'local' | 'broadcast' };
+type DataChangeDetail = { method: string; path: string; source: 'local' | 'broadcast'; scope?: string };
+
+/** Canonical writes performed behind the assistant endpoint invalidate their
+ * business domain, including other open tabs, not only the /ia transport. */
+export const notifyAssistantDataChange = (scope: string) => {
+  if (!/^[a-z][a-z0-9_-]{0,59}$/.test(scope)) return;
+  emitDataChange({ method: 'ACTION', path: `/${scope}`, scope, source: 'local' });
+};
 
 const emitDataChange = (detail: DataChangeDetail, broadcast = true) => {
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent<DataChangeDetail>('pravia:data-changed', { detail }));

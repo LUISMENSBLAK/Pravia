@@ -286,7 +286,12 @@ export class PrediosService {
       })));
       const succeeded = attempted.filter((entry): entry is PromiseFulfilledResult<{ link: typeof links[number]; result: Awaited<ReturnType<typeof extraerPredioDesdeDocumento>> }> => entry.status === 'fulfilled').map((entry) => entry.value);
       const extractionErrors = attempted.flatMap((entry, index) => entry.status === 'rejected' ? [{ documento_id: links[index].documento_id, nombre: links[index].documento.nombre_original, error: entry.reason instanceof Error ? entry.reason.message : 'No fue posible procesar el documento.' }] : []);
-      if (!succeeded.length) throw new PredioError(422, 'PREDIO_AI_NO_READABLE_SOURCE', 'No fue posible interpretar ninguno de los documentos seleccionados. Revisa que no estén corruptos y vuelve a intentar.');
+      if (!succeeded.length) {
+        // A configuration, balance or provider gate is not a corrupt document.
+        const gatewayFailure = attempted.find((entry) => entry.status === 'rejected' && entry.reason instanceof PlatformDomainError);
+        if (gatewayFailure?.status === 'rejected') throw gatewayFailure.reason;
+        throw new PredioError(422, 'PREDIO_AI_NO_READABLE_SOURCE', 'No fue posible interpretar ninguno de los documentos seleccionados. Revisa el formato y la disponibilidad de los archivos y vuelve a intentar.');
+      }
       const results = succeeded.map((entry) => entry.result);
       const resultLinks = succeeded.map((entry) => entry.link);
       const extractionId = crypto.randomUUID();

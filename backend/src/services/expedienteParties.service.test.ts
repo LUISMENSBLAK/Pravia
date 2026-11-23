@@ -81,6 +81,16 @@ const link = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe('EXP-003 relaciones compareciente–acto', () => {
+  it('acepta vendedor y comprador personalizados al 100% en el mismo acto sin advertencia falsa', async () => {
+    const { prisma, tx } = database({ current: null });
+    tx.expedienteCompareciente.findMany.mockResolvedValue([
+      relation({ id: 'seller', caracter: { id: 'custom-seller', clave: 'CUSTOM_SELLER', nombre: 'Vendedor' }, participacion_porcentaje: 100 }),
+      relation({ id: 'buyer', caracter: { id: 'custom-buyer', clave: 'CUSTOM_BUYER', nombre: 'Comprador' }, participacion_porcentaje: 100 }),
+    ]);
+    const result = await new ExpedientePartiesService(prisma).list(actor, 'exp-1');
+    expect(result.validations[0]).toMatchObject({ transmitter_total: 100, acquirer_total: 100, consistent: true });
+    expect(result.validations[0].warnings).toEqual([]);
+  });
   it('vincula una persona maestra existente sin crear ni duplicar identidad', async () => {
     const { prisma, tx } = database({ current: null });
     const service = new ExpedientePartiesService(prisma);

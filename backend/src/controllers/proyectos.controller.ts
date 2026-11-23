@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'fs';
 import path from 'path';
 import multer from 'multer';
@@ -19,6 +19,7 @@ import { isDefaultProjectSource, ProjectGenerationError, projectGenerationServic
 import { projectInstructionService } from '../services/projectInstruction.service';
 import { INSUFFICIENT_LEGAL_FOUNDATION, knowledgeService } from '../services/knowledge.service';
 import { PlatformDomainError } from '../platform/platform.errors';
+import { buildProjectionReviewReport, normalizeProjectionObservations } from '../services/projectReviewReport.service';
 
 function assertPersistentProjectStorage() {
   if (!['cloud', 'local'].includes(getStorageInfo().primary)) {
@@ -121,6 +122,7 @@ interface ProyectoVersionRecord {
   template_version_id?: string | null;
   template_version?: number | null;
   template_name?: string | null;
+  template_use?: { purpose: 'SAME_ACT' | 'STYLE_REFERENCE'; source_act: string; target_act: string } | null;
   generation_mode?: string;
   generation_origin?: string;
   instructions?: string | null;
@@ -177,7 +179,7 @@ function saveProyectosState(state: { versiones: ProyectoVersionRecord[]; reporte
 }
 
 const projectMeta = (document: any) => {
-  const metadata = document.datos_extraidos;
+  const metadata = document?.datos_extraidos;
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return {};
   const value = (metadata as any).proyecto;
   return value && typeof value === 'object' ? value : {};
@@ -188,6 +190,7 @@ const projectTemplateLineage = (metadata: Record<string, any>) => Object.fromEnt
   'template_version_id',
   'template_version',
   'template_checksum',
+  'template_use',
   'generation_mode',
   'source_document_ids',
   'source_selection_explicit',
@@ -252,6 +255,7 @@ const mapDocumentProjectVersion = (document: any): ProyectoVersionRecord => {
     template_version_id: typeof meta.template_version_id === 'string' ? meta.template_version_id : null,
     template_version: Number.isFinite(Number(meta.template_version)) ? Number(meta.template_version) : null,
     template_name: typeof meta.template_name === 'string' ? meta.template_name : null,
+    template_use: ['SAME_ACT', 'STYLE_REFERENCE'].includes(meta.template_use?.purpose) ? meta.template_use : null,
     generation_mode: typeof meta.generation_mode === 'string' ? meta.generation_mode : undefined,
     generation_origin: typeof meta.generation_origin === 'string' ? meta.generation_origin : undefined,
     instructions: typeof meta.instructions === 'string' ? meta.instructions : null,
@@ -375,7 +379,8 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
     if (!expediente) return res.status(404).json({ error: 'Expediente no encontrado o archivado.' });
 
     const safeName = path.basename(file.originalname).replace(/[^a-zA-Z0-9_.-]/g, '_');
-    uploadedStorageKey = `organizations/${req.user!.organizationId}/documentos/expedientes/${id}/proyectos/${crypto.randomUUID()}_${safeName}`;
+    const checksum = createHash('sha256').update(file.buffer).digest('hex');
+    uploadedStorageKey = `organizations/${req.user!.organizationId}/documentos/expedientes/${id}/proyectos/${randomUUID()}_${safeName}`;
     await uploadFile(file.buffer, uploadedStorageKey, file.mimetype);
 
     const createdDocument = await prisma.$transaction(async (tx) => {
@@ -386,7 +391,7 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
         orderBy: { fecha_vinculo: 'desc' },
       });
       if (previousActive?.document_role === 'DEFINITIVE_DEED' || projectMeta(previousActive?.documento).es_version_final === true) {
-        throw Object.assign(new Error('El proyecto está validado. Reábrelo explícitamente antes de cargar otra versión.'), { code: 'PROJECT_VALIDATED_REOPEN_REQUIRED', status: 409 });
+        throw new ProjectGenerationError(409, 'PROJECT_VALIDATED_REOPEN_REQUIRED', 'El proyecto está validado. Reábrelo explícitamente antes de cargar otra versión.');
       }
       const inheritedLineage = projectTemplateLineage(projectMeta(previousActive?.documento));
       const existing = await tx.documento.findMany({
@@ -405,6 +410,7 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
 
       const document = await tx.documento.create({
         data: {
+          organization_id: req.user!.organizationId,
           nombre_original: `V${newVersionNum} — ${file.originalname}`,
           nombre_interno: uploadedStorageKey!,
           storage_key: uploadedStorageKey!,
@@ -412,6 +418,7 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
           categoria: 'PROYECTO',
           mime_type: file.mimetype,
           size_bytes: file.size,
+          checksum_sha256: checksum,
           subido_por_id: user.id,
           expediente_id: id,
           estatus: 'VIGENTE',
@@ -456,11 +463,12 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
       });
       await tx.auditLog.create({
         data: {
+          organization_id: req.user!.organizationId,
           user_id: user.id,
           accion: 'UPLOAD_PROYECTO_VERSION',
           entidad: 'Expediente',
           entidad_id: id,
-          valores_nuevos: { documento_id: document.id, version: newVersionNum, storage_key: uploadedStorageKey },
+          valores_nuevos: { documento_id: document.id, version: newVersionNum, storage_key: uploadedStorageKey, checksum_sha256: checksum },
           correlation_id: (req as any).correlationId,
         }
       });
@@ -472,7 +480,8 @@ export const uploadProyectoVersion = async (req: Request, res: Response) => {
     res.status(201).json(newVersion);
   } catch (error: any) {
     if (uploadedStorageKey) await deleteFile(uploadedStorageKey).catch(() => undefined);
-    res.status(500).json({ error: 'Error al cargar versión de proyecto', detail: error.message });
+    if (error instanceof ProjectGenerationError) return res.status(error.status).json({ error: error.message, code: error.code });
+    return res.status(500).json({ error: 'Error al cargar versión de proyecto' });
   }
 };
 
@@ -808,6 +817,7 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
       {
         expediente: { folio: exp.numero_pravia, descripcion: exp.descripcion, cliente: exp.cliente_alias, valor_operacion: exp.valor_operacion?.toString() || null },
         actos: exp.actos.map((acto) => ({ id: acto.id, nombre: acto.tipo_acto.nombre, estatus: acto.estatus })),
+        uso_del_machote: vigente.template_use || null,
         comparecientes: exp.comparecientes.map((link) => ({
           id: link.compareciente.id,
           nombre: link.compareciente.nombre_busqueda,
@@ -867,150 +877,21 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
       ...deterministicObservations,
       ...resultadoIA.observaciones.filter((observation) => !deterministicCategories.has(observation.tipo_discrepancia as any)),
     ];
-    const observaciones = mergedObservations.map((observacion, index) => ({
-      id: `obs_${index + 1}`,
-      titulo: `OBSERVACIÓN ${String(index + 1).padStart(2, '0')} — Riesgo ${
-        observacion.nivel_riesgo === 'ALTO'
-          ? 'Alto'
-          : observacion.nivel_riesgo === 'MEDIO' ? 'Medio' : 'Informativo'
-      }`,
-      ...observacion
-    }));
-    const conteoAlto = observaciones.filter(o => o.nivel_riesgo === 'ALTO').length;
-    const conteoMedio = observaciones.filter(o => o.nivel_riesgo === 'MEDIO').length;
-    const conteoInformativo = observaciones.filter(o => o.nivel_riesgo === 'INFORMATIVO').length;
+    const observaciones = normalizeProjectionObservations(mergedObservations);
     const documentosNoLeidos = Array.from(new Set([
       ...documentosNoDescargados,
       ...resultadoIA.documentos_no_leidos
     ]));
 
     const reportFileName = `Observaciones_IA_Expediente_${exp.numero_pravia.replace(/[^a-zA-Z0-9]/g, '_')}_V${vigente.version_numero}.docx`;
-    // Build Formatted Word .docx Report using 'docx' library
-    const reportDoc = new Document({
-      sections: [{
-        properties: {},
-        children: [
-          new Paragraph({
-            text: "PRAVIA OS — REPORTE DE REVISIÓN IA JURÍDICA",
-            heading: HeadingLevel.HEADING_1,
-          }),
-          new Paragraph({
-            children: [
-              new TextRun({ text: "Expediente: ", bold: true }),
-              new TextRun({ text: `${exp.numero_pravia} (${exp.cliente_alias || 'Sin alias'})` }),
-            ]
-          }),
-          new Paragraph({
-            children: [
-              new TextRun({ text: "Tipo de Acto: ", bold: true }),
-              new TextRun({ text: `${exp.actos[0]?.tipo_acto.nombre || 'Acto no especificado'}` }),
-            ]
-          }),
-          new Paragraph({
-            children: [
-              new TextRun({ text: "Versión del Proyecto Analizada: ", bold: true }),
-              new TextRun({ text: `V${vigente.version_numero} — ${vigente.nombre_original}` }),
-            ]
-          }),
-          new Paragraph({
-            children: [
-              new TextRun({ text: "Fecha y Solicitante: ", bold: true }),
-              new TextRun({ text: `${new Date().toLocaleString()} por ${userName}` }),
-            ]
-          }),
-          new Paragraph({ text: " " }),
-          new Paragraph({
-            text: "RESUMEN EJECUTIVO DE DOCUMENTOS:",
-            heading: HeadingLevel.HEADING_2,
-          }),
-          new Paragraph({
-            children: [
-              new TextRun({ text: `• Documentos Analizados: `, bold: true }),
-              new TextRun({ text: `${documentosParaIA.length} de ${docsActivos.length} documentos procesados` }),
-            ]
-          }),
-          new Paragraph({
-            children: [
-              new TextRun({ text: `• Resumen OpenAI: `, bold: true }),
-              new TextRun({ text: resultadoIA.resumen_ejecutivo || 'Análisis completado.' }),
-            ]
-          }),
-          new Paragraph({
-            children: [
-              new TextRun({ text: `• Observaciones Detectadas: `, bold: true }),
-              new TextRun({
-                text: `${observaciones.length} observaciones (${conteoAlto} Alto, ${conteoMedio} Medio, ${conteoInformativo} Informativo)`
-              }),
-            ]
-          }),
-          new Paragraph({
-            children: [
-              new TextRun({ text: '• Fundamento jurídico activo: ', bold: true }),
-              new TextRun({ text: legalEvidence.evidence.length
-                ? legalEvidence.evidence.map((item: any) => `${item.inventory_code} · ${item.title} · ${item.label}`).join('; ')
-                : INSUFFICIENT_LEGAL_FOUNDATION }),
-            ],
-          }),
-          new Paragraph({ text: " " }),
-          new Paragraph({
-            text: "COBERTURA DE LAS 17 ÁREAS DE REVISIÓN:",
-            heading: HeadingLevel.HEADING_2,
-          }),
-          ...resultadoIA.areas_revision.map((area, index) => new Paragraph({
-            children: [
-              new TextRun({ text: `${index + 1}. ${area.etiqueta}: `, bold: true }),
-              new TextRun({ text: `${area.estado.replace(/_/g, ' ')}${area.hallazgos ? ` · ${area.hallazgos} hallazgo(s)` : ''}. ${area.resumen}` }),
-            ],
-          })),
-          new Paragraph({ text: " " }),
-          new Paragraph({
-            text: "DETALLE DE OBSERVACIONES Y DISCREPANCIAS:",
-            heading: HeadingLevel.HEADING_2,
-          }),
-          ...(observaciones.length > 0 ? observaciones.map(o => [
-            new Paragraph({
-              children: [
-                new TextRun({ text: `${o.titulo}: `, bold: true, color: o.nivel_riesgo === 'ALTO' ? 'DC2626' : o.nivel_riesgo === 'MEDIO' ? 'D97706' : '2563EB' }),
-                new TextRun({ text: o.tipo_discrepancia }),
-              ]
-            }),
-            new Paragraph({
-              children: [
-                new TextRun({ text: `   - Dato en Proyecto: `, bold: true }),
-                new TextRun({ text: o.dato_proyecto }),
-              ]
-            }),
-            new Paragraph({
-              children: [
-                new TextRun({ text: `   - Dato en Fuente: `, bold: true }),
-                new TextRun({ text: o.dato_fuente }),
-              ]
-            }),
-            new Paragraph({
-              children: [
-                new TextRun({ text: `   - Documento Origen: `, bold: true }),
-                new TextRun({ text: `${o.documento_fuente} (${o.ubicacion})` }),
-              ]
-            }),
-            new Paragraph({
-              children: [
-                new TextRun({ text: `   - Recomendación Jurídica: `, bold: true }),
-                new TextRun({ text: o.recomendacion }),
-              ]
-            }),
-            new Paragraph({ text: " " })
-          ]).flat() : [new Paragraph({ text: 'No se detectaron discrepancias comprobables en los documentos analizados.' })]),
-          new Paragraph({
-            children: [
-              new TextRun({ text: "DECLARACIÓN DE AUDITORÍA: ", bold: true, italics: true }),
-              new TextRun({ text: "Este reporte es una herramienta tecnológica de asistencia. No sustituye la revisión jurídica obligatoria del abogado encargado ni la autorización del Notario Público.", italics: true }),
-            ]
-          })
-        ]
-      }]
+    const reportBuffer = await buildProjectionReviewReport({
+      folio: exp.numero_pravia, projectName: `V${vigente.version_numero} — ${vigente.nombre_original}`, requestedBy: userName,
+      summary: resultadoIA.resumen_ejecutivo, observations: observaciones, areas: resultadoIA.areas_revision,
+      unread: documentosNoLeidos, sourceCount: documentosParaIA.length - resultadoIA.documentos_no_leidos.length,
+      totalSourceCount: docsActivos.length, legalFoundation: legalEvidence.evidence.length
+        ? legalEvidence.evidence.map((item: any) => `${item.inventory_code} · ${item.title} · ${item.label}`).join('; ')
+        : INSUFFICIENT_LEGAL_FOUNDATION,
     });
-
-    const reportBuffer = await Packer.toBuffer(reportDoc);
     assertPersistentProjectStorage();
     uploadedReportKey = `organizations/${req.user!.organizationId}/documentos/expedientes/${id}/reportes-ia/${crypto.randomUUID()}_${reportFileName}`;
     await uploadFile(reportBuffer, uploadedReportKey, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
@@ -1050,7 +931,7 @@ export const analizarProyectoConIA = async (req: Request, res: Response) => {
           areas_revision: JSON.parse(JSON.stringify(resultadoIA.areas_revision)) as Prisma.InputJsonValue,
           template_integrity: deterministicTemplateIntegrity ? JSON.parse(JSON.stringify(deterministicTemplateIntegrity)) as Prisma.InputJsonValue : null,
           legal_evidence: JSON.parse(JSON.stringify(legalEvidence)) as Prisma.InputJsonValue,
-          observaciones,
+          observaciones: JSON.parse(JSON.stringify(observaciones)) as Prisma.InputJsonValue,
           solicitado_por: userName,
         } },
       } });

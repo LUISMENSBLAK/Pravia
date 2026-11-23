@@ -6,6 +6,8 @@ import { Prisma } from '@prisma/client';
 import type { Request } from 'express';
 import prisma from '../config/prisma';
 import { budgetTotals, moneyToCents, type BudgetTaxTreatment } from '../domain/expedienteBudget';
+import type { QuotePropertyRecord } from '../domain/quotePropertyValues';
+import { quoteActName, quoteClientName } from '../domain/quoteIdentity';
 import {
   AdministrativeQuoteTemplateError,
   DOCX_MIME_TYPE,
@@ -338,6 +340,7 @@ export function appendAccountStatement(documentBuffer: Buffer, statement: Accoun
 export function quoteTemplateData(input: {
   folio: string; date: Date; client: string; act: string; notary: string;
   responsible?: string; state?: string; municipality?: string;
+  propertyValues?: QuotePropertyRecord;
   concepts: QuoteBudgetConcept[];
   validatedAdvanceCents: bigint;
 }) {
@@ -356,6 +359,10 @@ export function quoteTemplateData(input: {
     'responsable.nombre': input.responsible || 'Pendiente',
     'operacion.estado': input.state || 'Pendiente',
     'operacion.municipio': input.municipality || 'Pendiente',
+    'operacion.valor': input.propertyValues?.valor_operacion == null ? 'Sin información' : money(moneyToCents(input.propertyValues.valor_operacion)),
+    'inmueble.valor_catastral': input.propertyValues?.valor_catastral == null ? 'Sin información' : money(moneyToCents(input.propertyValues.valor_catastral)),
+    'inmueble.cuenta_predial': input.propertyValues?.cuenta_predial || 'Sin información',
+    'inmueble.importe_predial': input.propertyValues?.importe_predial == null ? 'Sin información' : money(moneyToCents(input.propertyValues.importe_predial)),
     'inmueble.referencia|[PENDIENTE/NO APLICA]': 'Pendiente / no aplica',
     'cotizacion.base_honorarios': names(input.concepts.filter((row) => row.categoria === 'HONORARIOS')),
     'cotizacion.honorarios': money(totals.honorariosCents),
@@ -518,12 +525,15 @@ export class QuoteDocumentService {
       where: { id: cotizacionId, organization_id: actor.organizationId },
       include: {
         prospecto: true,
+        solicitante_formal: { select: { nombre_busqueda: true } },
+        actos: { include: { tipo_acto: { select: { nombre: true } } }, orderBy: { orden: 'asc' } },
         creada_por: { select: { nombre: true, apellido: true } },
         conceptos: { orderBy: { orden: 'asc' } },
         pagos: { where: { estatus: 'VALIDADO' } },
       },
     });
     if (!quote) throw new QuoteDocumentError(404, 'QUOTE_NOT_FOUND', 'No se encontró la cotización.');
+    if (quote.etapa_contractual && !quote.actos?.length) throw new QuoteDocumentError(409, 'QUOTE_ACT_REQUIRED', 'Selecciona al menos un acto en la cotización antes de generar el documento.');
     if (!quote.conceptos.length) throw new QuoteDocumentError(409, 'QUOTE_STRUCTURED_BUDGET_REQUIRED', 'Captura y confirma el presupuesto estructurado antes de generar la cotización.');
     if (quote.conceptos.some((row) => row.tratamiento_iva === 'REQUIERE_REVISION')) throw new QuoteDocumentError(409, 'QUOTE_TAX_REVIEW_REQUIRED', 'Revisa el tratamiento fiscal pendiente antes de generar un total definitivo.');
     const organization = await prisma.organization.findUnique({
@@ -542,9 +552,10 @@ export class QuoteDocumentService {
       tratamiento_iva: row.tratamiento_iva, iva_tasa: row.iva_tasa == null ? null : String(row.iva_tasa) }));
     const data = quoteTemplateData({
       folio: quote.numero_cotizacion || quote.numero_solicitud || quote.id,
-      date: new Date(), client: quote.prospecto?.nombre || 'Cliente pendiente',
-      act: quote.prospecto?.tipo_acto || 'Acto pendiente', notary: organization.name, concepts,
+      date: new Date(), client: quoteClientName(quote) || 'Cliente pendiente',
+      act: quoteActName(quote) || 'Acto pendiente', notary: organization.name, concepts,
       responsible: [quote.creada_por?.nombre, quote.creada_por?.apellido].filter(Boolean).join(' '),
+      propertyValues: quote,
       state: quote.territorio_operacion && typeof quote.territorio_operacion === 'object' && !Array.isArray(quote.territorio_operacion)
         ? String(quote.territorio_operacion.state || '') : '',
       municipality: quote.territorio_operacion && typeof quote.territorio_operacion === 'object' && !Array.isArray(quote.territorio_operacion)

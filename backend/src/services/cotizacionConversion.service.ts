@@ -17,6 +17,7 @@ import { recordQuoteTransitionInTransaction } from './cotizacionWorkflow.service
 import { createQuoteOperationalSnapshotInTransaction } from './quoteBudget.service';
 import { ExpedienteActosService } from './expedienteActos.service';
 import { ExpedienteSeguimientoService } from './expedienteSeguimiento.service';
+import { quoteClientName } from '../domain/quoteIdentity';
 
 type Actor = NonNullable<Request['user']>;
 
@@ -217,7 +218,8 @@ export class CotizacionConversionService {
         tipoActoId: tipoActo.id,
         abogadoId: lawyer.id,
         actorUserId: actor.id,
-        clienteAlias: cotizacion.prospecto?.nombre || 'Cliente',
+        clienteAlias: quoteClientName(cotizacion) || 'Cliente',
+        clienteComparecienteId: cotizacion.solicitante_formal?.id || null,
         notariaId: cotizacion.notaria_id,
         cotizacionId: cotizacion.id,
         folioSeries: input.folioSeries,

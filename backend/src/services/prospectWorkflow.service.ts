@@ -266,9 +266,6 @@ export class ProspectWorkflowService {
         ? p.transicion_actual?.etapa_anterior ?? null
         : null;
       const next = nextProspectStage(p.etapa_contractual, action, Boolean(p.cotizacion), resumeStage);
-      if (action === 'MARCAR_LISTO_PARA_COTIZAR' && !p.actos.length) {
-        return failProspect(409, 'PRO001_ACT_REQUIRED', 'Selecciona al menos un acto preliminar antes de marcar el prospecto como listo para cotizar.');
-      }
       if (action === 'CONVERTIR' && p.cotizacion_responsable_id && raw.quoteAssigneeId
         && raw.quoteAssigneeId !== p.cotizacion_responsable_id) {
         return failProspect(409, 'PRO001_QUOTE_ASSIGNEE_MISMATCH', 'La cotización conservará a la persona ya asignada. Revisa el prospecto antes de convertirlo.');
@@ -296,7 +293,6 @@ export class ProspectWorkflowService {
       let quoteId: string | null = null;
       if (action === 'CONVERTIR') {
         if (p.etapa_contractual !== Stage.LISTO_PARA_COTIZAR) return failProspect(409, 'PRO001_NOT_READY_TO_QUOTE', 'Marca el prospecto como listo para cotizar antes de convertirlo.');
-        if (!p.actos.length) return failProspect(409, 'PRO001_ACT_REQUIRED', 'Selecciona al menos un acto preliminar antes de solicitar la cotización.');
         const assignedId = p.cotizacion_responsable_id || quoteAssignee?.user_id;
         if (!assignedId) return failProspect(409, 'PRO001_QUOTE_ASSIGNEE_REQUIRED', 'Selecciona quién continuará con la cotización.');
         const currentAssignee = await tx.organizationMembership.findFirst({ where: {

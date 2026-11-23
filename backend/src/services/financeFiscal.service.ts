@@ -316,7 +316,11 @@ export class FinanceFiscalService {
   }
 
   providerStatus() {
-    return { configured: this.provider.configured, provider: this.provider.configured ? this.provider.id : null, cfdiEnabled: this.provider.configured, manualUploadEnabled: true, localDraftsEnabled: true, realStampingVerified: false, message: this.provider.configured ? 'Proveedor configurado; requiere certificación externa antes de habilitarse en producción.' : 'PAC no configurado. Borradores y carga manual XML/PDF permanecen disponibles.' };
+    const sandbox = this.provider.configured && this.provider.id === 'FACTURAMA_SANDBOX';
+    return { configured: this.provider.configured, provider: this.provider.configured ? this.provider.id : null, cfdiEnabled: this.provider.configured,
+      environment: sandbox ? 'SANDBOX' : 'DISABLED', sandboxStampingEnabled: sandbox,
+      manualUploadEnabled: true, localDraftsEnabled: true, realStampingVerified: false,
+      message: sandbox ? 'Facturama sandbox local: sólo RFC públicos de prueba. Sin validez fiscal; timbrado productivo deshabilitado.' : this.provider.configured ? 'Proveedor configurado; requiere certificación externa antes de habilitarse en producción.' : 'PAC no configurado. Borradores y carga manual XML/PDF permanecen disponibles.' };
   }
 
   fiscalRegimes() {
@@ -940,7 +944,7 @@ export class FinanceFiscalService {
       select: { id: true, estado: true, total: true, subtotal: true, impuestos_trasladados: true, impuestos_retenidos: true,
         receptor_compareciente_id: true, receptor_rfc: true, receptor_nombre: true,
         receptor_regimen: true, entidad_fiscal_id: true,
-        metodo_pago: true, forma_pago: true, uso_cfdi: true, moneda: true, draft_payload: true, created_at: true },
+        metodo_pago: true, forma_pago: true, uso_cfdi: true, moneda: true, draft_payload: true, created_at: true, updated_at: true, emisor_rfc: true },
       orderBy: { created_at: 'desc' },
     });
     const { facturableAmount, invoicedAmount, reservedDraftAmount, remainingInvoiceableAmount } = cfdiIncomeBalance({
@@ -1443,6 +1447,7 @@ export class FinanceFiscalService {
     let uploadedKey: string | null = null;
     try {
       return await this.db.$transaction(async (tx) => {
+        await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:cfdi-draft-id:${actor.organizationId}:${cfdiId}`}))`);
         await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:prefactura-pdf:${actor.organizationId}:${cfdiId}`}))`);
         const duplicate = await tx.prefacturaRepresentacion.findFirst({ where: { organization_id: actor.organizationId, cfdi_id: cfdiId, idempotency_key: idempotencyKey },
           select: { id: true, version: true, pdf_sha256: true, size_bytes: true, documento: { select: { nombre_original: true } } } });
@@ -1624,6 +1629,7 @@ export class FinanceFiscalService {
   async documentUrl(actor: FiscalActor, cfdiId: string, kind: 'xml' | 'pdf') {
     const row = await this.db.documentoCfdi.findFirst({ where: { id: cfdiId, organization_id: actor.organizationId }, include: { xmlDocumento: true, pdfDocumento: true } });
     if (!row) throw new FinanceFiscalError(404, 'CFDI_NOT_FOUND', 'Documento fiscal no encontrado.');
+    await this.db.$transaction((tx) => this.assertDraftExpedienteAccess(tx, actor, row.expediente_id));
     const document = kind === 'xml' ? row.xmlDocumento : row.pdfDocumento;
     if (!document) throw new FinanceFiscalError(404, 'CFDI_FILE_NOT_FOUND', 'El CFDI no tiene este archivo asociado.');
     return { url: await getSignedUrl(document.storage_key, 600), filename: document.nombre_original, mimeType: document.mime_type };
@@ -1639,6 +1645,7 @@ export class FinanceFiscalService {
       if (duplicate) return { application: duplicate, idempotent: true };
       const cfdi = await tx.documentoCfdi.findFirst({ where: { id: cfdiId, organization_id: actor.organizationId }, include: { cuentaPorCobrar: true, cuentaPorPagar: true, aplicacionesPago: true } });
       if (!cfdi) throw new FinanceFiscalError(404, 'CFDI_NOT_FOUND', 'Documento fiscal no encontrado.');
+      if (cfdi.estado.endsWith('_SANDBOX')) throw new FinanceFiscalError(409, 'CFDI_SANDBOX_PAYMENT_FORBIDDEN', 'Un comprobante sandbox no puede recibir pagos reales.');
       const movement = await tx.movimientoFinanciero.findFirst({ where: { id: movementId, organization_id: actor.organizationId, estatus: { in: ['APLICADO', 'RECIBIDO', 'VALIDADO'] } } });
       if (!movement) throw new FinanceFiscalError(404, 'CFDI_PAYMENT_MOVEMENT_INVALID', 'Selecciona un movimiento aplicado de la organización activa.');
       if (cfdi.direccion === 'EMITIDO' && movement.naturaleza !== 'INGRESO') throw new FinanceFiscalError(409, 'CFDI_PAYMENT_NATURE_MISMATCH', 'Una cuenta por cobrar requiere un ingreso.');
@@ -1675,7 +1682,11 @@ export class FinanceFiscalService {
     return { eligible: true, providerCall: false, payload: { version: '2.0', relatedUuid: cfdi.uuid_fiscal, currency: cfdi.moneda, payments: pending.map((item) => ({ applicationId: item.id, movementId: item.movimiento_id, date: item.movimiento.fecha_movimiento, amount: item.monto_aplicado.toFixed(2), partiality: item.numero_parcialidad, previousBalance: item.saldo_anterior?.toFixed(2), outstandingBalance: item.saldo_insoluto?.toFixed(2) })) } };
   }
 
-  async stamp(actor: FiscalActor, cfdiId: string) {
+  async stamp(actor: FiscalActor, cfdiId: string, input: Record<string, unknown> = {}, correlationId?: string) {
+    if (this.provider.id === 'FACTURAMA_SANDBOX') {
+      const { CfdiSandboxStampService } = await import('./cfdiSandboxStamp.service');
+      return new CfdiSandboxStampService(this.db, this.provider).stamp(actor, cfdiId, input, correlationId);
+    }
     const row = await this.db.documentoCfdi.findFirst({ where: { id: cfdiId, organization_id: actor.organizationId } });
     if (!row) throw new FinanceFiscalError(404, 'CFDI_NOT_FOUND', 'Documento fiscal no encontrado.');
     if (!this.provider.configured) throw new FinanceFiscalError(503, 'CFDI_PROVIDER_NOT_CONFIGURED', 'El PAC no está configurado; no se generó timbrado ni UUID.');

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -49,6 +49,41 @@ function mockApi(options:{empty?:boolean;fail?:boolean;permissions?:string[]}={}
 const renderPath=(path:string)=>render(<MemoryRouter initialEntries={[path]}><App/></MemoryRouter>);
 
 describe('Comparecientes client workspace',()=>{
+  it('reconsulta el maestro después del chat y conserva una edición local sin sobrescribirla',async()=>{
+    mockApi();const normalFetch=fetch;let occupation='ORIGINAL QA';
+    vi.stubGlobal('fetch',vi.fn((input:RequestInfo|URL,init?:RequestInit)=>{
+      if(String(input).endsWith('/comparecientes/party-1')&&!init?.method) return Promise.resolve(json({success:true,data:{...detail,personaFisica:{...detail.personaFisica,ocupacion:occupation}}}));
+      return normalFetch(input,init);
+    }));
+    renderPath('/comparecientes/party-1');expect(await screen.findByDisplayValue('ORIGINAL QA')).toBeInTheDocument();
+    occupation='CONFIRMADO DESDE CHAT';
+    act(()=>window.dispatchEvent(new CustomEvent('pravia:data-changed',{detail:{scope:'comparecientes'}})));
+    const input=await screen.findByDisplayValue('CONFIRMADO DESDE CHAT');
+    fireEvent.change(input,{target:{value:'BORRADOR LOCAL'}});occupation='OTRA SESIÓN';
+    act(()=>window.dispatchEvent(new CustomEvent('pravia:data-changed',{detail:{scope:'comparecientes'}})));
+    expect(screen.getByDisplayValue('BORRADOR LOCAL')).toBeInTheDocument();
+    expect(await screen.findByText(/Conservamos tus cambios sin guardar/)).toBeInTheDocument();
+  });
+  it('distingue una extracción parcial y conserva los datos propuestos para revisión', async () => {
+    mockApi(); const normalFetch = fetch;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/comparecientes/party-1/extraer-ia')) return Promise.resolve(json({ success: true, data: {
+        values: { ocupacion: 'ARQUITECTA' }, proposals: {}, errores: [{ nombre: 'INE sin leer.png', error: 'IA no disponible' }],
+      } }));
+      return normalFetch(input, init);
+    }));
+    const user = userEvent.setup(); renderPath('/comparecientes/party-1');
+    await user.click(await screen.findByRole('button', { name: /Extraer información con IA/ }));
+    expect(await screen.findByText('Extracción parcial: hay documentos sin analizar')).toBeInTheDocument();
+    expect(screen.getByText('INE sin leer.png')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('ARQUITECTA')).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+  });
+  it('conserva el regreso al expediente en una ficha maestra existente', async () => {
+    mockApi(); renderPath('/comparecientes/party-1?fromExpediente=exp-1&fromSection=comparecientes');
+    const back = await screen.findByRole('link', { name: 'Volver al expediente' });
+    expect(back).toHaveAttribute('href', '/expedientes/exp-1#comparecientes');
+  });
   beforeEach(()=>{vi.restoreAllMocks();window.localStorage.clear();vi.spyOn(HTMLCanvasElement.prototype,'getContext').mockReturnValue({} as CanvasRenderingContext2D);vi.spyOn(HTMLAnchorElement.prototype,'click').mockImplementation(()=>undefined);Object.defineProperty(URL,'createObjectURL',{configurable:true,value:vi.fn(()=>`blob:local-preview-${Math.random()}`)});Object.defineProperty(URL,'revokeObjectURL',{configurable:true,value:vi.fn()})});
 
   it('muestra únicamente Total, Personas físicas y Personas morales',async()=>{mockApi();renderPath('/comparecientes');expect(await screen.findByText('Total comparecientes')).toBeInTheDocument();expect(screen.getByText('Personas físicas')).toBeInTheDocument();expect(screen.getByText('Personas morales')).toBeInTheDocument();expect(screen.queryByText('Identidad verificada')).not.toBeInTheDocument();expect(screen.queryByText('Pendientes')).not.toBeInTheDocument();expect(screen.queryByText('Con observación')).not.toBeInTheDocument()});

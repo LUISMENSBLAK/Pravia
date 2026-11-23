@@ -529,7 +529,7 @@ export const assistantConversationService = {
       compareciente_id: input.targetType === 'COMPARECIENTE' ? input.targetId : null,
       predio_id: input.targetType === 'PREDIO' ? input.targetId : null,
     };
-    if (!(await canAttachDocumento(user, targets))) {
+    if (!(await (transaction ? canAttachDocumento(user, targets, transaction) : canAttachDocumento(user, targets)))) {
       throw new AssistantConversationError('No tienes acceso al registro de destino.', 'ASSISTANT_DOCUMENT_TARGET_DENIED', 403);
     }
     if (attachment.documento_id) {

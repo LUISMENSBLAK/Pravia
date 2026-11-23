@@ -21,6 +21,7 @@ export interface ProjectVersionRecord {
   template_version_id?: string | null;
   template_version?: number | null;
   template_name?: string | null;
+  template_use?: { purpose: 'SAME_ACT' | 'STYLE_REFERENCE'; source_act: string; target_act: string } | null;
   generation_mode?: string;
   generation_origin?: string;
   instructions?: string | null;
@@ -69,6 +70,7 @@ export function mapProjectVersion(document: any): ProjectVersionRecord {
     template_version_id: typeof meta.template_version_id === 'string' ? meta.template_version_id : null,
     template_version: Number.isFinite(Number(meta.template_version)) ? Number(meta.template_version) : null,
     template_name: typeof meta.template_name === 'string' ? meta.template_name : null,
+    template_use: ['SAME_ACT', 'STYLE_REFERENCE'].includes(meta.template_use?.purpose) ? meta.template_use : null,
     generation_mode: typeof meta.generation_mode === 'string' ? meta.generation_mode : undefined,
     generation_origin: typeof meta.generation_origin === 'string' ? meta.generation_origin : undefined,
     instructions: typeof meta.instructions === 'string' ? meta.instructions : null,

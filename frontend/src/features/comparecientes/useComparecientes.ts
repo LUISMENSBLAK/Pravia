@@ -1,6 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useRef, useState } from 'react';
 import { comparecientesService } from './comparecientes.service';
 import type { ComparecienteFilters, ComparecienteListResult } from './comparecientes.types';
+import { useCanonicalRefresh } from '../../services/api/useCanonicalRefresh';
 
 export function useComparecientes(filters: ComparecienteFilters) {
   const deferredSearch = useDeferredValue(filters.search || '');
@@ -13,5 +14,6 @@ export function useComparecientes(filters: ComparecienteFilters) {
     catch (error) { if (!(error instanceof DOMException && error.name === 'AbortError')) setStatus('error'); }
   }, [deferredSearch, filters.type, filters.updated, filters.sort, filters.page]);
   useEffect(() => { const controller = new AbortController(); void load(controller.signal); return () => controller.abort(); }, [load]);
+  useCanonicalRefresh('comparecientes', signal => { void load(signal); });
   return { result, status, reload: () => load() };
 }

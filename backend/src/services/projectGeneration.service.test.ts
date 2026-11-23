@@ -23,6 +23,13 @@ async function template() {
 }
 
 describe('EXP-010 · motor DOCX sobre machote real', () => {
+  it('usa razonamiento para indicaciones expresas sin cambiar de modelo ni evadir el gateway', async () => {
+    const requests:any[]=[];
+    await planLiteralProjectPatchesWithOpenAI({templateName:'Sintético QA',templateSegments:[{id:'p1',text:'SUPERFICIE: 347.50 m2',paragraph_index:0}],canonicalFacts:{superficie_maestro:'350.25'},sourceDocuments:[{id:'fuente-qa',name:'Antecedente QA',text:'Superficie acreditada: 347.50 m2.',extracted:{}}],instructions:'Conserva la superficie del antecedente y reporta la discrepancia del maestro.',economicContext:{actor:{userId:'qa',organizationId:'org-qa',membershipId:'membership-qa',role:'DIRECCION',permissions:['ia.execute'],scope:'GLOBAL',sessionId:'session-qa'},idempotencyKey:'qa-instructions',traceId:'qa-trace',gateway:{execute:async(request)=>{requests.push(request);return {output:[{content:[{type:'output_text',text:JSON.stringify({patches:[],missing_fields:[],conflicts:[{field:'superficie',detail:'347.50 vs 350.25',sources:['fuente-qa','CANONICAL_FACTS']}],possible_residues:[]})}]}]} as any;}}}});
+    expect(requests[0]).toMatchObject({operationCode:'PROJECT_LITERAL_PATCH_PLAN',billingClass:'CUSTOMER_WALLET',payload:{body:{reasoning:{effort:'medium'},store:false}}});
+    const prompt=requests[0].payload.body.input[0].content[0].text;
+    expect(prompt).toContain('Conserva la superficie del antecedente');expect(prompt).toContain('nunca sobre la evidencia factual');expect(prompt).toContain('347.50');
+  });
   it('enruta el plan literal por el gateway económico con actor, operación e idempotencia', async () => {
     const requests: any[] = [];
     const plan = await planLiteralProjectPatchesWithOpenAI({
@@ -229,7 +236,7 @@ describe('EXP-010 · motor DOCX sobre machote real', () => {
     expect(xml).toContain('<w:highlight w:val="yellow"/>');
   });
 
-  it('neutraliza todos los valores enmascarados y residuos reportados que la IA no pudo acreditar', () => {
+  it('convierte máscaras vacías en pendientes sin borrar residuos dudosos', () => {
     const usage = { modelo: 'qa', input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_tokens: 0, total_tokens: 2, duracion_ms: 1, documentos_enviados: 1, costo_estimado_usd: 0, precios_version: 'qa', escalamiento_utilizado: false };
     const completed = completeLiteralProjectPatchPlan({
       patches: [{

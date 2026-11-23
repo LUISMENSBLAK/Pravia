@@ -6,11 +6,20 @@ vi.mock('../services/compareciente.service', () => ({ ComparecienteService: clas
 vi.mock('../config/prisma', () => ({ default: {}, prisma: {} }));
 vi.mock('../services/objectAccess.service', () => ({ comparecienteObjectWhere: vi.fn(() => ({})), canAccessCompareciente: access.canAccessCompareciente }));
 import { ComparecienteController } from './compareciente.controller';
+import { PlatformDomainError } from '../platform/platform.errors';
+import { Prisma } from '@prisma/client';
 
 const response = () => { const res: any = {}; res.status = vi.fn(() => res); res.json = vi.fn(() => res); return res; };
 const user = { id: 'user-1', organizationId: 'org-1', rol: 'ABOGADO', permissions: ['comparecientes.read'] };
 
 describe('ComparecienteController endpoints', () => {
+  it('no expone rutas internas ni consultas Prisma al fallar un guardado', async () => {
+    service.actualizarMaster.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('Invalid Prisma invocation /private/internal', { code: 'P2028', clientVersion: '5.22.0' }));
+    const res = response();
+    await ComparecienteController.actualizarMaster({ user, params: { id: 'party-1' }, body: {} } as any, res);
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ success: false, code: 'COMPARECIENTE_SAVE_INTERNAL_ERROR', error: 'No pudimos guardar los cambios. Reintenta; no se confirmó ninguna modificación.' });
+  });
   beforeEach(() => vi.clearAllMocks());
   it('propaga paginación, búsqueda, filtros permitidos, sort y object scope', async () => { service.listarMaster.mockResolvedValue({ data: [], metrics: {}, meta: {} }); const req: any = { query: { search: 'López', tipo_persona: 'FISICA', identidad: 'PENDIENTE', cumplimiento: 'NO_CONFIGURADO', actualizacion: '30_DIAS', sort: 'nombre:asc', page: '2', pageSize: '20' }, user }; const res = response(); await ComparecienteController.listarMaster(req,res); expect(service.listarMaster).toHaveBeenCalledWith(expect.objectContaining({ search:'López', tipo_persona:'FISICA', actualizacion:'30_DIAS', sort:'nombre:asc', page:2, limit:20, accessWhere:{organization_id:'org-1'} })); expect(service.listarMaster.mock.calls[0][0]).not.toHaveProperty('identidad'); expect(service.listarMaster.mock.calls[0][0]).not.toHaveProperty('cumplimiento'); expect(res.status).toHaveBeenCalledWith(200); });
   it('busca duplicados sin escapar del scope visible', async () => { service.buscarDuplicados.mockResolvedValue([]); const req: any = { query: { rfc:'ABC010203AA1', correo:'persona@example.mx', telefono:'3111234567' }, user }; const res=response(); await ComparecienteController.buscarDuplicados(req,res); expect(service.buscarDuplicados).toHaveBeenCalledWith(expect.objectContaining({ rfc:'ABC010203AA1', correo:'persona@example.mx', telefono:'3111234567', accessWhere:{organization_id:'org-1'} })); });
@@ -20,6 +29,16 @@ describe('ComparecienteController endpoints', () => {
   it('devuelve propuestas IA sin persistencia maestra', async()=>{access.canAccessCompareciente.mockResolvedValue(true);service.extraerDocumentosExistentesConIA.mockResolvedValue({values:{rfc:'ABC'},proposals:{rfc:{estado:'PENDIENTE_CONFIRMACION'}}});const req:any={params:{id:'party-1'},user,header:vi.fn(()=> 'extract-party-1')};const res=response();await ComparecienteController.extraerDocumentosConIA(req,res);expect(service.extraerDocumentosExistentesConIA).toHaveBeenCalledWith('party-1',user,'extract-party-1');expect(res.json.mock.calls[0][0].data.values).toEqual({rfc:'ABC'})});
 
   it('deniega extracción IA fuera del alcance del actor', async()=>{access.canAccessCompareciente.mockResolvedValue(false);const req:any={params:{id:'party-2'},user};const res=response();await ComparecienteController.extraerDocumentosConIA(req,res);expect(res.status).toHaveBeenCalledWith(404);expect(service.extraerDocumentosExistentesConIA).not.toHaveBeenCalled()});
+  it.each([
+    ['AI_EXTERNAL_DISABLED', 503], ['AI_BALANCE_EXHAUSTED', 402], ['AI_OPERATION_DISABLED', 409],
+  ])('conserva el error accionable %s sin simular un error documental', async (code, status) => {
+    access.canAccessCompareciente.mockResolvedValue(true);
+    service.extraerDocumentosExistentesConIA.mockRejectedValue(new PlatformDomainError(code, 'La operación requiere configuración.', status));
+    const res = response();
+    await ComparecienteController.extraerDocumentosConIA({ params: { id: 'party-1' }, user } as any, res);
+    expect(res.status).toHaveBeenCalledWith(status);
+    expect(res.json).toHaveBeenCalledWith({ success: false, code, error: 'La operación requiere configuración.' });
+  });
   it('responde conflicto de duplicado sin exponer detalles de Prisma', async () => {
     service.actualizarMaster.mockRejectedValue(Object.assign(new Error('Invalid Prisma invocation at /internal/path'), { code: 'P2002' }));
     const res = response();

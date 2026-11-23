@@ -17,6 +17,9 @@ const candidate = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe('evaluateConversionEligibility', () => {
+  it('la cotización contractual directa no requiere fabricar un Prospecto para convertirse', () => {
+    expect(evaluateConversionEligibility(candidate({ etapa_contractual: 'ACEPTADA', prospecto_id: null, pagos: [] }))).toMatchObject({ eligible: true, linkedProspect: false });
+  });
   it('permite convertir sólo con aceptación, versión aprobada y anticipo validado', () => {
     const result = evaluateConversionEligibility(candidate());
     expect(result).toMatchObject({

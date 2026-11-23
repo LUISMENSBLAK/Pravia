@@ -6,9 +6,9 @@ describe('repositorio persistente de proyectos', () => {
     expect(mapProjectVersion({
       id: 'doc-1', expediente_id: 'exp-1', nombre_original: 'Proyecto V2.docx', mime_type: 'application/docx',
       size_bytes: 2048, fecha_carga: new Date('2026-08-12T12:00:00Z'), observaciones: null,
-      datos_extraidos: { proyecto: { version_numero: 2, es_version_final: true, nota_version: 'Final revisado' } },
+      datos_extraidos: { proyecto: { version_numero: 2, es_version_final: true, nota_version: 'Final revisado', template_use: { purpose: 'STYLE_REFERENCE', source_act: 'Otro acto', target_act: 'Acto real' } } },
       subido_por: { nombre: 'Ana', apellido: 'Pérez' }, expedienteVinculos: [{ estatus: 'ACTIVO' }],
-    })).toMatchObject({ id: 'doc-1', version_numero: 2, es_vigente: true, es_version_final: true, cargado_por_nombre: 'Ana Pérez' });
+    })).toMatchObject({ id: 'doc-1', version_numero: 2, es_vigente: true, es_version_final: true, cargado_por_nombre: 'Ana Pérez', template_use: { purpose: 'STYLE_REFERENCE', source_act: 'Otro acto', target_act: 'Acto real' } });
   });
 
   it('mapea un reporte sin exponer su clave de storage', () => {

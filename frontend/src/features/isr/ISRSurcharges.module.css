@@ -1,0 +1,13 @@
+.panel { min-width: 0; padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
+.panel summary { cursor: pointer; color: var(--color-navy-800); font-size: 1rem; font-weight: 600; min-height: 44px; padding-block: 10px; }
+.panel p { font-size: .875rem; line-height: 1.55; overflow-wrap: anywhere; }
+.fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-4); margin-block: var(--space-4); }
+.fields label { display: grid; align-content: start; gap: var(--space-2); min-width: 0; font-size: .875rem; line-height: 1.45; }
+.fields input, .fields select { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; min-height: 44px; padding: 10px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text-primary); font: inherit; }
+.panel button { max-width: 100%; min-height: 44px; padding: 10px 14px; border: 1px solid var(--color-gold-500); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-navy-800); font: inherit; font-size: .875rem; font-weight: 600; white-space: normal; }
+.panel button:disabled { cursor: not-allowed; opacity: .55; }
+.panel :is(button, input, select, summary):focus-visible { outline: 2px solid var(--color-gold-500); outline-offset: 3px; }
+.panel dl { display: grid; gap: var(--space-3); }
+.panel dl > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-2); border-bottom: 1px solid var(--color-border); padding-bottom: var(--space-2); font-size: .875rem; }
+.panel dd { margin: 0; font-variant-numeric: tabular-nums; }
+@media (max-width: 720px) { .fields { grid-template-columns: minmax(0, 1fr); } .panel { padding: var(--space-3); } .panel button { width: 100%; } }

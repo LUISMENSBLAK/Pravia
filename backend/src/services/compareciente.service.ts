@@ -518,7 +518,7 @@ export class ComparecienteService {
     correo?: string;
     observaciones?: string;
     creado_por_id: string;
-  }) {
+  }, transaction?: Prisma.TransactionClient, operationId?: string) {
     const cleanName = this.uppercase(dto.nombre) || '';
     const cleanFirstSurname = this.uppercase(dto.apellido_paterno);
     const cleanSecondSurname = this.uppercase(dto.apellido_materno);
@@ -533,7 +533,16 @@ export class ComparecienteService {
     const cleanRfc = validateRfc(dto.rfc, 'FISICA');
     const birthDate = validateOptionalDate(dto.fecha_nacimiento, 'La fecha de nacimiento');
 
-    return await this.prisma.$transaction(async (tx) => {
+    const create = async (tx: Prisma.TransactionClient) => {
+      const stableId=operationId?extractionCorrelationId(`party-create:${requireActorContext().organizationId}:${dto.creado_por_id}:${operationId}`):undefined;
+      if(stableId){
+        await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:party-create:${stableId}`}))`);
+        const previous=await tx.compareciente.findFirst({where:{id:stableId,organization_id:requireActorContext().organizationId},include:{personaFisica:true}});
+        if(previous){
+          if(previous.archived_at||previous.nombre_busqueda!==nombreBusqueda||!previous.personaFisica) throw Object.assign(new Error('La operación de alta ya existe con otros datos.'),{code:'PARTY_CREATE_IDEMPOTENCY_CONFLICT'});
+          const {personaFisica,...compareciente}=previous;return {compareciente,personaFisica};
+        }
+      }
       const identityKey = cleanCurp || cleanRfc || nombreBusqueda;
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:compareciente:${identityKey}`}))`);
       const duplicate = await tx.personaFisica.findFirst({
@@ -553,6 +562,7 @@ export class ComparecienteService {
       // 1. Crear cabecera compareciente
       const compareciente = await tx.compareciente.create({
         data: {
+          ...(stableId?{id:stableId}:{}),
           tipo_persona: TipoPersona.FISICA,
           nombre_busqueda: nombreBusqueda,
           observaciones: optionalOperationalText(dto.observaciones),
@@ -674,7 +684,8 @@ export class ComparecienteService {
       });
 
       return { compareciente, personaFisica };
-    }, { timeout: 15_000 });
+    };
+    return transaction ? create(transaction) : this.prisma.$transaction(create, { timeout: 15_000 });
   }
 
   /**
@@ -699,7 +710,7 @@ export class ComparecienteService {
     estatus_societario?: string;
     observaciones?: string;
     creado_por_id: string;
-  }, transaction?: Prisma.TransactionClient) {
+  }, transaction?: Prisma.TransactionClient, operationId?: string) {
     const cleanLegalName = this.uppercase(dto.razon_social) || '';
     const nombreBusqueda = this.normalizeSearchString(cleanLegalName);
     if (!nombreBusqueda) throw new Error('La razón social es obligatoria.');
@@ -707,6 +718,15 @@ export class ComparecienteService {
     const incorporationDate = validateOptionalDate(dto.fecha_constitucion, 'La fecha de constitución');
 
     const create = async (tx: Prisma.TransactionClient) => {
+      const stableId=operationId?extractionCorrelationId(`party-create:${requireActorContext().organizationId}:${dto.creado_por_id}:${operationId}`):undefined;
+      if(stableId){
+        await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:party-create:${stableId}`}))`);
+        const previous=await tx.compareciente.findFirst({where:{id:stableId,organization_id:requireActorContext().organizationId},include:{personaMoral:true}});
+        if(previous){
+          if(previous.archived_at||previous.nombre_busqueda!==nombreBusqueda||!previous.personaMoral) throw Object.assign(new Error('La operación de alta ya existe con otros datos.'),{code:'PARTY_CREATE_IDEMPOTENCY_CONFLICT'});
+          const {personaMoral,...compareciente}=previous;return {compareciente,personaMoral};
+        }
+      }
       const identityKey = cleanRfc || nombreBusqueda;
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:compareciente:${identityKey}`}))`);
       if (cleanRfc) {
@@ -720,6 +740,7 @@ export class ComparecienteService {
       // 1. Crear cabecera compareciente
       const compareciente = await tx.compareciente.create({
         data: {
+          ...(stableId?{id:stableId}:{}),
           tipo_persona: TipoPersona.MORAL,
           nombre_busqueda: nombreBusqueda,
           observaciones: optionalOperationalText(dto.observaciones),
@@ -1317,7 +1338,7 @@ export class ComparecienteService {
       if (consolidated.values.email && !consolidated.values.correo) consolidated.values.correo = consolidated.values.email;
       if (consolidated.values.celular && !consolidated.values.telefono) consolidated.values.telefono = consolidated.values.celular;
       const faltantes = missingApplicableComparecienteFields(extraction, compareciente.tipo_persona as 'FISICA' | 'MORAL');
-      await this.prisma.$transaction(async (tx) => {
+      const persistProposals = () => this.prisma.$transaction(async (tx) => {
         await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${correlationId}))`);
         const prior = await tx.auditLog.findFirst({ where: { organization_id: actorOrganizationId,
           entidad_id: comparecienteId, accion: 'EXTRAER_DATOS_COMPARECIENTE_IA', correlation_id: correlationId },
@@ -1413,16 +1434,26 @@ export class ComparecienteService {
         }
         await tx.auditLog.create({ data: {
           organization_id: actorOrganizationId, user_id: actorUserId, accion: 'EXTRAER_DATOS_COMPARECIENTE_IA', entidad: 'Compareciente', entidad_id: comparecienteId,
-          valores_nuevos: { campos_propuestos: Object.keys(consolidated.proposals), conflictos: consolidated.conflicts.length, faltantes: faltantes.length, errores_lectura: skipped.length, documentos: readable.length },
+          valores_nuevos: { campos_propuestos: Object.keys(consolidated.proposals), conflictos: consolidated.conflicts.length, faltantes: faltantes.length, errores_lectura: skipped.length + (extraction.errores?.length || 0), documentos: readable.length },
           detalles: { modulo: 'COMPARECIENTES', persistencia_maestra: false,
             documentos_csf_locales: extraction.documentos_csf?.length || 0,
             identificaciones_ocr_local: extraction.documentos_ine?.length || 0,
             reextraccion: true }, correlation_id: correlationId, session_id: actor.sessionId,
         } });
-      });
+      }, { maxWait: 10_000, timeout: 20_000 });
+      // Retry only the rolled-back local persistence, never the paid provider
+      // call. The advisory lock + audit key also handles an uncertain commit.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try { await persistProposals(); break; }
+        catch (error) {
+          if (attempt > 0 || !(error instanceof Prisma.PrismaClientKnownRequestError)
+            || !['P2028', 'P2034'].includes(error.code)) throw error;
+        }
+      }
       return {
         values: consolidated.values, proposals: consolidated.proposals, conflicts: consolidated.conflicts,
         domicilios_detectados: extraction.domicilios_detectados || [], documentos_omitidos: skipped,
+        errores: extraction.errores || [],
         documentos_curp: extraction.documentos_curp || [],
         documentos_csf: extraction.documentos_csf || [],
         documentos_ine: extraction.documentos_ine || [],

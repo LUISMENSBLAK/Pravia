@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react';
 import { useLocation } from 'react-router-dom';
+import { notifyAssistantDataChange } from '../../services/api/client';
 import { getAssistantActions, resolveAssistantContext } from './assistantContext';
 import { assistantService, type AssistantService } from './assistant.service';
 import type {
@@ -106,7 +107,7 @@ export function AssistantProvider({ children, service = assistantService }: Prop
     setStatus(nextStatus); if (reply.conversationId) { activeConversationIdRef.current = reply.conversationId; setActiveConversationId(reply.conversationId); }
     if (reply.message) setMessages((current) => [...current, { id: reply.messageId || messageId(), role: 'assistant', content: reply.message!, timestamp: now(),
       ...(reply.sources?.length ? { sources: reply.sources } : {}), ...(reply.confirmation ? { confirmation: reply.confirmation } : {}) }]);
-    if (reply.refresh) window.dispatchEvent(new CustomEvent('pravia:data-changed', { detail: { scope: reply.refresh } }));
+    if (reply.refresh) notifyAssistantDataChange(reply.refresh);
     if (nextStatus === 'success') { if (successTimer.current) window.clearTimeout(successTimer.current); successTimer.current = window.setTimeout(() => setStatus('idle'), 2200); }
   }, []);
 

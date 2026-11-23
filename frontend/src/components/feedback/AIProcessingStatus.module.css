@@ -14,3 +14,9 @@
 @keyframes ai-dot{0%,60%,100%{opacity:.28;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
 @media(max-width:520px){.status{grid-template-columns:36px minmax(0,1fr);padding:11px}.activity{grid-column:2;justify-self:start;padding:0}.copy strong{font-size:.65rem}.copy small{font-size:.55rem}}
 @media(prefers-reduced-motion:reduce){.icon>svg:first-child,.icon>svg:last-child,.activity i{animation:none}.activity i{opacity:.65}}
+.status.expanded{padding:24px;min-height:144px;background:var(--color-gold-100);animation:ai-enter .2s ease-out}
+.expanded .copy strong{font-size:1rem;line-height:1.4}.expanded .copy small{font-size:.85rem;line-height:1.6}
+.waiting{grid-column:2/-1;min-width:0;overflow-wrap:anywhere}.waiting>span{display:block;font-size:.8rem;font-variant-numeric:tabular-nums;color:var(--color-navy-900)}.waiting p{margin:8px 0 0;font-size:.8rem;line-height:1.5;color:var(--color-text-secondary)}
+@keyframes ai-enter{from{opacity:0}to{opacity:1}}
+@media(max-width:520px){.status.expanded{padding:16px;gap:12px}.expanded .copy strong{font-size:.95rem}.expanded .copy small{font-size:.8rem}.expanded .waiting{grid-column:1/-1}}
+@media(prefers-reduced-motion:reduce){.status.expanded{animation:none}}

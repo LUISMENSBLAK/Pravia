@@ -6,10 +6,12 @@ import { deleteFile, downloadFile, uploadFile } from '../services/supabase.servi
 import { isrService } from '../services/isr.service';
 import { ISRValidationError } from '../domain/isrTaxEngine';
 import { canonicalUploadedDocumentMime } from '../services/documentUploadValidation';
+import { PlatformDomainError } from '../platform/platform.errors';
 
 const actor = (req: Request) => req.user!;
 const sendError = (res: Response, error: unknown) => {
   if (error instanceof ISRValidationError) return res.status(error.status).json({ code: error.code, error: error.message, field: error.field });
+  if (error instanceof PlatformDomainError) return res.status(error.status).json({ code: error.code, error: error.message });
   console.error('ISR operation failed', error);
   return res.status(500).json({ code: 'ISR_OPERATION_FAILED', error: 'No fue posible completar la operación de ISR. Intenta nuevamente.' });
 };
@@ -25,7 +27,8 @@ export const unlinkISRFromExpediente = async (req: Request, res: Response) => { 
 export const calculateISRRecord = async (req: Request, res: Response) => { try { return res.status(201).json({ data: await isrService.calculate(actor(req), req.params.id, { expectedVersion: req.body?.expected_version === undefined ? undefined : Number(req.body.expected_version), requestKey: String(req.get('Idempotency-Key') || req.body?.request_key || '') }) }); } catch (error) { return sendError(res, error); } };
 export const generateISRPDF = async (req: Request, res: Response) => { try { const result = await isrService.generatePdf(actor(req), req.params.id, { expectedVersion: req.body?.expected_version === undefined ? undefined : Number(req.body.expected_version), idempotencyKey: String(req.get('Idempotency-Key') || req.body?.idempotency_key || '') }); return res.status(result.idempotent ? 200 : 201).json(result); } catch (error) { return sendError(res, error); } };
 export const extractISR = async (req: Request, res: Response) => { try { return res.json({ data: await isrService.extract(actor(req), req.params.id, { requestKey: String(req.get('Idempotency-Key') || req.body?.request_key || '') }) }); } catch (error) { return sendError(res, error); } };
-export const reviewISRProposal = async (req: Request, res: Response) => { try { const action = req.body?.action; if (!['ACEPTADA', 'RECHAZADA'].includes(action)) throw new ISRValidationError('INVALID_REVIEW_ACTION', 'Selecciona aceptar o rechazar la propuesta.'); return res.json({ data: await isrService.reviewProposal(actor(req), req.params.id, req.params.proposalId, action) }); } catch (error) { return sendError(res, error); } };
+export const interpretISROperation = async (req: Request, res: Response) => { try { return res.json({ data: await isrService.interpretOperation(actor(req), req.params.id, String(req.body?.description || ''), String(req.get('Idempotency-Key') || '')) }); } catch (error) { return sendError(res, error); } };
+export const reviewISRProposal = async (req: Request, res: Response) => { try { const action = req.body?.action; if (!['ACEPTADA', 'RECHAZADA'].includes(action)) throw new ISRValidationError('INVALID_REVIEW_ACTION', 'Selecciona aceptar o rechazar la propuesta.'); return res.json({ data: await isrService.reviewProposal(actor(req), req.params.id, req.params.proposalId, action, { expectedUpdatedAt: req.body?.expected_updated_at, partyId: req.body?.party_id }) }); } catch (error) { return sendError(res, error); } };
 export const calculateISRReferredValue = async (req: Request, res: Response) => { try { return res.json({ data: await isrService.referredValue(actor(req), req.body || {}) }); } catch (error) { return sendError(res, error); } };
 export const calculateISRSurcharges = async (req: Request, res: Response) => { try { return res.json({ data: await isrService.surcharges(actor(req), req.body || {}) }); } catch (error) { return sendError(res, error); } };
 export const calculateISRAdditionalTax = async (req: Request, res: Response) => { try { return res.json({ data: await isrService.additionalTax(actor(req), req.body || {}) }); } catch (error) { return sendError(res, error); } };

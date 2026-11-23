@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectTab } from '../features/cases/components/tabs/ProjectTab';
@@ -8,6 +8,7 @@ const api = vi.hoisted(() => ({
   uploadProject: vi.fn(),
   generateProject: vi.fn(),
   generateProjectFromTemplate: vi.fn(),
+  applyProjectInstructions: vi.fn(),
   reviewProject: vi.fn(),
   saveProjectAsNotaryTemplate: vi.fn(),
   downloadProject: vi.fn(),
@@ -60,7 +61,7 @@ describe('EXP-010 · Proyecto y revisión notarial', () => {
         observaciones: [{ id: 'obs-1', titulo: 'OBSERVACIÓN 01 — Riesgo Alto', nivel_riesgo: 'ALTO', tipo_discrepancia: 'TRANSCRIPCION_INCOMPLETA', dato_proyecto: 'Texto truncado', dato_fuente: 'Texto íntegro', documento_fuente: 'certificado.docx', ubicacion: 'Antecedente tercero', recomendacion: 'Completar manualmente la transcripción.' }],
       },
     }} />);
-    expect(await screen.findByRole('heading', { name: 'Resultado de la revisión' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'OBSERVACIONES DE PROYECCIÓN' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Observaciones de generación' })).toBeInTheDocument();
     expect(screen.getByText('123 pendiente(s) explícito(s) dentro del proyecto')).toBeInTheDocument();
     expect(screen.getByText(/no inventó ni los marcó como resueltos/i)).toBeInTheDocument();
@@ -76,11 +77,81 @@ describe('EXP-010 · Proyecto y revisión notarial', () => {
     expect(api.downloadProjectReport).toHaveBeenCalledWith('exp-1', 'Revision.docx');
   });
 
+  it('referencia de otro acto es explícita, exige origen y lo envía sin cambiar el acto real', async () => {
+    api.generateProject.mockRejectedValue(new Error('QA: no llamar proveedor'));
+    render(<ProjectTab expediente={{ id: 'exp-1' } as any} onChanged={vi.fn()} project={{ vigente: null, historial: [], ultimoReporte: null }} />);
+    await waitFor(() => expect(api.projectWorkspace).toHaveBeenCalled());
+    await userEvent.click(screen.getByText('Opciones avanzadas'));
+    await userEvent.selectOptions(screen.getByLabelText('Uso del machote'), 'STYLE_REFERENCE');
+    await userEvent.click(screen.getByRole('button', { name: 'PROYECTAR CON IA' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Identifica el acto de origen'); expect(api.generateProject).not.toHaveBeenCalled();
+    await userEvent.type(screen.getByLabelText('Acto de origen del machote'), 'Donación');
+    await userEvent.click(screen.getByRole('button', { name: 'PROYECTAR CON IA' }));
+    await waitFor(() => expect(api.generateProject).toHaveBeenCalledWith('exp-1', expect.objectContaining({ templatePurpose: 'STYLE_REFERENCE', templateSourceAct: 'Donación', templateVersionId: 'template-v1' })));
+    expect(await screen.findByRole('alert')).toHaveTextContent('QA: no llamar proveedor');
+  });
+
+  it('muestra espera durante toda la generación, congela indicaciones y no repite el envío', async () => {
+    let reject!:(error:Error)=>void;api.generateProject.mockReturnValue(new Promise((_resolve,r)=>{reject=r;}));
+    render(<ProjectTab expediente={{id:'exp-1'} as any} project={{vigente:null,historial:[],ultimoReporte:null}} onChanged={vi.fn()}/>);
+    await waitFor(()=>expect(api.projectWorkspace).toHaveBeenCalled());
+    const input=screen.getByLabelText(/Indicaciones para la proyección/i);await userEvent.type(input,'Conserva el antecedente documental y reporta la diferencia de superficie.');
+    await userEvent.click(screen.getByRole('button',{name:'PROYECTAR CON IA'}));
+    expect(screen.getByRole('status')).toHaveTextContent('Proyectando escritura con IA');expect(input).toBeDisabled();
+    expect(screen.getByText('Tiempo transcurrido: 0:00')).toBeInTheDocument();expect(screen.getByRole('button',{name:'Preparando proyecto…'})).toBeDisabled();
+    expect(api.generateProject).toHaveBeenCalledTimes(1);reject(new Error('La fuente no puede leerse'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('La fuente no puede leerse');expect(input).not.toBeDisabled();
+    expect(screen.queryByText('Tiempo transcurrido: 0:00')).not.toBeInTheDocument();
+  });
+
   it('mantiene el CTA inejecutable para un usuario sin permiso de proyección', async () => {
     auth.permissions = ['expedientes.project.read'];
     render(<ProjectTab expediente={{ id: 'exp-1' } as any} onChanged={vi.fn()} project={{ vigente: null, historial: [], ultimoReporte: null }} />);
     expect(await screen.findByRole('button', { name: 'PROYECTAR CON IA' })).toBeDisabled();
     expect(screen.getByText('Tu función actual no permite generar proyectos.')).toBeInTheDocument();
+  });
+
+  it('separa motivo de corrección e indicación de generación, con espera y recuperación dentro del editor', async () => {
+    let reject!: (error: Error) => void;
+    api.applyProjectInstructions.mockReturnValueOnce(new Promise((_, fail) => { reject = fail; })).mockResolvedValueOnce({});
+    const update = vi.fn();
+    const user = userEvent.setup();
+    render(<ProjectTab expediente={{ id: 'exp-1' } as any} project={{
+      vigente: { id: 'project-v2', version_numero: 2, nombre_original: 'Proyecto.docx', es_vigente: true, created_at: '2026-09-21T12:00:00.000Z' },
+      historial: [], ultimoReporte: null,
+    }} onChanged={update}/>);
+    const editor = within(screen.getByRole('region', { name: 'Aplicar indicaciones a la versión vigente' }));
+    const generation = screen.getByLabelText(/Indicaciones para la proyección/i);
+    const correction = editor.getByLabelText(/Motivo de la corrección/i);
+    const current = editor.getByLabelText('Texto actual');
+    const replacement = editor.getByLabelText('Texto corregido');
+    const submit = editor.getByRole('button', { name: 'APLICAR INDICACIONES' });
+    await user.type(generation, 'Conserva el estilo del machote.');
+    await user.type(current, 'Superficie');
+    await user.type(replacement, 'Superficie registrada');
+    expect(submit).toBeDisabled();
+    await user.type(correction, 'Aclara la etiqueta sin cambiar el dato.');
+    await user.click(submit);
+    expect(editor.getByRole('status')).toHaveTextContent('Guardando corrección');
+    expect(correction).toBeDisabled();
+    expect(current).toBeDisabled();
+    expect(submit).toBeDisabled();
+    expect(api.applyProjectInstructions).toHaveBeenCalledTimes(1);
+    expect(api.applyProjectInstructions).toHaveBeenCalledWith('exp-1', expect.objectContaining({
+      instructions: 'Aclara la etiqueta sin cambiar el dato.',
+      patches: [{ find: 'Superficie', replace: 'Superficie registrada' }],
+      authorize_learning: false,
+    }));
+    reject(new Error('La versión vigente cambió.'));
+    expect(await editor.findByRole('alert')).toHaveTextContent('La versión vigente cambió.');
+    expect(current).toHaveValue('Superficie');
+    expect(correction).toHaveValue('Aclara la etiqueta sin cambiar el dato.');
+    expect(update).not.toHaveBeenCalled();
+    await user.click(submit);
+    expect(await editor.findByRole('status')).toHaveTextContent('La versión anterior permanece intacta');
+    expect(update).toHaveBeenCalledOnce();
+    expect(correction).toHaveValue('');
+    expect(generation).toHaveValue('Conserva el estilo del machote.');
   });
 
   it('preselecciona sólo las fuentes marcadas por el backend', async () => {

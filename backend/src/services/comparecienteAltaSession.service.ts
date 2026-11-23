@@ -549,7 +549,7 @@ export class ComparecienteAltaSessionService {
     return {
       success: true,
       procesados: documentosParaIA.length,
-      errores: erroresCarga,
+      errores: [...erroresCarga, ...(resultadoIA.errores || [])],
       sesion_id: sessionId,
       propuesta: propuestaRespuesta,
       conflictos: consolidacion.conflicts,

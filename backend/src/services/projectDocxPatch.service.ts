@@ -23,6 +23,41 @@ async function visibleText(source: Buffer) {
   return (await Promise.all(names.map(async (name) => xmlText(await zip.files[name].async('string'))))).join('\n');
 }
 
+/** Keep unchanged words in their original runs. A planner supplies a whole
+ * paragraph, but moving that paragraph into its first run loses local fonts,
+ * bold/italic labels and literal insert formatting. */
+function replacementEdits(before: string, after: string) {
+  const a = before.match(/\s+|\S+/g) || []; const b = after.match(/\s+|\S+/g) || [];
+  const edits: Array<{ start: number; end: number; value: string }> = [];
+  const push = (start: number, end: number, value: string) => {
+    let old = before.slice(start, end); let prefix = 0;
+    while (prefix < old.length && prefix < value.length && old[prefix] === value[prefix]) prefix++;
+    let suffix = 0;
+    while (suffix < old.length - prefix && suffix < value.length - prefix && old[old.length - 1 - suffix] === value[value.length - 1 - suffix]) suffix++;
+    old = old.slice(prefix, old.length - suffix);
+    const replacement = value.slice(prefix, value.length - suffix);
+    if (old !== replacement) edits.push({ start: start + prefix, end: end - suffix, value: replacement });
+  };
+  if ((a.length + 1) * (b.length + 1) > 4_000_000) { push(0, before.length, after); return edits; }
+  const width = b.length + 1; const lcs = new Uint16Array((a.length + 1) * width);
+  for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--) {
+    lcs[i * width + j] = a[i] === b[j] ? lcs[(i + 1) * width + j + 1] + 1 : Math.max(lcs[(i + 1) * width + j], lcs[i * width + j + 1]);
+  }
+  let i = 0; let j = 0; let offset = 0; let from = 0; let added = ''; let changing = false;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      if (changing) { push(from, offset, added); changing = false; added = ''; }
+      offset += a[i++].length; j++;
+    } else {
+      if (!changing) { from = offset; changing = true; }
+      if (j < b.length && (i === a.length || lcs[i * width + j + 1] > lcs[(i + 1) * width + j])) added += b[j++];
+      else offset += a[i++].length;
+    }
+  }
+  if (changing) push(from, offset, added);
+  return edits;
+}
+
 function replaceAcrossTextRuns(paragraph: string, patch: DirectedDocxPatch) {
   const textPattern = /(<w:t(?:\s[^>]*)?>)([\s\S]*?)(<\/w:t>)/g;
   const nodes: Array<{ start: number; end: number; text: string }> = [];
@@ -63,17 +98,26 @@ function replaceAcrossTextRuns(paragraph: string, patch: DirectedDocxPatch) {
   if (at < 0) return null;
   const finish = exactAt >= 0 ? at + patch.find.length : equivalent!.end;
   const changed = nodes.map((node) => ({ ...node }));
-  const first = changed.findIndex((node) => at < node.end && finish > node.start);
-  let last = -1;
-  for (let index = changed.length - 1; index >= 0; index -= 1) {
-    if (at < changed[index].end && finish > changed[index].start) { last = index; break; }
+  for (const edit of replacementEdits(joined.slice(at, finish), patch.replace).reverse()) {
+    const from = at + edit.start; const to = at + edit.end;
+    if (from === to) {
+      let index = changed.findIndex((node) => from >= node.start && from < node.end);
+      if (index < 0 && from === joined.length) index = changed.length - 1;
+      if (index < 0) return null;
+      const position = from - changed[index].start;
+      changed[index].text = changed[index].text.slice(0, position) + edit.value + changed[index].text.slice(position);
+      continue;
+    }
+    const first = changed.findIndex((node) => from < node.end && to > node.start);
+    let last = -1;
+    for (let index = changed.length - 1; index >= 0; index--) if (from < changed[index].end && to > changed[index].start) { last = index; break; }
+    if (first < 0 || last < 0) return null;
+    const prefix = changed[first].text.slice(0, Math.max(0, from - changed[first].start));
+    const suffix = changed[last].text.slice(Math.max(0, to - changed[last].start));
+    changed[first].text = `${prefix}${edit.value}${first === last ? suffix : ''}`;
+    for (let index = first + 1; index < last; index++) changed[index].text = '';
+    if (last !== first) changed[last].text = suffix;
   }
-  if (first < 0 || last < 0) return null;
-  const prefix = changed[first].text.slice(0, Math.max(0, at - changed[first].start));
-  const suffix = changed[last].text.slice(Math.max(0, finish - changed[last].start));
-  changed[first].text = `${prefix}${patch.replace}${first === last ? suffix : ''}`;
-  for (let index = first + 1; index < last; index += 1) changed[index].text = '';
-  if (last !== first) changed[last].text = suffix;
   let nodeIndex = 0;
   return paragraph.replace(textPattern, (_full, open, _raw, close) => `${open}${escapeXml(changed[nodeIndex++].text)}${close}`);
 }

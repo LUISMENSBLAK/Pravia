@@ -3,6 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { cfdiIncomeBalance } from './cfdiIncomeBalance';
 
 describe('canonical CFDI V2 income balance', () => {
+  it('sandbox keeps a reservation but never impersonates a real fiscal issuance',()=>{
+    for(const estado of ['TIMBRANDO_SANDBOX','RECUPERAR_SANDBOX','TIMBRADO_SANDBOX']){
+      const balance=cfdiIncomeBalance({amount:new Prisma.Decimal('116'),facturaEstado:'PENDIENTE',linked:[{estado,total:new Prisma.Decimal('116')}]});
+      expect(balance.invoicedAmount.toString()).toBe('0');expect(balance.reservedDraftAmount.toString()).toBe('116');expect(balance.remainingInvoiceableAmount.toString()).toBe('0');
+    }
+  });
   it('subtracts issued and reserved drafts without counting cancelled invoices', () => {
     const balance = cfdiIncomeBalance({ amount: new Prisma.Decimal('500.00'), facturaEstado: 'PENDIENTE',
       linked: [{ estado: 'TIMBRADO', total: new Prisma.Decimal('200.00') },

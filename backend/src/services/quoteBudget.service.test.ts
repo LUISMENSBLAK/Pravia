@@ -70,6 +70,30 @@ const input = {
 };
 
 describe('Corrección 002 v2 · presupuesto único editable', () => {
+  it('guarda únicamente datos opcionales sin exigir conceptos ni alterar estado, territorio, contexto o totales', async () => {
+    const { tx, service } = harness(quote({ conceptos: [], valor_catastral: '500.00' }));
+    const result = await service.save(actor(), quote().id, { propertyValues: { operationValue: '2000000', propertyTaxAccount: '0001-a', predialAmount: '0.00' }, expectedUpdatedAt: timestamp.toISOString() });
+    expect(tx.cotizacion.update).toHaveBeenCalledWith({ where: { id: quote().id }, data: { valor_operacion: '2000000.00', cuenta_predial: '0001-a', importe_predial: '0.00' } });
+    expect(tx.cotizacionConcepto.deleteMany).not.toHaveBeenCalled(); expect(tx.cotizacionConcepto.createMany).not.toHaveBeenCalled();
+    expect(result.propertyValues).toEqual({ operationValue: '2000000.00', cadastralValue: '500.00', propertyTaxAccount: '0001-a', predialAmount: '0.00' });
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ accion: 'QUOTE_PROPERTY_VALUES_UPDATED', valores_anteriores: { propertyValues: expect.objectContaining({ cadastralValue: '500.00' }) }, detalles: { budget_changed: false, stage_changed: false } }) }));
+  });
+  it('preserva los cuatro datos cuando sólo se edita el presupuesto', async () => {
+    const { tx, service } = harness(); await service.save(actor(), quote().id, input);
+    const data = tx.cotizacion.update.mock.calls[0][0].data;
+    for (const field of ['valor_operacion', 'valor_catastral', 'cuenta_predial', 'importe_predial']) expect(data).not.toHaveProperty(field);
+  });
+  it.each(['ACEPTADA', 'CONVERTIDA_EXPEDIENTE'])('no cambia datos inmobiliarios históricos de %s', async (stage) => {
+    const { tx, service } = harness(quote({ etapa_contractual: stage }));
+    await expect(service.save(actor(), quote().id, { propertyValues: { predialAmount: '20' }, expectedUpdatedAt: timestamp.toISOString() })).rejects.toMatchObject({ code: 'QUOTE_BUDGET_FROZEN' });
+    expect(tx.cotizacion.update).not.toHaveBeenCalled();
+  });
+  it('rechaza datos opcionales obsoletos y objetos fuera del alcance', async () => {
+    const { service, tx } = harness();
+    await expect(service.save(actor(), quote().id, { propertyValues: { predialAmount: '10' }, expectedUpdatedAt: '2000-01-01T00:00:00Z' })).rejects.toMatchObject({ code: 'QUOTE_BUDGET_STALE' });
+    expect(tx.cotizacion.update).not.toHaveBeenCalled();
+    await expect(harness(null).service.save(actor(), quote().id, { propertyValues: {}, expectedUpdatedAt: timestamp.toISOString() })).rejects.toMatchObject({ code: 'QUOTE_NOT_FOUND' });
+  });
   it('confirma territorio en el mismo registro sin tocar presupuesto y audita actor y fecha del servidor', async () => {
     const { tx, service } = harness();
     await service.save(actor(), quote().id, { operationTerritory: { jurisdiction:'Nayarit', state:'Nayarit', municipality:'Tepic', confirm:true }, expectedUpdatedAt: timestamp.toISOString() });

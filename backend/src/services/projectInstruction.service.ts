@@ -43,6 +43,8 @@ export function reconcileProjectMetadataAfterPatches(metadata: Record<string, an
     contradiction_observations: reconcile(metadata.contradiction_observations),
     generation_observations: reconcile(metadata.generation_observations),
     residual_observations: reconcile(metadata.residual_observations),
+    mandatory_review_completed: false,
+    review_invalidated_by_correction: true,
   };
 }
 

@@ -8,8 +8,11 @@ import { deleteFile, downloadFile, uploadFile } from './supabase.service';
 import { extractDocxText } from './docxText';
 import { projectTemplateAssignmentService } from './projectTemplateAssignment.service';
 import { projectRepository } from './projectRepository.service';
-import { planLiteralProjectPatchesWithOpenAI, type LiteralProjectPatchPlan, type LiteralProjectPatchPlanItem } from './openaiDocument.service';
+import { analizarProyectoNotarialConOpenAI, planLiteralProjectPatchesWithOpenAI, type DocumentoParaExtraccion, type LiteralProjectPatchPlan, type LiteralProjectPatchPlanItem, type ProyectoObservation } from './openaiDocument.service';
 import { applyDirectedDocxPatches as applyDocxPatches } from './projectDocxPatch.service';
+import { highlightProjectReviewBuffer, highlightProjectReviewText } from './projectDocxHighlight.service';
+import { buildProjectionReviewReport, normalizeProjectionObservations } from './projectReviewReport.service';
+import { INSUFFICIENT_LEGAL_FOUNDATION, knowledgeService } from './knowledge.service';
 
 type Actor = NonNullable<Express.Request['user']>;
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -20,6 +23,14 @@ const safe = (value: string) => value.normalize('NFKD').replace(/[\u0300-\u036f]
 
 export class ProjectGenerationError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
+}
+
+export function resolveProjectTemplateUse(input: { template_purpose?: unknown; template_source_act?: unknown }, targetAct: string) {
+  const purpose = input.template_purpose ?? 'SAME_ACT';
+  if (purpose !== 'SAME_ACT' && purpose !== 'STYLE_REFERENCE') throw new ProjectGenerationError(400, 'PROJECT_TEMPLATE_PURPOSE_INVALID', 'Indica si el machote corresponde al acto o sólo es referencia de estilo.');
+  const sourceAct = text(input.template_source_act);
+  if (purpose === 'STYLE_REFERENCE' && (!sourceAct || sourceAct.length > 200)) throw new ProjectGenerationError(400, 'PROJECT_TEMPLATE_SOURCE_ACT_REQUIRED', 'Identifica el acto de origen del machote utilizado sólo como referencia de estilo (máximo 200 caracteres).');
+  return { purpose, source_act: purpose === 'STYLE_REFERENCE' ? sourceAct! : targetAct, target_act: targetAct } as const;
 }
 
 function pending(key: string) {
@@ -114,29 +125,20 @@ const TEMPLATE_PENDING = '[PENDIENTE: DATO DEL MACHOTE POR ACREDITAR]';
  * A literal Word template may contain anonymised/example values that the model
  * cannot safely resolve. Those values must never survive as if they belonged
  * to the current matter. The model still decides source-backed substitutions;
- * this deterministic pass only turns remaining masks and explicitly reported
- * residues into visible, auditable pending markers.
+ * this deterministic pass turns only empty masks into pending markers. A
+ * suspected residue is not proof that text may be deleted: retain it for
+ * yellow highlighting and the separate review report.
  */
 export function completeLiteralProjectPatchPlan(
   plan: LiteralProjectPatchPlan,
   segments: Array<{ text: string; paragraph_index: number }>,
 ): LiteralProjectPatchPlan {
-  const residues = (plan.possible_residues || [])
-    .map((item) => String(item.value || '').trim())
-    .filter((value) => value.length >= 4)
-    .sort((left, right) => right.length - left.length);
-  const sanitize = (value: string) => {
-    let next = value.replace(TEMPLATE_MASK, TEMPLATE_PENDING);
-    for (const residue of residues) {
-      if (!next.includes(residue)) continue;
-      next = next.split(residue).join(TEMPLATE_PENDING);
-    }
-    return next;
-  };
+  const sanitize = (value: string) => value.replace(TEMPLATE_MASK, TEMPLATE_PENDING);
   const byParagraph = new Map<number, LiteralProjectPatchPlanItem>();
   const undirected: LiteralProjectPatchPlanItem[] = [];
   for (const patch of plan.patches || []) {
     if (Number.isInteger(patch.target_paragraph_index) && Number(patch.target_paragraph_index) >= 0) {
+      if (byParagraph.has(Number(patch.target_paragraph_index))) throw new ProjectGenerationError(422, 'PROJECT_LITERAL_PATCH_AMBIGUOUS', 'El plan contiene dos sustituciones para el mismo párrafo; requiere un único reemplazo consolidado.');
       byParagraph.set(Number(patch.target_paragraph_index), patch);
     } else undirected.push(patch);
   }
@@ -153,7 +155,7 @@ export function completeLiteralProjectPatchPlan(
           ? [...new Set([...(existing.source_references || []), 'TEMPLATE_MISSING'])]
           : existing.source_references,
         reason: introducedPending
-          ? `${existing.reason || 'Sustitución acreditada'}. Se neutralizaron marcadores o residuos no acreditados del machote.`
+          ? `${existing.reason || 'Sustitución acreditada'}. Se identificaron marcadores vacíos del machote.`
           : existing.reason,
       });
       continue;
@@ -164,7 +166,7 @@ export function completeLiteralProjectPatchPlan(
       replace: replacement,
       target_paragraph_index: segment.paragraph_index,
       source_references: ['TEMPLATE_MISSING'],
-      reason: 'Marcador o dato residual del machote sin fuente acreditante; requiere revisión humana.',
+      reason: 'Marcador vacío del machote sin fuente acreditante; requiere revisión humana.',
       confidence: 'ALTA',
     });
   }
@@ -341,14 +343,20 @@ export async function reviewProjectAgainstTemplate(
   authorizedTemplateTargets: string[] = [],
 ): Promise<DeterministicProjectReviewObservation[]> {
   const observations: DeterministicProjectReviewObservation[] = [];
-  const [projectText, templateStatic, projectStatic] = await Promise.all([
+  const [projectText, templateStatic, projectStatic, templateText] = await Promise.all([
     docxVisibleText(project),
     staticParagraphSignatures(template),
     staticParagraphSignatures(project),
+    docxVisibleText(template),
   ]);
   const normalizedProjectText = normalizedDocumentText(projectText);
   const formalAmount = formatNotarialAmount(canonicalAmount);
-  if (formalAmount) {
+  // A canonical formatted alternative is data, not authority to impose a
+  // house style. Require words only when this specific template uses them.
+  const numberWord = '(?:UN|UNO|UNA|DOS|TRES|CUATRO|CINCO|SEIS|SIETE|OCHO|NUEVE|DIEZ|ONCE|DOCE|TRECE|CATORCE|QUINCE|DIECISEIS|DIECISIETE|DIECIOCHO|DIECINUEVE|VEINTE|VEINTI[A-Z]+|TREINTA|CUARENTA|CINCUENTA|SESENTA|SETENTA|OCHENTA|NOVENTA|CIEN|CIENTO|[A-Z]+CIENTOS|MIL|MILLON|MILLONES|Y|DE)';
+  const templateUsesWords = /\{\{\s*operacion\.precio_(?:formal_|letra)/i.test(templateText)
+    || new RegExp(`\\b${numberWord}(?:\\s+${numberWord})*\\s+PESOS?\\b`).test(templateText.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase());
+  if (formalAmount && templateUsesWords) {
     const accepted = [formalAmount.numberWords, formalAmount.wordsNumber].some((value) => normalizedProjectText.includes(normalizedDocumentText(value)));
     if (!accepted) observations.push({
       nivel_riesgo: 'MEDIO',
@@ -654,11 +662,7 @@ export function buildProjectFactSheet(
 }
 
 function highlightPendingRuns(xml: string) {
-  return xml.replace(/<w:r(\s[^>]*)?>([\s\S]*?)<\/w:r>/g, (run, attrs = '', body) => {
-    if (!body.includes('[PENDIENTE:') && !body.includes('** de **** de *******')) return run;
-    if (/<w:rPr[\s>]/.test(body)) return `<w:r${attrs}>${body.replace(/<w:rPr([^>]*)>/, '<w:rPr$1><w:highlight w:val="yellow"/>')}</w:r>`;
-    return `<w:r${attrs}><w:rPr><w:highlight w:val="yellow"/></w:rPr>${body}</w:r>`;
-  });
+  return highlightProjectReviewText(xml, []);
 }
 
 function countPattern(value: string, pattern: RegExp) {
@@ -784,7 +788,7 @@ export function validateLiteralProjectPatches(
   const effectivePatches = Array.isArray(plan.patches)
     ? plan.patches.filter((patch) => String(patch.find || '').length > 0 && String(patch.replace || '').length > 0 && String(patch.find) !== String(patch.replace))
     : [];
-  if (effectivePatches.length < 1 || effectivePatches.length > 120) {
+  if (effectivePatches.length > 120) {
     throw new ProjectGenerationError(422, 'PROJECT_LITERAL_PATCHES_REQUIRED', 'La IA no identificó sustituciones seguras suficientes para proyectar este machote literal.');
   }
   const allowed = new Set(['CANONICAL_FACTS', 'TEMPLATE_MISSING', ...allowedSourceIds]);
@@ -841,6 +845,9 @@ export function validateLiteralProjectPatches(
       throw new ProjectGenerationError(422, 'PROJECT_LITERAL_PATCH_SOURCE_INVALID', `La sustitución ${index + 1} no está respaldada por una fuente cerrada.`);
     }
     const pendingReplacement = /\[PENDIENTE(?::[^\]]+)?\]/i.test(replace);
+    if (/\[PENDIENTE:\s*(?:DESCRIPCI[ÓO]N CLARA|DATO|INFORMACI[ÓO]N)\s*\]/i.test(replace)) {
+      throw new ProjectGenerationError(422, 'PROJECT_LITERAL_PENDING_UNDESCRIBED', `El pendiente ${index + 1} debe identificar el dato concreto faltante, no repetir una instrucción genérica.`);
+    }
     if (pendingReplacement && !references.includes('TEMPLATE_MISSING')) {
       throw new ProjectGenerationError(422, 'PROJECT_LITERAL_PENDING_SOURCE_INVALID', `El pendiente ${index + 1} no está identificado como dato faltante.`);
     }
@@ -860,6 +867,7 @@ export function isRetryableLiteralProjectPlanError(error: unknown): error is Pro
     'PROJECT_LITERAL_PATCH_NOT_FOUND',
     'PROJECT_LITERAL_PATCH_SOURCE_INVALID',
     'PROJECT_LITERAL_PENDING_SOURCE_INVALID',
+    'PROJECT_LITERAL_PENDING_UNDESCRIBED',
     'PROJECT_LITERAL_VALUE_WITHOUT_SOURCE',
   ]).has(error.code);
 }
@@ -874,8 +882,8 @@ export async function renderLiteralProjectTemplate(
   const originalMedia = Object.fromEntries(await Promise.all(originalEntries.filter((name) => name.startsWith('word/media/') && !original.files[name].dir).map(async (name) => [name, checksum(await original.files[name].async('nodebuffer'))])));
   const templateText = await docxVisibleText(source);
   const patches = validateLiteralProjectPatches(templateText, plan, allowedSourceIds);
-  const patched = await applyDocxPatches(source, patches, (status, code, message) => new ProjectGenerationError(status, code, message));
-  const highlighted = await JSZip.loadAsync(patched.buffer);
+  const patched = patches.length ? await applyDocxPatches(source, patches, (status, code, message) => new ProjectGenerationError(status, code, message)) : { buffer: source };
+  const highlighted = await JSZip.loadAsync(await highlightProjectReviewBuffer(patched.buffer, plan.possible_residues.map((item) => item.value)));
   for (const name of Object.keys(highlighted.files).filter((item) => /^word\/(document|header\d+|footer\d+)\.xml$/.test(item))) {
     const xml = await highlighted.file(name)?.async('string');
     if (xml) highlighted.file(name, highlightPendingRuns(xml));
@@ -927,20 +935,16 @@ export async function buildLiteralProjectSources(
   for (let index = 0; index < selectedSources.length; index += 1) {
     const link = selectedSources[index];
     const extracted = record(link.documento.datos_extraidos);
-    const documentsLeft = selectedSources.length - index;
-    const fairShare = documentsLeft > 0 ? Math.max(0, Math.floor(remaining / documentsLeft)) : 0;
-    const sourceBudget = Math.min(2_400, fairShare);
     const compact = compactExtraction(extracted);
-    const extractedText = JSON.stringify(compact).slice(0, Math.floor(sourceBudget * 0.7));
-    const literalBudget = Math.max(0, sourceBudget - extractedText.length);
+    const extractedText = JSON.stringify(compact);
     const sourceName = String(link.documento.nombre_original || link.documento_id);
     const mime = String(link.documento.mime_type || '').toLowerCase();
     const isLegacyDoc = mime === 'application/msword' || /\.doc$/i.test(sourceName);
     let literal = '';
     let issue: string | null = null;
-    if (literalBudget > 0) {
+    {
       try {
-        literal = (await readSource(link.documento)).slice(0, literalBudget);
+        literal = await readSource(link.documento);
         if (!literal && isLegacyDoc) {
           issue = 'El archivo DOC legacy no admite extracción literal validada; conserva trazabilidad y requiere revisión manual.';
         }
@@ -955,8 +959,9 @@ export async function buildLiteralProjectSources(
         document_id: link.documento_id,
         detail: issue,
       });
-      literal = `[FUENTE NO LEGIBLE: ${sourceName}. REQUIERE REVISIÓN MANUAL]`.slice(0, literalBudget);
+      literal = `[FUENTE NO LEGIBLE: ${sourceName}. REQUIERE REVISIÓN MANUAL]`;
     }
+    if (extractedText.length + literal.length > remaining) throw new ProjectGenerationError(422, 'PROJECT_SOURCE_CONTEXT_TOO_LARGE', 'Las fuentes superan la capacidad textual de esta proyección. No se truncaron ni se declararon leídas; prepara fuentes acotadas y conserva los originales para revisión.');
     remaining -= extractedText.length + literal.length;
     sources.push({
       id: link.documento_id,
@@ -1033,7 +1038,7 @@ export class ProjectGenerationService {
         const persisted = await projectRepository.getVersion(expedienteId, existing.documento_id);
         const metadata = record(existing.documento.datos_extraidos);
         const project = record(metadata.proyecto);
-        return { version: persisted?.record, pending_count: Number(project.pending_count || 0), contradiction_count: Array.isArray(project.contradiction_observations) ? project.contradiction_observations.length : 0, generation_observation_count: Array.isArray(project.generation_observations) ? project.generation_observations.length : 0, residual_observation_count: Array.isArray(project.residual_observations) ? project.residual_observations.length : 0, critical_count: 0, instructions_consumed: Boolean(project.instructions_consumed), instruction_focus: Array.isArray(project.instruction_focus) ? project.instruction_focus : [], generation_origin: project.generation_origin || 'UI', docx_structural_fidelity: 'PASS', template: { artifact_id: project.template_artifact_id || null, version_id: project.template_version_id || null, version: project.template_version || null, name: project.template_name || null, exclusive: String(project.generation_mode || '').includes('EXCEPCIONAL') }, review_required: true, idempotent: true };
+        return { version: persisted?.record, pending_count: Number(project.pending_count || 0), contradiction_count: Array.isArray(project.contradiction_observations) ? project.contradiction_observations.length : 0, generation_observation_count: Array.isArray(project.generation_observations) ? project.generation_observations.length : 0, residual_observation_count: Array.isArray(project.residual_observations) ? project.residual_observations.length : 0, critical_count: Number(project.critical_count || 0), instructions_consumed: Boolean(project.instructions_consumed), instruction_focus: Array.isArray(project.instruction_focus) ? project.instruction_focus : [], generation_origin: project.generation_origin || 'UI', docx_structural_fidelity: 'PASS', template: { artifact_id: project.template_artifact_id || null, version_id: project.template_version_id || null, version: project.template_version || null, name: project.template_name || null, exclusive: String(project.generation_mode || '').includes('EXCEPCIONAL') }, review_required: true, idempotent: true };
       }
     }
     const instructionPolicy = resolveProjectInstructions(input?.instructions);
@@ -1052,10 +1057,22 @@ export class ProjectGenerationService {
       throw new ProjectGenerationError(403, 'PROJECT_SOURCE_ACCESS_DENIED', 'Una fuente seleccionada no pertenece a los documentos vigentes del expediente.');
     }
     const selectedSources = expediente.expedienteDocumentos.filter((link) => selectedSourceIds.includes(link.documento_id));
+    const reviewSources: DocumentoParaExtraccion[] = [];
+    const unavailableSources: string[] = [];
+    for (const link of selectedSources) {
+      try {
+        reviewSources.push({ buffer: await downloadFile(link.documento.storage_key), mimeType: link.documento.mime_type,
+          tipoDocumento: link.documento.tipo, documentoId: link.documento_id, nombreOriginal: link.documento.nombre_original });
+      } catch { unavailableSources.push(link.documento.nombre_original); }
+    }
     const manualTemplate = input?.__manual_template as { buffer: Buffer; name: string } | undefined;
     const requestedVersionId = manualTemplate ? null : text(input?.template_version_id);
     const actId = expediente.actos[0]?.tipo_acto_id || expediente.tipo_acto_id;
     if (!actId) throw new ProjectGenerationError(409, 'PROJECT_ACT_REQUIRED', 'El expediente necesita al menos un acto activo antes de proyectar la escritura.');
+    const targetAct = expediente.actos.find((item) => item.tipo_acto_id === actId)?.tipo_acto
+      || await prisma.tipoActo.findUnique({ where: { id: actId }, select: { nombre: true } });
+    if (!targetAct) throw new ProjectGenerationError(409, 'PROJECT_ACT_REQUIRED', 'No se encontró el acto canónico del expediente.');
+    const templateUse = resolveProjectTemplateUse(input || {}, targetAct.nombre);
     const assignment = manualTemplate ? null : await projectTemplateAssignmentService.resolve(actor, actId);
     const resolved = assignment && (!requestedVersionId || requestedVersionId === assignment.version_id)
       ? { ...assignment.version, artefacto: assignment.artefacto }
@@ -1074,8 +1091,8 @@ export class ProjectGenerationService {
     const confirmedValues = input?.confirmed_values && typeof input.confirmed_values === 'object' ? input.confirmed_values : {};
     const baseValues = buildProjectTemplateData(expediente, confirmedValues);
     const documentContext = await buildProjectDocumentContext(source, selectedSources, baseValues, input?.transcription_sources);
-    const literalMode = documentContext.fields.length === 0;
-    if (literalMode && !idempotencyKey) {
+    const literalMode = templateUse.purpose === 'STYLE_REFERENCE' || documentContext.fields.length === 0;
+    if (!idempotencyKey) {
       throw new ProjectGenerationError(400, 'AI_IDEMPOTENCY_CONTEXT_REQUIRED', 'La proyección literal con IA requiere una clave de idempotencia.');
     }
     const literalSegments = literalMode ? await docxLiteralSegments(source) : [];
@@ -1092,15 +1109,17 @@ export class ProjectGenerationService {
           templateSegments: literalSegments,
           canonicalFacts: documentContext.values,
           sourceDocuments: literalSources.sources,
+          sourceAttachments: reviewSources.filter((item) => item.mimeType.includes('pdf') || item.mimeType.startsWith('image/')),
           instructions,
+          templateUse,
           validationFeedback,
           economicContext: {
             actor: {
               userId: actor.id, organizationId: actor.organizationId, membershipId: actor.membershipId,
               role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId,
             },
-            idempotencyKey: `${idempotencyKey}:literal-plan:${attempt}`,
-            traceId: text(input?.__trace_id) || idempotencyKey!,
+            idempotencyKey: `project:${checksum(`${expedienteId}:${idempotencyKey}`)}:literal-plan:${attempt}`,
+            traceId: `project:${checksum(`${expedienteId}:${idempotencyKey}:${text(input?.__trace_id) || ''}`)}:literal-plan:${attempt}`,
           },
         });
         const completed = completeLiteralProjectPatchPlan(planned, literalSegments);
@@ -1136,14 +1155,52 @@ export class ProjectGenerationService {
       ...literalPlan.possible_residues.map((residue) => ({ kind: 'POSSIBLE_TEMPLATE_RESIDUE' as const, value: residue.value, location: residue.location, detail: residue.detail })),
     ] : [];
     const generationObservations = [...documentContext.observations, ...literalSources.observations, ...plannerObservations, ...residueObservations];
+    // A second, independent model pass is mandatory before publishing the draft.
+    // It consumes the generated DOCX, the unchanged template and complete source
+    // files, not just the planner's conclusions. Failure leaves no new version.
+    const legalEvidence = await knowledgeService.retrieve({ id: actor.id, organizationId: actor.organizationId }, {
+      query: `${expediente.actos.map((item) => item.tipo_acto.nombre).join(' ')} ${expediente.descripcion || ''} proyecto escritura notarial`,
+      legal_date: new Date().toISOString().slice(0, 10), limit: 8,
+    }).catch(() => ({ status: 'INSUFFICIENT_FOUNDATION', message: INSUFFICIENT_LEGAL_FOUNDATION, evidence: [], internal_reasoning: null }));
+    const legalReview = await analizarProyectoNotarialConOpenAI(
+      { buffer: rendered.buffer, mimeType: DOCX, tipoDocumento: 'PROYECTO_ESCRITURA', documentoId: 'BORRADOR_EN_REVISION', nombreOriginal: 'Proyecto_en_revision.docx' },
+      reviewSources, { hechos_canonicos: documentContext.values, uso_del_machote: templateUse, observaciones_generacion: generationObservations, biblioteca_juridica: legalEvidence, indicaciones: instructions },
+      { buffer: source, mimeType: DOCX, tipoDocumento: 'MACHOTE_ORIGEN', documentoId: version.id || 'MACHOTE_EXCEPCIONAL', nombreOriginal: artifact.nombre },
+      { actor: { userId: actor.id, organizationId: actor.organizationId, membershipId: actor.membershipId, role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId },
+        idempotencyKey: `project:${checksum(`${expedienteId}:${idempotencyKey}`)}:mandatory-review`, traceId: `project:${checksum(`${expedienteId}:${idempotencyKey}:${text(input?.__trace_id) || ''}`)}:mandatory-review` },
+    );
+    const deterministicReview = await reviewProjectAgainstTemplate(rendered.buffer, source, expediente.valor_operacion?.toString(), artifact.nombre, renderedLiteralPatches.map((patch) => patch.find));
+    const factualReview: ProyectoObservation[] = generationObservations.map((item) => ({
+      nivel_riesgo: 'MEDIO', dato_proyecto: item.value || item.master_value || item.field || item.detail || 'Dato pendiente de revisión',
+      dato_fuente: item.document_value || item.detail || 'No acreditado con las fuentes seleccionadas',
+      documento_fuente: item.document_id || (item.kind === 'POSSIBLE_TEMPLATE_RESIDUE' ? artifact.nombre : 'Fuentes y maestros del expediente'),
+      ubicacion: item.location || item.field || 'Proyecto generado', tipo_discrepancia: item.kind === 'AI_PLANNER_MISSING' ? 'FALTANTE' : item.kind,
+      recomendacion: item.kind === 'POSSIBLE_TEMPLATE_RESIDUE' ? 'REVISAR POSIBLE ELIMINACIÓN/MODIFICACIÓN: conservar el texto hasta decisión expresa del abogado.' : 'Cotejar la fuente y confirmar o corregir mediante una acción humana trazable; no completar por inferencia.',
+    }));
+    const unreadSources = [...new Set([...unavailableSources, ...legalReview.documentos_no_leidos])];
+    const reportObservations = normalizeProjectionObservations([...legalReview.observaciones, ...deterministicReview, ...factualReview,
+      ...unreadSources.map((name): ProyectoObservation => ({ nivel_riesgo: 'MEDIO', dato_proyecto: 'Fuente no leída', dato_fuente: 'No se pudo acreditar el contenido', documento_fuente: name,
+        ubicacion: 'Fuentes documentales', tipo_discrepancia: 'FUENTE_NO_LEIDA', recomendacion: 'Revisión manual del original o aportar una copia legible validada. No se declara leído este archivo.' })),
+    ]);
+    rendered.buffer = await highlightProjectReviewBuffer(rendered.buffer, [
+      ...generationObservations.flatMap((item) => [item.value || '', item.master_value || '']),
+      ...reportObservations.filter((item) => item.categoria !== 'INFORMATIVAS').map((item) => item.texto_a_resaltar || item.dato_proyecto),
+    ]);
+    await assertDocxStructuralFidelity(await JSZip.loadAsync(source), await JSZip.loadAsync(rendered.buffer));
+    const criticalCount = reportObservations.filter((item) => item.categoria === 'CRÍTICAS').length;
     const factSheet = buildProjectFactSheet(documentContext.values, selectedSources.map((link) => link.documento_id), generationObservations, confirmedValues);
     const prior = await projectRepository.listVersions(expedienteId);
     const versionNumber = prior.reduce((max, item) => Math.max(max, item.version_numero), 0) + 1;
     const storageKey = `organizations/${actor.organizationId}/documentos/expedientes/${expedienteId}/proyectos/${randomUUID()}_Proyecto_${safe(expediente.numero_pravia)}.docx`;
     const manualStorageKey = manualTemplate ? `organizations/${actor.organizationId}/documentos/expedientes/${expedienteId}/proyectos/machotes/${randomUUID()}_${safe(manualTemplate.name)}` : null;
-    if (manualStorageKey) await uploadFile(source, manualStorageKey, DOCX);
-    await uploadFile(rendered.buffer, storageKey, DOCX);
+    const reportStorageKey = `organizations/${actor.organizationId}/documentos/expedientes/${expedienteId}/reportes-ia/${randomUUID()}_Observaciones_proyeccion.docx`;
+    const reportBuffer = await buildProjectionReviewReport({ folio: expediente.numero_pravia, projectName: `Proyecto sobre ${artifact.nombre} · SHA-256 ${checksum(rendered.buffer)}`, requestedBy: actor.id, summary: legalReview.resumen_ejecutivo,
+      observations: reportObservations, areas: legalReview.areas_revision, unread: unreadSources, sourceCount: reviewSources.length - legalReview.documentos_no_leidos.length,
+      totalSourceCount: selectedSources.length, legalFoundation: legalEvidence.evidence.length ? legalEvidence.evidence.map((item: any) => `${item.inventory_code}: ${item.title}`).join('; ') : INSUFFICIENT_LEGAL_FOUNDATION });
     try {
+      if (manualStorageKey) await uploadFile(source, manualStorageKey, DOCX);
+      await uploadFile(rendered.buffer, storageKey, DOCX);
+      await uploadFile(reportBuffer, reportStorageKey, DOCX);
       const result = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:proyecto-version:${expedienteId}`}))`);
         if (idempotencyKey) {
@@ -1174,21 +1231,39 @@ export class ProjectGenerationService {
           organization_id: actor.organizationId, expediente_id: expedienteId, nombre_original: assignedFileName, nombre_interno: storageKey, storage_key: storageKey,
           tipo: 'PROYECTO_ESCRITURA', categoria: 'PROYECTO', mime_type: DOCX, size_bytes: rendered.buffer.length, checksum_sha256: checksum(rendered.buffer),
           subido_por_id: actor.id, estatus: 'VIGENTE', observaciones: `V${assignedVersion} · borrador para revisión notarial`,
-          datos_extraidos: json({ proyecto: { version_numero: assignedVersion, es_version_final: false, nota_version: `V${assignedVersion} · borrador para revisión notarial`, template_artifact_id: artifact.id, template_version_id: sourceEntityId, template_version: version.version, template_name: artifact.nombre, template_checksum: version.checksum_sha256, source_document_ids: selectedSources.map((link) => link.documento_id), source_selection_explicit: requestedSourceIds !== undefined, instructions, instructions_consumed: instructionPolicy.consumed, instruction_focus: instructionPolicy.focus, generation_origin: origin, pending_count: rendered.pendingCount, contradiction_observations: generationObservations.filter((item) => item.kind === 'CONTRADICTION'), generation_observations: generationObservations, residual_observations: [...plannerObservations.filter((item) => item.kind === 'POSSIBLE_TEMPLATE_RESIDUE'), ...residueObservations], docx_structural_fidelity: { status: 'PASS', ...rendered.fidelity }, generation_mode: literalMode ? (manualSource ? 'MACHOTE_LITERAL_IA_EXCEPCIONAL' : 'MACHOTE_LITERAL_IA_CFG002') : manualSource ? 'MACHOTE_EXCEPCIONAL' : 'MACHOTE_CFG002', literal_projection: literalPlan ? { patch_count: renderedLiteralPatches.length, authorized_template_targets: renderedLiteralPatches.map((patch) => patch.find), planner_model: literalPlan.model, planner_usage: literalPlan.usage, source_references: [...new Set(renderedLiteralPatches.flatMap((patch) => patch.source_references))] } : null } }),
+          datos_extraidos: json({ proyecto: { version_numero: assignedVersion, es_version_final: false, nota_version: `V${assignedVersion} · borrador para revisión notarial`, template_artifact_id: artifact.id, template_version_id: sourceEntityId, template_version: version.version, template_name: artifact.nombre, template_use: templateUse, template_checksum: version.checksum_sha256, source_document_ids: selectedSources.map((link) => link.documento_id), source_selection_explicit: requestedSourceIds !== undefined, instructions, instructions_consumed: instructionPolicy.consumed, instruction_focus: instructionPolicy.focus, generation_origin: origin, pending_count: rendered.pendingCount, critical_count: criticalCount, mandatory_review_completed: true, contradiction_observations: generationObservations.filter((item) => item.kind === 'CONTRADICTION'), generation_observations: generationObservations, residual_observations: [...plannerObservations.filter((item) => item.kind === 'POSSIBLE_TEMPLATE_RESIDUE'), ...residueObservations], docx_structural_fidelity: { status: 'PASS', ...rendered.fidelity }, generation_mode: literalMode ? (manualSource ? 'MACHOTE_LITERAL_IA_EXCEPCIONAL' : 'MACHOTE_LITERAL_IA_CFG002') : manualSource ? 'MACHOTE_EXCEPCIONAL' : 'MACHOTE_CFG002', literal_projection: literalPlan ? { patch_count: renderedLiteralPatches.length, authorized_template_targets: renderedLiteralPatches.map((patch) => patch.find), planner_model: literalPlan.model, planner_usage: literalPlan.usage, source_references: [...new Set(renderedLiteralPatches.flatMap((patch) => patch.source_references))] } : null } }),
         } });
         await tx.expedienteDocumento.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, documento_id: created.id, tipo_vinculo: 'PROYECTO_ESCRITURA', creado_por_id: actor.id, estatus: 'ACTIVO', origen: 'EXPEDIENTE', source_entity_type: manualSource ? 'Documento' : 'CatalogoArtefactoVersion', source_entity_id: sourceEntityId, source_context: 'PROYECTO_ESCRITURA', source_key: `EXPEDIENTE:${manualSource ? 'Documento' : 'CatalogoArtefactoVersion'}:${sourceEntityId}:${created.id}:PROYECTO_ESCRITURA`, document_version: checksum(rendered.buffer), provenance: json({ template_artifact_id: artifact.id, template_version_id: sourceEntityId, template_checksum: version.checksum_sha256, exclusive_template: Boolean(manualSource), source_selection_explicit: requestedSourceIds !== undefined, source_documents: selectedSources.map((link) => ({ id: link.documento_id, checksum: link.documento.checksum_sha256 })) }), document_role: 'PROJECT_DRAFT', idempotency_key: idempotencyKey || null } });
         await tx.projectFactSnapshot.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, project_document_id: created.id, project_version: assignedVersion, facts: json(factSheet), conflicts: json(generationObservations), created_by_id: actor.id } });
+        await tx.expedienteDocumento.updateMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, tipo_vinculo: 'REPORTE_IA_PROYECTO', estatus: 'ACTIVO' }, data: { estatus: 'SUSTITUIDO', inactivado_at: new Date(), inactivado_por_id: actor.id, motivo_inactivacion: 'Sustituido por revisión obligatoria de un proyecto nuevo' } });
+        const report = await tx.documento.create({ data: {
+          organization_id: actor.organizationId, expediente_id: expedienteId, nombre_original: `Observaciones_Proyeccion_${safe(expediente.numero_pravia)}_V${assignedVersion}.docx`,
+          nombre_interno: reportStorageKey, storage_key: reportStorageKey, tipo: 'REPORTE_IA_PROYECTO', categoria: 'PROYECTO', mime_type: DOCX, size_bytes: reportBuffer.length,
+          checksum_sha256: checksum(reportBuffer), subido_por_id: actor.id, estatus: 'VIGENTE',
+          datos_extraidos: json({ reporte_ia_proyecto: { proyecto_version_id: created.id, proyecto_version_numero: assignedVersion,
+            documentos_analizados_count: Math.max(0, reviewSources.length - legalReview.documentos_no_leidos.length), documentos_totales_count: selectedSources.length,
+            documentos_no_leidos: unreadSources, areas_revision: legalReview.areas_revision, observaciones: reportObservations, solicitado_por: actor.id,
+            legal_evidence: legalEvidence, mandatory_post_generation: true, provider: legalReview.proveedor, model: legalReview.modelo, usage: legalReview.usos || legalReview.uso } }),
+        } });
+        await tx.expedienteDocumento.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, documento_id: report.id, tipo_vinculo: 'REPORTE_IA_PROYECTO',
+          creado_por_id: actor.id, estatus: 'ACTIVO', origen: 'EXPEDIENTE', source_entity_type: 'Documento', source_entity_id: created.id, source_context: 'REPORTE_IA_PROYECTO',
+          source_key: `EXPEDIENTE:Documento:${created.id}:${report.id}:REPORTE_IA_PROYECTO`, document_version: checksum(reportBuffer),
+          provenance: json({ project_document_id: created.id, mandatory_post_generation: true, project_checksum: checksum(rendered.buffer) }),
+          idempotency_key: `project:${checksum(`${expedienteId}:${idempotencyKey}`)}:mandatory-report` } });
+        await tx.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: 'PROYECTO_GENERADO_Y_REVISADO', entidad: 'Documento', entidad_id: created.id,
+          detalles: json({ expediente_id: expedienteId, project_document_id: created.id, report_document_id: report.id, version: assignedVersion, critical_count: criticalCount,
+            source_document_ids: selectedSourceIds, sources_unread: unreadSources, template_use: templateUse, template_checksum: checksum(source), project_checksum: checksum(rendered.buffer), idempotency_key: idempotencyKey }) } });
         await tx.expedienteActividad.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, tipo: 'AUDITORIA', titulo: `Proyecto generado (V${assignedVersion})`, descripcion: `Origen ${origin}; machote ${manualSource ? 'exclusivo' : 'CFG-002'} ${artifact.nombre}, versión ${version.version}; ${selectedSources.length} fuente(s) documental(es); indicaciones ${instructionPolicy.consumed ? 'consumidas como foco de revisión' : 'no proporcionadas'}; ${rendered.pendingCount} pendiente(s) y ${generationObservations.length} observación(es) para revisión.`, usuario_id: actor.id } });
         return { document: created, idempotent: false };
       }, { timeout: 20_000 });
-      if (result.idempotent) await Promise.all([deleteFile(storageKey).catch(() => undefined), manualStorageKey ? deleteFile(manualStorageKey).catch(() => undefined) : Promise.resolve()]);
+      if (result.idempotent) await Promise.all([deleteFile(storageKey).catch(() => undefined), deleteFile(reportStorageKey).catch(() => undefined), manualStorageKey ? deleteFile(manualStorageKey).catch(() => undefined) : Promise.resolve()]);
       const persisted = await projectRepository.getVersion(expedienteId, result.document.id);
       if (result.idempotent) {
         const metadata = record(result.document.datos_extraidos); const project = record(metadata.proyecto);
-        return { version: persisted?.record, pending_count: Number(project.pending_count || 0), contradiction_count: Array.isArray(project.contradiction_observations) ? project.contradiction_observations.length : 0, generation_observation_count: Array.isArray(project.generation_observations) ? project.generation_observations.length : 0, residual_observation_count: Array.isArray(project.residual_observations) ? project.residual_observations.length : 0, critical_count: 0, instructions_consumed: Boolean(project.instructions_consumed), instruction_focus: Array.isArray(project.instruction_focus) ? project.instruction_focus : [], generation_origin: project.generation_origin || origin, docx_structural_fidelity: 'PASS', template: { artifact_id: project.template_artifact_id || null, version_id: project.template_version_id || null, version: project.template_version || null, name: project.template_name || null, exclusive: String(project.generation_mode || '').includes('EXCEPCIONAL') }, review_required: true, idempotent: true };
+        return { version: persisted?.record, pending_count: Number(project.pending_count || 0), contradiction_count: Array.isArray(project.contradiction_observations) ? project.contradiction_observations.length : 0, generation_observation_count: Array.isArray(project.generation_observations) ? project.generation_observations.length : 0, residual_observation_count: Array.isArray(project.residual_observations) ? project.residual_observations.length : 0, critical_count: Number(project.critical_count || 0), instructions_consumed: Boolean(project.instructions_consumed), instruction_focus: Array.isArray(project.instruction_focus) ? project.instruction_focus : [], generation_origin: project.generation_origin || origin, docx_structural_fidelity: 'PASS', template: { artifact_id: project.template_artifact_id || null, version_id: project.template_version_id || null, version: project.template_version || null, name: project.template_name || null, exclusive: String(project.generation_mode || '').includes('EXCEPCIONAL') }, review_required: true, idempotent: true };
       }
-      return { version: persisted?.record, pending_count: rendered.pendingCount, contradiction_count: documentContext.observations.filter((item) => item.kind === 'CONTRADICTION').length, generation_observation_count: generationObservations.length, residual_observation_count: residueObservations.length, critical_count: 0, instructions_consumed: instructionPolicy.consumed, instruction_focus: instructionPolicy.focus, generation_origin: origin, docx_structural_fidelity: 'PASS', template: { artifact_id: artifact.id, version_id: version.id, version: version.version, name: artifact.nombre, exclusive: Boolean(manualTemplate) }, review_required: true, idempotent: false };
-    } catch (error) { await Promise.all([deleteFile(storageKey).catch(() => undefined), manualStorageKey ? deleteFile(manualStorageKey).catch(() => undefined) : Promise.resolve()]); throw error; }
+      return { version: persisted?.record, pending_count: rendered.pendingCount, contradiction_count: documentContext.observations.filter((item) => item.kind === 'CONTRADICTION').length, generation_observation_count: generationObservations.length, residual_observation_count: residueObservations.length, critical_count: criticalCount, instructions_consumed: instructionPolicy.consumed, instruction_focus: instructionPolicy.focus, generation_origin: origin, docx_structural_fidelity: 'PASS', template: { artifact_id: artifact.id, version_id: version.id, version: version.version, name: artifact.nombre, exclusive: Boolean(manualTemplate) }, review_required: true, idempotent: false };
+    } catch (error) { await Promise.all([deleteFile(storageKey).catch(() => undefined), deleteFile(reportStorageKey).catch(() => undefined), manualStorageKey ? deleteFile(manualStorageKey).catch(() => undefined) : Promise.resolve()]); throw error; }
   }
 }
 

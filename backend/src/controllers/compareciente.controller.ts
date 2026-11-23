@@ -3,6 +3,8 @@ import { ComparecienteService } from '../services/compareciente.service';
 import prisma from '../config/prisma';
 import { canAccessCompareciente, comparecienteObjectWhere } from '../services/objectAccess.service';
 import { canonicalUploadedDocumentMime } from '../services/documentUploadValidation';
+import { PlatformDomainError } from '../platform/platform.errors';
+import { Prisma } from '@prisma/client';
 
 const comparecienteService = new ComparecienteService(prisma);
 
@@ -88,6 +90,9 @@ export class ComparecienteController {
         success: false, code: 'COMPARECIENTE_DATOS_DUPLICADOS',
         error: 'Uno de los datos ya está registrado. Revisa la ficha y los posibles duplicados antes de guardar.',
       });
+      if (err instanceof Prisma.PrismaClientKnownRequestError || err instanceof Prisma.PrismaClientUnknownRequestError) {
+        return res.status(500).json({ success: false, code: 'COMPARECIENTE_SAVE_INTERNAL_ERROR', error: 'No pudimos guardar los cambios. Reintenta; no se confirmó ninguna modificación.' });
+      }
       return res.status(400).json({ success: false, error: err.message || 'No pudimos actualizar este compareciente.' });
     }
   }
@@ -231,6 +236,12 @@ export class ComparecienteController {
       const data = await comparecienteService.extraerDocumentosExistentesConIA(req.params.id, req.user, String(req.header?.('Idempotency-Key') || ''));
       return res.status(200).json({ success: true, data });
     } catch (err: any) {
+      if (err instanceof PlatformDomainError) {
+        return res.status(err.status).json({ success: false, code: err.code, error: err.message });
+      }
+      if (err instanceof Prisma.PrismaClientKnownRequestError || err instanceof Prisma.PrismaClientUnknownRequestError) {
+        return res.status(500).json({ success: false, code: 'DOCUMENT_EXTRACTION_INTERNAL_ERROR', error: 'No pudimos completar la extracción. La ficha no se modificó; intenta de nuevo.' });
+      }
       return res.status(400).json({ success: false, error: err.message || 'No pudimos extraer la información de los documentos.' });
     }
   }

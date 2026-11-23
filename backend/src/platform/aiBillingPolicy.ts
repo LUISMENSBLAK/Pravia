@@ -24,6 +24,7 @@ export const AI_OPERATION_CODES = {
   projectReview: 'PROJECT_LEGAL_REVIEW',
   propertyExtraction: 'PROPERTY_DOCUMENT_EXTRACTION',
   financialExtraction: 'FINANCIAL_DOCUMENT_EXTRACTION',
+  isrOperationInterpretation: 'ISR_OPERATION_INTERPRETATION',
   providerHealth: 'PROVIDER_MODEL_HEALTH',
 } as const;
 
@@ -39,6 +40,7 @@ export const CURRENT_AI_BILLING_CLASS_BY_OPERATION: Readonly<Record<string, AiBi
   [AI_OPERATION_CODES.projectReview]: 'CUSTOMER_WALLET',
   [AI_OPERATION_CODES.propertyExtraction]: 'CUSTOMER_WALLET',
   [AI_OPERATION_CODES.financialExtraction]: 'CUSTOMER_WALLET',
+  [AI_OPERATION_CODES.isrOperationInterpretation]: 'CUSTOMER_WALLET',
   [AI_OPERATION_CODES.providerHealth]: 'PLATFORM_INCLUDED',
 };
 

@@ -1,6 +1,7 @@
 import { useCallback, useDeferredValue, useEffect, useRef, useState } from 'react';
 import { quotesService } from './quotes.service';
 import type { QuoteListResult, QuoteState } from './quotes.types';
+import { useCanonicalRefresh } from '../../services/api/useCanonicalRefresh';
 
 export function useQuotes(filters: { search: string; state: QuoteState | ''; act: string; responsible: string; dateFrom: string; dateTo: string; period: '6m' | 'year'; page: number }) {
   const deferredSearch = useDeferredValue(filters.search);
@@ -24,5 +25,6 @@ export function useQuotes(filters: { search: string; state: QuoteState | ''; act
     void load(controller.signal);
     return () => controller.abort();
   }, [load]);
+  useCanonicalRefresh('cotizaciones', signal => { void load(signal); });
   return { result, status, reload: () => load() };
 }

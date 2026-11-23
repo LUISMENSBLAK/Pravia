@@ -4,6 +4,20 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { quoteStructuredBudget, quoteTemplateData, renderQuoteTemplate, resolveQuoteEconomicMapping } from './quoteDocument.service';
 
+describe('Datos inmobiliarios opcionales en el formato de Cotización', () => {
+  const input = { folio: 'COT-QA', date: new Date('2026-11-21T00:00:00Z'), client: 'SINTÉTICO', act: 'Compraventa', notary: 'QA', concepts: [], validatedAdvanceCents: 0n };
+  it('mapea sólo valores explícitos y no los incorpora al presupuesto ni al saldo', () => {
+    const data = quoteTemplateData({ ...input, propertyValues: { valor_operacion: '2000000.50', valor_catastral: '1200000.25', cuenta_predial: '0001-a', importe_predial: '0.00' } });
+    expect(data['operacion.valor']).toContain('2,000,000.50'); expect(data['inmueble.valor_catastral']).toContain('1,200,000.25');
+    expect(data['inmueble.cuenta_predial']).toBe('0001-a'); expect(data['inmueble.importe_predial']).toContain('0.00');
+    expect(data['cotizacion.total']).toContain('0.00');
+  });
+  it('los valores desconocidos no se imprimen como cero', () => {
+    const data = quoteTemplateData(input);
+    for (const key of ['operacion.valor', 'inmueble.valor_catastral', 'inmueble.cuenta_predial', 'inmueble.importe_predial'] as const) expect(data[key]).toBe('Sin información');
+  });
+});
+
 const minimalDoubleBraceTemplate = () => {
   const zip = new PizZip();
   zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');

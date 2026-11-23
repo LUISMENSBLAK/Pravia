@@ -1,0 +1,90 @@
+{
+  "sourceTitle": "Anexo 8 RMF 2026 A.I · DOF 28-12-2025 · LISR 126",
+  "sourceUrl": "https://sat.gob.mx/minisitio/NormatividadRMFyRGCE/documentos2026/rmf/anexos/Anexo-8-RMF-2026_DOF-28122025.pdf",
+  "sourceSha256": "69ebaf8a78a3bde5d631ad2a994e81ec6d07e2d4e39085c8c948d138f782c1f4",
+  "sourcePages": 19,
+  "sourceBytes": 308287,
+  "tablePages": [
+    3,
+    4
+  ],
+  "brackets": [
+    {
+      "order": 1,
+      "lower": "0.01",
+      "upper": "10135.11",
+      "fixedFee": "0",
+      "percentage": "1.92"
+    },
+    {
+      "order": 2,
+      "lower": "10135.12",
+      "upper": "86022.11",
+      "fixedFee": "194.59",
+      "percentage": "6.40"
+    },
+    {
+      "order": 3,
+      "lower": "86022.12",
+      "upper": "151176.19",
+      "fixedFee": "5051.37",
+      "percentage": "10.88"
+    },
+    {
+      "order": 4,
+      "lower": "151176.20",
+      "upper": "175735.66",
+      "fixedFee": "12140.13",
+      "percentage": "16.00"
+    },
+    {
+      "order": 5,
+      "lower": "175735.67",
+      "upper": "210403.69",
+      "fixedFee": "16069.64",
+      "percentage": "17.92"
+    },
+    {
+      "order": 6,
+      "lower": "210403.70",
+      "upper": "424353.97",
+      "fixedFee": "22282.14",
+      "percentage": "21.36"
+    },
+    {
+      "order": 7,
+      "lower": "424353.98",
+      "upper": "668840.14",
+      "fixedFee": "67981.92",
+      "percentage": "23.52"
+    },
+    {
+      "order": 8,
+      "lower": "668840.15",
+      "upper": "1276925.98",
+      "fixedFee": "125485.07",
+      "percentage": "30.00"
+    },
+    {
+      "order": 9,
+      "lower": "1276925.99",
+      "upper": "1702567.97",
+      "fixedFee": "307910.81",
+      "percentage": "32.00"
+    },
+    {
+      "order": 10,
+      "lower": "1702567.98",
+      "upper": "5107703.92",
+      "fixedFee": "444116.23",
+      "percentage": "34.00"
+    },
+    {
+      "order": 11,
+      "lower": "5107703.93",
+      "upper": null,
+      "fixedFee": "1601862.46",
+      "percentage": "35.00"
+    }
+  ]
+}

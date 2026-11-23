@@ -936,6 +936,10 @@ model Cotizacion {
   correo_asunto                  String?
   contexto_operacion             String?
   territorio_operacion           Json?
+  valor_operacion                Decimal?                    @db.Decimal(18, 2)
+  valor_catastral                Decimal?                    @db.Decimal(18, 2)
+  cuenta_predial                 String?                     @db.VarChar(180)
+  importe_predial                Decimal?                    @db.Decimal(18, 2)
   cuerpo_correo_notaria          String?
   fecha_aceptacion_cliente       DateTime?
   fecha_enviada_cliente          DateTime?
@@ -1806,6 +1810,8 @@ model Expediente {
   creador_id                 String                              @db.Uuid
   cotizacion_id              String?                             @unique @db.Uuid
   cliente_alias              String?
+  cliente_compareciente_id   String?                             @db.Uuid
+  cliente_compareciente      Compareciente?                      @relation("ExpedienteCliente", fields: [cliente_compareciente_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "expediente_cliente_tenant_fkey")
   fecha_apertura             DateTime                            @default(now())
   estatus                    ExpedienteEstatus                   @default(ABIERTO)
   archived_at                DateTime?
@@ -1910,6 +1916,7 @@ model Expediente {
   @@index([notaria_id], map: "idx_expedientes_notaria_fk")
   @@index([plantilla_doc_version_id], map: "idx_expedientes_plantilla_version_fk")
   @@index([tipo_acto_id], map: "idx_expedientes_tipo_acto_fk")
+  @@index([cliente_compareciente_id, organization_id], map: "idx_expediente_cliente")
   @@map("expedientes")
 }
 
@@ -2911,6 +2918,7 @@ model Compareciente {
   organization_id                   String?                             @db.Uuid
   tipo_persona                      TipoPersona                         @default(FISICA)
   nombre_busqueda                   String                              @db.VarChar(255)
+  expedientesComoCliente            Expediente[]                        @relation("ExpedienteCliente")
   observaciones                     String?
   estatus                           ComparecienteEstatus                @default(ACTIVO)
   creado_por_id                     String                              @db.Uuid

@@ -25,8 +25,22 @@ describe('EXP-010 · revisión documental grande por lotes', () => {
       idempotencyKey: 'review-qa', traceId: 'trace-review-qa', gateway,
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({ operationCode: 'PROJECT_LEGAL_REVIEW', billingClass: 'CUSTOMER_WALLET', idempotencyKey: 'review-qa:batch:1' });
+    expect(calls[0]).toMatchObject({ operationCode: 'PROJECT_LEGAL_REVIEW', billingClass: 'CUSTOMER_WALLET', idempotencyKey: 'review-qa:batch:1', traceId: 'trace-review-qa:batch:1' });
     expect(result.areas_revision).toHaveLength(17);
+  });
+
+  it('no reutiliza una traza económica entre lotes de la misma revisión', async () => {
+    const calls: any[] = [];
+    await analizarProyectoNotarialConOpenAI(document('project', 2), Array.from({ length: 9 }, (_, index) => document(`source-${index}`, 2)), {}, undefined, {
+      actor: { userId: 'user-qa', organizationId: 'org-qa', membershipId: 'membership-qa', role: 'DIRECCION', permissions: ['ia.execute'], scope: 'GLOBAL', sessionId: 'session-qa' },
+      idempotencyKey: 'review-multi-qa', traceId: 'trace-multi-qa', gateway: { execute: async (request) => {
+        calls.push(request);
+        return { status: 'completed', usage: { input_tokens: 1, output_tokens: 1 }, output: [{ content: [{ type: 'output_text', text: JSON.stringify({ resumen_ejecutivo: 'QA', observaciones: [], areas_revision: [] }) }] }] } as any;
+      } },
+    });
+    expect(calls.length).toBeGreaterThan(1);
+    expect(new Set(calls.map((item) => item.traceId)).size).toBe(calls.length);
+    expect(new Set(calls.map((item) => item.idempotencyKey)).size).toBe(calls.length);
   });
 
   it('conserva las 17 áreas contractuales en un orden estable y sin duplicados', () => {

@@ -1,6 +1,7 @@
 import { Download, Eye, FileText, LoaderCircle, Plus, Trash2, UploadCloud, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styles from '../Finance.module.css';
+import { SandboxStampAction } from './SandboxStampAction';
 import { financeService } from '../finance.service';
 import { comparecientesService } from '../../comparecientes/comparecientes.service';
 import type { FiscalConcept, FiscalEntity, FiscalIncomeContext, FiscalProviderStatus } from '../finance.types';
@@ -399,7 +400,7 @@ export function IncomeInvoiceGenerator({ incomeId, onClose, onChanged }: { incom
           {currentDraft?.draft_payload?.incomplete_income && <p className={styles.invoiceWarning}>Borrador incompleto: todavía no reserva saldo ni puede generar PDF. Los conceptos e importes se guardarán al completar la prefactura.</p>}
           {!draftId && <p>Guarda primero el borrador. Después podrás generar el PDF real, verlo y descargarlo.</p>}
           {versions.length > 0 && <ul className={styles.invoicePdfVersions}>{versions.map((item) => <li key={item.id}><div><strong>{item.documento.nombre_original}</strong><small>v{item.version} · {new Date(item.created_at).toLocaleString('es-MX')} · SHA-256 {item.pdf_sha256.slice(0, 12)}…</small></div><div><button type="button" aria-label={`Ver PDF versión ${item.version}`} onClick={() => void openPdf(item.version, item.documento.nombre_original)}><Eye/>Ver PDF</button><button type="button" aria-label={`Descargar PDF versión ${item.version}`} onClick={() => void downloadPdf(item.version)}><Download/>Descargar</button></div></li>)}</ul>}
-          <button type="button" disabled title={stampReason}>Timbrar CFDI</button><p className={styles.invoiceWarning}>Timbrado no disponible: {stampReason}</p>
+          {provider?.sandboxStampingEnabled && currentDraft ? <SandboxStampAction item={currentDraft} provider={provider} onChanged={() => void load()}/> : <><button type="button" disabled title={stampReason}>Timbrar CFDI</button><p className={styles.invoiceWarning}>Timbrado no disponible: {stampReason}</p></>}
         </section>
         {error && <p className={styles.invoiceError} role="alert">{error}</p>}{notice && <p className={styles.invoiceNotice} role="status">{notice}</p>}
       </div>}

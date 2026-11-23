@@ -28,6 +28,9 @@ export type AssistantContext = {
     instructions?: string;
     templateVersionId?: string;
     sourceDocumentIds?: string[];
+    templatePurpose?: 'SAME_ACT' | 'STYLE_REFERENCE';
+    templateSourceAct?: string;
+    manualTemplateSelected?: boolean;
   };
 };
 

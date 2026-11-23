@@ -51,6 +51,9 @@ export const quotesService = {
   async create(prospectId: string): Promise<Quote> {
     return apiRequest<Quote>('/cotizaciones', { method: 'POST', body: JSON.stringify({ prospecto_id: prospectId }) });
   },
+  async createDirect(input: { formalApplicantId: string | null; operationContext: string; idempotencyKey: string; confirm: true }): Promise<Quote> {
+    return apiRequest<Quote>('/cotizaciones', { method: 'POST', body: JSON.stringify(input) });
+  },
   async extractBudget(file: File): Promise<QuoteBudgetExtraction> {
     const body = new FormData(); body.append('archivo', file);
     return apiRequest('/cotizaciones/extraer-presupuesto', { method: 'POST', body });
@@ -63,6 +66,9 @@ export const quotesService = {
   },
   async updateOperationTerritory(id: string, operationTerritory: { jurisdiction: string; state: string; municipality: string | null; confirm: true } | null, expectedUpdatedAt: string): Promise<unknown> {
     return apiRequest(`/cotizaciones/${id}/presupuesto`, { method: 'PUT', body: JSON.stringify({ operationTerritory, expectedUpdatedAt }) });
+  },
+  async updatePropertyValues(id: string, propertyValues: { operationValue: string | null; cadastralValue: string | null; propertyTaxAccount: string | null; predialAmount: string | null }, expectedUpdatedAt: string): Promise<unknown> {
+    return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/presupuesto`, { method: 'PUT', body: JSON.stringify({ propertyValues, expectedUpdatedAt }) });
   },
   async updateBudget(id: string, input: { concepts: Array<Pick<QuoteBudgetConcept, 'categoria' | 'concepto' | 'importe' | 'tratamiento_iva' | 'iva_tasa' | 'regla_fiscal_fuente' | 'regla_fiscal_version'>>; origin: 'MANUAL' | 'IMPORTADO'; operationContext: string; expectedUpdatedAt: string }): Promise<{ presupuesto: QuoteBudget; updated_at: string; stage: string | null }> {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/presupuesto`, { method: 'PUT', body: JSON.stringify(input) });

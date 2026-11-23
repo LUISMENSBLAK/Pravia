@@ -174,6 +174,7 @@ export class AiGateway {
     });
     let lastCandidate = candidates[0];
     const failedAttempts: FailedProviderAttempt[] = [];
+    let receivedResult: AiProviderResult<T> | undefined;
     try {
       let lastError: unknown;
       for (const [index, candidate] of candidates.entries()) {
@@ -188,6 +189,7 @@ export class AiGateway {
             timeoutMs: Math.max(1_000, Math.min(request.timeoutMs || 120_000, 300_000)),
             traceId: request.traceId,
           });
+          receivedResult = result;
         } catch (error) {
           lastError = error;
           failedAttempts.push(failedProviderAttempt(candidate, error));
@@ -267,13 +269,21 @@ export class AiGateway {
         organization_id: request.actor.organizationId, user_id: request.actor.userId,
         operation_code: request.operationCode, billing_class: 'CUSTOMER_WALLET',
         provider_code: lastCandidate.providerCode, model_code: lastCandidate.modelCode,
-        provider_cost_currency: 'MXN',
-        fx_snapshot: { costUnverified: true, failedProviderAttempts: failedAttempts },
+        input_tokens: receivedResult?.inputTokens || 0,
+        output_tokens: receivedResult?.outputTokens || 0,
+        provider_cost_amount: receivedResult?.providerCostAmount || 0,
+        provider_cost_currency: receivedResult?.providerCostCurrency || 'MXN',
+        fx_rate: receivedResult?.fxRate || 1,
+        fx_snapshot: { ...economicSnapshot(receivedResult?.fxSnapshot, failedAttempts) as Prisma.JsonObject,
+          costUnverified: !receivedResult, failedProviderAttempts: failedAttempts },
         commercial_charge_minor: 0n, wallet_debit_minor: 0n,
-        pricing_version_id: sku.id, status: 'FAILED_COST_UNVERIFIED',
-        error_code: error instanceof PlatformDomainError ? error.code : 'AI_PROVIDER_FAILED',
+        pricing_version_id: sku.id, status: receivedResult ? 'REJECTED' : 'FAILED_COST_UNVERIFIED',
+        error_code: error instanceof PlatformDomainError ? error.code : receivedResult ? 'AI_SETTLEMENT_FAILED' : 'AI_PROVIDER_FAILED',
         trace_id: request.traceId, idempotency_key: request.idempotencyKey,
       } }).catch(() => undefined);
+      if (receivedResult && !(error instanceof PlatformDomainError)) {
+        throw new PlatformDomainError('AI_SETTLEMENT_FAILED', 'No se pudo registrar el consumo de IA. Los datos de la ficha no se modificaron; intenta de nuevo.', 503);
+      }
       throw error;
     }
   }

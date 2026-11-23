@@ -121,7 +121,7 @@ export function evaluateConversionEligibility(candidate: ConversionCandidate): C
   // A financial payment remains informational and is never a conversion gate.
   if (!canonical && !validatedAdvance) failures.push('Debe existir un anticipo mayor a cero validado por administración.');
   if (!notConverted) failures.push('La cotización ya fue convertida a expediente.');
-  if (!linkedProspect) failures.push('La cotización debe conservar un prospecto vinculado.');
+  if (!canonical && !linkedProspect) failures.push('La cotización debe conservar un prospecto vinculado.');
 
   return {
     eligible: failures.length === 0,

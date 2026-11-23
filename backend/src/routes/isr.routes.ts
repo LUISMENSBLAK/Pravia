@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { DOCUMENT_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
+import { interpretISROperation } from '../controllers/isr.controller';
 import { requirePermission } from '../middleware/auth.middleware';
 import { auditISRExport, calculateISRAdditionalTax, calculateISRRecord, calculateISRReferredValue, calculateISRSurcharges, createISR, downloadISRDocument, extractISR, generateISRPDF, getISR, getISRResources, listISR, openISRForExpediente, prepareISRExport, previewISRDocument, reviewISRProposal, searchISRPostalCodes, unlinkISRDocument, unlinkISRFromExpediente, updateISR, uploadISRDocument, validateISRExport } from '../controllers/isr.controller';
 
@@ -24,6 +25,7 @@ router.post('/:id/export-audit', requirePermission('isr.read'), auditISRExport);
 router.post('/:id/export-validation', requirePermission('isr.calculate'), validateISRExport);
 router.post('/:id/export-data', requirePermission('isr.export'), prepareISRExport);
 router.post('/:id/extract', requirePermission('isr.write'), extractISR);
+router.post('/:id/interpret-operation', requirePermission('isr.write'), requirePermission('ia.execute'), interpretISROperation);
 router.patch('/:id/proposals/:proposalId', requirePermission('isr.write'), reviewISRProposal);
 router.post('/:id/documents', requirePermission('isr.write'), requirePermission('documentos.write'), upload.single('file'), uploadISRDocument);
 router.get('/:id/documents/:documentId/preview', requirePermission('isr.read'), requirePermission('documentos.read'), previewISRDocument);

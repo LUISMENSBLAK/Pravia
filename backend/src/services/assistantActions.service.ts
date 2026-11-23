@@ -5,7 +5,7 @@ import { AgendaController } from '../controllers/agenda.controller';
 import { agendaEditableWhere } from './agendaVisibility.service';
 import { analizarProyectoConIA } from '../controllers/proyectos.controller';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
-import { canAccessCompareciente, prospectoObjectWhere, cotizacionObjectWhere } from './objectAccess.service';
+import { canAccessCompareciente, comparecienteObjectWhere, prospectoObjectWhere, cotizacionObjectWhere } from './objectAccess.service';
 import { assistantConversationService, type AssistantActionState, type AssistantCollection } from './assistantConversation.service';
 import { ProspectWorkflowService } from './prospectWorkflow.service';
 import { CotizacionWorkflowService } from './cotizacionWorkflow.service';
@@ -21,7 +21,7 @@ import { ExpedienteArtifactsService } from './expedienteArtifacts.service';
 import { complianceH9Service } from './complianceH9.service';
 import { actsAndTimesService } from './configurationCatalog.service';
 import { functionalDestinationService } from './functionalDestination.service';
-import { ProjectGenerationError, ProjectGenerationService } from './projectGeneration.service';
+import { ProjectGenerationError, ProjectGenerationService, resolveProjectTemplateUse } from './projectGeneration.service';
 import { ProjectRepository } from './projectRepository.service';
 import { QuoteBudgetService, quoteBudgetPayload } from './quoteBudget.service';
 import { quoteDocumentService } from './quoteDocument.service';
@@ -40,7 +40,7 @@ export type AssistantActionContext = {
   entityId?: string;
   module?: string;
   route?: string;
-  projectDraft?: { instructions?: string; templateVersionId?: string; sourceDocumentIds?: string[] };
+  projectDraft?: { instructions?: string; templateVersionId?: string; sourceDocumentIds?: string[]; templatePurpose?: 'SAME_ACT' | 'STYLE_REFERENCE'; templateSourceAct?: string; manualTemplateSelected?: boolean };
   requestMessage?: string;
   attachmentIds?: string[];
   attachmentFacts?: Array<{ field: string; value: string; confidence?: string; attachmentId: string }>;
@@ -153,6 +153,17 @@ async function invokeProjectReview(input: ExecuteInput) {
 }
 
 const definitions: Definition[] = [
+  {
+    key: 'quote.create', domain: 'Cotizaciones', description: 'Crear una cotización directamente, sin Prospecto obligatorio.',
+    permissions: ['cotizaciones.write'], risk: 'SAFE_WRITE', confirmation: 'REQUIRED',
+    fields: { formalApplicantId: { type: 'string', max: 80 }, operationContext: { type: 'string', max: 4_000 } },
+    async execute(input) {
+      const quote = await new CotizacionWorkflowService(prisma).createDirect(input.actor, {
+        ...input.args, confirm: true, idempotencyKey: input.invocationId,
+      });
+      return { entityType: 'Cotizacion', entityId: quote.id, message: `La cotización ${quote.numero_cotizacion} quedó creada como borrador, sin crear un Prospecto.`, refresh: 'cotizaciones' };
+    },
+  },
   {
     key: 'agenda.event.create', domain: 'Agenda', description: 'Crear una cita o evento en Agenda.',
     permissions: ['agenda.write'], risk: 'SAFE_WRITE', confirmation: 'REQUIRED',
@@ -386,24 +397,78 @@ const definitions: Definition[] = [
       tipo_persona: { type: 'string', required: true, enum: ['FISICA', 'MORAL'] }, nombre: { type: 'string', required: true, max: 300 },
       apellido_paterno: { type: 'string', max: 180 }, apellido_materno: { type: 'string', max: 180 }, rfc: { type: 'string', max: 20 },
       curp: { type: 'string', max: 24 }, telefono: { type: 'string', max: 60 }, correo: { type: 'string', max: 240 }, observaciones: { type: 'string', max: 2_000 },
+      attachment_ids: { type: 'string[]' },
+    },
+    async prepare({actor,args}) {
+      const {attachment_ids,...data}=args;
+      if(attachment_ids?.length&&!actor.permissions.includes('documentos.write')) throw new AssistantActionError('No tienes permiso para incorporar los documentos de esta alta.','AI_ACTION_DENIED',403);
+      return {object:{type:'Compareciente',label:args.nombre},after:{...data,...(attachment_ids?.length?{archivos_origen:attachment_ids.length}:{})},
+        impact:attachment_ids?.length?'Creará la ficha e incorporará sus archivos de origen de forma atómica, sin duplicar blobs. No identifica la foto como documento oficial de identidad.':'Creará únicamente la ficha con los datos revisados.'};
     },
     async execute(input) {
       const service = new ComparecienteService(prisma);
+      const create = async (tx?: import('@prisma/client').Prisma.TransactionClient) => {
       const created = input.args.tipo_persona === 'MORAL'
         ? await service.crearPersonaMoral({
           razon_social: input.args.nombre, rfc: input.args.rfc, telefono: input.args.telefono,
           correo: input.args.correo, observaciones: input.args.observaciones, creado_por_id: input.actor.id,
-        })
+        },tx,input.invocationId)
         : await service.crearPersonaFisica({
           nombre: input.args.nombre, apellido_paterno: input.args.apellido_paterno, apellido_materno: input.args.apellido_materno,
           rfc: input.args.rfc, curp: input.args.curp, telefono: input.args.telefono, correo: input.args.correo,
           observaciones: input.args.observaciones, creado_por_id: input.actor.id,
-        });
+        },tx,input.invocationId);
+      if(input.args.attachment_ids?.length){
+        if(!input.actor.permissions.includes('documentos.write')) throw new AssistantActionError('No tienes permiso para incorporar documentos.','AI_ACTION_DENIED',403);
+        for(const id of input.args.attachment_ids) {
+          const prior=await (tx||prisma).assistantAttachment.findFirst({where:{id,conversation_id:input.conversationId,organization_id:input.actor.organizationId,source:'OFFICIAL_DOCUMENT',documento:{compareciente_id:created.compareciente.id}},select:{id:true}});
+          if(!prior) await assistantConversationService.promoteAttachment(input.actor,input.conversationId,id,{targetType:'COMPARECIENTE',targetId:created.compareciente.id,documentType:'OTROS'},tx);
+        }
+      }
+      return created;
+      };
+      const created=input.args.attachment_ids?.length?await prisma.$transaction(tx=>create(tx),{timeout:15000}):await create();
       return {
         entityType: 'Compareciente', entityId: created.compareciente.id,
         message: 'El compareciente quedó creado en el maestro de la organización.', refresh: 'comparecientes',
         details: [{ label: 'Compareciente', value: input.args.nombre }, { label: 'Tipo', value: input.args.tipo_persona === 'MORAL' ? 'Persona moral' : 'Persona física' }],
       };
+    },
+  },
+  {
+    key: 'party.update', domain: 'Comparecientes', description: 'Actualizar datos básicos explícitos de un compareciente existente, con revisión y confirmación.',
+    permissions: ['comparecientes.read', 'comparecientes.write'], risk: 'SENSITIVE_WRITE', confirmation: 'REQUIRED',
+    fields: {
+      compareciente_id: { type: 'string', required: true, max: 80 },
+      compareciente_query: { type: 'string', max: 300 },
+      nombre: { type: 'string', max: 300 }, apellido_paterno: { type: 'string', max: 180 }, apellido_materno: { type: 'string', max: 180 },
+      razon_social: { type: 'string', max: 300 }, telefono: { type: 'string', max: 60 }, correo: { type: 'string', max: 240 },
+      ocupacion: { type: 'string', max: 240 }, observaciones: { type: 'string', max: 2_000 },
+    }, contextField: 'compareciente_id', contextTypes: ['compareciente'],
+    async prepare({ actor, args }) {
+      if (!(await canAccessCompareciente(actor, args.compareciente_id))) throw new AssistantActionError('No tienes acceso a ese compareciente.', 'AI_ACTION_TARGET_DENIED', 403);
+      const current = await prisma.compareciente.findFirst({ where: { id: args.compareciente_id, organization_id: actor.organizationId, archived_at: null }, include: { personaFisica: true, personaMoral: true, contactos: { where: { activo: true, archived_at: null } } } });
+      if (!current) throw new AssistantActionError('No se encontró el compareciente.', 'AI_ACTION_TARGET_DENIED', 404);
+      const { compareciente_id: _id, compareciente_query: _query, ...changes } = args;
+      const incompatible = current.tipo_persona === 'MORAL' ? ['nombre', 'apellido_paterno', 'apellido_materno', 'ocupacion'] : ['razon_social'];
+      if (incompatible.some(field => changes[field] !== undefined)) throw new AssistantActionError('Esos campos no corresponden al tipo de persona de la ficha. No se cambió ningún dato.', 'AI_PARTY_FIELD_INCOMPATIBLE', 422);
+      const before = Object.fromEntries(Object.keys(changes).map(field => [field,
+        field === 'telefono' || field === 'correo'
+          ? current.contactos.find(item => item.tipo === (field === 'telefono' ? 'TELEFONO' : 'CORREO'))?.valor ?? null
+          : (current.personaFisica as any)?.[field] ?? (current.personaMoral as any)?.[field] ?? (current as any)[field] ?? null]));
+      return { object: { type: 'Compareciente', id: current.id, label: current.nombre_busqueda }, before, after: changes,
+        impact: 'Actualizará sólo los datos mostrados de esta ficha maestra; no modifica otros clientes ni decisiones jurídicas.',
+        guard: { kind: 'PARTY_VERSION', id: current.id, version: current.version } };
+    },
+    async assertFresh(input) {
+      if (!(await canAccessCompareciente(input.actor, input.args.compareciente_id))) throw new AssistantActionError('No tienes acceso a ese compareciente.', 'AI_ACTION_TARGET_DENIED', 403);
+      const current = await prisma.compareciente.findFirst({ where: { id: input.args.compareciente_id, organization_id: input.actor.organizationId, archived_at: null }, select: { version: true } });
+      if (!current || current.version !== input.preview?.guard?.version) throw new AssistantActionError('La ficha cambió desde la propuesta. Recarga y prepara el cambio de nuevo.', 'AI_ACTION_STALE', 409);
+    },
+    async execute(input) {
+      const { compareciente_id, compareciente_query: _query, ...changes } = input.args;
+      await new ComparecienteService(prisma).actualizarMaster(compareciente_id, { ...changes, expectedVersion: input.preview!.guard!.version }, input.actor.id);
+      return { entityType: 'Compareciente', entityId: compareciente_id, message: 'Los datos confirmados quedaron guardados en la ficha del compareciente.', refresh: 'comparecientes' };
     },
   },
   {
@@ -563,7 +628,7 @@ const definitions: Definition[] = [
     key: 'project.generate', domain: 'Proyecto', description: 'Generar un proyecto con EXP-010 y el machote CFG-002 aplicable.',
     permissions: ['expedientes.write', 'expedientes.project.read', 'documentos.write', 'ia.execute'], risk: 'SENSITIVE_WRITE', confirmation: 'REQUIRED',
     confirmLabel: 'Generar proyecto',
-    fields: { expediente_id: { type: 'string', required: true, max: 80 }, expediente_query: { type: 'string', max: 120 }, template_version_id: { type: 'string', max: 80 }, source_document_ids: { type: 'string[]' }, instructions: { type: 'string', max: 4_000 } },
+    fields: { expediente_id: { type: 'string', required: true, max: 80 }, expediente_query: { type: 'string', max: 120 }, template_version_id: { type: 'string', max: 80 }, source_document_ids: { type: 'string[]' }, instructions: { type: 'string', max: 4_000 }, template_purpose: { type: 'string', enum: ['SAME_ACT', 'STYLE_REFERENCE'] }, template_source_act: { type: 'string', max: 200 } },
     contextField: 'expediente_id', contextTypes: ['expediente', 'proyecto'],
     async prepare({ actor, args }) {
       const expediente = await prisma.expediente.findFirst({ where: { id: args.expediente_id, archived_at: null, ...expedienteAccessWhere(actor) }, select: { id: true, numero_pravia: true, updated_at: true } });
@@ -573,6 +638,7 @@ const definitions: Definition[] = [
         ? workspace.templates.flatMap((item: any) => item.versions.map((version: any) => ({ ...version, artifact: item }))).find((version: any) => version.id === args.template_version_id)
         : workspace.templates.flatMap((item: any) => item.versions.map((version: any) => ({ ...version, artifact: item }))).find((version: any) => version.artifact.default) || workspace.templates[0]?.versions[0];
       if (!selected) throw new AssistantActionError('No existe un machote CFG-002 aplicable para proyectar este expediente.', 'AI_PROJECT_TEMPLATE_MISSING', 409);
+      resolveProjectTemplateUse(args, workspace.expediente.acts.map((item: any) => item.name).join(', '));
       const requestedSources = Array.isArray(args.source_document_ids) ? args.source_document_ids : workspace.sources.documents.filter((item: any) => item.selected_by_default).map((item: any) => item.documento.id);
       return { object: { type: 'Expediente', id: expediente.id, label: expediente.numero_pravia }, before: { proyecto: 'Sin nueva versión generada' }, after: { expediente: workspace.expediente.folio, acto: workspace.expediente.acts.map((item: any) => item.name).join(', ') || 'Sin acto', machote: selected.artifact?.name || selected.name, version_machote: selected.version, fuentes: requestedSources.length, instrucciones: args.instructions || 'Sin indicaciones adicionales', pendientes_detectables: workspace.pending_detectable_count }, impact: 'Creará una nueva versión de proyecto mediante EXP-010; no reemplazará ni editará silenciosamente las fuentes.', guard: { kind: 'EXPEDIENTE_UPDATED_AT', id: expediente.id, version: expediente.updated_at.toISOString() } };
     },
@@ -586,7 +652,7 @@ const definitions: Definition[] = [
       const workspace = await new ProjectGenerationService().workspace(input.actor, input.args.expediente_id);
       const selectedVersion = input.args.template_version_id || workspace.templates.flatMap((item: any) => item.versions.map((version: any) => ({ ...version, default: item.default }))).find((version: any) => version.default)?.id || workspace.templates[0]?.versions[0]?.id;
       const sourceIds = Array.isArray(input.args.source_document_ids) ? input.args.source_document_ids : workspace.sources.documents.filter((item: any) => item.selected_by_default).map((item: any) => item.documento.id);
-      const result = await new ProjectGenerationService().generate(input.actor, input.args.expediente_id, { template_version_id: selectedVersion, source_document_ids: sourceIds, instructions: input.args.instructions || null, origin: 'PRAVIA_IA', idempotency_key: input.invocationId });
+      const result = await new ProjectGenerationService().generate(input.actor, input.args.expediente_id, { template_version_id: selectedVersion, source_document_ids: sourceIds, instructions: input.args.instructions || null, template_purpose: input.args.template_purpose, template_source_act: input.args.template_source_act, origin: 'PRAVIA_IA', idempotency_key: input.invocationId });
       return { entityType: 'Expediente', entityId: input.args.expediente_id, message: 'El proyecto quedó generado mediante EXP-010 y está listo para revisión.', refresh: 'proyecto', details: [{ label: 'Versión', value: String((result.version as any)?.version_numero || 'Nueva') }, { label: 'Pendientes', value: String(result.pending_count) }, { label: 'Observaciones', value: String(result.generation_observation_count + result.residual_observation_count) }] };
     },
   },
@@ -849,6 +915,15 @@ function validateArgs(definition: Definition, raw: unknown, options?: { invalidE
 }
 
 async function resolveQuery(actor: Actor, args: Record<string, any>) {
+  if (!args.compareciente_id && args.compareciente_query) {
+    const query=safeText(args.compareciente_query,300);
+    const rows=await prisma.compareciente.findMany({where:{organization_id:actor.organizationId,archived_at:null,...comparecienteObjectWhere(actor),
+      OR:[{nombre_busqueda:{contains:query,mode:'insensitive'}},{personaFisica:{is:{rfc:{equals:query,mode:'insensitive'}}}},{personaMoral:{is:{rfc:{equals:query,mode:'insensitive'}}}}]},
+      select:{id:true,nombre_busqueda:true},take:3});
+    if(rows.length===1) args.compareciente_id=rows[0].id;
+    else if(rows.length>1) throw new AssistantActionError('Encontré más de un compareciente. Indica su nombre completo o RFC para no modificar la ficha equivocada.','AI_ACTION_ENTITY_AMBIGUOUS',409,rows.map(row=>row.nombre_busqueda));
+    else throw new AssistantActionError('No encontré ese compareciente en tu alcance. Confirma el nombre o RFC; no creé una ficha nueva.','AI_ACTION_TARGET_NOT_FOUND',404);
+  }
   if (!args.expediente_id && args.expediente_query) {
     const q = safeText(args.expediente_query, 120);
     const rows = await prisma.expediente.findMany({ where: { archived_at: null, ...expedienteAccessWhere(actor), OR: [{ numero_pravia: { contains: q, mode: 'insensitive' } }, { cliente_alias: { contains: q, mode: 'insensitive' } }] }, select: { id: true, numero_pravia: true, cliente_alias: true }, take: 3 });
@@ -900,6 +975,9 @@ function applyContext(definition: Definition, args: Record<string, any>, context
   }
   if (definition.key === 'project.generate' && context?.projectDraft) {
     const draft = context.projectDraft;
+    if (draft.manualTemplateSelected) throw new AssistantActionError('El machote exclusivo sólo está seleccionado en el formulario y todavía no es una fuente persistida del chat. Usa PROYECTAR CON IA en Proyecto para enviar ese archivo; no se sustituirá silenciosamente por otro machote.', 'AI_PROJECT_LOCAL_TEMPLATE_REQUIRED', 409);
+    if (!args.template_purpose && draft.templatePurpose) args.template_purpose = draft.templatePurpose;
+    if (!args.template_source_act && draft.templateSourceAct) args.template_source_act = safeText(draft.templateSourceAct, 200);
     const fieldInstructions = safeText(draft.instructions, 4_000);
     const plannedInstructions = safeText(args.instructions, 4_000);
     const derivedInstructions = projectInstructionsFromMessage(context.requestMessage);
@@ -934,7 +1012,13 @@ function applyContext(definition: Definition, args: Record<string, any>, context
     };
     for (const [target, sourceNames] of Object.entries(aliases)) {
       if (args[target] !== undefined) continue;
-      const fact = context.attachmentFacts.find((item) => sourceNames.includes(item.field));
+      // A full name is a fallback for "nombre", not contradictory evidence
+      // against separately extracted first/surnames. Compare like fields only.
+      const selectedAlias = sourceNames.find(name => context.attachmentFacts!.some(item => item.field === name));
+      const candidates = context.attachmentFacts.filter((item) => item.field === selectedAlias);
+      const distinct = new Set(candidates.map(item => item.value.trim().replace(/\s+/g,' ').toLocaleUpperCase('es-MX')));
+      if (distinct.size > 1) throw new AssistantActionError(`Los documentos contienen valores distintos para ${target.replace(/_/g,' ')}. Confirma el dato correcto antes de crear la ficha.`, 'AI_ATTACHMENT_FACT_CONFLICT', 409);
+      const fact = candidates[0];
       if (!fact) continue;
       if (definition.fields[target]?.type === 'number') {
         const normalized = fact.value.replace(/[^0-9.-]/g, '');
@@ -946,6 +1030,7 @@ function applyContext(definition: Definition, args: Record<string, any>, context
       } else args[target] = safeText(fact.value, definition.fields[target]?.max || 500);
     }
   }
+  if (definition.key === 'party.create' && context?.attachmentIds?.length) args.attachment_ids = [...new Set(context.attachmentIds)].slice(0,6);
   return args;
 }
 
@@ -953,6 +1038,7 @@ function missingFields(definition: Definition, args: Record<string, any>) {
   const missing = Object.entries(definition.fields).filter(([, field]) => field.required).map(([name]) => name).filter((name) => args[name] === undefined || args[name] === null || args[name] === '');
   if (definition.key === 'agenda.event.update' && !Object.keys(args).some((key) => key !== 'event_id')) missing.push('cambio');
   if (definition.key === 'prospect.update' && !Object.keys(args).some((key) => !['prospect_id', 'prospect_query'].includes(key))) missing.push('cambio');
+  if (definition.key === 'party.update' && !Object.keys(args).some((key) => !['compareciente_id','compareciente_query'].includes(key))) throw new AssistantActionError('Indícame qué dato de la ficha quieres cambiar.', 'AI_PARTY_CHANGE_REQUIRED', 422);
   return missing;
 }
 
@@ -1124,6 +1210,17 @@ export async function prepareOrExecuteAssistantAction(input: { actor: Actor; con
       { label: 'Después', value: displayValue(preview.after ?? args) },
       { label: 'Impacto', value: preview.impact || 'Persistirá el cambio mediante el servicio canónico.' },
     ];
+    if (definition.key === 'party.create' || definition.key === 'party.update') {
+      // Basic master data must be reviewable field by field, not hidden behind
+      // the generic 180-character JSON summary (which can omit the last fields).
+      const before=preview.before&&typeof preview.before==='object'?preview.before as Record<string,unknown>:{};
+      const after=preview.after&&typeof preview.after==='object'?preview.after as Record<string,unknown>:{};
+      details.splice(2,details.length-3,...Object.entries(after).flatMap(([key,value])=>{
+        const label=fieldLabels[key]||({ocupacion:'Ocupación',razon_social:'Razón social',archivos_origen:'Archivos de origen',observaciones:'Observaciones'} as Record<string,string>)[key]||key.replace(/_/g,' ');
+        const show=(v:unknown)=>v==null||v===''?'Sin información':String(v);
+        return [...(key in before?[{label:`Antes · ${label}`,value:show(before[key])}]:[]),{label:`${definition.key==='party.update'?'Después · ':''}${label}`,value:show(value)}];
+      }));
+    }
     const reinforced = confirmationPolicy === 'REINFORCED';
     const confirmation = { id: confirmationId, title: definition.description, summary: reinforced ? 'Cambio administrativo sensible. Revisa el estado actual, la propuesta y su impacto antes de continuar.' : 'Revisa el cambio antes de ejecutarlo.', level: reinforced ? 'REINFORCED' as const : 'STANDARD' as const, details, confirmLabel: definition.confirmLabel || (reinforced ? 'Confirmar cambio administrativo' : 'Confirmar') };
     const state: AssistantActionState = { status: 'AWAITING_CONFIRMATION', actionKey: definition.key, args, invocationId, confirmationId, expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(), confirmation, preview };

@@ -8,13 +8,15 @@ import { useAuth } from '../auth/AuthProvider';
 import { ConvertQuoteDialog } from './components/ConvertQuoteDialog';
 import { QuoteActivity } from './components/QuoteActivity';
 import { QuoteConcepts } from './components/QuoteConcepts';
+import { QuotePropertyValues } from './components/QuotePropertyValues';
+import { QuoteActSelector } from './components/QuoteActSelector';
 import { QuoteContractActionDialog } from './components/QuoteContractActionDialog';
 import type { QuoteAcceptanceResume } from './components/QuoteContractActionDialog';
 import { QuoteProgress } from './components/QuoteProgress';
 import { QuoteStatusBadge } from './components/QuoteStatusBadge';
 import { QuotesLoading } from './components/QuotesLoading';
 import { RegisterDeliveryDialog } from './components/RegisterDeliveryDialog';
-import { money, quoteDeadline, shortDate } from './quoteFormatters';
+import { money, quoteDeadline, shortDate, quoteClientName, quoteActName } from './quoteFormatters';
 import { quotesService } from './quotes.service';
 import type { Quote, QuoteContractAction, QuoteDocument, QuoteState } from './quotes.types';
 import styles from './Quotes.module.css';
@@ -168,7 +170,7 @@ export function QuoteDetailPage() {
   return <div className={styles.detailPage} data-ai-trigger={accepted && !quote.expediente ? 'COTIZACION_ACEPTADA_SIN_EXPEDIENTE' : undefined}>
     <Link className={styles.backLink} to="/cotizaciones"><ArrowLeft size={17} />Cotizaciones</Link>
     <header className={styles.detailHeader}>
-      <div><div className={styles.detailEyebrow}><QuoteStatusBadge quote={quote} />{!canonical && <span>Registro histórico</span>}</div><h1>{quote.numero_cotizacion || quote.numero_solicitud || 'Cotización'}</h1><p>{quote.prospecto?.nombre || 'Prospecto no disponible'} · {quote.actos?.map((item) => item.tipo_acto.nombre).join(', ') || quote.prospecto?.tipo_acto || 'Acto sin especificar'}</p></div>
+      <div><div className={styles.detailEyebrow}><QuoteStatusBadge quote={quote} />{!canonical && <span>Registro histórico</span>}</div><h1>{quote.numero_cotizacion || quote.numero_solicitud || 'Cotización'}</h1><p>{quoteClientName(quote)} · {quoteActName(quote)}</p></div>
       <div className={styles.detailActions}>
         {canWrite && (quote.presupuesto?.concepts?.length ?? 0) > 0 && <button type="button" className={styles.primaryButton} onClick={() => void generateDocument()} disabled={Boolean(busy)}>{busy ? <LoaderCircle className={styles.spin} size={17} /> : <FilePlus2 size={17} />}{busy === 'generate-word' ? 'Generando Word…' : busy === 'convert-pdf' ? 'Convirtiendo a PDF…' : busy === 'saving-documents' ? 'Guardando documentos…' : 'Generar cotización'}</button>}
         {canonical && canWrite && actions.includes('REENVIAR_CLIENTE') && <button type="button" className={styles.secondaryButton} onClick={() => setDelivery('CLIENTE')}><Send size={17} />Registrar reenvío</button>}
@@ -188,7 +190,7 @@ export function QuoteDetailPage() {
     </div>}
 
     <section className={styles.detailOverview} aria-label="Resumen de cotización">
-      <article><small>Cliente</small><strong>{quote.prospecto?.nombre || 'Sin cliente visible'}</strong><span>{quote.prospecto?.email || quote.prospecto?.telefono || 'Sin contacto visible'}</span></article>
+      <article><small>Cliente</small><strong>{quoteClientName(quote)}</strong><span>{quote.prospecto?.email || quote.prospecto?.telefono || 'Sin contacto visible'}</span></article>
       <article><small>Importe cliente</small><strong>{quote.total_cliente == null ? 'Sin importe' : money(quote.total_cliente)}</strong><span>Total de la cotización</span></article>
       <article><small>{quote.workflow?.daysWithoutResponse != null ? 'Días sin respuesta' : canonical ? 'Hito actual' : 'Vigencia / plazo histórico'}</small><strong className={styles[`deadline-${deadline.tone}`]}>{quote.workflow?.daysWithoutResponse != null ? `${quote.workflow.daysWithoutResponse} día${quote.workflow.daysWithoutResponse === 1 ? '' : 's'}` : deadline.label}</strong><span>{quote.workflow?.daysWithoutResponse != null ? `Desde el primer envío confirmado · ${shortDate(quote.workflow.firstSentAt)}` : canonical ? 'Fecha contractual registrada' : quote.fecha_limite_respuesta_notaria ? shortDate(quote.fecha_limite_respuesta_notaria) : 'Sin vencimiento registrado'}</span></article>
       <article><small>Responsable</small><strong>{quote.creada_por?.nombre || 'Sin asignar'}</strong><span>Presupuesto estructurado vigente</span></article>
@@ -197,12 +199,13 @@ export function QuoteDetailPage() {
     <div className={styles.detailGrid}>
       <main>
         {quote.fuente_notarial && <section className={styles.detailSection}><h2>Cotización de Notaría · Fuente de origen</h2><p>Primera recepción: {shortDate(quote.fuente_notarial.received_at)} · Versión {quote.fuente_notarial.version}</p><button type="button" className={styles.secondaryButton} onClick={() => void viewSource()}>Visualizar {quote.fuente_notarial.documento.nombre_original}</button></section>}
+        <QuotePropertyValues quote={quote} canWrite={canWrite} onSaved={() => load()} notify={notify} />
         <QuoteConcepts quote={quote} canWrite={canWrite} onSaved={() => load()} notify={notify} />
         <QuoteActivity quote={quote} />
       </main>
       <aside>
         <RecordCollaborators kind="cotizacion" recordId={quote.id} canManage={user?.role === 'DIRECCION' || user?.role === 'ADMINISTRACION'} />
-        <section className={styles.detailSection}><header><div><h2>Actos de la cotización</h2><p>Fuente canónica compartida con Prospectos y Expedientes.</p></div></header>{quote.actos?.length ? <ul className={styles.documentList}>{quote.actos.map((item) => <li key={item.id}><span><strong>{item.tipo_acto.nombre}</strong><small>{item.tipo_acto.codigo_catalogo || 'Acto de esta Notaría'}</small></span></li>)}</ul> : <p className={styles.sectionEmpty}>Sin actos vinculados.</p>}{canonical && canWrite && ['BORRADOR', 'EN_ELABORACION'].includes(quote.workflow?.stage || '') && <Link className={styles.secondaryButton} to={`/configuracion/actos-tiempos?returnTo=${encodeURIComponent(`/cotizaciones/${quote.id}`)}`}>+ Crear nuevo acto en Actos y tiempos</Link>}</section>
+        <section className={styles.detailSection}><header><div><h2>Actos de la cotización</h2><p>Fuente canónica compartida con Prospectos y Expedientes.</p></div></header>{quote.actos?.length ? <ul className={styles.documentList}>{quote.actos.map((item) => <li key={item.id}><span><strong>{item.tipo_acto.nombre}</strong><small>{item.tipo_acto.codigo_catalogo || 'Acto de esta Notaría'}</small></span></li>)}</ul> : <p className={styles.sectionEmpty}>Sin actos vinculados.</p>}{canonical && canWrite && ['BORRADOR', 'EN_ELABORACION'].includes(quote.workflow?.stage || '') && <><QuoteActSelector quote={quote} onSaved={() => load()} /><Link className={styles.secondaryButton} to={`/configuracion/actos-tiempos?returnTo=${encodeURIComponent(`/cotizaciones/${quote.id}`)}`}>+ Crear nuevo acto en Actos y tiempos</Link></>}</section>
         <section className={styles.detailSection}><header><div><h2>Acciones de negocio</h2><p>{canonical ? 'Acciones contractuales disponibles para el hito actual.' : 'Compatibilidad operativa del registro histórico.'}</p></div></header><div className={styles.businessActions}>
           {canonical && canWrite && actions.includes('RECHAZAR') && <button type="button" className={styles.dangerAction} onClick={() => setContractAction('RECHAZAR')}><X size={17} />Registrar rechazo</button>}
           {canonical && canWrite && actions.includes('SUSPENDER') && <button type="button" onClick={() => setContractAction('SUSPENDER')}>Suspender cotización</button>}

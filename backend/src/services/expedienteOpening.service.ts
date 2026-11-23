@@ -17,6 +17,7 @@ export type OpenExpedienteInput = {
   clienteAlias: string;
   notariaId?: string | null;
   comparecienteId?: string | null;
+  clienteComparecienteId?: string | null;
   caracterId?: string | null;
   descripcion?: string | null;
   valorOperacion?: number | null;
@@ -65,6 +66,10 @@ export class ExpedienteOpeningService {
     if (!effectiveLawyer || !ALLOWED_RESPONSIBLE_ROLES.has(effectiveLawyer.rol)) throw new ExpedienteOpeningError('Selecciona un responsable autorizado y activo.', 'EXPEDIENTE_RESPONSIBLE_INVALID');
     if (input.notariaId && !notary) throw new ExpedienteOpeningError('La notaría seleccionada ya no está disponible.', 'EXPEDIENTE_NOTARY_INVALID');
     if (input.comparecienteId && !selectedParty) throw new ExpedienteOpeningError('El cliente seleccionado ya no está disponible.', 'EXPEDIENTE_PARTY_INVALID');
+    const client = input.clienteComparecienteId ? await tx.compareciente.findFirst({ where: {
+      id: input.clienteComparecienteId, organization_id: organizationId, archived_at: null, estatus: 'ACTIVO',
+    }, select: { id: true, nombre_busqueda: true } }) : null;
+    if (input.clienteComparecienteId && !client) throw new ExpedienteOpeningError('El cliente de la cotización ya no está disponible en esta Notaría.', 'EXPEDIENTE_CLIENT_INVALID');
 
     const characterId = input.comparecienteId
       ? input.caracterId || tipoActo.tipoActoCaracteresCompareciente[0]?.caracter_id
@@ -84,7 +89,8 @@ export class ExpedienteOpeningService {
       creador_id: actor.id,
       cotizacion_id: input.cotizacionId,
       notaria_id: input.notariaId || null,
-      cliente_alias: alias,
+      cliente_alias: client?.nombre_busqueda || alias,
+      cliente_compareciente_id: client?.id ?? null,
       descripcion: input.descripcion?.trim() || null,
       valor_operacion: input.valorOperacion ?? null,
       datos_operacion: input.datosOperacion,

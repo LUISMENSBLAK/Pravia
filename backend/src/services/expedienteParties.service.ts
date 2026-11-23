@@ -4,6 +4,7 @@ import type { Request } from 'express';
 import { expedienteAccessWhere, expedienteReadWhere } from '../middleware/auth.middleware';
 import { comparecienteObjectWhere } from './objectAccess.service';
 import { ExpedienteArtifactsService } from './expedienteArtifacts.service';
+import { partyTransferRole } from '../domain/partyTransferRole';
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -43,8 +44,6 @@ const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.Inp
 const isRepresentation = (value: FormaComparecencia) => value === FormaComparecencia.EN_REPRESENTACION_PERSONA_MORAL
   || value === FormaComparecencia.EN_REPRESENTACION_PERSONA_FISICA
   || value === FormaComparecencia.POR_PROPIO_DERECHO_Y_REPRESENTACION;
-const transmitterRoles = new Set(['TRANSMITENTE', 'VENDEDOR', 'PARTE_VENDEDORA', 'DONANTE', 'CEDENTE', 'FIDEICOMITENTE']);
-const acquirerRoles = new Set(['ADQUIRENTE', 'COMPRADOR', 'PARTE_COMPRADORA', 'DONATARIO', 'CESIONARIO', 'FIDEICOMISARIO']);
 const relationInclude = {
   expedienteActo: { include: { tipo_acto: { select: { id: true, nombre: true } } } },
   caracter: { select: { id: true, clave: true, nombre: true } },
@@ -182,8 +181,8 @@ export class ExpedientePartiesService {
     ]);
     const validations = acts.map((act) => {
       const relations = data.filter((item) => item.expediente_acto_id === act.id);
-      const transmitters = relations.filter((item) => transmitterRoles.has(String(item.caracter.clave || '').toUpperCase()));
-      const acquirers = relations.filter((item) => acquirerRoles.has(String(item.caracter.clave || '').toUpperCase()));
+      const transmitters = relations.filter((item) => partyTransferRole(item.caracter) === 'TRANSMITTER');
+      const acquirers = relations.filter((item) => partyTransferRole(item.caracter) === 'ACQUIRER');
       const sum = (items: typeof relations) => items.reduce((total, item) => total + (item.participacion_porcentaje == null ? 0 : Number(item.participacion_porcentaje)), 0);
       const target = Number(act.porcentaje_objeto);
       const transmitterTotal = sum(transmitters);

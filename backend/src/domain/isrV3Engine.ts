@@ -1,7 +1,9 @@
 import { Prisma } from '@prisma/client';
 import type { ISRRateBracket, ISRRuleSetSnapshot } from './isrTaxEngine';
+import { fullFiscalYears, updateISRAcquisition, type ISRAcquisitionHistorical } from './isrAcquisitionUpdate';
 
 const Decimal = Prisma.Decimal;
+export const ISR_V3_CALCULATION_REVISION = '2026-11-21.2';
 
 export type ISRV3LegalStatus =
   | 'GRAVADO'
@@ -32,12 +34,16 @@ export type ISRV3AcquisitionLayer = {
   source: string;
   priorLayerId?: string;
   verified: boolean;
+  historical?: ISRAcquisitionHistorical;
 };
 
 export type ISRV3Party = {
   id: string;
   role: 'ENAJENANTE' | 'ADQUIRENTE';
   name: string;
+  rfc?: string;
+  curp?: string;
+  sourceComparecienteId?: string;
   subjectType: ISRV3SubjectType;
   nationalityCode: string;
   immigrationStatus?: string;
@@ -95,13 +101,17 @@ export type ISRV3RuleParameter = {
 
 export type ISRV3RuleSnapshot = {
   engineVersion: 'ISR-V3.0';
+  calculationRevision?: string;
   effectiveDate: string;
   saleRuleSet: ISRRuleSetSnapshot;
   foreignGrossRate?: ISRV3RuleParameter;
+  foreignGainRate?: ISRV3RuleParameter;
   acquisitionThresholdPercent?: ISRV3RuleParameter;
   acquisitionRate?: ISRV3RuleParameter;
   ivaGeneralRate?: ISRV3RuleParameter;
   homeExemptionLimitPesos?: ISRV3RuleParameter;
+  minimumAcquisitionPercent?: ISRV3RuleParameter;
+  statePaymentRate?: ISRV3RuleParameter;
 };
 
 export type ISRV3Trace = {
@@ -125,11 +135,14 @@ export type ISRV3PartyResult = {
   reason: string;
   missing: string[];
   traces: ISRV3Trace[];
+  acquisitionWorksheet?: { updatedCost: string; minimumCost: string; appliedCost: string; appliedDeductions: string; taxableRatio: string };
+  distribution?: { status: 'DETERMINADO' | 'PENDIENTE_INFORMACION' | 'NO_APLICA'; statePayment: string | null; federalRemainder: string | null; reason: string; traces: ISRV3Trace[] };
 };
 
 export type ISRV3Result = {
   schemaVersion: 3;
   engineVersion: 'ISR-V3.0';
+  calculationRevision?: string;
   ruleVersion: string;
   currency: 'MXN';
   saleISR: ISRV3PartyResult[];
@@ -204,28 +217,51 @@ const noAplica = (party: ISRV3Party, route: string, reason: string): ISRV3PartyR
   taxableBase: null, exemptAmount: null, route, reason, missing: [], traces: [],
 });
 
-const acquisitionCost = (party: ISRV3Party, operationDate: string) => {
+const acquisitionCost = (party: ISRV3Party, operationDate: string, rules: ISRV3RuleSnapshot, propertyIsLand: boolean) => {
   const layers = party.acquisitionLayers || [];
   const missing: string[] = [];
   if (!layers.length) missing.push(`capas de adquisición de ${party.name}`);
   let totalPercentage = new Decimal(0);
   let total = new Decimal(0);
   let earliest: Date | undefined;
+  const traces: ISRV3Trace[] = [];
   const operation = new Date(`${operationDate}T00:00:00Z`);
   for (const layer of layers) {
     if (!layer.verified) missing.push(`verificación de la capa ${layer.id}`);
+    if (!['ONEROSA', 'HERENCIA', 'DONACION', 'OTRO'].includes(layer.acquisitionAct)) missing.push(`acto de adquisición válido de la capa ${layer.id}`);
     if (!layer.fiscalDate) missing.push(`fecha fiscal de la capa ${layer.id}`);
     if (!layer.source.trim()) missing.push(`fuente de la capa ${layer.id}`);
     if ((layer.acquisitionAct === 'HERENCIA' || layer.acquisitionAct === 'DONACION') && !layer.priorLayerId) missing.push(`antecedente encadenado de la capa ${layer.id}`);
     const layerDate = layer.fiscalDate ? new Date(`${layer.fiscalDate}T00:00:00Z`) : undefined;
-    if (layerDate && (!Number.isFinite(layerDate.getTime()) || layerDate > operation)) missing.push(`fecha fiscal válida de la capa ${layer.id}`);
+    if (layerDate && (!Number.isFinite(layerDate.getTime()) || layerDate > operation || layerDate.toISOString().slice(0, 10) !== layer.fiscalDate)) missing.push(`fecha fiscal válida de la capa ${layer.id}`);
     if (layerDate && (!earliest || layerDate < earliest)) earliest = layerDate;
     totalPercentage = totalPercentage.plus(percent(layer.percentage, `porcentaje de la capa ${layer.id}`));
-    total = total.plus(money(layer.adjustedLandCost, 'costo de terreno')).plus(money(layer.adjustedConstructionCost, 'costo de construcción'));
+    if (layer.historical) {
+      const updated = updateISRAcquisition({ historical: layer.historical, acquisitionDate: layer.fiscalDate, operationDate, propertyIsLand, references: rules.saleRuleSet.referenceTables || [] });
+      missing.push(...updated.missing.map((item) => `${item} · capa ${layer.id}`));
+      if (updated.land !== null && updated.construction !== null) total = total.plus(updated.land).plus(updated.construction);
+      for (const alternative of updated.alternatives) traces.push({ ruleId: alternative.referenceCode, legalReference: alternative.source, ruleVersion: String(alternative.referenceVersion),
+        inputsUsed: { ...updated.inputs, factor: alternative.factor, method: alternative.method, layerId: layer.id }, calculation: 'base histórica actualizable × factor verificado', result: alternative.total,
+        explanation: alternative.method === updated.chosenMethod ? 'Alternativa seleccionada por el método confirmado.' : 'Alternativa evaluada; no seleccionada.' });
+    } else {
+      if (!String(layer.adjustedLandCost ?? '').trim() || !String(layer.adjustedConstructionCost ?? '').trim()) missing.push(`costos explícitos de la capa ${layer.id} (cero cuando corresponda)`);
+      total = total.plus(money(layer.adjustedLandCost, 'costo de terreno')).plus(money(layer.adjustedConstructionCost, 'costo de construcción'));
+    }
   }
   const sellerPercentage = percent(party.percentage, `porcentaje de ${party.name}`);
   if (layers.length && !totalPercentage.eq(sellerPercentage)) missing.push(`capas de ${party.name} deben sumar ${sellerPercentage.toFixed()}%`);
-  return { total, earliest, missing };
+  if (new Set(layers.map((layer) => layer.fiscalDate).filter(Boolean)).size > 1) missing.push(`criterio verificado de distribución de ganancia por fechas de adquisición distintas de ${party.name}; no se aplica a toda la ganancia la fecha más antigua`);
+  return { total, earliest, missing, traces };
+};
+
+const distribution = (party: ISRV3Party, tax: Prisma.Decimal, gain: Prisma.Decimal, rules: ISRV3RuleSnapshot): NonNullable<ISRV3PartyResult['distribution']> => {
+  if (party.fiscalResidence !== 'MEXICO') return { status: 'NO_APLICA', statePayment: null, federalRemainder: null, reason: 'Esta distribución no aplica automáticamente a la ruta de residentes en el extranjero.', traces: [] };
+  if (!rules.statePaymentRate) return { status: 'PENDIENTE_INFORMACION', statePayment: null, federalRemainder: null, reason: 'Falta la tasa verificada y vigente LISR127_STATE_RATE.', traces: [] };
+  const rate = percent(rules.statePaymentRate.value, 'tasa entidad federativa');
+  const state = Decimal.min(rounded(tax), rounded(Decimal.max(new Decimal(0), gain).times(rate.div(100))));
+  const federal = rounded(tax).minus(state);
+  return { status: 'DETERMINADO', statePayment: serialized(state), federalRemainder: serialized(federal), reason: 'Pago a entidad federativa acreditable, limitado al pago provisional determinado; no se suma como un segundo ISR.',
+    traces: [trace(rules.statePaymentRate, { ganancia: serialized(gain), tasa: rate.toFixed(), isrDeterminado: serialized(tax) }, 'min(ISR determinado, ganancia × tasa / 100); remanente = ISR − pago entidad', state, 'Distribución LISR 127; conserva la suma exacta del pago provisional.')] };
 };
 
 const calculateSale = (input: ISRV3Input, rules: ISRV3RuleSnapshot, party: ISRV3Party): ISRV3PartyResult => {
@@ -237,12 +273,8 @@ const calculateSale = (input: ISRV3Input, rules: ISRV3RuleSnapshot, party: ISRV3
 
   const share = percent(party.percentage, `porcentaje de ${party.name}`).div(100);
   const gross = money(input.values.operation, 'valor de operación').times(share);
-  const costs = acquisitionCost(party, input.operationDate);
-  if (costs.missing.length) return pending(party, party.fiscalResidence === 'EXTRANJERO' ? 'EXTRANJERO' : 'PF_MEXICO', costs.missing);
-  const partyDeductions = input.deductions
-    .filter((item) => !item.paidByPartyId || item.paidByPartyId === party.id)
-    .reduce((sum, item) => item.verified ? sum.plus(money(item.amount, item.concept)) : sum, new Decimal(0));
-
+  // LISR 160: the gross-income route has no deductions. Missing acquisition
+  // evidence must not accidentally turn it into a gain-based calculation.
   if (party.fiscalResidence === 'EXTRANJERO' && !party.foreignGainOption?.requested) {
     if (!rules.foreignGrossRate) return pending(party, 'EXTRANJERO_INGRESO_BRUTO', ['tasa vigente verificada de LISR 160']);
     const rate = new Decimal(rules.foreignGrossRate.value);
@@ -256,12 +288,15 @@ const calculateSale = (input: ISRV3Input, rules: ISRV3RuleSnapshot, party: ISRV3
   if (party.fiscalResidence === 'EXTRANJERO' && !party.foreignGainOption?.requirementsVerified) {
     return pending(party, 'EXTRANJERO_OPCION_GANANCIA', ['requisitos verificados para opción sobre ganancia']);
   }
-
+  if (party.fiscalResidence === 'EXTRANJERO' && !party.foreignGainOption?.source.trim()) return pending(party, 'EXTRANJERO_OPCION_GANANCIA', ['fuente de verificación de la opción sobre ganancia']);
+  if (party.fiscalResidence === 'EXTRANJERO' && !rules.foreignGainRate) return pending(party, 'EXTRANJERO_OPCION_GANANCIA', ['tasa máxima vigente verificada de LISR 152 para LISR 160']);
   let exempt = new Decimal(0);
   const exemptionTraces: ISRV3Trace[] = [];
   if (party.homeExemption?.requested) {
     const home = party.homeExemption;
     const missing = [
+      input.property.type !== 'CASA_HABITACION' && 'clasificación acreditada como casa habitación',
+      party.fiscalResidence !== 'MEXICO' && 'procedencia verificada de la exención en la ruta fiscal del contribuyente',
       !home.homeUseVerified && 'uso casa habitación',
       !home.requiredDocumentsVerified && 'documentación de casa habitación',
       !home.noExemptionInPriorThreeYearsVerified && 'antecedente temporal de exención',
@@ -273,8 +308,27 @@ const calculateSale = (input: ISRV3Input, rules: ISRV3RuleSnapshot, party: ISRV3
     exemptionTraces.push(trace(rules.homeExemptionLimitPesos!, { ingreso: serialized(gross), limiteParticipacion: serialized(limit) }, 'min(ingreso, límite × participación)', exempt, 'Exención de casa habitación limitada por participación y parámetro UDI vigente.'));
   }
 
+  if (exempt.eq(gross)) return {
+    partyId: party.id, partyName: party.name, status: 'EXENTO', amount: '0.00', taxableBase: '0.00', exemptAmount: serialized(exempt), route: 'EXENCION_CASA_HABITACION',
+    reason: 'Ingreso totalmente exento con requisitos confirmados; no se requirieron deducciones para obtener este resultado.', missing: [], traces: exemptionTraces,
+    distribution: distribution(party, new Decimal(0), new Decimal(0), rules),
+  };
+  const costs = acquisitionCost(party, input.operationDate, rules, input.property.type === 'TERRENO');
+  if (costs.missing.length) return pending(party, party.fiscalResidence === 'EXTRANJERO' ? 'EXTRANJERO' : 'PF_MEXICO', costs.missing);
+  const applicableDeductions = input.deductions.filter((item) => !item.paidByPartyId || item.paidByPartyId === party.id);
+  const unverified = applicableDeductions.filter((item) => !item.verified);
+  if (unverified.length) return pending(party, 'DEDUCCIONES_POR_CONFIRMAR', unverified.map((item) => `verificación de deducción ${item.concept || item.id}`));
+  // Common deductions are allocated once; explicitly assigned ones only to payer.
+  const partyDeductions = applicableDeductions.reduce((sum, item) => sum.plus(money(item.amount, item.concept).times(item.paidByPartyId ? 1 : share)), new Decimal(0));
+
   const taxableIncome = gross.minus(exempt);
-  const gain = taxableIncome.minus(costs.total).minus(partyDeductions);
+  if (!rules.minimumAcquisitionPercent) return pending(party, 'COSTO_MINIMO_POR_VERIFICAR', ['porcentaje de costo mínimo LISR121_MIN_ACQUISITION_PERCENT verificado']);
+  const minimumCost = gross.times(percent(rules.minimumAcquisitionPercent.value, 'porcentaje de costo mínimo').div(100));
+  const deductibleCost = Decimal.max(costs.total, minimumCost);
+  const taxableRatio = gross.eq(0) ? new Decimal(0) : taxableIncome.div(gross);
+  const gain = taxableIncome.minus(deductibleCost.times(taxableRatio)).minus(partyDeductions.times(taxableRatio));
+  const costTraces = [...costs.traces, trace(rules.minimumAcquisitionPercent, { costoActualizado: serialized(costs.total), costoMinimo: serialized(minimumCost), proporcionGravada: taxableRatio.toFixed(10) }, 'max(costo actualizado, ingreso × mínimo fiscal) × proporción gravada', deductibleCost.times(taxableRatio), 'Costo mínimo fiscal y proporción de deducciones cuando existe ingreso parcialmente exento.')];
+  const acquisitionWorksheet = { updatedCost: serialized(costs.total), minimumCost: serialized(minimumCost), appliedCost: serialized(deductibleCost.times(taxableRatio)), appliedDeductions: serialized(partyDeductions.times(taxableRatio)), taxableRatio: taxableRatio.toFixed(10) };
   const ruleParameter = {
     ruleId: rules.saleRuleSet.key,
     legalReference: rules.saleRuleSet.normativeSource,
@@ -285,18 +339,29 @@ const calculateSale = (input: ISRV3Input, rules: ISRV3RuleSnapshot, party: ISRV3
       partyId: party.id, partyName: party.name, status: exempt.eq(gross) ? 'EXENTO' : 'NO_GENERADO', amount: '0.00',
       taxableBase: serialized(Decimal.max(new Decimal(0), gain)), exemptAmount: serialized(exempt), route: party.fiscalResidence === 'EXTRANJERO' ? 'EXTRANJERO_OPCION_GANANCIA' : 'PF_MEXICO',
       reason: exempt.eq(gross) ? 'Ingreso totalmente exento.' : 'La operación no determina ganancia gravable; el resultado no generado se conserva como cero.', missing: [],
-      traces: [...exemptionTraces, trace(ruleParameter, { ingresoGravable: serialized(taxableIncome), costo: serialized(costs.total), deducciones: serialized(partyDeductions) }, 'ingresoGravable − costo − deducciones', '0.00', 'No existe ganancia positiva sobre la cual aplicar la tarifa.')],
+      traces: [...exemptionTraces, ...costTraces, trace(ruleParameter, { ingresoGravable: serialized(taxableIncome), costo: serialized(deductibleCost.times(taxableRatio)), deducciones: serialized(partyDeductions.times(taxableRatio)) }, 'ingresoGravable − costo − deducciones', '0.00', 'No existe ganancia positiva sobre la cual aplicar la tarifa.')],
+      distribution: distribution(party, new Decimal(0), new Decimal(0), rules),
+      acquisitionWorksheet,
     };
   }
   const earliest = costs.earliest!;
-  const years = Math.max(1, Math.min(rules.saleRuleSet.yearsCap, input.taxYear - earliest.getUTCFullYear()));
+  const operation = new Date(`${input.operationDate}T00:00:00Z`);
+  const elapsedYears = fullFiscalYears(earliest, operation);
+  const years = Math.max(1, Math.min(rules.saleRuleSet.yearsCap, elapsedYears));
   const annualBase = gain.div(years);
-  const tax = tariffTax(annualBase, rules.saleRuleSet.brackets).times(years);
+  const foreignGain = party.fiscalResidence === 'EXTRANJERO';
+  const bracket = foreignGain ? null : rules.saleRuleSet.brackets.find((item) => annualBase.gte(item.lower) && (item.upper === null || annualBase.lte(item.upper)));
+  if (!foreignGain && !bracket) return pending(party, 'TARIFA_SIN_TRAMO', ['tramo vigente de tarifa para la base anual determinada; no se extrapola ni se inventa redondeo']);
+  const tax = foreignGain ? gain.times(percent(rules.foreignGainRate!.value, 'tasa máxima LISR 160').div(100)) : tariffTax(annualBase, rules.saleRuleSet.brackets).times(years);
   return {
     partyId: party.id, partyName: party.name, status: exempt.gt(0) ? 'EXENTO_PARCIALMENTE' : 'GRAVADO', amount: serialized(tax),
     taxableBase: serialized(gain), exemptAmount: serialized(exempt), route: party.fiscalResidence === 'EXTRANJERO' ? 'EXTRANJERO_OPCION_GANANCIA' : 'PF_MEXICO',
     reason: party.fiscalResidence === 'EXTRANJERO' ? 'Opción sobre ganancia aplicada con requisitos verificados.' : 'Tarifa de enajenación vigente aplicada a la ganancia individual.', missing: [],
-    traces: [...exemptionTraces, trace(ruleParameter, { ganancia: serialized(gain), anos: String(years), baseAnual: annualBase.toFixed(8) }, 'tarifa(ganancia / años) × años', tax, 'Cálculo determinístico individual por enajenante y sus capas de adquisición.')],
+    traces: [...exemptionTraces, ...costTraces, foreignGain
+      ? trace(rules.foreignGainRate!, { ganancia: serialized(gain), tasa: rules.foreignGainRate!.value }, 'ganancia × tasa máxima / 100', tax, 'Opción LISR 160; no se aplica la tarifa provisional de residentes en México.')
+      : trace(ruleParameter, { ganancia: serialized(gain), anos: String(years), baseAnual: annualBase.toFixed(8), limiteInferior: bracket!.lower, limiteSuperior: bracket!.upper || 'Sin límite superior', cuotaFija: bracket!.fixedFee, porcentaje: bracket!.percentage }, 'tarifa(ganancia / años) × años', tax, 'Cálculo determinístico individual por enajenante y sus capas de adquisición.')],
+    distribution: distribution(party, tax, gain, rules),
+    acquisitionWorksheet,
   };
 };
 
@@ -357,10 +422,20 @@ const calculateIVA = (input: ISRV3Input, rules: ISRV3RuleSnapshot): ISRV3Result[
 export function calculateISRV3(input: ISRV3Input, rules: ISRV3RuleSnapshot): ISRV3Result {
   if (input.schemaVersion !== 3) throw new Error('El motor ISR v3 requiere schemaVersion 3.');
   if (rules.engineVersion !== 'ISR-V3.0') throw new Error('La versión normativa no corresponde al motor ISR v3.');
+  if (!['TERRENO', 'CASA_HABITACION', 'TERRENO_CONSTRUCCION', 'CONSTRUCCION_COMERCIAL', 'USO_MIXTO', 'OTRO'].includes(input.property.type)) throw new Error('Selecciona un tipo de inmueble válido.');
+  if (!Array.isArray(input.parties) || !Array.isArray(input.deductions)) throw new Error('Las partes y deducciones deben tener un formato válido.');
+  if (new Set(input.parties.map((party) => party.id)).size !== input.parties.length || input.parties.some((party) => !party.id || !party.name?.trim())) throw new Error('Identifica cada parte sin duplicar su ID.');
+  for (const party of input.parties) {
+    if (!['ENAJENANTE', 'ADQUIRENTE'].includes(party.role) || !['PF', 'PM_TITULO_II', 'PM_TITULO_III', 'OTRO'].includes(party.subjectType) || !['MEXICO', 'EXTRANJERO', 'POR_DETERMINAR'].includes(party.fiscalResidence)) throw new Error('El carácter, sujeto y residencia fiscal deben ser válidos.');
+    if (percent(party.percentage, `participación de ${party.name}`).lte(0)) throw new Error('La participación de cada parte debe ser mayor que cero.');
+    if (party.acquisitionLayers && new Set(party.acquisitionLayers.map((layer) => layer.id)).size !== party.acquisitionLayers.length) throw new Error('Las adquisiciones de una persona no pueden duplicar su ID.');
+  }
+  if (input.deductions.some((item) => item.paidByPartyId && !input.parties.some((party) => party.id === item.paidByPartyId && party.role === 'ENAJENANTE'))) throw new Error('El pagador de una deducción debe ser un enajenante del cálculo.');
   if (!input.act.id && input.act.fiscalClassification !== 'OTRO') throw new Error('Selecciona un acto del catálogo real de la Notaría.');
   if (input.act.fiscalClassification === 'OTRO' && !input.act.otherDescription?.trim()) throw new Error('Especifica el acto no catalogado.');
   const operationDate = new Date(`${input.operationDate}T00:00:00Z`);
-  if (!input.operationDate || !Number.isFinite(operationDate.getTime())) throw new Error('La fecha fiscal de operación es obligatoria.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.operationDate) || !Number.isFinite(operationDate.getTime()) || operationDate.toISOString().slice(0, 10) !== input.operationDate) throw new Error('La fecha fiscal de operación debe ser válida.');
+  if (operationDate.getUTCFullYear() !== input.taxYear) throw new Error('La fecha fiscal debe pertenecer al ejercicio del cálculo.');
   const operationValue = money(input.values.operation, 'valor de operación');
   if (operationValue.lte(0)) throw new Error('El valor de operación debe ser mayor que cero.');
   const componentValue = money(input.values.landSale, 'valor de terreno').plus(money(input.values.constructionSale, 'valor de construcción'));
@@ -376,21 +451,26 @@ export function calculateISRV3(input: ISRV3Input, rules: ISRV3RuleSnapshot): ISR
   const saleISR = sellers.map((party) => calculateSale(input, rules, party));
   const acquisitionISR = buyers.map((party) => calculateAcquisition(input, rules, party));
   const iva = calculateIVA(input, rules);
-  const missing = [...new Set([...saleISR.flatMap((item) => item.missing), ...acquisitionISR.flatMap((item) => item.missing), ...iva.missing])];
+  const missing = [...new Set([...saleISR.flatMap((item) => [...item.missing, ...(item.distribution?.status === 'PENDIENTE_INFORMACION' ? [item.distribution.reason] : [])]), ...acquisitionISR.flatMap((item) => item.missing), ...iva.missing])];
+  if (!sellers.length) missing.push('enajenantes de la operación');
+  if (!buyers.length) missing.push('adquirentes de la operación');
   const breakdown = [
     ...saleISR.map((item) => ({ key: `sale:${item.partyId}`, label: `ISR enajenación · ${item.partyName}`, operation: item.route, amount: item.amount ?? item.status, source: item.traces.map((entry) => entry.legalReference).join('; ') || item.reason })),
     ...acquisitionISR.map((item) => ({ key: `acquisition:${item.partyId}`, label: `ISR adquisición · ${item.partyName}`, operation: item.route, amount: item.amount ?? item.status, source: item.traces.map((entry) => entry.legalReference).join('; ') || item.reason })),
     { key: 'iva', label: 'IVA', operation: iva.status, amount: iva.amount ?? iva.status, source: iva.traces.map((entry) => entry.legalReference).join('; ') || iva.reason },
   ];
-  return { schemaVersion: 3, engineVersion: 'ISR-V3.0', ruleVersion: rules.saleRuleSet.version, currency: 'MXN', saleISR, acquisitionISR, iva, missing, breakdown };
+  return { schemaVersion: 3, engineVersion: 'ISR-V3.0', calculationRevision: ISR_V3_CALCULATION_REVISION, ruleVersion: rules.saleRuleSet.version, currency: 'MXN', saleISR, acquisitionISR, iva, missing, breakdown };
 }
 
 const parameterCodes = {
   foreignGrossRate: 'LISR160_GROSS_RATE',
+  foreignGainRate: 'LISR160_GAIN_MAX_RATE',
   acquisitionThresholdPercent: 'RLISR217_THRESHOLD_PERCENT',
   acquisitionRate: 'RLISR217_ACQUISITION_RATE',
   ivaGeneralRate: 'LIVA_GENERAL_RATE',
   homeExemptionLimitPesos: 'LISR93_XIX_HOME_EXEMPTION_LIMIT_PESOS',
+  minimumAcquisitionPercent: 'LISR121_MIN_ACQUISITION_PERCENT',
+  statePaymentRate: 'LISR127_STATE_RATE',
 } as const;
 
 /** Convierte exclusivamente revisiones fiscales verificadas por el servicio a un
@@ -410,11 +490,14 @@ export function buildISRV3RuleSnapshot(saleRuleSet: ISRRuleSetSnapshot, effectiv
     };
   };
   return {
-    engineVersion: 'ISR-V3.0', effectiveDate, saleRuleSet,
+    engineVersion: 'ISR-V3.0', calculationRevision: ISR_V3_CALCULATION_REVISION, effectiveDate, saleRuleSet,
     foreignGrossRate: mapped(parameterCodes.foreignGrossRate),
+    foreignGainRate: mapped(parameterCodes.foreignGainRate),
     acquisitionThresholdPercent: mapped(parameterCodes.acquisitionThresholdPercent),
     acquisitionRate: mapped(parameterCodes.acquisitionRate),
     ivaGeneralRate: mapped(parameterCodes.ivaGeneralRate),
     homeExemptionLimitPesos: mapped(parameterCodes.homeExemptionLimitPesos),
+    minimumAcquisitionPercent: mapped(parameterCodes.minimumAcquisitionPercent),
+    statePaymentRate: mapped(parameterCodes.statePaymentRate),
   };
 }

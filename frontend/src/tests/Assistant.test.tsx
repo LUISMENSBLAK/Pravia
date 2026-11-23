@@ -403,7 +403,7 @@ describe('PRAVIA IA global', () => {
     await user.type(screen.getByLabelText('Pregúntame algo...'), 'Agenda una cita mañana a las 10.');
     await user.click(screen.getByRole('button', { name: 'Enviar mensaje' }));
     await screen.findByText('Evento creado.');
-    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ detail: { scope: 'agenda' } }));
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ detail: expect.objectContaining({ scope: 'agenda', method: 'ACTION', path: '/agenda' }) }));
     window.removeEventListener('pravia:data-changed', changed);
   });
 

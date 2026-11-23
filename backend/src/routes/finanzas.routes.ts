@@ -74,7 +74,7 @@ router.post('/facturacion/borradores/:id/prefacturas', requirePermission('finanz
 router.post('/facturacion/manual', requirePermission('finanzas.write'), requirePermission('documentos.write'), fiscalUpload.fields([{ name: 'xml', maxCount: 1 }, { name: 'pdf', maxCount: 1 }]), FinanceFiscalController.uploadManual);
 router.post('/facturacion/documentos/:id/aplicaciones', requirePermission('finanzas.validate'), FinanceFiscalController.applyPayment);
 router.post('/facturacion/documentos/:id/rep/preparar', requirePermission('finanzas.validate'), FinanceFiscalController.prepareRep);
-router.post('/facturacion/documentos/:id/timbrar', requirePermission('finanzas.validate'), FinanceFiscalController.stamp);
+router.post('/facturacion/documentos/:id/timbrar', requirePermission('finanzas.validate'), requirePermission('documentos.write'), FinanceFiscalController.stamp);
 router.post('/facturacion/transferencias', requirePermission('finanzas.validate'), FinanceFiscalController.transfer);
 router.post('/gastos-recurrentes', requirePermission('finanzas.write'), FinanceLedgerController.createRecurringExpense);
 router.patch('/gastos-recurrentes/:id', requirePermission('finanzas.write'), FinanceLedgerController.updateRecurringExpense);

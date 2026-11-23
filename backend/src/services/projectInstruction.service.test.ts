@@ -16,6 +16,8 @@ describe('indicaciones dirigidas EXP-010',()=>{
     expect(reconciled.generation_observations).toEqual([{kind:'CONTRADICTION',document_value:'Otro dato'}]);
     expect(reconciled.residual_observations).toEqual([{kind:'POSSIBLE_TEMPLATE_RESIDUE',value:'Otro residuo'}]);
     expect(reconciled.contradiction_observations).toEqual([{document_value:'Otro dato'}]);
+    expect(reconciled.mandatory_review_completed).toBe(false);
+    expect(reconciled.review_invalidated_by_correction).toBe(true);
   });
   it('bloquea texto ambiguo',async()=>{const source=await docx('<w:p><w:r><w:t>Duplicado</w:t></w:r></w:p><w:p><w:r><w:t>Duplicado</w:t></w:r></w:p>');await expect(applyDirectedDocxPatches(source,[{find:'Duplicado',replace:'Único'}])).rejects.toThrow(/más de una vez/);});
   it('no borra una fecha desconocida del conteo por corregir texto ajeno a la fecha',()=>{

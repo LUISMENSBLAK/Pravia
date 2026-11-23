@@ -133,7 +133,7 @@ export const getCotizaciones = async (req: Request, res: Response) => {
     if (parsed.states.length === 1) where.estado = parsed.states[0];
     else if (parsed.states.length > 1) where.estado = { in: parsed.states };
     if (parsed.responsible) where.user_id = parsed.responsible;
-    if (parsed.act) where.prospecto = { is: { tipo_acto: { equals: parsed.act, mode: 'insensitive' } } };
+    if (parsed.act) where.AND = [{ OR: [{ actos: { some: { tipo_acto: { nombre: { equals: parsed.act, mode: 'insensitive' } } } } }, { prospecto: { is: { tipo_acto: { equals: parsed.act, mode: 'insensitive' } } } }] }];
     if (parsed.dateFrom || parsed.dateTo) where.created_at = { ...(parsed.dateFrom ? { gte: parsed.dateFrom } : {}), ...(parsed.dateTo ? { lte: parsed.dateTo } : {}) };
     if (parsed.search) {
       where.OR = [
@@ -142,6 +142,8 @@ export const getCotizaciones = async (req: Request, res: Response) => {
         { numero_cotizacion: { contains: parsed.search, mode: 'insensitive' } },
         { prospecto: { is: { nombre: { contains: parsed.search, mode: 'insensitive' } } } },
         { prospecto: { is: { tipo_acto: { contains: parsed.search, mode: 'insensitive' } } } },
+        { solicitante_formal: { is: { nombre_busqueda: { contains: parsed.search, mode: 'insensitive' } } } },
+        { actos: { some: { tipo_acto: { nombre: { contains: parsed.search, mode: 'insensitive' } } } } },
       ];
     }
 
@@ -150,6 +152,8 @@ export const getCotizaciones = async (req: Request, res: Response) => {
       ...(parsed.paginated ? { skip: parsed.skip, take: parsed.pageSize } : {}),
       include: {
         prospecto: { select: { nombre: true, tipo_acto: true } },
+        solicitante_formal: { select: { id: true, nombre_busqueda: true, tipo_persona: true } },
+        actos: { include: { tipo_acto: { select: { id: true, nombre: true } } }, orderBy: { orden: 'asc' } },
         notaria: { select: { nombre: true } },
         creada_por: { select: { nombre: true } },
         collaborators: { where: { active: true }, select: { user_id: true } },
@@ -174,7 +178,7 @@ export const getCotizaciones = async (req: Request, res: Response) => {
       prisma.cotizacion.count({ where: { ...where, fecha_aceptacion_cliente: { not: null } } }),
       prisma.cotizacion.aggregate({ where, _sum: { total_cliente: true } }),
       prisma.cotizacion.groupBy({ by: ['estado'], where, _count: { _all: true } }),
-      prisma.cotizacion.findMany({ where: scope, select: { prospecto: { select: { tipo_acto: true } }, creada_por: { select: { id: true, nombre: true, apellido: true } } } }),
+      prisma.cotizacion.findMany({ where: scope, select: { actos: { select: { tipo_acto: { select: { nombre: true } } } }, prospecto: { select: { tipo_acto: true } }, creada_por: { select: { id: true, nombre: true, apellido: true } } } }),
       prisma.cotizacion.findMany({
         where: { ...where, fecha_enviada_cliente: { gte: analyticsRange.start, lt: analyticsRange.end } },
         select: { fecha_enviada_cliente: true, fecha_aceptacion_cliente: true, total_cliente: true },
@@ -182,7 +186,7 @@ export const getCotizaciones = async (req: Request, res: Response) => {
     ]);
     const totalPages = Math.max(1, Math.ceil(total / parsed.pageSize));
     const responsibles = Array.from(new Map(facetRows.map((item) => [item.creada_por.id, { id: item.creada_por.id, name: `${item.creada_por.nombre}${item.creada_por.apellido ? ` ${item.creada_por.apellido}` : ''}` }])).values()).sort((a, b) => a.name.localeCompare(b.name, 'es'));
-    const acts = Array.from(new Set(facetRows.map((item) => item.prospecto?.tipo_acto).filter((item): item is string => Boolean(item)))).sort((a, b) => a.localeCompare(b, 'es'));
+    const acts = Array.from(new Set(facetRows.flatMap((item) => item.actos?.length ? item.actos.map((act) => act.tipo_acto.nombre) : item.prospecto?.tipo_acto ? [item.prospecto.tipo_acto] : []))).sort((a, b) => a.localeCompare(b, 'es'));
     return res.json({
       data: rows,
       meta: {
@@ -331,9 +335,13 @@ export const attachCotizacionAct = async (req: Request, res: Response) => {
   } catch (error) { return quoteWorkflowError(res, error); }
 };
 
-/** Compatibility route: the same PRO-001 conversion authority, never a second creation path. */
+/** Explicit Prospect conversions retain PRO-001 authority; direct entry uses COT-001. */
 export const createCotizacion = async (req: Request, res: Response) => {
   try {
+    if (req.body?.prospecto_id === undefined) {
+      const quote = await cotizacionWorkflowService.createDirect(req.user!, req.body ?? {});
+      return res.status(quote.idempotent ? 200 : 201).json(quote);
+    }
     const { prospecto_id, expectedVersion, idempotencyKey, confirm, ...extra } = req.body ?? {};
     if (Object.keys(extra).length) return res.status(400).json({ error: 'La creación se confirma desde el prospecto, con su fuente notarial.', code: 'PRO001_CREATION_REQUIRED' });
     if (typeof prospecto_id !== 'string') return res.status(400).json({ error: 'Selecciona el prospecto de origen.' });
@@ -341,7 +349,7 @@ export const createCotizacion = async (req: Request, res: Response) => {
       action: 'CONVERTIR', expectedVersion, idempotencyKey, confirm,
     });
     return res.status(result.idempotent ? 200 : 201).json({ id: result.quoteId, ...result });
-  } catch (error) { return prospectWorkflowError(res, error); }
+  } catch (error) { return req.body?.prospecto_id === undefined ? quoteWorkflowError(res, error) : prospectWorkflowError(res, error); }
 };
 
 export const updateCotizacionEstado = async (req: Request, res: Response) => {

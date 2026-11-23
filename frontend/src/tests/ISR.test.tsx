@@ -90,7 +90,7 @@ describe('Cálculo ISR v3', () => {
 
   it('expone por enajenante las capas de adquisición y su fuente verificable', async () => {
     renderAt('/calculo-isr/fixture?fixture=result');
-    expect(await screen.findByText('Capas de adquisición')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Adquisición' })).toBeInTheDocument();
     expect(screen.getByLabelText('Acto de adquisición')).toHaveValue('ONEROSA');
     expect(screen.getByLabelText('Costo terreno')).toHaveValue('650000.00');
     expect(screen.getByLabelText('Costo construcción')).toHaveValue('450000.00');

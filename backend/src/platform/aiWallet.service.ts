@@ -22,7 +22,10 @@ export class AiWalletService {
   private async serializable<T>(callback: Parameters<PrismaClient['$transaction']>[0] extends (tx: infer U) => unknown ? (tx: U) => Promise<T> : never): Promise<T> {
     for (let attempt = 1; attempt <= 4; attempt += 1) {
       try {
-        return await this.db.$transaction(callback as never, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }) as T;
+        return await this.db.$transaction(callback as never, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 10_000, timeout: 20_000,
+        }) as T;
       } catch (error) {
         const sqlState = error instanceof Prisma.PrismaClientKnownRequestError
           ? String((error.meta as { code?: unknown } | undefined)?.code || '')

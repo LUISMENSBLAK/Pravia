@@ -1,0 +1,499 @@
+{
+  "code": "ISR_ANNEX9_FACTORS",
+  "version": 20260717,
+  "taxYear": 2026,
+  "effectiveFrom": "2026-07-17",
+  "effectiveTo": "2026-12-31",
+  "sourceTitle": "Anexo 9 RMF 2026 · DOF 17-07-2026 · regla 3.15.1 / LISR 121",
+  "sourceUrl": "https://sat.gob.mx/minisitio/NormatividadRMFyRGCE/documentos2026/rmf/anexos/Anexo-9-RMF-2026_DOF-17072026.pdf",
+  "sourceSha256": "9f12f91583bd9caaf8e2185e72bb9d66b9e98bc98aa43322bf0d159a92503181",
+  "sourceBytes": 33240,
+  "sourcePages": 4,
+  "rows": [
+    {
+      "moreThanYears": null,
+      "upToYears": 1,
+      "factor": "1.00"
+    },
+    {
+      "moreThanYears": 1,
+      "upToYears": 2,
+      "factor": "1.04"
+    },
+    {
+      "moreThanYears": 2,
+      "upToYears": 3,
+      "factor": "1.08"
+    },
+    {
+      "moreThanYears": 3,
+      "upToYears": 4,
+      "factor": "1.13"
+    },
+    {
+      "moreThanYears": 4,
+      "upToYears": 5,
+      "factor": "1.22"
+    },
+    {
+      "moreThanYears": 5,
+      "upToYears": 6,
+      "factor": "1.30"
+    },
+    {
+      "moreThanYears": 6,
+      "upToYears": 7,
+      "factor": "1.35"
+    },
+    {
+      "moreThanYears": 7,
+      "upToYears": 8,
+      "factor": "1.39"
+    },
+    {
+      "moreThanYears": 8,
+      "upToYears": 9,
+      "factor": "1.45"
+    },
+    {
+      "moreThanYears": 9,
+      "upToYears": 10,
+      "factor": "1.53"
+    },
+    {
+      "moreThanYears": 10,
+      "upToYears": 11,
+      "factor": "1.61"
+    },
+    {
+      "moreThanYears": 11,
+      "upToYears": 12,
+      "factor": "1.65"
+    },
+    {
+      "moreThanYears": 12,
+      "upToYears": 13,
+      "factor": "1.70"
+    },
+    {
+      "moreThanYears": 13,
+      "upToYears": 14,
+      "factor": "1.78"
+    },
+    {
+      "moreThanYears": 14,
+      "upToYears": 15,
+      "factor": "1.83"
+    },
+    {
+      "moreThanYears": 15,
+      "upToYears": 16,
+      "factor": "1.91"
+    },
+    {
+      "moreThanYears": 16,
+      "upToYears": 17,
+      "factor": "1.98"
+    },
+    {
+      "moreThanYears": 17,
+      "upToYears": 18,
+      "factor": "2.07"
+    },
+    {
+      "moreThanYears": 18,
+      "upToYears": 19,
+      "factor": "2.20"
+    },
+    {
+      "moreThanYears": 19,
+      "upToYears": 20,
+      "factor": "2.28"
+    },
+    {
+      "moreThanYears": 20,
+      "upToYears": 21,
+      "factor": "2.37"
+    },
+    {
+      "moreThanYears": 21,
+      "upToYears": 22,
+      "factor": "2.46"
+    },
+    {
+      "moreThanYears": 22,
+      "upToYears": 23,
+      "factor": "2.57"
+    },
+    {
+      "moreThanYears": 23,
+      "upToYears": 24,
+      "factor": "2.68"
+    },
+    {
+      "moreThanYears": 24,
+      "upToYears": 25,
+      "factor": "2.82"
+    },
+    {
+      "moreThanYears": 25,
+      "upToYears": 26,
+      "factor": "2.96"
+    },
+    {
+      "moreThanYears": 26,
+      "upToYears": 27,
+      "factor": "3.20"
+    },
+    {
+      "moreThanYears": 27,
+      "upToYears": 28,
+      "factor": "3.55"
+    },
+    {
+      "moreThanYears": 28,
+      "upToYears": 29,
+      "factor": "4.22"
+    },
+    {
+      "moreThanYears": 29,
+      "upToYears": 30,
+      "factor": "4.87"
+    },
+    {
+      "moreThanYears": 30,
+      "upToYears": 31,
+      "factor": "6.15"
+    },
+    {
+      "moreThanYears": 31,
+      "upToYears": 32,
+      "factor": "9.34"
+    },
+    {
+      "moreThanYears": 32,
+      "upToYears": 33,
+      "factor": "10.29"
+    },
+    {
+      "moreThanYears": 33,
+      "upToYears": 34,
+      "factor": "11.06"
+    },
+    {
+      "moreThanYears": 34,
+      "upToYears": 35,
+      "factor": "12.32"
+    },
+    {
+      "moreThanYears": 35,
+      "upToYears": 36,
+      "factor": "14.53"
+    },
+    {
+      "moreThanYears": 36,
+      "upToYears": 37,
+      "factor": "18.47"
+    },
+    {
+      "moreThanYears": 37,
+      "upToYears": 38,
+      "factor": "22.62"
+    },
+    {
+      "moreThanYears": 38,
+      "upToYears": 39,
+      "factor": "30.43"
+    },
+    {
+      "moreThanYears": 39,
+      "upToYears": 40,
+      "factor": "84.25"
+    },
+    {
+      "moreThanYears": 40,
+      "upToYears": 41,
+      "factor": "172.15"
+    },
+    {
+      "moreThanYears": 41,
+      "upToYears": 42,
+      "factor": "285.63"
+    },
+    {
+      "moreThanYears": 42,
+      "upToYears": 43,
+      "factor": "459.15"
+    },
+    {
+      "moreThanYears": 43,
+      "upToYears": 44,
+      "factor": "796.14"
+    },
+    {
+      "moreThanYears": 44,
+      "upToYears": 45,
+      "factor": "1672.24"
+    },
+    {
+      "moreThanYears": 45,
+      "upToYears": 46,
+      "factor": "2188.34"
+    },
+    {
+      "moreThanYears": 46,
+      "upToYears": 47,
+      "factor": "2796.68"
+    },
+    {
+      "moreThanYears": 47,
+      "upToYears": 48,
+      "factor": "3399.54"
+    },
+    {
+      "moreThanYears": 48,
+      "upToYears": 49,
+      "factor": "4000.50"
+    },
+    {
+      "moreThanYears": 49,
+      "upToYears": 50,
+      "factor": "4781.98"
+    },
+    {
+      "moreThanYears": 50,
+      "upToYears": 51,
+      "factor": "6157.59"
+    },
+    {
+      "moreThanYears": 51,
+      "upToYears": 52,
+      "factor": "6898.00"
+    },
+    {
+      "moreThanYears": 52,
+      "upToYears": 53,
+      "factor": "8134.03"
+    },
+    {
+      "moreThanYears": 53,
+      "upToYears": 54,
+      "factor": "10079.45"
+    },
+    {
+      "moreThanYears": 54,
+      "upToYears": 55,
+      "factor": "10746.36"
+    },
+    {
+      "moreThanYears": 55,
+      "upToYears": 56,
+      "factor": "11218.73"
+    },
+    {
+      "moreThanYears": 56,
+      "upToYears": 57,
+      "factor": "11771.81"
+    },
+    {
+      "moreThanYears": 57,
+      "upToYears": 58,
+      "factor": "12383.78"
+    },
+    {
+      "moreThanYears": 58,
+      "upToYears": 59,
+      "factor": "12658.88"
+    },
+    {
+      "moreThanYears": 59,
+      "upToYears": 60,
+      "factor": "12830.57"
+    },
+    {
+      "moreThanYears": 60,
+      "upToYears": 61,
+      "factor": "13230.55"
+    },
+    {
+      "moreThanYears": 61,
+      "upToYears": 62,
+      "factor": "13362.16"
+    },
+    {
+      "moreThanYears": 62,
+      "upToYears": 63,
+      "factor": "13896.73"
+    },
+    {
+      "moreThanYears": 63,
+      "upToYears": 64,
+      "factor": "14141.70"
+    },
+    {
+      "moreThanYears": 64,
+      "upToYears": 65,
+      "factor": "14489.13"
+    },
+    {
+      "moreThanYears": 65,
+      "upToYears": 66,
+      "factor": "14384.83"
+    },
+    {
+      "moreThanYears": 66,
+      "upToYears": 67,
+      "factor": "15160.69"
+    },
+    {
+      "moreThanYears": 67,
+      "upToYears": 68,
+      "factor": "15218.67"
+    },
+    {
+      "moreThanYears": 68,
+      "upToYears": 69,
+      "factor": "15580.04"
+    },
+    {
+      "moreThanYears": 69,
+      "upToYears": 70,
+      "factor": "16665.39"
+    },
+    {
+      "moreThanYears": 70,
+      "upToYears": 71,
+      "factor": "16778.90"
+    },
+    {
+      "moreThanYears": 71,
+      "upToYears": 72,
+      "factor": "18500.43"
+    },
+    {
+      "moreThanYears": 72,
+      "upToYears": 73,
+      "factor": "21677.19"
+    },
+    {
+      "moreThanYears": 73,
+      "upToYears": 74,
+      "factor": "22148.91"
+    },
+    {
+      "moreThanYears": 74,
+      "upToYears": 75,
+      "factor": "21392.37"
+    },
+    {
+      "moreThanYears": 75,
+      "upToYears": 76,
+      "factor": "24899.10"
+    },
+    {
+      "moreThanYears": 76,
+      "upToYears": 77,
+      "factor": "29867.17"
+    },
+    {
+      "moreThanYears": 77,
+      "upToYears": 78,
+      "factor": "32948.31"
+    },
+    {
+      "moreThanYears": 78,
+      "upToYears": 79,
+      "factor": "36441.92"
+    },
+    {
+      "moreThanYears": 79,
+      "upToYears": 80,
+      "factor": "39298.74"
+    },
+    {
+      "moreThanYears": 80,
+      "upToYears": 81,
+      "factor": "41725.55"
+    },
+    {
+      "moreThanYears": 81,
+      "upToYears": 82,
+      "factor": "49157.59"
+    },
+    {
+      "moreThanYears": 82,
+      "upToYears": 83,
+      "factor": "55418.85"
+    },
+    {
+      "moreThanYears": 83,
+      "upToYears": 84,
+      "factor": "71706.07"
+    },
+    {
+      "moreThanYears": 84,
+      "upToYears": 85,
+      "factor": "90356.08"
+    },
+    {
+      "moreThanYears": 85,
+      "upToYears": 86,
+      "factor": "100614.85"
+    },
+    {
+      "moreThanYears": 86,
+      "upToYears": 87,
+      "factor": "107833.85"
+    },
+    {
+      "moreThanYears": 87,
+      "upToYears": 88,
+      "factor": "110684.08"
+    },
+    {
+      "moreThanYears": 88,
+      "upToYears": 89,
+      "factor": "109294.74"
+    },
+    {
+      "moreThanYears": 89,
+      "upToYears": 90,
+      "factor": "116651.12"
+    },
+    {
+      "moreThanYears": 90,
+      "upToYears": 91,
+      "factor": "143511.58"
+    },
+    {
+      "moreThanYears": 91,
+      "upToYears": 92,
+      "factor": "153079.01"
+    },
+    {
+      "moreThanYears": 92,
+      "upToYears": 93,
+      "factor": "153079.01"
+    },
+    {
+      "moreThanYears": 93,
+      "upToYears": 94,
+      "factor": "161798.71"
+    },
+    {
+      "moreThanYears": 94,
+      "upToYears": 95,
+      "factor": "174073.09"
+    },
+    {
+      "moreThanYears": 95,
+      "upToYears": 96,
+      "factor": "163315.76"
+    },
+    {
+      "moreThanYears": 96,
+      "upToYears": null,
+      "factor": "144500.58"
+    }
+  ]
+}

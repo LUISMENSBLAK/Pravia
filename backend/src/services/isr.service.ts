@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { Document, Packer, Paragraph, TextRun } from 'docx';
 import type { Request } from 'express';
 import { Prisma } from '@prisma/client';
 import prisma from '../config/prisma';
@@ -6,7 +7,10 @@ import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { deleteFile, downloadFile, uploadFile } from './supabase.service';
 import { extraerMultiplesDocumentos, getOpenAIModelName, type DocumentoParaExtraccion } from './openaiDocument.service';
 import { calculateISR, ISRCalculationInput, ISRRateBracket, ISRRuleSetSnapshot, ISRValidationError } from '../domain/isrTaxEngine';
-import { buildISRV3RuleSnapshot, calculateISRV3, type ISRV3Input, type ISRV3Result } from '../domain/isrV3Engine';
+import { buildISRV3RuleSnapshot, calculateISRV3, ISR_V3_CALCULATION_REVISION, type ISRV3Input, type ISRV3Result } from '../domain/isrV3Engine';
+import { applyISRProposal, describeISRProposal, normalizeISRExtractionFields } from '../domain/isrProposal';
+import { interpretISROperationWithAI } from './isrOperationInterpretation.service';
+import { aiGateway, type AiGatewayExecutor } from '../platform/aiGateway.runtime';
 import { comparecienteObjectWhere } from './objectAccess.service';
 import { FunctionalDocumentRenderError, renderConfiguredFunctionalDocument } from './functionalDocumentRenderer.service';
 import { buildFiscalExportPayload, calculateAdditionalTax, calculateReferredValue, calculateSurcharges, validateFiscalExportProfile, type FiscalReferenceSnapshot } from '../domain/isrFiscalUtilities';
@@ -35,6 +39,10 @@ const stableValue = (value: unknown): unknown => Array.isArray(value)
     : value;
 const safeInput = (value: unknown): ISRCalculationInput => {
   const raw = (value || {}) as Partial<ISRCalculationInput>;
+  if (isV3Input(raw)) {
+    if (!Array.isArray(raw.parties) || !Array.isArray(raw.deductions) || !raw.values || !raw.property || !raw.act) throw new ISRValidationError('ISR_INPUT_INVALID', 'El borrador fiscal está incompleto o tiene formato inválido.');
+    return structuredClone(raw) as unknown as ISRCalculationInput;
+  }
   const exercise = Number(raw.taxYear) || new Date().getFullYear();
   const operationType = raw.operationType || 'ENAJENACION_INMUEBLE';
   const base = defaultInput(exercise, operationType);
@@ -97,14 +105,18 @@ const mapReferenceRevision = (record: any): NonNullable<ISRRuleSetSnapshot['refe
   value: record.value, sourceTitle: record.source_title, sourceUrl: record.source_url,
 });
 
-const inputSummary = (input: ISRCalculationInput) => ({
+const inputSummary = (input: ISRCalculationInput | ISRV3Input) => isV3Input(input) ? {
+  contribuyente_nombre: input.parties.filter((party) => party.role === 'ENAJENANTE').map((party) => party.name.trim()).filter(Boolean).join('; ') || null,
+  contribuyente_rfc: input.parties.filter((party) => party.role === 'ENAJENANTE').length === 1 ? input.parties.find((party) => party.role === 'ENAJENANTE')?.rfc?.trim().toUpperCase() || null : null,
+  inmueble_descripcion: input.property.otherDescription?.trim() || null,
+} : ({
   contribuyente_nombre: input.taxpayer.fullName.trim() || null,
   contribuyente_rfc: input.taxpayer.rfc.trim().toUpperCase() || null,
   inmueble_descripcion: input.property.description.trim() || null,
 });
 
 export class ISRService {
-  constructor(private readonly db: Db = prisma) {}
+  constructor(private readonly db: Db = prisma, private readonly gateway: AiGatewayExecutor = aiGateway) {}
 
   async resources(user: AuthUser, legalDate?: string) {
     const parsedDate = legalDate ? new Date(`${legalDate}T12:00:00Z`) : new Date();
@@ -226,13 +238,26 @@ export class ISRService {
   }
 
   async surcharges(user: AuthUser, body: Record<string, unknown>) {
+    if (!user.permissions.includes('isr.calculate')) throw new ISRValidationError('ISR_SURCHARGES_PERMISSION_DENIED', 'No tienes permiso para calcular accesorios.', undefined, 403);
+    let principal = String(body.principal || ''), originDate = String(body.origin_date || '');
+    let source: { calculationId: string; versionId: string; version: number; partyId: string } | null = null;
+    if (body.calculation_id) {
+      const calc = await this.get(user, String(body.calculation_id)); const version = calc.versiones[0];
+      if (!version || calc.datos_modificados || Number(body.expected_version) !== version.version) throw new ISRValidationError('ISR_STALE_VERSION', 'Calcula o recarga la versión vigente antes de estimar accesorios.', undefined, 409);
+      const input = version.input_snapshot as unknown as ISRV3Input, result = version.result as unknown as ISRV3Result;
+      if (input.schemaVersion !== 3 || result.schemaVersion !== 3) throw new ISRValidationError('ISR_V3_CALCULATION_REQUIRED', 'Selecciona una determinación v3 vigente.', undefined, 409);
+      const party = result.saleISR.find((item) => item.partyId === String(body.party_id || ''));
+      if (!party || party.amount === null || !new Prisma.Decimal(party.amount).gt(0)) throw new ISRValidationError('ISR_SURCHARGE_PRINCIPAL_REQUIRED', 'Selecciona un enajenante con ISR determinado mayor que cero.');
+      principal = party.amount; originDate = input.operationDate;
+      source = { calculationId: calc.id, versionId: version.id, version: version.version, partyId: party.partyId };
+    }
     const dueDate = String(body.due_date || ''); const paymentDate = String(body.payment_date || '');
     const due = new Date(`${dueDate}T00:00:00Z`); const paid = new Date(`${paymentDate}T00:00:00Z`);
     if (Number.isNaN(due.getTime()) || Number.isNaN(paid.getTime())) throw new ISRValidationError('SURCHARGE_DATE_INVALID', 'Confirma vencimiento y fecha de pago.', 'payment_date');
-    const references = await this.db.fiscalReferenceRevision.findMany({ where: { organization_id: user.organizationId, reference_type: 'RECARGO', verification_status: 'VERIFICADA', effective_from: { lte: paid }, OR: [{ effective_to: null }, { effective_to: { gte: due } }] } });
-    const result = calculateSurcharges({ principal: String(body.principal || ''), originDate: String(body.origin_date || ''), dueDate, paymentDate, monthlyRates: references.map((record) => this.fiscalReference(record)) });
-    await this.db.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'CALCULAR_RECARGOS_ISR', entidad: 'FiscalReferenceRevision', entidad_id: references[0]?.id || crypto.randomUUID(), detalles: json({ reference_ids: references.map((item) => item.id), result }) } });
-    return result;
+    const references = await this.db.fiscalReferenceRevision.findMany({ where: { organization_id: user.organizationId, reference_type: { in: ['RECARGO', 'INPC', 'ISR_SURCHARGE_POLICY'] }, verification_status: 'VERIFICADA', effective_from: { lte: paid }, OR: [{ effective_to: null }, { effective_to: { gte: due } }] } });
+    const result = calculateSurcharges({ principal, originDate, dueDate, paymentDate, monthlyRates: references.map((record) => this.fiscalReference(record)) });
+    await this.db.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'CALCULAR_RECARGOS_ISR', entidad: source ? 'CalculoISR' : 'FiscalReferenceRevision', entidad_id: source?.calculationId || references[0]?.id || crypto.randomUUID(), detalles: json({ reference_ids: references.map((item) => item.id), source, due_date: dueDate, hypothetical_payment_date: paymentDate, original_calculation_modified: false, result }) } });
+    return { ...result, source, originalCalculationModified: false };
   }
 
   async additionalTax(user: AuthUser, body: Record<string, unknown>) {
@@ -382,12 +407,12 @@ export class ISRService {
         expediente: { select: { id: true, numero_pravia: true, cliente_alias: true } },
         compareciente: { select: { id: true, nombre_busqueda: true } },
         versiones: { orderBy: { version: 'desc' } },
-        documentos: { where: { estatus: 'ACTIVO' }, orderBy: { fecha_vinculo: 'desc' }, include: { documento: true } },
-        propuestas: { orderBy: { extracted_at: 'desc' } },
+        documentos: { where: { estatus: 'ACTIVO', organization_id: user.organizationId, documento: { organization_id: user.organizationId } }, orderBy: { fecha_vinculo: 'desc' }, include: { documento: true } },
+        propuestas: { where: { organization_id: user.organizationId }, orderBy: { extracted_at: 'desc' } },
       },
     });
     if (!record) throw new ISRValidationError('ISR_NOT_FOUND', 'El cálculo no existe o no está dentro de tu alcance.', undefined, 404);
-    return record;
+    return { ...record, propuestas: record.propuestas.map((proposal) => ({ ...proposal, application: describeISRProposal(proposal.field_path) })) };
   }
 
   async create(user: AuthUser, body: Record<string, unknown>) {
@@ -441,7 +466,16 @@ export class ISRService {
   async update(user: AuthUser, id: string, body: Record<string, unknown>) {
     const current = await this.get(user, id);
     const input = safeInput(body.input_data || current.input_data);
-    if (input.taxYear !== current.ejercicio || input.operationType !== current.tipo_operacion) throw new ISRValidationError('IMMUTABLE_DISCRIMINATOR', 'El tipo de operación y el ejercicio no pueden cambiarse en este cálculo.');
+    if (input.taxYear !== current.ejercicio || (!isV3Input(input) && input.operationType !== current.tipo_operacion)) throw new ISRValidationError('IMMUTABLE_DISCRIMINATOR', 'El tipo de operación y el ejercicio no pueden cambiarse en este cálculo.');
+    if (isV3Input(input)) {
+      const v3 = input as unknown as ISRV3Input;
+      const oldMasters = new Set(isV3Input(current.input_data) ? current.input_data.parties.map((party) => party.sourceComparecienteId).filter(Boolean) : []);
+      for (const masterId of new Set(v3.parties.map((party) => party.sourceComparecienteId).filter((masterId): masterId is string => Boolean(masterId) && !oldMasters.has(masterId)))) {
+        if (!user.permissions?.includes('comparecientes.read')) throw new ISRValidationError('COMPARECIENTE_ACCESS_DENIED', 'No tienes permiso de lectura de fichas maestras.', undefined, 403);
+        const allowed = await this.db.compareciente.findFirst({ where: { id: masterId, organization_id: user.organizationId, archived_at: null, ...comparecienteObjectWhere(user) }, select: { id: true } });
+        if (!allowed) throw new ISRValidationError('COMPARECIENTE_ACCESS_DENIED', 'No tienes acceso al compareciente seleccionado.', undefined, 403);
+      }
+    }
     if (body.expected_updated_at && new Date(String(body.expected_updated_at)).getTime() !== new Date(current.updated_at).getTime()) {
       throw new ISRValidationError('ISR_STALE_STATE', 'El cálculo cambió en otra sesión. Recarga antes de guardar.', undefined, 409);
     }
@@ -456,6 +490,7 @@ export class ISRService {
     const changed = JSON.stringify(current.input_data) !== JSON.stringify(input);
     const nextStatus = statusFrom(input, current.ultima_version > 0 && !changed);
     return this.db.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:isr001-calculate:${user.organizationId}:${id}`}))`);
       const nextExpedienteId = Object.prototype.hasOwnProperty.call(body, 'expediente_id') ? (body.expediente_id ? String(body.expediente_id) : null) : current.expediente_id;
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:isr001-link:${user.organizationId}:${nextExpedienteId || id}`}))`);
       const lockedCurrent = await tx.calculoISR.findFirst({ where: { id, organization_id: user.organizationId, archived_at: null, ...isrObjectWhere(user) }, select: { updated_at: true } });
@@ -539,9 +574,9 @@ export class ISRService {
       const result = v3Input ? calculateISRV3(v3Input, buildISRV3RuleSnapshot(rules, legalDate)) : calculateISR(legacyInput!, rules); const version = current.ultima_version + 1;
       const effectiveInput = v3Input || legacyInput!;
       const created = await tx.calculoISRVersion.create({ data: { organization_id: user.organizationId, calculo_id: id, version, request_key: requestKey || null, rule_set_id: ruleRecord.id, input_snapshot: json(effectiveInput), ruleset_snapshot: json(v3Input ? buildISRV3RuleSnapshot(rules, legalDate) : rules), breakdown: json(result.breakdown), result: json(result), calculado_por_id: user.id } });
-      await tx.calculoISR.update({ where: { id }, data: { estado: 'CALCULADO', ultima_version: version, datos_modificados: false, actualizado_por_id: user.id } });
+      await tx.calculoISR.update({ where: { id }, data: { estado: v3Input && (result as ISRV3Result).missing.length ? 'REQUIERE_REVISION' : 'CALCULADO', ultima_version: version, datos_modificados: false, actualizado_por_id: user.id } });
       const legacyResult = v3Input ? null : result as ReturnType<typeof calculateISR>;
-      await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: version === 1 ? 'GENERAR_CALCULO_ISR' : 'RECALCULAR_ISR', entidad: 'CalculoISR', entidad_id: id, detalles: json({ version, request_key: requestKey || null, ruleset: rules.version, engine: v3Input ? 'ISR-V3.0' : 'ISR-LEGACY', scope: v3Input ? 'ISR_ENAJENACION_ADQUISICION_IVA' : legacyResult!.scope, provisionalFederalISR: legacyResult?.provisionalFederalISR || null, criteria_reference: legacyInput?.criteria?.referenceCode || null, criteria_version: legacyInput?.criteria?.version || null, adjustment_method: legacyInput?.criteria?.resolvedAdjustmentMethod || null, tariff_selection: legacyInput?.criteria?.tariffSelection || 'AUTO', tariff_authorized_by: legacyInput?.criteria?.authorizedBy || null }) } });
+      await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: version === 1 ? 'GENERAR_CALCULO_ISR' : 'RECALCULAR_ISR', entidad: 'CalculoISR', entidad_id: id, detalles: json({ version, request_key: requestKey || null, ruleset: rules.version, engine: v3Input ? 'ISR-V3.0' : 'ISR-LEGACY', calculation_revision: v3Input ? ISR_V3_CALCULATION_REVISION : null, scope: v3Input ? 'ISR_ENAJENACION_ADQUISICION_IVA' : legacyResult!.scope, provisionalFederalISR: legacyResult?.provisionalFederalISR || null, criteria_reference: legacyInput?.criteria?.referenceCode || null, criteria_version: legacyInput?.criteria?.version || null, adjustment_method: legacyInput?.criteria?.resolvedAdjustmentMethod || null, tariff_selection: legacyInput?.criteria?.tariffSelection || 'AUTO', tariff_authorized_by: legacyInput?.criteria?.authorizedBy || null }) } });
       return created;
     });
   }
@@ -577,7 +612,9 @@ export class ISRService {
     const input = v3Input ? null : safeInput(rawInput);
     const result = latest.result as unknown as ReturnType<typeof calculateISR> | ISRV3Result;
     const v3Result = v3Input && (result as ISRV3Result).schemaVersion === 3 ? result as ISRV3Result : null;
-    const sumAmounts = (items: ISRV3Result['saleISR']) => items.reduce((sum, item) => item.amount === null ? sum : sum.plus(item.amount), new Prisma.Decimal(0)).toDecimalPlaces(2).toFixed(2);
+    const sumKnown = (items: Array<string | null | undefined>) => items.some((item) => item === null || item === undefined)
+      ? 'Pendiente de información' : items.reduce<Prisma.Decimal>((sum, item) => sum.plus(item!), new Prisma.Decimal(0)).toDecimalPlaces(2).toFixed(2);
+    const sumAmounts = (items: ISRV3Result['saleISR']) => !items.length || items.every((item) => item.status === 'NO_APLICA') ? 'No aplica' : sumKnown(items.map((item) => item.amount));
     let rendered: Awaited<ReturnType<typeof renderConfiguredFunctionalDocument>>;
     try {
       rendered = await renderConfiguredFunctionalDocument(format, {
@@ -587,9 +624,15 @@ export class ISRService {
         'isr.ejercicio': current.ejercicio,
         'isr.tipo_operacion': current.tipo_operacion,
         'isr.valor_enajenacion': moneyString(v3Input?.values.operation ?? input?.salePrice),
-        'isr.costo_comprobado': moneyString(v3Input
-          ? v3Input.parties.filter((party) => party.role === 'ENAJENANTE').flatMap((party) => party.acquisitionLayers || []).reduce((sum, layer) => sum.plus(layer.adjustedLandCost || 0).plus(layer.adjustedConstructionCost || 0), new Prisma.Decimal(0)).toFixed(2)
+        'isr.costo_comprobado': moneyString(v3Result
+          ? sumKnown(v3Result.saleISR.map((item) => item.acquisitionWorksheet?.updatedCost))
           : input?.deductions.find((item) => item.treatment === 'COSTO_ADQUISICION_ACTUALIZADO')?.updatedAmount || ''),
+        'isr.costo_minimo': v3Result ? sumKnown(v3Result.saleISR.map((item) => item.acquisitionWorksheet?.minimumCost)) : '',
+        'isr.costo_aplicado': v3Result ? sumKnown(v3Result.saleISR.map((item) => item.acquisitionWorksheet?.appliedCost)) : '',
+        'isr.ganancia_fiscal': v3Result ? sumKnown(v3Result.saleISR.map((item) => item.taxableBase)) : '',
+        'isr.pago_entidad_federativa': v3Result ? sumKnown(v3Result.saleISR.map((item) => item.distribution?.statePayment)) : '',
+        'isr.remanente_federal': v3Result ? sumKnown(v3Result.saleISR.map((item) => item.distribution?.federalRemainder)) : '',
+        'isr.hoja_trabajo': v3Result ? v3Result.saleISR.map((item) => ({ persona: item.partyName, adquisicion: item.acquisitionWorksheet, trazas: item.traces, distribucion: item.distribution })) : '',
         'isr.resultado': moneyString(v3Result ? sumAmounts(v3Result.saleISR) : (result as any).provisionalFederalISR ?? (result as any).taxDue ?? ''),
         'isr.isr_enajenacion': v3Result ? sumAmounts(v3Result.saleISR) : moneyString((result as any).provisionalFederalISR ?? ''),
         'isr.isr_adquisicion': v3Result ? sumAmounts(v3Result.acquisitionISR) : '',
@@ -669,28 +712,100 @@ export class ISRService {
         role: user.rol, permissions: user.permissions, scope: user.scope, sessionId: user.sessionId },
       idempotencyKey: operationId, traceId: operationId,
     });
-    const groups = new Map<string, typeof extraction.campos>();
-    for (const field of extraction.campos) { const list = groups.get(field.campo) || []; list.push(field); groups.set(field.campo, list); }
+    const fields = normalizeISRExtractionFields(extraction.campos);
+    if (fields.some((field) => !readable.some((source) => source.documentoId === field.documento_id))) throw new ISRValidationError('ISR_EXTRACTION_SOURCE_INVALID', 'La propuesta no identifica inequívocamente un documento del cálculo.', undefined, 409);
+    const groups = new Map<string, typeof fields>();
+    for (const field of fields) { const list = groups.get(field.campo) || []; list.push(field); groups.set(field.campo, list); }
     const conflicts = new Set<string>();
     for (const [field, values] of groups) if (new Set(values.map((value) => value.valor.trim().toUpperCase())).size > 1) conflicts.add(field);
     await this.db.$transaction(async (tx) => {
       await tx.calculoISRPropuesta.deleteMany({ where: { organization_id: user.organizationId, calculo_id: id, status: { in: ['PENDIENTE', 'CONFLICTO'] } } });
-      for (const field of extraction.campos) {
-        const doc = readable.find((item) => item.documentoId === field.documento_id) || readable[0];
+      for (const field of fields) {
+        const doc = readable.find((item) => item.documentoId === field.documento_id)!;
         await tx.calculoISRPropuesta.create({ data: { organization_id: user.organizationId, calculo_id: id, field_path: field.campo, proposed_value: json(field.valor), status: conflicts.has(field.campo) ? 'CONFLICTO' : 'PENDIENTE', source_document_id: doc.documentoId, source_document_name: doc.nombreOriginal, source_page: field.pagina, confidence: field.confianza === 'LECTURA_CLARA' ? new Prisma.Decimal('0.95') : field.confianza === 'LECTURA_DUDOSA' ? new Prisma.Decimal('0.65') : new Prisma.Decimal('0.35'), model_version: extraction.modelo || getOpenAIModelName(), source_fragment: field.fragmento?.slice(0, 400), conflict_group: conflicts.has(field.campo) ? field.campo : null } });
       }
-      await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'EXTRAER_DATOS_ISR_IA', entidad: 'CalculoISR', entidad_id: id, detalles: json({ operation_id: operationId, documentos: readable.length, propuestas: extraction.campos.length, conflictos: conflicts.size, persistencia_input: false }) } });
+      await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'EXTRAER_DATOS_ISR_IA', entidad: 'CalculoISR', entidad_id: id, detalles: json({ operation_id: operationId, documentos: readable.length, propuestas: fields.length, conflictos: conflicts.size, persistencia_input: false }) } });
     });
-    return { provider: extraction.proveedor, model: extraction.modelo, proposals: extraction.campos.length, conflicts: [...conflicts], idempotent: false };
+    return { provider: extraction.proveedor, model: extraction.modelo, proposals: fields.length, conflicts: [...conflicts], idempotent: false };
   }
 
-  async reviewProposal(user: AuthUser, id: string, proposalId: string, action: 'ACEPTADA' | 'RECHAZADA') {
+  async interpretOperation(user: AuthUser, id: string, description: string, requestKey: string) {
+    const current = await this.get(user, id);
+    if (!user.permissions?.includes('isr.write') || !user.permissions?.includes('ia.execute')) throw new ISRValidationError('ISR_AI_DENIED', 'No tienes permiso para interpretar operaciones fiscales con IA.', undefined, 403);
+    const text = String(description || '').trim(), key = String(requestKey || '').trim();
+    if (!key || key.length > 140) throw new ISRValidationError('IDEMPOTENCY_REQUIRED', 'La interpretación requiere una clave de idempotencia válida.');
+    if (text.length < 15 || text.length > 12_000) throw new ISRValidationError('ISR_DESCRIPTION_INVALID', 'Describe la operación entre 15 y 12.000 caracteres.');
+    if (!isV3Input(current.input_data)) throw new ISRValidationError('ISR_PROPOSAL_V3_REQUIRED', 'Guarda este borrador en el editor v3 antes de interpretar la operación.', undefined, 409);
+    const digest = crypto.createHash('sha256').update(text).digest('hex');
+    const operationId = `isr-text:${crypto.createHash('sha256').update(`${user.organizationId}:${id}:${key}`).digest('hex')}`;
+    const prior = await this.db.calculoISRDocumento.findFirst({ where: { organization_id: user.organizationId, calculo_id: id, idempotency_key: operationId }, include: { documento: true } });
+    if (prior) {
+      if ((prior.documento.datos_extraidos as Record<string, unknown> | null)?.description_sha256 !== digest) throw new ISRValidationError('ISR_KEY_REUSED', 'Esta solicitud ya corresponde a otra descripción.', undefined, 409);
+      return { proposals: await this.db.calculoISRPropuesta.count({ where: { organization_id: user.organizationId, calculo_id: id, source_document_id: prior.documento_id } }), idempotent: true, source_document_id: prior.documento_id };
+    }
+    const facts = await interpretISROperationWithAI(user, text, operationId, this.gateway);
+    if (!facts.length) throw new ISRValidationError('ISR_DESCRIPTION_NO_FACTS', 'No se detectaron hechos inequívocos. Puedes completar la captura manualmente.', undefined, 422);
+    // Validate the closed mapping before publishing any proposals. Identity and
+    // new-party destinations remain a separate explicit human choice.
+    for (const fact of facts) if (!describeISRProposal(fact.field).requires_party) applyISRProposal(current.input_data, fact.field, fact.value);
+    const source = await Packer.toBuffer(new Document({ sections: [{ children: [
+      new Paragraph({ children: [new TextRun({ text: 'DESCRIPCIÓN DE OPERACIÓN — FUENTE DECLARADA POR EL USUARIO', bold: true })] }),
+      new Paragraph('No es escritura, constancia oficial ni verificación jurídica. Las propuestas requieren confirmación y soporte documental.'),
+      ...text.split('\n').map((line) => new Paragraph(line)),
+    ] }] }));
+    const storageKey = `organizations/${user.organizationId}/isr/${id}/descripciones/${crypto.randomUUID()}.docx`;
+    await uploadFile(source, storageKey, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    try {
+      const result = await this.db.$transaction(async (tx) => {
+        await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:isr001-calculate:${user.organizationId}:${id}`}))`);
+        const stillAllowed = await tx.calculoISR.findFirst({ where: { id, organization_id: user.organizationId, archived_at: null, ...isrObjectWhere(user) }, select: { id: true } });
+        if (!stillAllowed) throw new ISRValidationError('ISR_NOT_FOUND', 'El cálculo ya no está disponible dentro de tu alcance.', undefined, 404);
+        const duplicate = await tx.calculoISRDocumento.findFirst({ where: { organization_id: user.organizationId, calculo_id: id, idempotency_key: operationId } });
+        if (duplicate) return { idempotent: true, source_document_id: duplicate.documento_id, proposals: facts.length };
+        const document = await tx.documento.create({ data: { organization_id: user.organizationId, nombre_original: 'Descripción de operación — declaración del usuario.docx', nombre_interno: storageKey, storage_key: storageKey, tipo: 'ISR_DESCRIPCION_OPERACION', categoria: 'SAT', mime_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size_bytes: source.length, checksum_sha256: crypto.createHash('sha256').update(source).digest('hex'), subido_por_id: user.id,
+          datos_extraidos: json({ source: 'USER_DECLARED_NOT_OFFICIAL', description_sha256: digest, blob_sha256: crypto.createHash('sha256').update(source).digest('hex'), operation_id: operationId }) } });
+        await tx.calculoISRDocumento.create({ data: { organization_id: user.organizationId, calculo_id: id, documento_id: document.id, creado_por_id: user.id, idempotency_key: operationId } });
+        const groups = new Map<string, Set<string>>();
+        for (const fact of facts) { const values = groups.get(fact.field) || new Set<string>(); values.add(fact.value); groups.set(fact.field, values); }
+        for (const fact of facts) await tx.calculoISRPropuesta.create({ data: { organization_id: user.organizationId, calculo_id: id, field_path: fact.field, proposed_value: fact.value, source_document_id: document.id, source_document_name: document.nombre_original, source_fragment: fact.excerpt,
+          model_version: 'AI_GATEWAY:ISR_OPERATION_INTERPRETATION:v1', status: fact.field !== 'party' && groups.get(fact.field)!.size > 1 ? 'CONFLICTO' : 'PENDIENTE' } });
+        await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: 'INTERPRETAR_OPERACION_ISR_IA', entidad: 'CalculoISR', entidad_id: id, detalles: json({ source_document_id: document.id, operation_id: operationId, description_sha256: digest, proposals: facts.length, input_modified: false, tax_calculated: false }) } });
+        return { idempotent: false, source_document_id: document.id, proposals: facts.length };
+      }, { maxWait: 10_000, timeout: 20_000 });
+      if (result.idempotent) await deleteFile(storageKey).catch(() => undefined);
+      return result;
+    } catch (error) { await deleteFile(storageKey).catch(() => undefined); throw error; }
+  }
+
+  async reviewProposal(user: AuthUser, id: string, proposalId: string, action: 'ACEPTADA' | 'RECHAZADA', options: { expectedUpdatedAt?: string; partyId?: string } = {}) {
+    if (!user.permissions?.includes('isr.write')) throw new ISRValidationError('ISR_WRITE_FORBIDDEN', 'No tienes permiso para modificar el cálculo.', undefined, 403);
     await this.get(user, id);
-    const proposal = await this.db.calculoISRPropuesta.findFirst({ where: { id: proposalId, organization_id: user.organizationId, calculo_id: id } });
-    if (!proposal) throw new ISRValidationError('PROPOSAL_NOT_FOUND', 'La propuesta ya no está disponible.');
-    const updated = await this.db.calculoISRPropuesta.update({ where: { id: proposalId }, data: { status: action, reviewed_by_id: user.id, reviewed_at: new Date() } });
-    await this.db.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: action === 'ACEPTADA' ? 'ACEPTAR_PROPUESTA_ISR_IA' : 'RECHAZAR_PROPUESTA_ISR_IA', entidad: 'CalculoISR', entidad_id: id, detalles: json({ propuesta_id: proposalId, campo: proposal.field_path }) } });
-    return updated;
+    return this.db.$transaction(async (tx) => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:isr001-calculate:${user.organizationId}:${id}`}))`);
+      const current = await tx.calculoISR.findFirst({ where: { id, organization_id: user.organizationId, archived_at: null, ...isrObjectWhere(user) }, include: { documentos: { where: { estatus: 'ACTIVO' }, select: { documento_id: true } } } });
+      if (!current) throw new ISRValidationError('ISR_NOT_FOUND', 'El cálculo no existe o no está dentro de tu alcance.', undefined, 404);
+      const proposal = await tx.calculoISRPropuesta.findFirst({ where: { id: proposalId, organization_id: user.organizationId, calculo_id: id } });
+      if (!proposal) throw new ISRValidationError('PROPOSAL_NOT_FOUND', 'La propuesta ya no está disponible.');
+      if (proposal.status === action) return proposal;
+      if (['ACEPTADA', 'RECHAZADA'].includes(proposal.status)) throw new ISRValidationError('ISR_PROPOSAL_ALREADY_REVIEWED', 'La propuesta ya fue revisada. Recarga el cálculo.', undefined, 409);
+      let applied: ReturnType<typeof applyISRProposal> | undefined;
+      if (action === 'ACEPTADA') {
+        if (!options.expectedUpdatedAt || new Date(options.expectedUpdatedAt).getTime() !== current.updated_at.getTime()) throw new ISRValidationError('ISR_STALE_STATE', 'Recarga el cálculo antes de aplicar la propuesta.', undefined, 409);
+        if (!current.documentos.some((link) => link.documento_id === proposal.source_document_id)) throw new ISRValidationError('ISR_PROPOSAL_SOURCE_INACTIVE', 'El documento de origen ya no está vinculado al cálculo.', undefined, 409);
+        applied = applyISRProposal(current.input_data as unknown as ISRCalculationInput | ISRV3Input, proposal.field_path, proposal.proposed_value, { partyId: options.partyId });
+        const next = applied.input as ISRCalculationInput;
+        await tx.calculoISR.update({ where: { id }, data: {
+          input_data: json(next), estado: statusFrom(next, false), datos_modificados: current.ultima_version > 0, actualizado_por_id: user.id,
+          ...inputSummary(next),
+        } });
+      }
+      const updated = await tx.calculoISRPropuesta.update({ where: { id: proposalId }, data: { status: action, reviewed_by_id: user.id, reviewed_at: new Date() } });
+      await tx.auditLog.create({ data: { organization_id: user.organizationId, user_id: user.id, accion: action === 'ACEPTADA' ? 'ACEPTAR_PROPUESTA_ISR_IA' : 'RECHAZAR_PROPUESTA_ISR_IA', entidad: 'CalculoISR', entidad_id: id,
+        valores_anteriores: applied ? json({ path: applied.path, value: applied.previous }) : undefined,
+        valores_nuevos: applied ? json({ path: applied.path, value: applied.value }) : undefined,
+        detalles: json({ propuesta_id: proposalId, campo: proposal.field_path, applied_path: applied?.path || null, source_document_id: proposal.source_document_id, source_page: proposal.source_page, master_modified: false, calculated_versions_modified: false }) } });
+      return updated;
+    }, { maxWait: 10_000, timeout: 20_000 });
   }
 }
 

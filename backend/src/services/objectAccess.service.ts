@@ -1,4 +1,5 @@
 import type { Request } from 'express';
+import type { Prisma } from '@prisma/client';
 import prisma from '../config/prisma';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 
@@ -155,10 +156,16 @@ export async function canAttachDocumento(user: AuthUser, targets: {
   compareciente_id?: string | null;
   movimiento_id?: string | null;
   predio_id?: string | null;
-}) {
+}, transaction?: Prisma.TransactionClient) {
   if (targets.prospecto_id && !(await canAccessProspecto(user, targets.prospecto_id))) return false;
   if (targets.cotizacion_id && !(await canAccessCotizacion(user, targets.cotizacion_id))) return false;
-  if (targets.compareciente_id && !(await canAccessCompareciente(user, targets.compareciente_id))) return false;
+  if (targets.compareciente_id) {
+    // Creation + document promotion share one transaction. The uncommitted
+    // party is visible only here; apply exactly the same tenant/object scope.
+    const accessible = transaction ? Boolean(await transaction.compareciente.findFirst({where:{id:targets.compareciente_id,organization_id:user.organizationId,archived_at:null,...comparecienteObjectWhere(user)},select:{id:true}}))
+      : await canAccessCompareciente(user, targets.compareciente_id);
+    if (!accessible) return false;
+  }
   if (targets.expediente_id) {
     const record = await prisma.expediente.findFirst({
       where: { id: targets.expediente_id, archived_at: null, ...expedienteAccessWhere(user) },

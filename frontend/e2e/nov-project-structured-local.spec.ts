@@ -94,9 +94,8 @@ test('NOV-PRO · Word estructurado conserva machote, texto fijo y pendientes', a
     await page.reload();
     await expect(page.getByRole('region', { name: 'Observaciones automáticas de generación' })).toContainText('2 pendiente(s) explícito(s)');
     const apply = page.getByRole('region', { name: 'Aplicar indicaciones a la versión vigente' });
-    await page.locator('#project-advanced-options').locator('summary').first().click();
     const instruction = 'Corregir sólo la etiqueta Superficie; conservar la cláusula fija y no completar los datos pendientes.';
-    await page.getByLabel(/Indicaciones para la proyección/).fill(instruction);
+    await apply.getByLabel(/Motivo de la corrección/).fill(instruction);
     const pendingResponse = () => page.waitForResponse((item) => item.request().method() === 'POST'
       && item.url().endsWith(`/expedientes/${qaCaseId}/proyecto/aplicar-indicaciones`));
     await apply.getByLabel('Texto actual').fill('Texto inexistente en el proyecto QA');

@@ -5,6 +5,8 @@ import { cotizacionObjectWhere, cotizacionReadWhere } from './objectAccess.servi
 import { normalizeOperationalText } from '../utils/operationalText';
 import { getQuotationTemplate } from './quotationTemplate.service';
 import { readQuoteTerritory } from '../domain/quoteTerritory';
+import { parseQuotePropertyValues, quotePropertyValuesPayload } from '../domain/quotePropertyValues';
+import { quoteClientName } from '../domain/quoteIdentity';
 
 type Actor = NonNullable<Request['user']>;
 
@@ -143,13 +145,14 @@ export class QuoteBudgetService {
 
   async save(actor: Actor, quoteId: string, raw: Record<string, unknown>) {
     if (!actor.permissions.includes('cotizaciones.write')) throw new QuoteBudgetError(403, 'QUOTE_BUDGET_WRITE_DENIED', 'No tienes permiso para modificar la cotización.');
-    const allowed = new Set(['concepts', 'origin', 'operationContext', 'operationTerritory', 'expectedUpdatedAt']);
+    const allowed = new Set(['concepts', 'origin', 'operationContext', 'operationTerritory', 'propertyValues', 'expectedUpdatedAt']);
     const unexpected = Object.keys(raw).filter((key) => !allowed.has(key));
     if (unexpected.length) throw new QuoteBudgetError(400, 'QUOTE_BUDGET_FIELDS_DENIED', 'La solicitud contiene campos no permitidos.');
     const expected = typeof raw.expectedUpdatedAt === 'string' ? new Date(raw.expectedUpdatedAt) : null;
     if (!expected || Number.isNaN(expected.getTime())) throw new QuoteBudgetError(400, 'QUOTE_BUDGET_REVISION_REQUIRED', 'Actualiza la ficha antes de guardar el presupuesto.');
     const origin = raw.origin === 'IMPORTADO' ? 'IMPORTADO' : 'MANUAL';
     const operationContext = typeof raw.operationContext === 'string' ? normalizeOperationalText(raw.operationContext, 4_000) : '';
+    const propertyData = raw.propertyValues === undefined ? {} : parseQuotePropertyValues(raw.propertyValues);
 
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:quote-budget:${actor.organizationId}:${quoteId}`}))`);
@@ -158,6 +161,7 @@ export class QuoteBudgetService {
         include: {
           conceptos: { orderBy: { orden: 'asc' } },
           prospecto: true,
+          solicitante_formal: { select: { nombre_busqueda: true } },
           creada_por: { select: { nombre: true, apellido: true } },
           actos: { include: { tipo_acto: { select: { nombre: true } } }, orderBy: { orden: 'asc' } },
         },
@@ -187,18 +191,19 @@ export class QuoteBudgetService {
             confirmedById: actor.id, confirmedAt: new Date().toISOString() };
         }
       }
-      if (raw.concepts === undefined && raw.operationTerritory !== undefined) {
+      if (raw.concepts === undefined && (raw.operationTerritory !== undefined || raw.propertyValues !== undefined)) {
         const updated = await tx.cotizacion.update({ where: { id: quote.id }, data: {
-          territorio_operacion: territory ? json(territory) : Prisma.DbNull,
+          ...(raw.operationTerritory !== undefined ? { territorio_operacion: territory ? json(territory) : Prisma.DbNull } : {}),
+          ...propertyData,
         } });
         await tx.auditLog.create({ data: {
           organization_id: actor.organizationId, user_id: actor.id, session_id: actor.sessionId,
-          accion: 'QUOTE_OPERATION_TERRITORY_CONFIRMED', entidad: 'Cotizacion', entidad_id: quote.id,
-          valores_anteriores: json({ operationTerritory: quote.territorio_operacion }),
-          valores_nuevos: json({ operationTerritory: territory }),
+          accion: raw.propertyValues !== undefined ? 'QUOTE_PROPERTY_VALUES_UPDATED' : 'QUOTE_OPERATION_TERRITORY_CONFIRMED', entidad: 'Cotizacion', entidad_id: quote.id,
+          valores_anteriores: json({ ...(raw.operationTerritory !== undefined ? { operationTerritory: quote.territorio_operacion } : {}), ...(raw.propertyValues !== undefined ? { propertyValues: quotePropertyValuesPayload(quote) } : {}) }),
+          valores_nuevos: json({ ...(raw.operationTerritory !== undefined ? { operationTerritory: territory } : {}), ...(raw.propertyValues !== undefined ? { propertyValues: quotePropertyValuesPayload({ ...quote, ...propertyData }) } : {}) }),
           detalles: { budget_changed: false, stage_changed: false },
         } });
-        return { presupuesto: quoteBudgetPayload(quote.conceptos), updated_at: updated.updated_at, stage: quote.etapa_contractual };
+        return { presupuesto: quoteBudgetPayload(quote.conceptos), propertyValues: quotePropertyValuesPayload({ ...quote, ...propertyData }), updated_at: updated.updated_at, stage: quote.etapa_contractual };
       }
       const concepts = withDerivedHonorariosIva(normalizeEditableBudgetConcepts(raw.concepts));
       const totals = budgetTotals(concepts);
@@ -219,7 +224,7 @@ export class QuoteBudgetService {
       })) });
       const draft = quoteBudgetDraft({
         folio: quote.numero_cotizacion || quote.numero_solicitud || quote.id,
-        client: quote.prospecto?.nombre || 'Cliente pendiente',
+        client: quoteClientName(quote) || 'Cliente pendiente',
         act: quote.actos?.map((item) => item.tipo_acto.nombre).join(', ') || quote.prospecto?.tipo_acto || 'Acto pendiente',
         description: operationContext || quote.contexto_operacion || quote.prospecto?.necesidad || 'Sin descripción adicional',
         responsible: [quote.creada_por?.nombre, quote.creada_por?.apellido].filter(Boolean).join(' ') || 'Responsable pendiente',
@@ -232,6 +237,7 @@ export class QuoteBudgetService {
         total_cliente: totals.total,
         honorarios_pravia: null,
         contexto_operacion: operationContext || null,
+        ...propertyData,
         ...(raw.operationTerritory !== undefined ? { territorio_operacion: territory ? json(territory) : Prisma.DbNull } : {}),
         ...(refreshUnsentDraft ? { correo_asunto: draft.subject, cuerpo_correo_cliente: draft.body } : {}),
       }, include: { conceptos: { orderBy: { orden: 'asc' } } } });
@@ -243,8 +249,8 @@ export class QuoteBudgetService {
         entidad: 'Cotizacion',
         entidad_id: quote.id,
         session_id: actor.sessionId,
-        valores_anteriores: json({ stage: quote.etapa_contractual, budget: before, operationContext: quote.contexto_operacion, operationTerritory: quote.territorio_operacion }),
-        valores_nuevos: json({ stage: updated.etapa_contractual, budget: after, operationContext: updated.contexto_operacion, operationTerritory: updated.territorio_operacion }),
+        valores_anteriores: json({ stage: quote.etapa_contractual, budget: before, operationContext: quote.contexto_operacion, operationTerritory: quote.territorio_operacion, ...(raw.propertyValues !== undefined ? { propertyValues: quotePropertyValuesPayload(quote) } : {}) }),
+        valores_nuevos: json({ stage: updated.etapa_contractual, budget: after, operationContext: updated.contexto_operacion, operationTerritory: updated.territorio_operacion, ...(raw.propertyValues !== undefined ? { propertyValues: quotePropertyValuesPayload({ ...quote, ...propertyData }) } : {}) }),
         detalles: { source: 'CORRECCION_002_V2', stage_changed: false, editable_version_created: false },
       } });
       return { presupuesto: after, updated_at: updated.updated_at, stage: updated.etapa_contractual };

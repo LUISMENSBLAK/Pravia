@@ -33,6 +33,7 @@ import { ExpedienteArtifactsService } from '../services/expedienteArtifacts.serv
 import { ComplianceH6Service } from '../services/complianceH6.service';
 import { ExpedienteActoError, ExpedienteActosService, type ExpedienteActoCommand } from '../services/expedienteActos.service';
 import { canonicalUploadedDocumentMime } from '../services/documentUploadValidation';
+import { expedienteClientName } from '../domain/expedienteClient';
 
 const cotizacionConversionService = new CotizacionConversionService(prisma);
 const expedienteReadService = new ExpedienteReadService(prisma);
@@ -164,6 +165,7 @@ export const getExpedienteById = async (req: Request, res: Response) => {
     const expediente: any = await prisma.expediente.findUnique({
       where: { id },
       include: {
+        cliente_compareciente: { select: { id: true, nombre_busqueda: true, tipo_persona: true } },
         actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: true }, orderBy: { created_at: 'asc' } },
         flujoVersion: true,
         abogado: { select: { id: true, nombre: true, apellido: true, email: true } },
@@ -173,6 +175,7 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         notaria: true,
         cotizacion: {
           include: {
+            solicitante_formal: { select: { id: true, nombre_busqueda: true } },
             versiones: true,
             prospecto: true
           }
@@ -334,7 +337,9 @@ export const getExpedienteById = async (req: Request, res: Response) => {
         fecha_limite_accion: expediente.fecha_limite_accion,
         updated_at: expediente.updated_at,
         macrofase: macrophaseForStatus(expediente.estatus),
-        cliente_principal: expediente.cliente_alias || 'Sin cliente',
+        cliente_principal: expedienteClientName(expediente),
+        cliente_compareciente_id: expediente.cliente_compareciente_id,
+        cliente_compareciente: expediente.cliente_compareciente,
         comparecientes_adicionales: Math.max(0, expediente.comparecientes.length - 1),
         riesgo: canReadCompliance ? { label: complianceLabel(expediente.complianceReviews?.[0]?.resultado_json), requires_attention: complianceAttention(expediente.complianceReviews?.[0]?.resultado_json) } : { label: 'Restringido', requires_attention: false },
         tipo_acto: { id: primaryAct.id, nombre: primaryAct.nombre },
@@ -375,10 +380,7 @@ export const getExpedienteById = async (req: Request, res: Response) => {
       ...serializedExpediente,
       tipo_acto: primaryAct,
       macrofase: macrophaseForStatus(expediente.estatus),
-      cliente_principal: expediente.comparecientes[0]?.compareciente.personaFisica?.nombre_completo_calculado
-        || expediente.comparecientes[0]?.compareciente.personaMoral?.razon_social
-        || expediente.cliente_alias
-        || 'Sin cliente',
+      cliente_principal: expedienteClientName(expediente),
       comparecientes_adicionales: Math.max(0, expediente.comparecientes.length - 1),
       riesgo: canReadCompliance ? { label: complianceLabel(expediente.complianceReviews?.[0]?.resultado_json), requires_attention: complianceAttention(expediente.complianceReviews?.[0]?.resultado_json) } : { label: 'Restringido', requires_attention: false },
       ...(canReadFinance
@@ -939,6 +941,7 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
     const { id } = req.params;
     const {
       cliente_alias,
+      cliente_compareciente_id,
       tipo_acto_id,
       tipo_acto_nombre,
       abogado_id,
@@ -959,7 +962,11 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
     if ([numero_escritura, fecha_firma, fecha_escritura, folio_desde, folio_hasta].some((value) => value !== undefined)) {
       throw new ExpedienteUpdateError('La escritura, fecha de firma y folios se modifican exclusivamente desde Archivo.', 'ARCHIVO_SUMMARY_READ_ONLY', 409);
     }
-    const cleanAlias = cliente_alias === undefined ? undefined : String(cliente_alias).trim();
+    if (cliente_alias !== undefined) throw new ExpedienteUpdateError('Selecciona un compareciente existente como cliente; no se admite un nombre libre.', 'EXPEDIENTE_CLIENT_SELECTION_REQUIRED', 409);
+    const clientId = cliente_compareciente_id;
+    if (clientId !== undefined && !req.user!.permissions.includes('comparecientes.read')) throw new ExpedienteUpdateError('No tienes permiso para seleccionar comparecientes.', 'EXPEDIENTE_CLIENT_DENIED', 403);
+    if (clientId !== undefined && (typeof clientId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(clientId))) throw new ExpedienteUpdateError('Selecciona un cliente válido del catálogo.', 'EXPEDIENTE_CLIENT_INVALID');
+    if (clientId !== undefined && !Number.isInteger(expectedVersion)) throw new ExpedienteUpdateError('Recarga el expediente antes de cambiar el cliente.', 'EXPEDIENTE_VERSION_REQUIRED');
     const cleanAbogadoId = abogado_id === undefined ? undefined : String(abogado_id).trim();
     if (notaria_id !== undefined) {
       throw new ExpedienteUpdateError('La notaría activa se obtiene de la organización de tu sesión; no se selecciona en el expediente.', 'EXPEDIENTE_NOTARY_SELECTOR_RETIRED', 409);
@@ -1006,9 +1013,6 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
       );
     }
 
-    if (cleanAlias !== undefined && cleanAlias.length === 0) {
-      throw new ExpedienteUpdateError('El alias o identificación del expediente no puede quedar vacío.', 'EXPEDIENTE_ALIAS_REQUIRED');
-    }
     if (cleanAbogadoId !== undefined && cleanAbogadoId.length === 0) {
       throw new ExpedienteUpdateError('Selecciona un abogado activo para el expediente.', 'EXPEDIENTE_LAWYER_REQUIRED');
     }
@@ -1041,7 +1045,11 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
       if (!actor) throw new ExpedienteUpdateError('No existe un usuario activo para registrar el cambio.', 'EXPEDIENTE_ACTOR_INVALID', 403);
 
       const changes: string[] = [];
-      if (cleanAlias !== undefined && cleanAlias !== currentExp.cliente_alias) changes.push('Alias o identificación');
+      const client = clientId === undefined ? null : await tx.compareciente.findFirst({ where: {
+        id: clientId, organization_id: req.user!.organizationId, archived_at: null, estatus: 'ACTIVO',
+      }, select: { id: true, nombre_busqueda: true } });
+      if (clientId !== undefined && !client) throw new ExpedienteUpdateError('El cliente no existe o no está activo en esta Notaría.', 'EXPEDIENTE_CLIENT_INVALID');
+      if (client && client.id !== currentExp.cliente_compareciente_id) changes.push('Cliente del expediente');
       if (cleanAbogadoId !== undefined && cleanAbogadoId !== currentExp.abogado_id) changes.push('Abogado encargado');
       if (cleanNumeroEscritura !== undefined && cleanNumeroEscritura !== (currentExp.numero_escritura || '')) changes.push('Número de escritura');
       if (cleanFechaFirma !== undefined && cleanFechaFirma?.getTime() !== currentExp.fecha_real_firma?.getTime()) changes.push('Fecha de firma');
@@ -1059,7 +1067,7 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
       const expediente = await tx.expediente.update({
         where: { id },
         data: {
-          cliente_alias: cleanAlias,
+          ...(client ? { cliente_compareciente_id: client.id, cliente_alias: client.nombre_busqueda } : {}),
           abogado_id: cleanAbogadoId,
           numero_escritura: cleanNumeroEscritura === undefined ? undefined : (cleanNumeroEscritura || null),
           fecha_real_firma: cleanFechaFirma,
@@ -1092,8 +1100,8 @@ export const updateExpedienteHeader = async (req: Request, res: Response) => {
             accion: 'UPDATE_EXPEDIENTE_HEADER',
             entidad: 'Expediente',
             entidad_id: id,
-            valores_anteriores: { version: currentExp.version },
-            valores_nuevos: { version: expediente.version, campos: changes },
+            valores_anteriores: { version: currentExp.version, ...(client ? { cliente_compareciente_id: currentExp.cliente_compareciente_id, cliente_alias: currentExp.cliente_alias } : {}) },
+            valores_nuevos: { version: expediente.version, campos: changes, ...(client ? { cliente_compareciente_id: client.id, cliente_alias: client.nombre_busqueda } : {}) },
             correlation_id: correlationId,
             session_id: req.user!.sessionId,
           },

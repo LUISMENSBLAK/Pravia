@@ -85,6 +85,10 @@ export type ConversionEligibility = {
 };
 
 export type Quote = {
+  valor_operacion?: string | number | null;
+  valor_catastral?: string | number | null;
+  cuenta_predial?: string | null;
+  importe_predial?: string | number | null;
   fuente_notarial_id?: string | null;
   fuente_notarial?: { received_at: string; version: number; documento: { id: string; nombre_original: string; mime_type?: string } } | null;
   id: string;

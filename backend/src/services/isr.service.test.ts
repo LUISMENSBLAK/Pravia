@@ -44,6 +44,21 @@ function dbMock(current=record()) {
 
 describe('ISRService, RBAC e inmutabilidad',()=>{
   beforeEach(()=>vi.clearAllMocks());
+  it.each([{ datos_modificados: true, expected: 2 }, { datos_modificados: false, expected: 1 }])('accesorios rechaza borrador modificado/versión obsoleta antes de consultar referencias', async ({ datos_modificados, expected }) => {
+    const { db } = dbMock(record({ datos_modificados, ultima_version: 2, versiones: [{ id: 'v2', version: 2 }] }));
+    await expect(new ISRService(db).surcharges(user(), { calculation_id: 'calc-1', expected_version: expected })).rejects.toMatchObject({ code: 'ISR_STALE_VERSION', status: 409 });
+    expect(db.fiscalReferenceRevision.findMany).not.toHaveBeenCalled(); expect(db.auditLog.create).not.toHaveBeenCalled();
+  });
+  it('accesorios no produce éxito/auditoría de cálculo cuando faltan referencias', async () => {
+    const { db } = dbMock(record({ ultima_version: 2, versiones: [{ id: 'v2', version: 2, input_snapshot: { schemaVersion: 3, operationDate: '2026-01-01' }, result: { schemaVersion: 3, saleISR: [{ partyId: 'seller', amount: '1000.00' }] } }] }));
+    await expect(new ISRService(db).surcharges(user(), { calculation_id: 'calc-1', expected_version: 2, party_id: 'seller', due_date: '2026-01-31', payment_date: '2026-03-15' })).rejects.toMatchObject({ code: 'SURCHARGE_POLICY_REQUIRED' });
+    expect(db.fiscalReferenceRevision.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ organization_id: 'org-1', verification_status: 'VERIFICADA' }) }));
+    expect(db.auditLog.create).not.toHaveBeenCalled();
+  });
+  it('accesorios sin permiso no consulta ni modifica el cálculo', async () => {
+    const { db } = dbMock(); await expect(new ISRService(db).surcharges(user('CONSULTA', ROLE_PERMISSIONS.CONSULTA), { calculation_id: 'calc-1' })).rejects.toMatchObject({ code: 'ISR_SURCHARGES_PERMISSION_DENIED', status: 403 });
+    expect(db.calculoISR.findFirst).not.toHaveBeenCalled(); expect(db.auditLog.create).not.toHaveBeenCalled();
+  });
   it('asigna permisos mínimos por rol y excluye recepción/gestoría',()=>{
     expect(roleHasPermission('DIRECCION','isr.admin')).toBe(true);expect(roleHasPermission('ADMINISTRACION','isr.calculate')).toBe(true);expect(roleHasPermission('ADMINISTRACION','isr.export')).toBe(true);expect(roleHasPermission('ABOGADO','isr.write')).toBe(true);expect(roleHasPermission('ABOGADO','isr.export')).toBe(true);expect(roleHasPermission('CONSULTA','isr.read')).toBe(true);expect(roleHasPermission('CONSULTA','isr.export')).toBe(false);expect(roleHasPermission('CONSULTA','isr.write')).toBe(false);expect(roleHasPermission('RECEPCION','isr.read')).toBe(false);expect(roleHasPermission('GESTORIA','isr.read')).toBe(false);
   });
@@ -69,7 +84,33 @@ describe('ISRService, RBAC e inmutabilidad',()=>{
   it('IA envía cada documento una sola vez, registra uso canónico y nunca modifica el input fiscal',async()=>{const linked=record({documentos:[{documento_id:'doc-1',documento:{id:'doc-1',storage_key:'isr/doc.pdf',mime_type:'application/pdf',tipo:'ISR_SOPORTE',nombre_original:'Escritura.pdf'}}]});const {db,tx}=dbMock(linked);const result=await new ISRService(db).extract(user(),'calc-1',{requestKey:'extract-1'});expect(result).toMatchObject({proposals:2,conflicts:[],idempotent:false});expect(mocks.extract).toHaveBeenCalledWith([expect.objectContaining({documentoId:'doc-1'})],expect.objectContaining({idempotencyKey:'isr-extraction:org-1:calc-1:extract-1'}));expect(tx.calculoISRPropuesta.create).toHaveBeenCalledTimes(2);expect(tx.aIUsageLog.upsert).not.toHaveBeenCalled();expect(tx.calculoISR.update).not.toHaveBeenCalled();expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({data:expect.objectContaining({accion:'EXTRAER_DATOS_ISR_IA',detalles:expect.objectContaining({operation_id:'isr-extraction:org-1:calc-1:extract-1'})})}));});
   it('reintentar la misma extracción no vuelve a invocar proveedor ni duplica auditoría',async()=>{const linked=record({propuestas:[{id:'p1',field_path:'rfc',status:'PENDIENTE',model_version:'fixture-model'}]});const {db,tx}=dbMock(linked);db.auditLog.findFirst.mockResolvedValue({id:'audit-extract'});const result=await new ISRService(db).extract(user(),'calc-1',{requestKey:'same-extract'});expect(result).toMatchObject({proposals:1,idempotent:true});expect(mocks.extract).not.toHaveBeenCalled();expect(tx.auditLog.create).not.toHaveBeenCalled();});
   it('un borrador cambiado después de calcular deja de fingir estado final',async()=>{const current=record({ultima_version:1,estado:'CALCULADO'});const {db,tx}=dbMock(current);await new ISRService(db).update(user(),'calc-1',{input_data:{...input,salePrice:'2100000.00'},expected_updated_at:current.updated_at.toISOString()});expect(tx.calculoISR.update).toHaveBeenCalledWith(expect.objectContaining({data:expect.objectContaining({estado:'LISTO_PARA_CALCULAR',datos_modificados:true})}));});
-  it('separa aceptación humana de la edición del snapshot',async()=>{const {db}=dbMock();db.calculoISRPropuesta.findFirst.mockResolvedValue({id:'p1',calculo_id:'calc-1',field_path:'rfc'});db.calculoISRPropuesta.update.mockResolvedValue({id:'p1',status:'ACEPTADA'});await new ISRService(db).reviewProposal(user(),'calc-1','p1','ACEPTADA');expect(db.calculoISRPropuesta.update).toHaveBeenCalledWith(expect.objectContaining({data:expect.objectContaining({reviewed_by_id:'user-1'})}));expect(db.calculoISR.findFirst).toHaveBeenCalledTimes(1);});
+  it('aplica propuesta confirmada al borrador con auditoría atómica y sin cambiar versiones',async()=>{
+    const current=record({ultima_version:2,documentos:[{documento_id:'doc-1'}]}); const {db,tx}=dbMock(current);
+    tx.calculoISRPropuesta.findFirst.mockResolvedValue({id:'p1',calculo_id:'calc-1',field_path:'precio_enajenacion',proposed_value:'2100000.00',status:'PENDIENTE',source_document_id:'doc-1',source_page:2});
+    tx.calculoISRPropuesta.update.mockResolvedValue({id:'p1',status:'ACEPTADA'});
+    await new ISRService(db).reviewProposal(user(),'calc-1','p1','ACEPTADA',{expectedUpdatedAt:current.updated_at.toISOString()});
+    expect(tx.calculoISR.update).toHaveBeenCalledWith(expect.objectContaining({data:expect.objectContaining({input_data:expect.objectContaining({salePrice:'2100000.00'}),datos_modificados:true})}));
+    expect(tx.calculoISRPropuesta.update).toHaveBeenCalledWith(expect.objectContaining({data:expect.objectContaining({reviewed_by_id:'user-1'})}));
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({data:expect.objectContaining({valores_anteriores:{path:'salePrice',value:'2000000.00'},valores_nuevos:{path:'salePrice',value:'2100000.00'}})}));
+    expect(tx.calculoISRVersion.create).not.toHaveBeenCalled();
+  });
+
+  it('propuesta obsoleta, fuente desvinculada y usuario sin permiso no pueden escribir',async()=>{
+    const current=record({documentos:[]});const {db,tx}=dbMock(current);
+    tx.calculoISRPropuesta.findFirst.mockResolvedValue({id:'p1',status:'PENDIENTE',source_document_id:'doc-1'});
+    const service=new ISRService(db);
+    await expect(service.reviewProposal(user(),'calc-1','p1','ACEPTADA')).rejects.toMatchObject({code:'ISR_STALE_STATE'});
+    await expect(service.reviewProposal(user(),'calc-1','p1','ACEPTADA',{expectedUpdatedAt:current.updated_at.toISOString()})).rejects.toMatchObject({code:'ISR_PROPOSAL_SOURCE_INACTIVE'});
+    await expect(service.reviewProposal(user('CONSULTA',ROLE_PERMISSIONS.CONSULTA),'calc-1','p1','RECHAZADA')).rejects.toMatchObject({status:403});
+    expect(tx.calculoISR.update).not.toHaveBeenCalled();expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('retry de revisión no vuelve a escribir ni permite invertir una confirmación',async()=>{
+    const {db,tx}=dbMock();tx.calculoISRPropuesta.findFirst.mockResolvedValue({id:'p1',status:'ACEPTADA'});
+    const service=new ISRService(db);expect(await service.reviewProposal(user(),'calc-1','p1','ACEPTADA')).toMatchObject({status:'ACEPTADA'});
+    await expect(service.reviewProposal(user(),'calc-1','p1','RECHAZADA')).rejects.toMatchObject({code:'ISR_PROPOSAL_ALREADY_REVIEWED'});
+    expect(tx.calculoISR.update).not.toHaveBeenCalled();expect(tx.calculoISRPropuesta.update).not.toHaveBeenCalled();expect(tx.auditLog.create).not.toHaveBeenCalled();
+  });
   it('abre siempre el mismo cálculo ya vinculado y no crea un duplicado',async()=>{const {db,tx}=dbMock();tx.calculoISR.findFirst.mockResolvedValue(record());const result=await new ISRService(db).openForExpediente(user(),'exp-1','same-request');expect(result).toMatchObject({created:false,idempotent:true,data:{id:'calc-1'}});expect(tx.calculoISR.create).not.toHaveBeenCalled();});
   it('el backend bloquea abrir un expediente de otro tenant aunque el ID sea válido',async()=>{const {db,tx}=dbMock();tx.expediente.findFirst.mockResolvedValue(null);await expect(new ISRService(db).openForExpediente(user(),'tenant-b-exp')).rejects.toMatchObject({code:'EXPEDIENT_ACCESS_DENIED',status:403});expect(tx.calculoISR.create).not.toHaveBeenCalled();});
   it('exige Reemplazar o Cancelar cuando el expediente está ocupado',async()=>{const current=record({expediente_id:null,expediente:null});const {db,tx}=dbMock(current);tx.calculoISR.findFirst.mockImplementation(async({where}:any)=>where.id==='calc-1'?current:{id:'occupied',folio:'ISR-OCUPADO'});await expect(new ISRService(db).update(user(),'calc-1',{input_data:input,expediente_id:'exp-1'})).rejects.toMatchObject({code:'ISR_EXPEDIENT_OCCUPIED',status:409});expect(tx.calculoISR.update).not.toHaveBeenCalled();});

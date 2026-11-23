@@ -1,4 +1,5 @@
 import { Prisma, PrismaClient, PresupuestoConceptoCategoria } from '@prisma/client';
+import { quoteActName } from '../domain/quoteIdentity';
 import type { Request } from 'express';
 import prisma from '../config/prisma';
 import { budgetTotals, normalizeEditableBudgetConcepts, withDerivedHonorariosIva } from '../domain/expedienteBudget';
@@ -85,13 +86,14 @@ export class QuoteAIProposalService {
     if (!key || key.length > 160) throw new QuoteAIError(400, 'QUOTE_AI_IDEMPOTENCY_REQUIRED', 'No fue posible identificar de forma segura esta propuesta.');
     const quote = await this.db.cotizacion.findFirst({
       where: { id: quoteId, ...cotizacionObjectWhere(actor) },
-      include: { prospecto: true, conceptos: { orderBy: { orden: 'asc' } } },
+      include: { prospecto: true, actos: { include: { tipo_acto: { select: { nombre: true } } }, orderBy: { orden: 'asc' } }, conceptos: { orderBy: { orden: 'asc' } } },
     });
     if (!quote?.organization_id) throw new QuoteAIError(404, 'QUOTE_NOT_FOUND', 'No se encontró la cotización o no tienes acceso.');
     const prior = await this.db.cotizacionIAProposal.findFirst({ where: { organization_id: actor.organizationId, cotizacion_id: quoteId, idempotency_key: key } });
     if (prior) return { data: prior, idempotent: true };
     if (quote.etapa_contractual && frozen.has(quote.etapa_contractual)) throw new QuoteAIError(409, 'QUOTE_AI_FROZEN', 'La cotización aceptada conserva su presupuesto histórico.');
-    const act = quote.prospecto?.tipo_acto?.trim();
+    if (quote.etapa_contractual && !quote.actos?.length) throw new QuoteAIError(409, 'QUOTE_AI_CONTEXT_REQUIRED', 'Selecciona un acto en la cotización antes de solicitar una propuesta.');
+    const act = quoteActName(quote);
     if (!act) throw new QuoteAIError(409, 'QUOTE_AI_CONTEXT_REQUIRED', 'Define el acto antes de solicitar una propuesta.');
     const legalDate = new Date();
     const territory = readQuoteTerritory(quote.territorio_operacion);
@@ -152,7 +154,7 @@ export class QuoteAIProposalService {
     if (!['APLICAR', 'DESCARTAR'].includes(action)) throw new QuoteAIError(400, 'QUOTE_AI_DECISION_INVALID', 'Selecciona aplicar o descartar la propuesta.');
     return this.db.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:quote-budget:${actor.organizationId}:${quoteId}`}))`);
-      const quote = await tx.cotizacion.findFirst({ where: { id: quoteId, ...cotizacionObjectWhere(actor) }, include: { prospecto: true } });
+      const quote = await tx.cotizacion.findFirst({ where: { id: quoteId, ...cotizacionObjectWhere(actor) }, include: { prospecto: true, actos: { include: { tipo_acto: { select: { nombre: true } } }, orderBy: { orden: 'asc' } } } });
       const proposal = await tx.cotizacionIAProposal.findFirst({ where: { id: proposalId, organization_id: actor.organizationId, cotizacion_id: quoteId } });
       if (!quote || !proposal) throw new QuoteAIError(404, 'QUOTE_AI_PROPOSAL_NOT_FOUND', 'La propuesta ya no está disponible.');
       if (proposal.status !== 'PENDIENTE') return { data: proposal, idempotent: true, applied: proposal.status === 'APLICADA' };
@@ -170,7 +172,7 @@ export class QuoteAIProposalService {
       const policies = evidence.layers?.internal_policy ?? [];
       if (policies.length) {
         const current = await tx.knowledgeCriterion.findMany({ where: { organization_id: actor.organizationId, active: true, id: { in: policies.map((item: any) => item.criterion_id) } } });
-        const applicable = approvedInternalBudgetRows(current, quote.prospecto?.tipo_acto?.trim() || '', new Date(), readQuoteTerritory(quote.territorio_operacion));
+        const applicable = approvedInternalBudgetRows(current, quoteActName(quote), new Date(), readQuoteTerritory(quote.territorio_operacion));
         if (applicable.length !== policies.length || policies.some((item: any) => !applicable.some((row) => row.explanation.criterion_id === item.criterion_id && row.explanation.version === Number(item.scope?.version || 1)))) {
           throw new QuoteAIError(409, 'QUOTE_AI_POLICY_CHANGED', 'El criterio interno cambió o dejó de estar vigente. Genera una propuesta actualizada.');
         }

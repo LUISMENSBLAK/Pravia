@@ -3,6 +3,7 @@ import type { Request } from 'express';
 import { activeOrganizationMembershipWhere, organizationMembershipRoleSelect, usersWithEffectiveMembershipRoles } from '../auth/organizationMembership';
 import { expedienteReadWhere } from '../middleware/auth.middleware';
 import { resolveCurrentOperationalActivity } from '../domain/expedienteOperationalStage';
+import { expedienteClientName } from '../domain/expedienteClient';
 import {
   complianceAttention,
   complianceLabel,
@@ -32,6 +33,7 @@ export class ExpedienteReadService {
     if (query.notaryId) AND.push({ notaria_id: query.notaryId });
     if (query.actTypeId) AND.push({ actos: { some: { tipo_acto_id: query.actTypeId, estatus: 'ACTIVO', removed_at: null } } });
     if (query.client) AND.push({ OR: [
+      { cliente_compareciente: { is: { nombre_busqueda: { contains: query.client, mode: 'insensitive' } } } },
       { cliente_alias: { contains: query.client, mode: 'insensitive' } },
       { comparecientes: { some: { archived_at: null, estatus: 'ACTIVO', compareciente: { nombre_busqueda: { contains: query.client, mode: 'insensitive' } } } } },
     ] });
@@ -55,6 +57,7 @@ export class ExpedienteReadService {
         { numero_pravia: { contains: term, mode: 'insensitive' } },
         { numero_notaria: { contains: term, mode: 'insensitive' } },
         { cliente_alias: { contains: term, mode: 'insensitive' } },
+        { cliente_compareciente: { is: { nombre_busqueda: { contains: term, mode: 'insensitive' } } } },
         { actos: { some: { estatus: 'ACTIVO', removed_at: null, tipo_acto: { nombre: { contains: term, mode: 'insensitive' } } } } },
         { notaria: { is: { OR: [
           { numero_notaria: { contains: term, mode: 'insensitive' } },
@@ -89,6 +92,7 @@ export class ExpedienteReadService {
         take: query.stage ? undefined : query.pageSize,
         orderBy: { [sortField]: sortDirection },
         include: {
+          cliente_compareciente: { select: { id: true, nombre_busqueda: true } },
           actos: { where: { estatus: 'ACTIVO', removed_at: null }, include: { tipo_acto: { select: { id: true, nombre: true } } }, orderBy: { created_at: 'asc' } },
           abogado: { select: { id: true, nombre: true, apellido: true } },
           notaria: { select: { id: true, nombre: true, numero_notaria: true, municipio: true } },
@@ -167,7 +171,7 @@ export class ExpedienteReadService {
         etapaActual: record.etapaActual,
         counts: record._count,
         macrofase: macrophaseForStatus(record.estatus),
-        cliente_principal: partyName(principal) || record.cliente_alias || 'Sin cliente',
+        cliente_principal: expedienteClientName(record),
         comparecientes_adicionales: Math.max(0, record.comparecientes.length - 1),
         riesgo: { label: complianceLabel(review?.resultado_json), requires_attention: complianceAttention(review?.resultado_json), review_id: review?.id || null },
         vulnerable: user.permissions.includes('compliance.read')

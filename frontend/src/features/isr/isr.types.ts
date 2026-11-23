@@ -71,10 +71,10 @@ export type ISRResult = {
 
 export type ISRV3LegalStatus = 'GRAVADO' | 'EXENTO' | 'EXENTO_PARCIALMENTE' | 'NO_GENERADO' | 'NO_APLICA' | 'PENDIENTE_INFORMACION';
 export type ISRV3Party = {
-  id: string; role: 'ENAJENANTE' | 'ADQUIRENTE'; name: string;
+  id: string; role: 'ENAJENANTE' | 'ADQUIRENTE'; name: string; rfc?: string; curp?: string; sourceComparecienteId?: string;
   subjectType: 'PF' | 'PM_TITULO_II' | 'PM_TITULO_III' | 'OTRO'; nationalityCode: string;
   immigrationStatus?: string; fiscalResidence: 'MEXICO' | 'EXTRANJERO' | 'POR_DETERMINAR'; percentage: string;
-  acquisitionLayers?: Array<{ id: string; percentage: string; acquisitionAct: 'ONEROSA' | 'HERENCIA' | 'DONACION' | 'OTRO'; legalDate: string; fiscalDate: string; adjustedLandCost: string; adjustedConstructionCost: string; source: string; priorLayerId?: string; verified: boolean }>;
+  acquisitionLayers?: Array<{ id: string; percentage: string; acquisitionAct: 'ONEROSA' | 'HERENCIA' | 'DONACION' | 'OTRO'; legalDate: string; fiscalDate: string; adjustedLandCost: string; adjustedConstructionCost: string; source: string; priorLayerId?: string; verified: boolean; historical?: { method: 'AUTO' | 'INPC' | 'FACTORES'; separation: 'EXPLICIT' | 'STATUTORY'; land?: string; construction?: string; total?: string } }>;
   foreignGainOption?: { requested: boolean; requirementsVerified: boolean; source: string };
   acquisitionExemption?: { applies: boolean; legalReference: string; verified: boolean };
   homeExemption?: { requested: boolean; homeUseVerified: boolean; requiredDocumentsVerified: boolean; noExemptionInPriorThreeYearsVerified: boolean };
@@ -88,14 +88,14 @@ export type ISRV3Input = {
   deductions: Array<{ id: string; concept: string; amount: string; paidByPartyId?: string; component: 'TERRENO' | 'CONSTRUCCION' | 'AMBOS'; verified: boolean; supportDocumentId?: string }>;
 };
 export type ISRV3Trace = { ruleId: string; legalReference: string; ruleVersion: string; inputsUsed: Record<string,string>; calculation: string; result: string; explanation: string };
-export type ISRV3PartyResult = { partyId: string; partyName: string; status: ISRV3LegalStatus; amount: string | null; taxableBase: string | null; exemptAmount: string | null; route: string; reason: string; missing: string[]; traces: ISRV3Trace[] };
+export type ISRV3PartyResult = { partyId: string; partyName: string; status: ISRV3LegalStatus; amount: string | null; taxableBase: string | null; exemptAmount: string | null; route: string; reason: string; missing: string[]; traces: ISRV3Trace[]; distribution?: { status: 'DETERMINADO' | 'PENDIENTE_INFORMACION' | 'NO_APLICA'; statePayment: string | null; federalRemainder: string | null; reason: string; traces: ISRV3Trace[] }; acquisitionWorksheet?: { updatedCost: string; minimumCost: string; appliedCost: string; appliedDeductions: string; taxableRatio: string } };
 export type ISRV3Result = { schemaVersion: 3; engineVersion: 'ISR-V3.0'; ruleVersion: string; currency: 'MXN'; saleISR: ISRV3PartyResult[]; acquisitionISR: ISRV3PartyResult[]; iva: { status: ISRV3LegalStatus; taxableBase: string | null; rate: string | null; amount: string | null; reason: string; missing: string[]; traces: ISRV3Trace[] }; missing: string[]; breakdown: Array<{ key: string; label: string; operation: string; amount: string; source: string }> };
 export type ISRAnyInput = ISRInput | ISRV3Input;
 export type ISRAnyResult = ISRResult | ISRV3Result;
 
 export type ISRVersion = { id: string; version: number; result: ISRAnyResult; breakdown: Array<{ key: string; label: string; operation: string; amount: string; source: string }>; calculated_at: string; ruleset_snapshot: Record<string, unknown>; input_snapshot: ISRAnyInput };
 export type ISRDocumentLink = { id: string; documento_id: string; estatus?: 'ACTIVO' | 'INACTIVO'; idempotency_key?: string | null; generated_from_version?: number | null; format_source?: string | null; documento: { id: string; nombre_original: string; mime_type: string; size_bytes: number; fecha_carga: string; tipo?: string } };
-export type ISRProposal = { id: string; field_path: string; proposed_value: unknown; status: 'PENDIENTE' | 'ACEPTADA' | 'RECHAZADA' | 'CONFLICTO'; source_document_id: string; source_document_name: string; source_page?: number; confidence?: string; model_version: string; source_fragment?: string; conflict_group?: string };
+export type ISRProposal = { id: string; field_path: string; proposed_value: unknown; status: 'PENDIENTE' | 'ACEPTADA' | 'RECHAZADA' | 'CONFLICTO'; source_document_id: string; source_document_name: string; source_page?: number; confidence?: string; model_version: string; source_fragment?: string; conflict_group?: string; application?: { can_apply: boolean; requires_party: boolean } };
 
 export type ISRRecord = {
   id: string; folio: string; tipo_operacion: ISROperationType; estado: ISRStatus; ejercicio: number;

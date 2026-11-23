@@ -5,6 +5,7 @@ export type CfdiProviderDraft = {
   receptorRfc: string;
   total: string;
   metodoPago?: 'PUE' | 'PPD' | null;
+  facturamaPayload?: import('./facturamaSandboxProvider').FacturamaPayload;
 };
 
 export type CfdiProviderStampResult = {

@@ -4,6 +4,7 @@ import { AgendaController } from '../controllers/agenda.controller';
 import { assistantConversationService } from './assistantConversation.service';
 import { ProspectWorkflowService } from './prospectWorkflow.service';
 import { CotizacionWorkflowService } from './cotizacionWorkflow.service';
+import { ComparecienteService } from './compareciente.service';
 import { ExpedienteActivityService } from './expedienteActivity.service';
 import { ProspectWorkflowError } from '../domain/prospectWorkflow';
 import { ProjectGenerationService } from './projectGeneration.service';
@@ -25,6 +26,41 @@ const actor = {
 const base = { actor, conversationId: 'conversation-1', messageId: 'message-1', correlationId: 'correlation-1' };
 
 describe('PRAVIA IA action layer', () => {
+  it('crea una cotización por el servicio directo, sin Prospecto ficticio y con idempotencia canónica',async()=>{
+    vi.spyOn(assistantConversationService,'actionState').mockResolvedValue(undefined);
+    vi.spyOn(assistantConversationService,'setActionState').mockResolvedValue(undefined as any);
+    vi.spyOn(prisma.auditLog,'create').mockResolvedValue({} as any);
+    const create=vi.spyOn(CotizacionWorkflowService.prototype,'createDirect').mockResolvedValue({id:'q',numero_cotizacion:'COT-0001-2026'} as any);
+    const result=await prepareOrExecuteAssistantAction({...base,origin:'USER_COMMAND',actionKey:'quote.create',args:{operationContext:'Revisión documental'}});
+    expect(result.message).toContain('COT-0001-2026');
+    expect(create).toHaveBeenCalledWith(actor,expect.objectContaining({confirm:true,operationContext:'Revisión documental',idempotencyKey:expect.any(String)}));
+    expect(create.mock.calls[0][1]).not.toHaveProperty('prospecto_id');
+  });
+
+  it('actualiza sólo campos confirmados y exige versión vigente de la ficha',async()=>{
+    const partyActor={...actor,permissions:[...actor.permissions,'comparecientes.write']};let stored:any;
+    vi.spyOn(assistantConversationService,'actionState').mockImplementation(async()=>stored);
+    vi.spyOn(assistantConversationService,'setActionState').mockImplementation(async(_a,_c,s)=>{stored=s;});
+    vi.spyOn(prisma.compareciente,'findFirst').mockResolvedValue({id:'p',nombre_busqueda:'CLIENTE QA',tipo_persona:'FISICA',version:4,personaFisica:{ocupacion:'ANTERIOR'},contactos:[]} as any);
+    vi.spyOn(prisma.auditLog,'create').mockResolvedValue({} as any);
+    const update=vi.spyOn(ComparecienteService.prototype,'actualizarMaster').mockResolvedValue({} as any);
+    const prepared=await prepareOrExecuteAssistantAction({...base,actor:partyActor,origin:'USER_COMMAND',actionKey:'party.update',args:{compareciente_id:'p',ocupacion:'ARQUITECTA'}});
+    expect(prepared.confirmation?.level).toBe('REINFORCED');expect(update).not.toHaveBeenCalled();
+    expect(stored.preview).toMatchObject({before:{ocupacion:'ANTERIOR'},after:{ocupacion:'ARQUITECTA'},guard:{version:4}});
+    expect(prepared.confirmation?.details).toEqual(expect.arrayContaining([{label:'Antes · Ocupación',value:'ANTERIOR'},{label:'Después · Ocupación',value:'ARQUITECTA'}]));
+    await confirmAssistantAction({actor:partyActor,conversationId:base.conversationId,confirmationId:prepared.confirmation!.id,correlationId:base.correlationId});
+    expect(update).toHaveBeenCalledWith('p',{ocupacion:'ARQUITECTA',expectedVersion:4},actor.id);
+  });
+
+  it('rechaza cambio vacío, acceso ajeno y datos que no corresponden a la ficha',async()=>{
+    const partyActor={...actor,permissions:[...actor.permissions,'comparecientes.write']};
+    vi.spyOn(assistantConversationService,'actionState').mockResolvedValue(undefined);
+    await expect(prepareOrExecuteAssistantAction({...base,actor:partyActor,actionKey:'party.update',args:{compareciente_id:'p'}})).rejects.toMatchObject({code:'AI_PARTY_CHANGE_REQUIRED'});
+    const find=vi.spyOn(prisma.compareciente,'findFirst').mockResolvedValue(null);
+    await expect(prepareOrExecuteAssistantAction({...base,actor:partyActor,actionKey:'party.update',args:{compareciente_id:'p',correo:'qa@example.test'}})).rejects.toMatchObject({code:'AI_ACTION_TARGET_DENIED'});
+    find.mockResolvedValue({id:'p',tipo_persona:'MORAL',version:1,contactos:[]} as any);
+    await expect(prepareOrExecuteAssistantAction({...base,actor:partyActor,actionKey:'party.update',args:{compareciente_id:'p',ocupacion:'ARQUITECTA'}})).rejects.toMatchObject({code:'AI_PARTY_FIELD_INCOMPATIBLE'});
+  });
   beforeEach(() => {
     vi.spyOn(assistantConversationService, 'claimActionState').mockImplementation(async (_actor, conversationId, confirmationId) => {
       const state = await assistantConversationService.actionState(actor, conversationId);
@@ -259,6 +295,14 @@ describe('PRAVIA IA action layer', () => {
     expect((create.mock.calls[0][0] as any).body).toMatchObject({ titulo: 'Cita con María', idempotency_key: 'stable-follow-up' });
   });
 
+  it('no elige arbitrariamente entre dos valores extraídos del mismo campo',async()=>{
+    const partyActor={...actor,permissions:[...actor.permissions,'comparecientes.write']};
+    vi.spyOn(assistantConversationService,'actionState').mockResolvedValue(undefined);
+    await expect(prepareOrExecuteAssistantAction({...base,actor:partyActor,actionKey:'party.create',args:{tipo_persona:'FISICA'},context:{attachmentFacts:[
+      {field:'nombre',value:'ANA',attachmentId:'a'},{field:'nombre',value:'ELENA',attachmentId:'b'},
+    ]}})).rejects.toMatchObject({code:'AI_ATTACHMENT_FACT_CONFLICT'});
+  });
+
   it('reutiliza el expediente de la página y exige confirmación antes de una escritura segura', async () => {
     let stored: any;
     vi.spyOn(assistantConversationService, 'actionState').mockImplementation(async () => stored);
@@ -311,7 +355,7 @@ describe('PRAVIA IA action layer', () => {
       context: {
         entityType: 'proyecto',
         entityId: 'case-1',
-        projectDraft: { instructions: 'Conservar literalmente la cláusula tercera.', templateVersionId: 'template-v1', sourceDocumentIds: ['source-1'] },
+        projectDraft: { instructions: 'Conservar literalmente la cláusula tercera.', templateVersionId: 'template-v1', sourceDocumentIds: ['source-1'], templatePurpose: 'STYLE_REFERENCE', templateSourceAct: 'Donación' },
       },
     });
 
@@ -320,6 +364,8 @@ describe('PRAVIA IA action layer', () => {
       expediente_id: 'case-1',
       template_version_id: 'template-v1',
       source_document_ids: ['source-1'],
+      template_purpose: 'STYLE_REFERENCE',
+      template_source_act: 'Donación',
       instructions: 'Indicaciones existentes:\nConservar literalmente la cláusula tercera.\n\nIndicaciones de esta solicitud:\nRevisa especialmente el antecedente.',
     });
   });
@@ -357,6 +403,12 @@ describe('PRAVIA IA action layer', () => {
     const restricted = { ...actor, permissions: ['ai.use', 'ai.actions.prepare', 'expedientes.project.read'] } as any;
     await expect(prepareOrExecuteAssistantAction({ ...base, actor: restricted, actionKey: 'project.generate', args: { expediente_id: 'case-1' } }))
       .rejects.toMatchObject<Partial<AssistantActionError>>({ code: 'AI_ACTION_DENIED', status: 403 });
+  });
+
+  it('no sustituye un archivo exclusivo aún local del formulario por otro machote al generar desde chat', async () => {
+    const projectActor = { ...actor, permissions: [...actor.permissions, 'expedientes.project.read', 'ia.execute'] } as any;
+    vi.spyOn(assistantConversationService, 'actionState').mockResolvedValue(undefined);
+    await expect(prepareOrExecuteAssistantAction({ ...base, actor: projectActor, actionKey: 'project.generate', args: {}, context: { entityType: 'proyecto', entityId: 'case-1', projectDraft: { manualTemplateSelected: true } } })).rejects.toMatchObject({ code: 'AI_PROJECT_LOCAL_TEMPLATE_REQUIRED' });
   });
 
   it('devuelve el recibo durable y no repite una escritura segura al reintentar el mismo mensaje', async () => {

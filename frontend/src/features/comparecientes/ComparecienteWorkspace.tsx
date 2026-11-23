@@ -7,7 +7,8 @@ import {
   Save,
   ShieldCheck,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useCanonicalRefresh } from '../../services/api/useCanonicalRefresh';
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { PageContainer } from "../../components/layout/PageContainer";
 import { useAuth } from "../auth/AuthProvider";
@@ -209,7 +210,7 @@ export function ComparecienteWorkspace() {
         ? ownershipContext?.returnPath ||
           quoteContext?.returnPath ||
           resolveExpedienteReturn(location.search)
-        : null,
+        : resolveExpedienteReturn(location.search),
     [createMode, location.search, ownershipContext, quoteContext],
   );
   const [item, setItem] = useState<ComparecienteDetail | null>(null);
@@ -230,6 +231,8 @@ export function ComparecienteWorkspace() {
     ocr?: string;
   }>({});
   const [dirty, setDirty] = useState(false);
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
   const [extractionState, setExtractionState] = useState("");
   const [extractionReview, setExtractionReview] = useState<{
     filled: string[];
@@ -289,10 +292,15 @@ export function ComparecienteWorkspace() {
           })),
     [createMode, temporaryDocuments, item],
   );
-  const load = async (signal?: AbortSignal) => {
+  const load = async (signal?: AbortSignal, protectDraft = false) => {
     if (createMode) return;
     try {
       const result = await comparecientesService.detail(id, signal);
+      if (signal?.aborted) return;
+      if (protectDraft && dirtyRef.current) {
+        setMessage('La ficha cambió en el sistema. Conservamos tus cambios sin guardar; recarga antes de volver a guardar para revisar la versión actual.');
+        return;
+      }
       setItem(result);
       setDraft(detailToDraft(result));
       setIneIdentifiers({
@@ -319,6 +327,12 @@ export function ComparecienteWorkspace() {
     void load(controller.signal);
     return () => controller.abort();
   }, [id]);
+  useCanonicalRefresh('comparecientes', signal => {
+    if (createMode) return;
+    if (dirty || busy) {
+      setMessage('La ficha cambió en el sistema. Conservamos tus cambios sin guardar; recarga antes de volver a guardar para revisar la versión actual.');
+    } else void load(signal, true);
+  });
   useEffect(() => {
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
@@ -670,9 +684,9 @@ export function ComparecienteWorkspace() {
           <button
             type="button"
             className={styles.secondaryButton}
-            onClick={() => navigate("/comparecientes")}
+            onClick={() => navigate(safeReturn || "/comparecientes")}
           >
-            Volver al listado
+            {safeReturn ? "Volver al expediente" : "Volver al listado"}
           </button>
         </section>
       </PageContainer>
@@ -762,7 +776,7 @@ export function ComparecienteWorkspace() {
         {extractionReview && (
           <section className={styles.extractionReview} aria-label="Resultado de extracción documental">
             <header>
-              <div><strong>{extractionReview.missing.length ? "Extracción completada con faltantes" : "Extracción completada"}</strong><span>{extractionReview.filled.length} campo{extractionReview.filled.length === 1 ? "" : "s"} propuesto{extractionReview.filled.length === 1 ? "" : "s"} para revisión humana.</span></div>
+              <div><strong>{extractionReview.errors.length ? "Extracción parcial: hay documentos sin analizar" : extractionReview.missing.length ? "Extracción completada con faltantes" : "Extracción completada"}</strong><span>{extractionReview.filled.length} campo{extractionReview.filled.length === 1 ? "" : "s"} propuesto{extractionReview.filled.length === 1 ? "" : "s"} para revisión humana.</span></div>
               <button type="button" onClick={() => setExtractionReview(null)}>Cerrar</button>
             </header>
             {extractionReview.missing.length > 0 && <div><b>Datos no encontrados</b><ul>{extractionReview.missing.map((field) => <li key={field}>{field.replaceAll("_", " ")}: DATO NO ENCONTRADO</li>)}</ul></div>}

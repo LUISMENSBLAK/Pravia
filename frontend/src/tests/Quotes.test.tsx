@@ -108,11 +108,12 @@ describe('Cotizaciones', () => {
     mockApi({ permissions: ['cotizaciones.read'] }); render(<MemoryRouter initialEntries={['/cotizaciones']}><App /></MemoryRouter>); await screen.findByText('Lista de cotizaciones'); expect(screen.queryByRole('button', { name: 'Nueva cotización' })).not.toBeInTheDocument();
   });
 
-  it('alta compartida conduce a Prospectos, sin segunda solicitud a Notaría', async () => {
+  it('alta directa abre un borrador sin exigir Prospecto ni generar una solicitud a Notaría', async () => {
     mockApi(); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones']}><App /></MemoryRouter>);
     await screen.findByText('Lista de cotizaciones'); await user.click(screen.getByRole('button', { name: 'Nueva cotización' }));
-    expect(screen.getByRole('link', {name:'Ir al prospecto de origen'})).toHaveAttribute('href','/prospectos');
-    expect(screen.queryByRole('button',{name:'Crear cotización'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', {name:'Ir al prospecto de origen'})).not.toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'Crear cotización'})).toBeEnabled();
+    expect(screen.getByText('Alta directa, sin crear un Prospecto.')).toBeInTheDocument();
     expect(fetch).not.toHaveBeenCalledWith(expect.stringMatching(/\/cotizaciones$/),expect.objectContaining({method:'POST'}));
   });
 

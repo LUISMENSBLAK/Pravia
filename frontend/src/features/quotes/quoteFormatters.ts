@@ -1,5 +1,8 @@
 import type { Quote, QuoteConcept, QuoteContractStage, QuoteState, QuoteVersion } from './quotes.types';
 
+export const quoteClientName = (quote: Quote) => quote.solicitante_formal?.nombre_busqueda || quote.prospecto?.nombre || 'Cliente por seleccionar';
+export const quoteActName = (quote: Quote) => quote.actos?.map((item) => item.tipo_acto.nombre).join(', ') || quote.prospecto?.tipo_acto || 'Acto sin especificar';
+
 export const QUOTE_STATE_LABELS: Record<QuoteState, string> = {
   BORRADOR: 'Borrador',
   ENVIADA_NOTARIA: 'Enviada a notaría',

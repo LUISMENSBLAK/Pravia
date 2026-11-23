@@ -138,6 +138,8 @@ export type ExpedienteBudget = {
 
 export type ExpedienteMetric = { key: string; label: string; value: number; percentage: number | null };
 export type ExpedienteListItem = {
+  cliente_compareciente_id?: string | null;
+  cliente_compareciente?: { id: string; nombre_busqueda: string; tipo_persona?: 'FISICA' | 'MORAL' } | null;
   id: string; numero_pravia: string; numero_notaria?: string | null; cliente_alias?: string | null; cliente_principal: string;
   comparecientes_adicionales: number; estatus: ExpedienteStatus; macrofase: ExpedienteMacrophase; version: number;
   etapa_actual_nombre?: string | null; proxima_accion?: string | null; fecha_limite_accion?: string | null;
@@ -223,10 +225,11 @@ export type ProjectGenerationObservation = {
   detail?: string;
 };
 export type ProjectFact = { field: string; value: string; status: 'CONFIRMADO' | 'PENDIENTE' | 'CONFLICTO'; mutability: 'FIJO' | 'VARIABLE'; provenance: { type: 'USER_CONFIRMED' | 'STRUCTURED_AND_DOCUMENTARY' | 'STRUCTURED'; document_ids: string[] }; conflicts: ProjectGenerationObservation[] };
-export type ProjectVersion = { id: string; version_numero: number; nombre_original?: string; nota_version?: string; es_vigente: boolean; es_version_final?: boolean; validation_cycle?: number; validated_by_id?: string | null; validated_at?: string | null; reopened_from_document_id?: string | null; reopened_by_id?: string | null; reopened_at?: string | null; subido_por_nombre?: string; cargado_por_nombre?: string; created_at: string; pending_count?: number; generation_observations?: ProjectGenerationObservation[]; docx_structural_fidelity?: { status?: string; sections?: number; tables?: number; immutable_parts?: number }; template_artifact_id?: string | null; template_version_id?: string | null; template_version?: number | null; template_name?: string | null; generation_mode?: string; generation_origin?: 'UI' | 'PRAVIA_IA' | string; instructions?: string | null; instructions_consumed?: boolean; fact_snapshot?: { facts: ProjectFact[]; conflicts: ProjectGenerationObservation[]; created_at: string } | null };
+export type ProjectVersion = { id: string; version_numero: number; nombre_original?: string; nota_version?: string; es_vigente: boolean; es_version_final?: boolean; validation_cycle?: number; validated_by_id?: string | null; validated_at?: string | null; reopened_from_document_id?: string | null; reopened_by_id?: string | null; reopened_at?: string | null; subido_por_nombre?: string; cargado_por_nombre?: string; created_at: string; pending_count?: number; generation_observations?: ProjectGenerationObservation[]; docx_structural_fidelity?: { status?: string; sections?: number; tables?: number; immutable_parts?: number }; template_artifact_id?: string | null; template_version_id?: string | null; template_version?: number | null; template_name?: string | null; template_use?: { purpose: 'SAME_ACT' | 'STYLE_REFERENCE'; source_act: string; target_act: string } | null; generation_mode?: string; generation_origin?: 'UI' | 'PRAVIA_IA' | string; instructions?: string | null; instructions_consumed?: boolean; fact_snapshot?: { facts: ProjectFact[]; conflicts: ProjectGenerationObservation[]; created_at: string } | null };
 export type ProjectObservation = {
   id: string;
   titulo: string;
+  categoria?: 'CRÍTICAS' | 'REVISAR' | 'PENDIENTES' | 'INFORMATIVAS';
   nivel_riesgo: 'ALTO' | 'MEDIO' | 'INFORMATIVO';
   dato_proyecto: string;
   dato_fuente: string;

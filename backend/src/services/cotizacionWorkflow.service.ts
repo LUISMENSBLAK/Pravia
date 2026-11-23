@@ -20,6 +20,7 @@ import {
 } from '../domain/cotizacionContract';
 import { cotizacionObjectWhere, cotizacionReadWhere } from './objectAccess.service';
 import { createQuoteOperationalSnapshotInTransaction } from './quoteBudget.service';
+import { reserveOrganizationFolio } from './organizationFolio.service';
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -46,6 +47,7 @@ export async function recordQuoteTransitionInTransaction(tx: Prisma.TransactionC
   recipient?: string | null;
   reason?: string | null;
   quoteVersionId?: string | null;
+  creationOrigin?: 'ALTA_DIRECTA';
 }) {
   const { actor, quote } = input;
   if (quote.organization_id !== actor.organizationId) failQuote(404, 'COT001_NOT_FOUND', 'No se encontró la cotización o no tienes acceso.');
@@ -58,7 +60,7 @@ export async function recordQuoteTransitionInTransaction(tx: Prisma.TransactionC
     effective_at: input.effectiveAt,
     recorded_at: input.recordedAt,
     accion: input.action,
-    procedencia: input.action === 'CREAR' ? 'CONVERSION_PRO001' : 'CONFIRMACION_HUMANA',
+    procedencia: input.action === 'CREAR' ? input.creationOrigin ?? 'CONVERSION_PRO001' : 'CONFIRMACION_HUMANA',
     canal: input.channel || null,
     destinatario: input.recipient || null,
     causa: input.reason || null,
@@ -98,14 +100,15 @@ export async function recordQuoteTransitionInTransaction(tx: Prisma.TransactionC
 
 export async function initializeQuoteContractInTransaction(tx: Prisma.TransactionClient, actor: Actor, quote: {
   id: string; organization_id: string | null; etapa_contractual: Stage | null; version_operativa: number; transicion_actual_id: string | null;
-}, input: { effectiveAt: Date; idempotencyKey: string; sourceId?: string | null; prospectId: string }) {
+}, input: { effectiveAt: Date; idempotencyKey: string; sourceId?: string | null; prospectId?: string | null; direct?: { payloadHash: string } }) {
   if (quote.etapa_contractual || quote.transicion_actual_id || quote.version_operativa !== 0) failQuote(409, 'COT001_ALREADY_INITIALIZED', 'La cotización ya tiene una historia contractual.');
   return recordQuoteTransitionInTransaction(tx, {
     actor, quote, action: 'CREAR', next: Stage.BORRADOR, changesStage: true,
     effectiveAt: input.effectiveAt, recordedAt: input.effectiveAt,
     key: input.idempotencyKey,
-    hash: quoteHash({ quoteId: quote.id, sourceId: input.sourceId ?? null, prospectId: input.prospectId, actor: actor.id }),
-    evidence: { sourceId: input.sourceId ?? null, prospectId: input.prospectId, origin: input.sourceId ? 'LEGACY_NOTARY_SOURCE' : 'PROSPECT_DIRECT' },
+    hash: input.direct?.payloadHash ?? quoteHash({ quoteId: quote.id, sourceId: input.sourceId ?? null, prospectId: input.prospectId, actor: actor.id }),
+    ...(input.direct ? { creationOrigin: 'ALTA_DIRECTA' as const } : {}),
+    evidence: { sourceId: input.sourceId ?? null, prospectId: input.prospectId ?? null, origin: input.direct ? 'DIRECT' : input.sourceId ? 'LEGACY_NOTARY_SOURCE' : 'PROSPECT_DIRECT' },
   });
 }
 
@@ -121,6 +124,49 @@ const readInclude = {
 
 export class CotizacionWorkflowService {
   constructor(private readonly prisma: PrismaClient) {}
+
+  /** Direct entry shares folio, event history and workflow with Prospect conversion.
+   * No synthetic Prospect is created. The active creator is the initial responsible. */
+  async createDirect(actor: Actor, raw: Record<string, unknown>) {
+    permission(actor, 'cotizaciones.write');
+    assertQuoteFields(raw, ['formalApplicantId', 'operationContext', 'idempotencyKey', 'confirm']);
+    if (raw.confirm !== true) failQuote(400, 'COT001_CONFIRM_REQUIRED', 'Confirma la creación de la cotización.');
+    const key = quoteKey(raw.idempotencyKey);
+    const applicantId = raw.formalApplicantId == null || raw.formalApplicantId === '' ? null : raw.formalApplicantId;
+    if (applicantId !== null && (typeof applicantId !== 'string' || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(applicantId))) failQuote(400, 'COT001_APPLICANT_INVALID', 'Selecciona un compareciente válido.');
+    if (raw.operationContext !== undefined && (typeof raw.operationContext !== 'string' || raw.operationContext.length > 4000)) failQuote(400, 'COT001_CONTEXT_INVALID', 'El contexto debe ser texto de máximo 4000 caracteres.');
+    const context = trim(raw.operationContext);
+    const hash = quoteHash({ actor: actor.id, formalApplicantId: applicantId, operationContext: context, origin: 'DIRECT' });
+    return this.prisma.$transaction(async (tx) => {
+      await this.lock(tx, actor.organizationId, `create:${actor.id}:${key}`);
+      const membership = await tx.organizationMembership.findFirst({ where: {
+        organization_id: actor.organizationId, user_id: actor.id, status: 'ACTIVE', user: { activo: true },
+      }, select: { id: true } });
+      if (!membership) failQuote(403, 'COT001_RESPONSIBLE_REQUIRED', 'La cotización requiere una persona responsable activa en esta Notaría.');
+      const previous = await tx.cotizacionTransicion.findFirst({ where: {
+        organization_id: actor.organizationId, actor_id: actor.id, accion: 'CREAR', procedencia: 'ALTA_DIRECTA', idempotency_key: key,
+      } });
+      if (previous) {
+        assertQuoteReplay(previous, hash, actor.id);
+        const quote = await this.quote(tx, actor, previous.cotizacion_id);
+        return { ...quote, idempotent: true };
+      }
+      if (applicantId) {
+        permission(actor, 'comparecientes.read');
+        const applicant = await tx.compareciente.findFirst({ where: { id: applicantId as string, organization_id: actor.organizationId, archived_at: null }, select: { id: true } });
+        if (!applicant) failQuote(404, 'COT001_APPLICANT_NOT_FOUND', 'No se encontró el compareciente en esta Notaría.');
+      }
+      const now = new Date();
+      const folio = await reserveOrganizationFolio(tx, actor.organizationId, 'COT', now);
+      const quote = await tx.cotizacion.create({ data: {
+        organization_id: actor.organizationId, user_id: actor.id, prospecto_id: null,
+        numero_cotizacion: folio, estado: 'BORRADOR', contexto_operacion: context || null,
+        solicitante_formal_id: applicantId as string | null,
+      } });
+      await initializeQuoteContractInTransaction(tx, actor, quote, { effectiveAt: now, idempotencyKey: key, direct: { payloadHash: hash } });
+      return { ...(await this.quote(tx, actor, quote.id)), idempotent: false };
+    }, { timeout: 15000, maxWait: 10000 });
+  }
 
   private async lock(tx: Prisma.TransactionClient, organizationId: string, id: string) {
     await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:cot001:${organizationId}:${id}`}))`);
@@ -180,7 +226,7 @@ export class CotizacionWorkflowService {
         previousLabel: event.etapa_anterior ? quoteStageLabel(event.etapa_anterior) : null,
         nextLabel: quoteStageLabel(event.etapa_nueva),
         action: event.accion,
-        actionLabel: event.accion === 'CREAR' ? 'Cotización creada desde Prospecto' : QUOTE_CONTRACT_ACTIONS[event.accion as QuoteContractAction],
+        actionLabel: event.accion === 'CREAR' ? event.procedencia === 'ALTA_DIRECTA' ? 'Cotización creada directamente' : 'Cotización creada desde Prospecto' : QUOTE_CONTRACT_ACTIONS[event.accion as QuoteContractAction],
         effectiveAt: event.effective_at,
         recordedAt: event.recorded_at,
         channel: event.canal,

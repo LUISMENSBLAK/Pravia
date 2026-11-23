@@ -8,6 +8,7 @@ import { quoteBudgetPayload } from './quoteBudget.service';
 import { aiGateway, type AiGatewayExecutor } from '../platform/aiGateway.runtime';
 import { AI_OPERATION_CODES } from '../platform/aiBillingPolicy';
 import { PlatformDomainError } from '../platform/platform.errors';
+import { quoteClientName } from '../domain/quoteIdentity';
 
 type Actor = NonNullable<Request['user']>;
 
@@ -50,6 +51,7 @@ export class QuoteEmailAIService {
       where: { id: quoteId, ...cotizacionObjectWhere(actor) },
       include: {
         prospecto: true,
+        solicitante_formal: { select: { nombre_busqueda: true } },
         conceptos: { orderBy: { orden: 'asc' } },
         creada_por: { select: { nombre: true, apellido: true } },
         actos: { include: { tipo_acto: { select: { nombre: true } } }, orderBy: { orden: 'asc' } },
@@ -66,7 +68,7 @@ export class QuoteEmailAIService {
     const promptVersion = 'COT-EMAIL-IA-001-v1' as const;
     const source = {
       folio: quote.numero_cotizacion || quote.numero_solicitud || quote.id,
-      cliente: quote.prospecto?.nombre || '',
+      cliente: quoteClientName(quote),
       acto: quote.actos.map((item) => item.tipo_acto.nombre).join(', ') || quote.prospecto?.tipo_acto || '',
       descripcion: quote.contexto_operacion || quote.prospecto?.necesidad || '',
       responsable: [quote.creada_por?.nombre, quote.creada_por?.apellido].filter(Boolean).join(' '),

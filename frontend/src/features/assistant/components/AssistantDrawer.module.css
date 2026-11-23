@@ -100,7 +100,7 @@
 .confirmation dl div:last-child { border-bottom: 0; }
 .confirmation dt, .confirmation dd { margin: 0; font-size: 10px; line-height: 1.4; }
 .confirmation dt { color: var(--color-text-secondary); }
-.confirmation dd { color: var(--color-text-primary); font-weight: 650; }
+.confirmation dd { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; color: var(--color-text-primary); font-weight: 650; }
 .confirmationActions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .confirmationActions button { min-height: 36px; border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 0 var(--space-3); color: var(--color-text-primary); background: white; font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
 .confirmationActions .confirmButton { display: inline-flex; align-items: center; gap: 6px; border-color: var(--color-gold-500); background: var(--color-gold-400); }

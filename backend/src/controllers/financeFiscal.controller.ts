@@ -2,8 +2,10 @@ import type { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
 import { FinanceFiscalError, FinanceFiscalService, type UploadedFiscalFile } from '../services/financeFiscal.service';
 import { FiscalDocumentExtractionService, FiscalExtractionError } from '../services/fiscalDocumentExtraction.service';
+import { configuredCfdiProvider } from '../services/cfdiRuntimeProvider';
+import { FacturamaSandboxError } from '../services/facturamaSandboxProvider';
 
-const service = new FinanceFiscalService(prisma);
+const service = new FinanceFiscalService(prisma, configuredCfdiProvider());
 const fiscalExtractor = new FiscalDocumentExtractionService();
 const correlation = (req: Request) => req.correlationId;
 const actor = (req: Request) => {
@@ -18,6 +20,7 @@ function file(value: Express.Multer.File | undefined): UploadedFiscalFile | unde
 function fail(res: Response, error: unknown, fallback: string) {
   const correlationId = String(res.getHeader('x-correlation-id') || '');
   if (error instanceof FinanceFiscalError) return res.status(error.status).json({ success: false, code: error.code, error: error.message, correlation_id: correlationId });
+  if (error instanceof FacturamaSandboxError) return res.status(error.status).json({ success: false, code: error.code, error: error.message, correlation_id: correlationId });
   if (error instanceof FiscalExtractionError) return res.status(error.status).json({ success: false, code: error.code, error: error.message, correlation_id: correlationId });
   const safeError = error instanceof Error ? { name: error.name, code: 'CFDI_OPERATION_FAILED' } : { name: 'UnknownError', code: 'CFDI_OPERATION_FAILED' };
   console.error(`[FinanceFiscal] ${fallback}`, { ...safeError, correlation_id: correlationId });
@@ -254,7 +257,7 @@ export class FinanceFiscalController {
   }
 
   static async stamp(req: Request, res: Response) {
-    try { return res.json({ success: true, data: await service.stamp(actor(req), req.params.id) }); }
+    try { return res.json({ success: true, data: await service.stamp(actor(req), req.params.id, req.body || {}, correlation(req)) }); }
     catch (error) { return fail(res, error, 'No pudimos solicitar el timbrado.'); }
   }
 

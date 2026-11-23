@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, LoaderCircle } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowUp, ChevronLeft, ChevronRight, LoaderCircle } from 'lucide-react';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAssistant } from '../assistant/AssistantProvider';
@@ -33,10 +33,15 @@ export function ExpedienteWorkspace() {
   const { id = '' } = useParams(); const location = useLocation(); const navigate = useNavigate(); const { openAssistant } = useAssistant(); const { user } = useAuth(); const fixtureMode = import.meta.env.DEV ? new URLSearchParams(location.search).get('fixture') : null; const fixtureISR = fixtureMode === 'isr'; const fixtureFinance = fixtureMode === 'exp008'; const fixtureActivity = fixtureMode === 'exp009'; const localFixture = fixtureISR || fixtureFinance || fixtureActivity; const [expediente, setExpediente] = useState<ExpedienteDetail | null>(localFixture ? localISRExpediente : null); const [project, setProject] = useState<ProjectState | null>(null); const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(localFixture ? 'ready' : 'loading');
   const tabRefs = useRef<Partial<Record<TabKey, HTMLButtonElement | null>>>({});
   const tabsContainerRef = useRef<HTMLElement | null>(null);
+  const sectionsStart = useRef<HTMLDivElement>(null);
+  const headerStart = useRef<HTMLDivElement>(null);
+  const pendingJump = useRef(false);
   const [budgetDirty, setBudgetDirty] = useState(false);
   const requestedActive = normalizeExpedienteSection(location.hash.slice(1));
   const canReadCompliance = Boolean(user?.permissions?.includes('compliance.read'));
-  const active = requestedActive === 'cumplimiento' && !canReadCompliance ? 'actos' : requestedActive;
+  const tabs = useMemo(() => allTabs.filter((tab) => tab.key !== 'finanzas' || expediente?.capabilities.canReadCaseFinance || expediente?.capabilities.canReadFinance).filter((tab) => !['proyecto', 'plantillas'].includes(tab.key) || expediente?.capabilities.canReadProject).filter((tab)=>tab.key!=='isr'||fixtureISR||!user?.permissions||user.permissions.includes('isr.read')).filter((tab)=>tab.key!=='cumplimiento'||canReadCompliance), [expediente,fixtureISR,user,canReadCompliance]);
+  const active = tabs.some((tab) => tab.key === requestedActive) ? requestedActive : 'actos';
+  const activeIndex = tabs.findIndex((tab) => tab.key === active);
   const load = useCallback(async (signal?: AbortSignal) => { if(localFixture){setExpediente(localISRExpediente);setStatus('ready');return;}try { const detail = await expedientesService.detail(id, signal); setExpediente(detail); if (detail.capabilities.canReadProject) { try { setProject(await expedientesService.project(id, signal)); } catch { setProject(null); } } setStatus('ready'); } catch (error) { if (!(error instanceof DOMException && error.name === 'AbortError')) setStatus('error'); } }, [localFixture,id]);
   useEffect(() => {
     const mainContent = document.getElementById('main-content');
@@ -49,19 +54,40 @@ export function ExpedienteWorkspace() {
     const element = tabRefs.current[active];
     const container = tabsContainerRef.current;
     if (!element || !container) return;
-    const target = element.offsetLeft - ((container.clientWidth - element.clientWidth) / 2);
+    const target = container.scrollLeft + element.getBoundingClientRect().left - container.getBoundingClientRect().left - ((container.clientWidth - element.clientWidth) / 2);
     const left = Math.max(0, target);
-    if (typeof container.scrollTo === 'function') container.scrollTo({ left, behavior: 'smooth' });
+    const motion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+    if (typeof container.scrollTo === 'function') container.scrollTo({ left, behavior: motion });
     else container.scrollLeft = left;
+    if (pendingJump.current) { pendingJump.current = false; sectionsStart.current?.scrollIntoView?.({ block: 'start' }); }
   }, [active, status]);
-  const tabs = useMemo(() => allTabs.filter((tab) => tab.key !== 'finanzas' || expediente?.capabilities.canReadCaseFinance || expediente?.capabilities.canReadFinance).filter((tab) => !['proyecto', 'plantillas'].includes(tab.key) || expediente?.capabilities.canReadProject).filter((tab)=>tab.key!=='isr'||fixtureISR||!user?.permissions||user.permissions.includes('isr.read')).filter((tab)=>tab.key!=='cumplimiento'||canReadCompliance), [expediente,fixtureISR,user,canReadCompliance]);
   if (status === 'loading') return <div className={styles.workspaceLoading}><LoaderCircle className={styles.spin} /><span>Preparando el workspace…</span></div>;
   if (status === 'error' || !expediente) return <section className={styles.pageState} role="alert"><span><AlertTriangle /></span><h2>No pudimos abrir este expediente.</h2><p>La información no está disponible o ya no tienes acceso.</p><button type="button" className={styles.secondaryButton} onClick={() => { setStatus('loading'); void load(); }}>Reintentar</button></section>;
   const confirmLeaveBudget = () => !budgetDirty || window.confirm('Hay cambios sin guardar en el presupuesto. ¿Salir sin guardarlos?');
-  return <div className={styles.workspace}><Link className={styles.backLink} to="/expedientes" onClick={(event) => { if (!confirmLeaveBudget()) event.preventDefault(); }}><ArrowLeft size={17} />Volver a expedientes</Link>
-    <ExpedienteInformationHeader expediente={expediente} onChanged={() => load()} onAssistant={() => openAssistant({ prefill: '¿Qué falta en este expediente?' })} onSeguimiento={() => { if (confirmLeaveBudget()) navigate('#seguimiento'); }} />
+  const changeSection = (key: TabKey) => {
+    if (key === active) { sectionsStart.current?.scrollIntoView?.({ block: 'start' }); return true; }
+    if (!confirmLeaveBudget()) return false;
+    pendingJump.current = true;
+    navigate({ hash: key }, { replace: true });
+    return true;
+  };
+  return <div className={styles.workspace}><div ref={headerStart} className={styles.sectionJump} /><Link className={styles.backLink} to="/expedientes" onClick={(event) => { if (!confirmLeaveBudget()) event.preventDefault(); }}><ArrowLeft size={17} />Volver a expedientes</Link>
+    <ExpedienteInformationHeader expediente={expediente} onChanged={() => load()} onAssistant={() => openAssistant({ prefill: '¿Qué falta en este expediente?' })} onSeguimiento={() => changeSection('seguimiento')} />
     {!localFixture && <RecordCollaborators kind="expediente" recordId={expediente.id} canManage={user?.role === 'DIRECCION' || user?.role === 'ADMINISTRACION'} />}
-    <nav ref={tabsContainerRef} className={styles.tabs} aria-label="Secciones del expediente" role="tablist">{tabs.map((tab) => <button key={tab.key} ref={(element) => { tabRefs.current[tab.key] = element; }} type="button" role="tab" aria-selected={active === tab.key} className={active === tab.key ? styles.tabActive : ''} onClick={() => { if (tab.key === active || confirmLeaveBudget()) navigate({ hash: tab.key }, { replace: true }); }}>{tab.label}</button>)}</nav>
-    <main className={styles.tabContent} role="tabpanel" aria-label={tabs.find((tab) => tab.key === active)?.label}>{active === 'actos' && <ActsTab expediente={expediente} onChanged={() => void load()} />}{active === 'comparecientes' && <PartiesTab expediente={expediente} />}{active === 'predios' && <Suspense fallback={<div role="status">Cargando predios…</div>}><PropertiesTab expediente={expediente} onChanged={() => void load()} /></Suspense>}{active === 'documentos' && <DocumentsTab expediente={expediente} onChanged={() => void load()} />}{active === 'seguimiento' && <WorkflowTab expediente={expediente} onChanged={() => void load()} />}{active === 'plantillas' && <TemplatesFormatsTab expediente={expediente} />}{active === 'cuestionarios' && <QuestionnairesTab expediente={expediente} />}{active === 'presupuesto' && <BudgetTab expedienteId={expediente.id} onDirtyChange={setBudgetDirty} />}{active === 'proyecto' && <ProjectTab expediente={expediente} project={project} onChanged={() => void load()} />}{active === 'finanzas' && (expediente.capabilities.canReadCaseFinance || expediente.capabilities.canReadFinance) && <FinanceTab expediente={expediente} onChanged={() => void load()} />}{active === 'isr' && <ISRTab expedienteId={expediente.id} canWrite={fixtureISR||!user?.permissions||user.permissions.includes('isr.write')} fixture={fixtureISR} />}{active === 'cumplimiento' && canReadCompliance && <ComplianceTab expediente={expediente} />}{active === 'archivo' && <ArchiveInstrument expedienteId={expediente.id} onSaved={() => void load()} />}{active === 'actividad' && <ActivityTab expediente={expediente} fixture={fixtureActivity} />}</main>
+    <div ref={sectionsStart} className={`${styles.sectionJump} ${styles.sectionAnchor}`} />
+    <div className={styles.sectionNavigation}>
+      <button type="button" className={styles.sectionStep} aria-label="Volver a información del expediente" title="Volver a la ficha" onClick={() => headerStart.current?.scrollIntoView?.({ block: 'start' })}><ArrowUp size={17} aria-hidden="true" /></button>
+      <button type="button" className={styles.sectionStep} aria-label="Sección anterior" disabled={activeIndex <= 0} onClick={() => changeSection(tabs[activeIndex - 1].key)}><ChevronLeft size={17} aria-hidden="true" /></button>
+      <nav ref={tabsContainerRef} className={styles.tabs} aria-label="Secciones del expediente" role="tablist" onKeyDown={(event) => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const index = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (activeIndex + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+        const next = tabs[index];
+        if (next && changeSection(next.key)) tabRefs.current[next.key]?.focus({ preventScroll: true });
+      }}>{tabs.map((tab) => <button key={tab.key} id={`case-tab-${tab.key}`} ref={(element) => { tabRefs.current[tab.key] = element; }} type="button" role="tab" tabIndex={active === tab.key ? 0 : -1} aria-controls="case-section-panel" aria-selected={active === tab.key} className={active === tab.key ? styles.tabActive : ''} onClick={() => changeSection(tab.key)}>{tab.label}</button>)}</nav>
+      <select className={styles.sectionPicker} aria-label="Ir a una sección del expediente" value={active} onChange={(event) => changeSection(event.target.value as TabKey)}>{tabs.map((tab) => <option key={tab.key} value={tab.key}>{tab.label}</option>)}</select>
+      <button type="button" className={styles.sectionStep} aria-label="Sección siguiente" disabled={activeIndex >= tabs.length - 1} onClick={() => changeSection(tabs[activeIndex + 1].key)}><ChevronRight size={17} aria-hidden="true" /></button>
+    </div>
+    <section id="case-section-panel" className={styles.tabContent} role="tabpanel" aria-label={tabs.find((tab) => tab.key === active)?.label}>{active === 'actos' && <ActsTab expediente={expediente} onChanged={() => void load()} />}{active === 'comparecientes' && <PartiesTab expediente={expediente} />}{active === 'predios' && <Suspense fallback={<div role="status">Cargando predios…</div>}><PropertiesTab expediente={expediente} onChanged={() => void load()} /></Suspense>}{active === 'documentos' && <DocumentsTab expediente={expediente} onChanged={() => void load()} />}{active === 'seguimiento' && <WorkflowTab expediente={expediente} onChanged={() => void load()} />}{active === 'plantillas' && <TemplatesFormatsTab expediente={expediente} />}{active === 'cuestionarios' && <QuestionnairesTab expediente={expediente} />}{active === 'presupuesto' && <BudgetTab expedienteId={expediente.id} onDirtyChange={setBudgetDirty} />}{active === 'proyecto' && <ProjectTab expediente={expediente} project={project} onChanged={() => void load()} />}{active === 'finanzas' && (expediente.capabilities.canReadCaseFinance || expediente.capabilities.canReadFinance) && <FinanceTab expediente={expediente} onChanged={() => void load()} />}{active === 'isr' && <ISRTab expedienteId={expediente.id} canWrite={fixtureISR||!user?.permissions||user.permissions.includes('isr.write')} fixture={fixtureISR} />}{active === 'cumplimiento' && canReadCompliance && <ComplianceTab expediente={expediente} />}{active === 'archivo' && <ArchiveInstrument expedienteId={expediente.id} onSaved={() => void load()} />}{active === 'actividad' && <ActivityTab expediente={expediente} fixture={fixtureActivity} />}</section>
   </div>;
 }
