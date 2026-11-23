@@ -1,4 +1,5 @@
 import type { Permission } from '../auth/permissions';
+import { createHash } from 'node:crypto';
 import type { ActorContext } from '../auth/actorContext';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import prisma from '../config/prisma';
@@ -98,6 +99,11 @@ export class AiGateway {
     if (!request.idempotencyKey || !request.traceId) {
       throw new PlatformDomainError('AI_IDEMPOTENCY_CONTEXT_REQUIRED', 'La solicitud IA requiere trazabilidad e idempotencia.', 400);
     }
+    // Domain prefixes, source IDs and batch/escalation suffixes can exceed the
+    // ledger's varchar(180). Hash only oversized keys, never truncate them:
+    // retries stay stable and distinct operations cannot collapse to one key.
+    const boundedKey = (key: string) => key.length <= 180 ? key : `sha256:${createHash('sha256').update(key).digest('hex')}`;
+    request = { ...request, idempotencyKey: boundedKey(request.idempotencyKey), traceId: boundedKey(request.traceId) };
     if (!externalProviderExecutionEnabled()) {
       throw new PlatformDomainError(
         'AI_EXTERNAL_DISABLED',

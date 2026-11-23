@@ -56,6 +56,20 @@ const adapter = (providerCode: string, output: string, execute = vi.fn()) => ({
 }) as AiProviderAdapter;
 
 describe('AI Gateway versioned routing contract', () => {
+  it('acota claves compuestas largas sin truncar ni colisionar sus sufijos', async () => {
+    const keys = ['A', 'B', 'A'].map(suffix => 'composite-domain-prefix:'.repeat(12) + suffix);
+    const traces: string[] = [];
+    for (const key of keys) {
+      const db = fakeDb(); const provider = adapter('QA_PROVIDER', 'bounded');
+      await new AiGateway(db, [provider]).execute({ actor, operationCode: 'QA_STANDARD', billingClass: 'PLATFORM_INCLUDED',
+        idempotencyKey: key, traceId: key, payload: {} });
+      const input = vi.mocked(provider.execute).mock.calls[0][0];
+      expect(input.traceId).toMatch(/^sha256:[a-f0-9]{64}$/);
+      expect(db.aiUsageEvent.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ trace_id: input.traceId, idempotency_key: input.traceId }) }));
+      traces.push(input.traceId);
+    }
+    expect(traces[0]).toBe(traces[2]); expect(traces[0]).not.toBe(traces[1]);
+  });
   it.each(['ECONOMY', 'STANDARD', 'PREMIUM'] as const)(
     'AIG route %s uses the configured candidate and records its COGS without wallet debit',
     async (tier) => {
