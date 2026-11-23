@@ -32,7 +32,7 @@ export type AiProviderResult<T = unknown> = {
 
 export interface AiProviderAdapter {
   readonly providerCode: string;
-  execute<T>(input: { modelCode: string; payload: unknown; timeoutMs: number; traceId: string }): Promise<AiProviderResult<T>>;
+  execute<T>(input: { modelCode: string; payload: unknown; timeoutMs: number; traceId: string; maxOutputTokens?: number | null }): Promise<AiProviderResult<T>>;
 }
 
 type RoutingCandidate = { providerCode: string; modelCode: string };
@@ -188,6 +188,7 @@ export class AiGateway {
             payload: request.payload,
             timeoutMs: Math.max(1_000, Math.min(request.timeoutMs || 120_000, 300_000)),
             traceId: request.traceId,
+            maxOutputTokens: operation.max_output,
           });
           receivedResult = result;
         } catch (error) {

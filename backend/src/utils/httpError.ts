@@ -23,6 +23,19 @@ const defaultMessage = (status: number) => status >= 500
   ? 'No fue posible completar la solicitud. Intenta de nuevo.'
   : 'La solicitud no pudo procesarse.';
 
+// Only reviewed, static messages may cross the production 5xx boundary.
+// Never pass through provider payloads, configuration values or exception text.
+const PUBLIC_UNAVAILABLE_MESSAGES: Record<string, string> = {
+  AI_EXTERNAL_DISABLED: 'Las funciones de IA están deshabilitadas en este entorno. Solicita su habilitación al administrador.',
+  AI_PROVIDER_NOT_CONFIGURED: 'El proveedor IA no está configurado. Contacta al administrador.',
+  AI_ROUTE_UNAVAILABLE: 'No hay una ruta IA disponible para esta operación. Contacta al administrador.',
+  AI_ROUTING_NOT_CONFIGURED: 'La ruta de esta operación IA no está configurada. Contacta al administrador.',
+  COMMERCIAL_PRICE_NOT_CONFIGURED: 'La tarifa de esta operación IA no está configurada. Contacta al administrador.',
+  AI_PROVIDER_RATE_NOT_CONFIGURED: 'La tarifa de esta operación IA no está configurada. Contacta al administrador.',
+  AI_BILLING_CLASS_NOT_CONFIGURED: 'La clasificación de consumo IA no está configurada. Contacta al administrador.',
+  AI_MAX_CHARGE_NOT_CONFIGURED: 'El límite de costo de esta operación IA no está configurado. Contacta al administrador.',
+};
+
 export function normalizeErrorBody(
   body: unknown,
   status: number,
@@ -46,6 +59,9 @@ export function normalizeErrorBody(
   // environments. Production additionally keeps every upstream 5xx opaque.
   // Technical context belongs in server-side logs, never in the response.
   const hideInternalDetails = status === 500 || (production && status >= 500);
+  if (status === 503 && Object.prototype.hasOwnProperty.call(PUBLIC_UNAVAILABLE_MESSAGES, code)) {
+    return { code, error: PUBLIC_UNAVAILABLE_MESSAGES[code], correlation_id: correlationId };
+  }
   if (status === 503 && source.code === 'UPLOAD_STORAGE_UNAVAILABLE') {
     return {
       code: 'UPLOAD_STORAGE_UNAVAILABLE',

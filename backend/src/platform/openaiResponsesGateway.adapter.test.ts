@@ -2,6 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { OpenAiResponsesGatewayAdapter } from './openaiResponsesGateway.adapter';
 
 describe('OpenAI Responses economic adapter', () => {
+  it('rechaza una salida superior al límite del catálogo antes de llamar al proveedor', async () => {
+    const db = { resourceCostVersion: { findFirst: vi.fn() } } as any;
+    const fetcher = vi.fn();
+    const adapter = new OpenAiResponsesGatewayAdapter(db, fetcher as any, 'synthetic-key');
+    await expect(adapter.execute({ modelCode: 'qa-model', payload: { body: { input: [], max_output_tokens: 16384 } },
+      timeoutMs: 2000, traceId: 'limit-qa', maxOutputTokens: 256 })).rejects.toMatchObject({ code: 'AI_OUTPUT_LIMIT_EXCEEDED' });
+    expect(fetcher).not.toHaveBeenCalled(); expect(db.resourceCostVersion.findFirst).not.toHaveBeenCalled();
+  });
   it('reintenta un HTTP transitorio dentro de la misma ejecución económica', async () => {
     const db = { resourceCostVersion: { findFirst: vi.fn().mockResolvedValue({
       id: 'cost-http', unit: 'MILLION_TOKENS', currency: 'MXN', cost_amount: '1',

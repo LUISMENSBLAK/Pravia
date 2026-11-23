@@ -80,6 +80,7 @@ describe('OCR local de identificaciones', () => {
     expect(execute).not.toHaveBeenCalled();
     expect(result.campos).toEqual([expect.objectContaining({ campo: 'rfc', valor: 'QAFA010101QA1', documento_id: 'csf' })]);
     expect(result.alertas).toContain('El escaneo no se pudo identificar como constancia CURP.');
+    expect(result.errores).toEqual([expect.objectContaining({ documento_id: 'curp', nombre: 'curp-qa.pdf', code: 'CURP_DOCUMENT_NOT_RECOGNIZED' })]);
     expect(result.documentos_csf?.[0].source).toBe('LOCAL_OCR_PDF');
   }, 30_000);
 });

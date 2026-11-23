@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { ComparecienteAltaSessionService } from '../services/comparecienteAltaSession.service';
 import { canonicalUploadedDocumentMime } from '../services/documentUploadValidation';
+import { PlatformDomainError } from '../platform/platform.errors';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -249,16 +250,15 @@ export class ComparecienteAltaSessionController {
         ...resultado
       });
     } catch (err: any) {
-      console.error('[AltaSessionController] Error en extracción IA:', err);
+      if (err instanceof PlatformDomainError) {
+        return res.status(err.status).json({ success: false, ok: false, code: err.code, error: err.message });
+      }
+      console.error('[AltaSessionController] Error en extracción IA', { error_name: err?.name || 'Error' });
       return res.status(500).json({
         success: false,
         ok: false,
-        error: 'IA_EXTRACTION_ERROR',
-        provider: 'OPENAI',
-        finishReason: err.finishReason || 'UNKNOWN',
-        partsCount: err.partsCount || 0,
-        rawLength: err.rawLength || 0,
-        mensaje: err.message
+        code: 'DOCUMENT_EXTRACTION_INTERNAL_ERROR',
+        error: 'No pudimos completar la extracción. Conservamos los archivos para volver a intentar; ningún compareciente se creó automáticamente.',
       });
     }
   }

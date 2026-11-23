@@ -75,9 +75,26 @@ describe('Comparecientes client workspace',()=>{
     const user = userEvent.setup(); renderPath('/comparecientes/party-1');
     await user.click(await screen.findByRole('button', { name: /Extraer información con IA/ }));
     expect(await screen.findByText('Extracción parcial: hay documentos sin analizar')).toBeInTheDocument();
-    expect(screen.getByText('INE sin leer.png')).toBeInTheDocument();
+    expect(screen.getByText('INE sin leer.png: IA no disponible')).toBeInTheDocument();
     expect(screen.getByDisplayValue('ARQUITECTA')).toBeInTheDocument();
     expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
+  });
+  it('explica el bloqueo IA sin afirmar que los campos faltan en documentos no analizados', async () => {
+    mockApi(); const normalFetch = fetch;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/comparecientes/party-1/extraer-ia')) return Promise.resolve(json({ success: true, data: {
+        values: { ocupacion: 'ARQUITECTA' }, proposals: {}, faltantes: ['nombre', 'rfc'],
+        errores: [{ nombre: 'acta.pdf', code: 'AI_EXTERNAL_DISABLED', error: 'La IA está deshabilitada.' }],
+      } }));
+      return normalFetch(input, init);
+    }));
+    const user = userEvent.setup(); renderPath('/comparecientes/party-1');
+    await user.click(await screen.findByRole('button', { name: /Extraer información con IA/ }));
+    expect(await screen.findByText('Extracción parcial: IA no disponible para algunos documentos')).toBeInTheDocument();
+    expect(screen.getByText('acta.pdf: La IA está deshabilitada.')).toBeInTheDocument();
+    expect(screen.getByText(/No se puede concluir que estos datos falten/)).toBeInTheDocument();
+    expect(screen.queryByText('Datos no encontrados')).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue('ARQUITECTA')).toBeInTheDocument();
   });
   it('conserva el regreso al expediente en una ficha maestra existente', async () => {
     mockApi(); renderPath('/comparecientes/party-1?fromExpediente=exp-1&fromSection=comparecientes');

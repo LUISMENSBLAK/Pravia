@@ -67,4 +67,19 @@ describe('normalizeErrorBody', () => {
     expect(errorLogLevel(404)).toBe('warn');
     expect(errorLogLevel(503)).toBe('error');
   });
+
+  it.each([
+    ['AI_EXTERNAL_DISABLED', 'Las funciones de IA están deshabilitadas en este entorno. Solicita su habilitación al administrador.'],
+    ['COMMERCIAL_PRICE_NOT_CONFIGURED', 'La tarifa de esta operación IA no está configurada. Contacta al administrador.'],
+  ])('conserva %s en producción con mensaje fijo y sin detalles del proveedor', (code, message) => {
+    expect(normalizeErrorBody({ code, error: 'secret-provider-detail', stack: 'private', key: 'sk-private' }, 503, 'trace-ai', true))
+      .toEqual({ code, error: message, correlation_id: 'trace-ai' });
+  });
+
+  it('no permite usar un código IA para revelar errores 500 o 502', () => {
+    for (const status of [500, 502]) {
+      expect(normalizeErrorBody({ code: 'AI_EXTERNAL_DISABLED', error: 'private' }, status, 'trace', true).code)
+        .not.toBe('AI_EXTERNAL_DISABLED');
+    }
+  });
 });

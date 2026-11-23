@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
 import { extractCurpPdf } from './curpDocumentExtraction.service';
 import { extraerMultiplesDocumentos } from './openaiDocument.service';
+import { PlatformDomainError } from '../platform/platform.errors';
 
 async function syntheticCurpPdf() {
   const pdf = await PDFDocument.create();
@@ -25,14 +26,14 @@ async function syntheticCurpPdf() {
 
 describe('extracción determinística CURP PDF', () => {
   it('conserva la lectura local real y declara el análisis parcial si falla la IA de otro documento', async () => {
-    const execute = vi.fn().mockRejectedValue(Object.assign(new Error('provider unavailable'), { code: 'AI_EXTERNAL_DISABLED' }));
+    const execute = vi.fn().mockRejectedValue(new PlatformDomainError('AI_EXTERNAL_DISABLED', 'IA deshabilitada en este entorno.', 503));
     const result = await extraerMultiplesDocumentos([
       { buffer: await syntheticCurpPdf(), mimeType: 'application/pdf', tipoDocumento: 'CURP', documentoId: 'curp-qa', nombreOriginal: 'CURP_SINTETICA.pdf' },
       { buffer: Buffer.from('synthetic image'), mimeType: 'image/png', tipoDocumento: 'IDENTIFICACION', documentoId: 'ine-qa', nombreOriginal: 'INE_SINTETICA.png' },
     ], { actor: { userId: 'user-qa', organizationId: 'org-qa', membershipId: 'membership-qa', role: 'ABOGADO', permissions: ['ia.execute'], scope: 'ASSIGNED_OBJECTS', sessionId: 'session-qa' }, idempotencyKey: 'partial-qa', traceId: 'partial-qa', gateway: { execute } });
     expect(execute).toHaveBeenCalled(); expect(result.campos).toMatchObject([{ campo: 'curp', valor: 'GARA900101HDFRBC09' }]);
     expect(result.alertas.join(' ')).toContain('Extracción parcial'); expect(result.alertas.join(' ')).toContain('INE_SINTETICA.png');
-    expect(result.errores).toMatchObject([{ documento_id: 'ine-qa', nombre: 'INE_SINTETICA.png' }]);
+    expect(result.errores).toMatchObject([{ documento_id: 'ine-qa', nombre: 'INE_SINTETICA.png', code: 'AI_EXTERNAL_DISABLED', error: 'IA deshabilitada en este entorno.' }]);
     expect(result.campos.some(field => field.documento_id === 'ine-qa')).toBe(false);
   });
   it('no anuncia éxito cuando todas las fuentes requieren un proveedor que falla', async () => {

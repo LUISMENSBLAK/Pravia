@@ -291,10 +291,9 @@ export class ComparecienteAltaSessionService {
   }
 
   /**
-   * Extrae datos de TODOS los documentos cargados mediante OpenAI (una sola llamada).
-   *
-   * REGLA PRAVIA: Si OpenAI no está disponible o falla, se lanza un error.
-   * NO existe fallback local. NO se rellenan campos con datos simulados.
+   * Lee las fuentes reales mediante el extractor canónico (local o AI Gateway).
+   * Conserva resultados parciales y su causa; nunca fabrica campos ni declara
+   * procesado un documento cuyo análisis falló.
    */
   static async extraerDatosConIA(sessionId: string, documentoIds: string[], optionalBuffer?: Buffer, requestKey = '') {
     const actor = requireActorContext();
@@ -389,6 +388,11 @@ export class ComparecienteAltaSessionService {
       resultadoIA,
       (sesion.tipo_persona || resultadoIA.tipo_persona_detectado || 'FISICA') as 'FISICA' | 'MORAL',
     );
+    const erroresExtraccion = [...erroresCarga, ...(resultadoIA.errores || [])];
+    // ZIP members use <source uuid>:<entry>. A failed member keeps its original
+    // archive retryable rather than falsely marking the entire source processed.
+    const failedDocumentIds = new Set(erroresExtraccion.map((entry) => String(entry.documento_id).split(':')[0]));
+    const documentosProcesados = documentosParaIA.filter((document) => !failedDocumentIds.has(document.documentoId));
     const camposCombinados: Record<string, any> = { ...consolidacion.values };
     const propuestaRespuesta: Record<string, any> = { ...consolidacion.proposals };
 
@@ -519,6 +523,7 @@ export class ComparecienteAltaSessionService {
       _ia_resumen: resultadoIA.resumen_ejecutivo || `Extracción completada sobre ${documentosParaIA.length} documentos.`,
       _ia_alertas: resultadoIA.alertas || [],
       _ia_faltantes: faltantesAplicables,
+      _ia_errores: erroresExtraccion,
       _ia_estructura_persona_moral: resultadoIA.estructura_persona_moral || null,
       _ia_conflictos: consolidacion.conflicts,
       _ia_propuesta: propuestaRespuesta,
@@ -538,8 +543,8 @@ export class ComparecienteAltaSessionService {
       }
     });
 
-    // Marcar documentos como PROCESADO
-    for (const doc of documentosParaIA) {
+    // Keep failed sources retryable; only successfully analyzed sources advance.
+    for (const doc of documentosProcesados) {
       await prisma.cargaTemporalDocumento.update({
         where: { id: doc.documentoId },
         data: { estado: 'PROCESADO' }
@@ -548,8 +553,8 @@ export class ComparecienteAltaSessionService {
 
     return {
       success: true,
-      procesados: documentosParaIA.length,
-      errores: [...erroresCarga, ...(resultadoIA.errores || [])],
+      procesados: documentosProcesados.length,
+      errores: erroresExtraccion,
       sesion_id: sessionId,
       propuesta: propuestaRespuesta,
       conflictos: consolidacion.conflicts,

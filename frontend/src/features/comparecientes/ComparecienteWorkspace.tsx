@@ -238,6 +238,7 @@ export function ComparecienteWorkspace() {
     filled: string[];
     missing: string[];
     errors: string[];
+    unavailable: boolean;
     alerts: string[];
     curpDocuments: Array<{ document_id: string; status: string; fields: Record<string, { literal: string; normalized: string; page: number } | null>; warnings: string[] }>;
     csfDocuments: Array<{ document_id: string; sha256: string; source: string; status: string;
@@ -522,14 +523,16 @@ export function ComparecienteWorkspace() {
     setExtractionConflicts(conflicts);
     const nested = response.borrador_actualizado || {};
     const missing = response.faltantes || nested._ia_faltantes || response.resultado?.faltantes || [];
+    const documentErrors = response.errores || nested._ia_errores || [];
     const errors = [
       ...(response.documentos_omitidos || []),
-      ...((response.errores || []).map((entry: any) => entry?.nombre || entry?.error).filter(Boolean)),
+      ...documentErrors.map((entry: any) => [entry?.nombre, entry?.error].filter(Boolean).join(': ')).filter(Boolean),
     ];
     setExtractionReview({
       filled: Object.keys(valuesToApply),
       missing,
       errors,
+      unavailable: documentErrors.some((entry: any) => String(entry?.code || '').startsWith('AI_')),
       alerts: response.alertas || nested._ia_alertas || response.resultado?.alertas || [],
       curpDocuments: response.documentos_curp || response.resultado?.documentos_curp || nested._ia_documentos_curp || [],
       csfDocuments: response.documentos_csf || response.resultado?.documentos_csf || [],
@@ -776,11 +779,11 @@ export function ComparecienteWorkspace() {
         {extractionReview && (
           <section className={styles.extractionReview} aria-label="Resultado de extracción documental">
             <header>
-              <div><strong>{extractionReview.errors.length ? "Extracción parcial: hay documentos sin analizar" : extractionReview.missing.length ? "Extracción completada con faltantes" : "Extracción completada"}</strong><span>{extractionReview.filled.length} campo{extractionReview.filled.length === 1 ? "" : "s"} propuesto{extractionReview.filled.length === 1 ? "" : "s"} para revisión humana.</span></div>
+              <div role="status"><strong>{extractionReview.unavailable ? "Extracción parcial: IA no disponible para algunos documentos" : extractionReview.errors.length ? "Extracción parcial: hay documentos sin analizar" : extractionReview.missing.length ? "Extracción completada con faltantes" : "Extracción completada"}</strong><span>{extractionReview.filled.length} campo{extractionReview.filled.length === 1 ? "" : "s"} propuesto{extractionReview.filled.length === 1 ? "" : "s"} para revisión humana.</span></div>
               <button type="button" onClick={() => setExtractionReview(null)}>Cerrar</button>
             </header>
-            {extractionReview.missing.length > 0 && <div><b>Datos no encontrados</b><ul>{extractionReview.missing.map((field) => <li key={field}>{field.replaceAll("_", " ")}: DATO NO ENCONTRADO</li>)}</ul></div>}
-            {extractionReview.errors.length > 0 && <div><b>Errores de lectura</b><ul>{extractionReview.errors.map((entry) => <li key={entry}>{entry}</li>)}</ul></div>}
+            {extractionReview.errors.length > 0 && <div><b>Documentos sin analizar</b><ul>{extractionReview.errors.map((entry) => <li key={entry}>{entry}</li>)}</ul><p>No se puede concluir que estos datos falten en los documentos que no se analizaron. Conservamos las propuestas obtenidas y los archivos para reintentar.</p></div>}
+            {extractionReview.missing.length > 0 && <details><summary>{extractionReview.errors.length ? "Campos aún sin propuesta" : "Datos no encontrados"} ({extractionReview.missing.length})</summary><ul>{extractionReview.missing.map((field) => <li key={field}>{field.replaceAll("_", " ")}: {extractionReview.errors.length ? "SIN PROPUESTA" : "DATO NO ENCONTRADO"}</li>)}</ul></details>}
             {extractionReview.alerts.length > 0 && <div><b>Observaciones</b><ul>{extractionReview.alerts.map((entry) => <li key={entry}>{entry}</li>)}</ul></div>}
             {extractionReview.curpDocuments.length > 0 && <div><b>Constancia CURP · datos sin confirmar</b><p>Se leyó el documento localmente. La identidad y la certificación requieren revisión humana; no se consultó RENAPO.</p><ul>{extractionReview.curpDocuments.flatMap((document) => ([
               ["nombre_literal", "Nombre literal"], ["folio_documental", "Folio documental"],

@@ -1139,6 +1139,11 @@ export async function extraerMultiplesDocumentos(
   const localResults: DocumentExtractionResult[] = [];
   const remoteDocuments: DocumentoParaExtraccion[] = [];
   const localFailures: Array<CurpDocumentExtractionError | FiscalExtractionError> = [];
+  const localDocumentErrors: NonNullable<DocumentExtractionResult['errores']> = [];
+  const recordLocalFailure = (document: DocumentoParaExtraccion, error: CurpDocumentExtractionError | FiscalExtractionError) => {
+    localFailures.push(error);
+    localDocumentErrors.push({ documento_id: document.documentoId, nombre: document.nombreOriginal, code: error.code, error: error.message });
+  };
   const localOnly = String(process.env.AI_IDENTITY_LOCAL_ONLY || '').toLowerCase() === 'true';
   for (const document of expanded) {
     const mimeType = document.mimeType.toLowerCase();
@@ -1155,7 +1160,7 @@ export async function extraerMultiplesDocumentos(
       const detected = await (image ? extractCurpImage(document.buffer, document.documentoId, mimeType)
         : extractCurpPdf(document.buffer, document.documentoId)).catch((error: unknown) => {
         if (!(error instanceof CurpDocumentExtractionError)) throw error;
-        localFailures.push(error);
+        recordLocalFailure(document, error);
         return null;
       });
       if (!detected) continue;
@@ -1176,7 +1181,7 @@ export async function extraerMultiplesDocumentos(
         mimetype: document.mimeType, size: document.buffer.length,
       }).catch((error: unknown) => {
         if (!(error instanceof FiscalExtractionError)) throw error;
-        localFailures.push(error);
+        recordLocalFailure(document, error);
         return null;
       });
       if (!detected) continue;
@@ -1223,7 +1228,7 @@ export async function extraerMultiplesDocumentos(
       const detected = await (image ? extractIdentityImageWithLocalOcr(document.buffer, document.documentoId, 'INE', mimeType)
         : extractIdentityPdfWithLocalOcr(document.buffer, document.documentoId, 'INE')).catch(() => null);
       if (!detected) {
-        localFailures.push(new CurpDocumentExtractionError('IDENTITY_OCR_FAILED', 'No se pudo leer una identificación mediante OCR local. Revisa el original.'));
+        recordLocalFailure(document, new CurpDocumentExtractionError('IDENTITY_OCR_FAILED', 'No se pudo leer una identificación mediante OCR local. Revisa el original.'));
         continue;
       }
       const useful = detected.fields.length > 0 || Boolean(detected.identificadores_ine.cic || detected.identificadores_ine.ocr);
@@ -1262,11 +1267,11 @@ export async function extraerMultiplesDocumentos(
   // A provider outage must not erase a real local CSF/CURP result. Conversely,
   // zero successful sources is an error, never a fabricated complete extraction.
   if (!results.length && batchFailures.length) throw batchFailures[0].error;
-  const extractionErrors = batchFailures.flatMap(({ documents, error }) => documents.map((document) => ({
+  const extractionErrors = [...localDocumentErrors, ...batchFailures.flatMap(({ documents, error }) => documents.map((document) => ({
     documento_id: document.documentoId, nombre: document.nombreOriginal,
     code: error instanceof PlatformDomainError ? error.code : 'DOCUMENT_EXTRACTION_FAILED',
     error: error instanceof PlatformDomainError ? error.message : 'No se pudo analizar este documento. Reintenta su extracción.',
-  })));
+  })))];
   const partialAlerts = [
     ...new Set(localFailures.map((error) => error.message)),
     ...batchFailures.map(({ documents }) => `Extracción parcial: no se analizaron ${documents.map((document) => document.nombreOriginal).join(', ')}. Reintenta el análisis de estos documentos; los datos no fueron completados ni confirmados.`),

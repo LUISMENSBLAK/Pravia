@@ -75,6 +75,7 @@ vi.mock('../auth/actorContext', () => ({ requireActorContext: () => ({ organizat
 vi.mock('./supabase.service', () => ({ uploadFile: network.uploadFile, deleteFile: network.deleteFile, downloadFile: network.downloadFile }));
 vi.mock('./openaiDocument.service', () => ({
   extraerMultiplesDocumentos: network.extract,
+  missingApplicableComparecienteFields: vi.fn().mockReturnValue(['rfc']),
   curpToFechaNacimiento: vi.fn(), extraerFolioIneMrz: vi.fn(), autoridadPorTipoDocumento: vi.fn(), getOpenAIModelName: vi.fn(),
 }));
 
@@ -106,5 +107,22 @@ describe('H3-F-001 · alta asistida canónica', () => {
     expect(fixture.queries).toHaveLength(1); expect(fixture.queries[0]).toMatchObject({ contract_version: 'CUM-LST-001', query_kind: 'MASTER', trigger_reason: 'COMPARECIENTE_CREATED', execution_state: 'NOT_CONFIGURED' });
     expect(fixture.getSession()).toMatchObject({ estatus: 'COMPLETADO' });
     expect(network.uploadFile).not.toHaveBeenCalled(); expect(network.downloadFile).not.toHaveBeenCalled(); expect(network.extract).not.toHaveBeenCalled();
+  });
+
+  it('conserva los errores parciales en el borrador y no marca procesada una fuente fallida', async () => {
+    fixture.db.cargaTemporalDocumento.findMany.mockResolvedValueOnce([
+      { id: 'local', nombre_original: 'constancia.pdf', mime_type: 'application/pdf', tipo_documento: 'CSF', storage_key_temporal: 'private/local' },
+      { id: 'blocked', nombre_original: 'acta.pdf', mime_type: 'application/pdf', tipo_documento: 'OTRO', storage_key_temporal: 'private/blocked' },
+    ]);
+    network.downloadFile.mockResolvedValue(Buffer.from('synthetic-real-bytes'));
+    const errors = [{ documento_id: 'blocked', nombre: 'acta.pdf', code: 'AI_EXTERNAL_DISABLED', error: 'IA deshabilitada' }];
+    network.extract.mockResolvedValueOnce({ campos: [], alertas: [], errores: errors, proveedor: 'LOCAL', modelo: 'LOCAL', tipo_persona_detectado: 'FISICA' });
+    const result = await ComparecienteAltaSessionService.extraerDatosConIA(ids.session, [], undefined, 'partial-request');
+    expect(result.procesados).toBe(1);
+    expect(result.errores).toEqual(errors);
+    expect(fixture.getSession().borrador_json._ia_errores).toEqual(errors);
+    expect(fixture.db.cargaTemporalDocumento.update).toHaveBeenCalledTimes(1);
+    expect(fixture.db.cargaTemporalDocumento.update).toHaveBeenCalledWith({ where: { id: 'local' }, data: { estado: 'PROCESADO' } });
+    expect(fixture.db.compareciente.create).not.toHaveBeenCalled();
   });
 });

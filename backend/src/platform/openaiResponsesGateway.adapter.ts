@@ -27,7 +27,7 @@ export class OpenAiResponsesGatewayAdapter implements AiProviderAdapter {
   constructor(private readonly db: PrismaClient = prisma, private readonly fetchImpl: typeof fetch = fetch,
     private readonly apiKey = process.env.OPENAI_API_KEY || '') {}
 
-  async execute<T>(input: { modelCode: string; payload: unknown; timeoutMs: number; traceId: string }): Promise<AiProviderResult<T>> {
+  async execute<T>(input: { modelCode: string; payload: unknown; timeoutMs: number; traceId: string; maxOutputTokens?: number | null }): Promise<AiProviderResult<T>> {
     const rawPayload = input.payload as ResponsesPayload | TranscriptionPayload | null;
     if (rawPayload && 'kind' in rawPayload && rawPayload.kind === 'transcription') {
       return this.executeTranscription<T>(input, rawPayload);
@@ -35,6 +35,10 @@ export class OpenAiResponsesGatewayAdapter implements AiProviderAdapter {
     const payload = rawPayload as ResponsesPayload | null;
     if (!payload?.body || typeof payload.body !== 'object' || Array.isArray(payload.body)) {
       throw new PlatformDomainError('AI_PROVIDER_PAYLOAD_INVALID', 'La solicitud IA no tiene un cuerpo válido.', 400);
+    }
+    if (input.maxOutputTokens != null && (!Number.isSafeInteger(payload.body.max_output_tokens)
+      || Number(payload.body.max_output_tokens) <= 0 || Number(payload.body.max_output_tokens) > input.maxOutputTokens)) {
+      throw new PlatformDomainError('AI_OUTPUT_LIMIT_EXCEEDED', 'La solicitud supera el límite de salida configurado para esta operación IA.', 422);
     }
     if (!this.apiKey.trim()) throw new PlatformDomainError('AI_PROVIDER_NOT_CONFIGURED', 'El proveedor IA no está configurado.', 503);
 
@@ -63,10 +67,15 @@ export class OpenAiResponsesGatewayAdapter implements AiProviderAdapter {
     let providerCost = new Prisma.Decimal(0);
     const failedHttpAttempts: Array<{ status: number; costVerified: false }> = [];
     const attempts = payload.retryIncomplete === true ? 2 : 1;
+    let providerAttempts = 0;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const httpAttempts = Math.max(1, Math.min(Number(payload.retryHttp || 1), 3));
       let response: Response | undefined;
       for (let httpAttempt = 1; httpAttempt <= httpAttempts; httpAttempt += 1) {
+        // The catalog reservation covers at most three provider attempts in
+        // total, not three HTTP attempts multiplied by incomplete retries.
+        if (providerAttempts >= 3) throw new PlatformDomainError('AI_PROVIDER_RETRY_LIMIT', 'Se alcanzó el límite de reintentos IA. Revisa el resultado antes de intentar de nuevo.', 503);
+        providerAttempts += 1;
         response = await openAiProviderFetch('/v1/responses', { method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
           signal: AbortSignal.timeout(Math.max(1_000, Math.min(input.timeoutMs, 300_000))),
