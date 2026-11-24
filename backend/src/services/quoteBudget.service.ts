@@ -168,6 +168,7 @@ export class QuoteBudgetService {
       });
       if (!quote) throw new QuoteBudgetError(404, 'QUOTE_NOT_FOUND', 'No se encontró la cotización o no tienes acceso.');
       if (!quote.organization_id) throw new QuoteBudgetError(409, 'QUOTE_TENANT_REQUIRED', 'La cotización histórica requiere revisión antes de editarse.');
+      if (quote.predio_principal_id && raw.propertyValues !== undefined) throw new QuoteBudgetError(409, 'QUOTE_PROPERTY_MASTER_LINKED', 'Los valores provienen del inmueble vinculado. Edita su ficha maestra o desvincúlalo para capturar valores manuales.');
       if (['ACEPTADA', 'ACEPTO_ANTICIPO', 'CONVERTIDA_EXPEDIENTE'].includes(String(quote.etapa_contractual))) {
         throw new QuoteBudgetError(409, 'QUOTE_BUDGET_FROZEN', 'La cotización aceptada o convertida conserva su presupuesto y documentos históricos.');
       }

@@ -18,6 +18,8 @@ import { createQuoteOperationalSnapshotInTransaction } from './quoteBudget.servi
 import { ExpedienteActosService } from './expedienteActos.service';
 import { ExpedienteSeguimientoService } from './expedienteSeguimiento.service';
 import { quoteClientName } from '../domain/quoteIdentity';
+import { effectiveQuotePropertyValues } from '../domain/quotePropertyValues';
+import { CaseSheetService } from './caseSheet.service';
 
 type Actor = NonNullable<Request['user']>;
 
@@ -43,6 +45,7 @@ export interface ConvertCotizacionResult {
   alreadyConverted: boolean;
   correlationId: string;
   validatedAdvanceTotal: number;
+  ficha_expediente?: Awaited<ReturnType<CaseSheetService['automatic']>>;
 }
 
 export class CotizacionConversionService {
@@ -55,12 +58,13 @@ export class CotizacionConversionService {
 
     const correlationId = input.correlationId || crypto.randomUUID();
 
-    return this.prisma.$transaction(async (tx) => {
+    const result: ConvertCotizacionResult = await this.prisma.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:cot001:${input.actorOrganizationId}:${input.cotizacionId}`}))`);
 
       const cotizacion = await tx.cotizacion.findFirst({
         where: { id: input.cotizacionId, organization_id: input.actorOrganizationId },
         include: {
+          predio_principal: true,
           prospecto: true,
           expediente: true,
           conceptos: { orderBy: { orden: 'asc' } },
@@ -214,6 +218,8 @@ export class CotizacionConversionService {
         );
       }
 
+      const propertyValues = effectiveQuotePropertyValues(cotizacion);
+      if (cotizacion.predio_principal?.archived_at) throw new CotizacionBusinessError('El inmueble vinculado está archivado. Revísalo antes de convertir.', 'QUOTE_PROPERTY_ARCHIVED', 409);
       const expediente = await new ExpedienteOpeningService(this.prisma).openInTransaction(tx, {
         tipoActoId: tipoActo.id,
         abogadoId: lawyer.id,
@@ -222,6 +228,7 @@ export class CotizacionConversionService {
         clienteComparecienteId: cotizacion.solicitante_formal?.id || null,
         notariaId: cotizacion.notaria_id,
         cotizacionId: cotizacion.id,
+        valorOperacion: propertyValues.valor_operacion == null ? null : String(propertyValues.valor_operacion),
         folioSeries: input.folioSeries,
         comparecienteId: !canonical || input.solicitanteCaracterPorActo![cotizacion.actos.find((item) => item.tipo_acto_id === tipoActo.id)!.id]
           ? cotizacion.solicitante_formal?.id || null : null,
@@ -229,6 +236,16 @@ export class CotizacionConversionService {
         proximaAccion: 'Integrar documentación y comparecientes',
         correlationId,
       });
+      if (cotizacion.predio_principal_id) {
+        // Carry the master, not a duplicate. No automatic act/property assignment
+        // is inferred in multi-act files, and no source documents are copied.
+        await tx.expedientePredio.create({ data: { organization_id: input.actorOrganizationId,
+          expediente_id: expediente.id, predio_id: cotizacion.predio_principal_id, created_by: actor.id,
+          idempotency_key: `QUOTE:${cotizacion.id}:PROPERTY` } });
+        await tx.auditLog.create({data:{organization_id:input.actorOrganizationId,user_id:actor.id,
+          accion:'INHERIT_QUOTE_PROPERTY',entidad:'Expediente',entidad_id:expediente.id,
+          detalles:{cotizacion_id:cotizacion.id,predio_id:cotizacion.predio_principal_id,documents_copied:false,act_assignment_inferred:false}}});
+      }
       if (canonical && cotizacion.actos.length > 1) {
         const additionalActs = cotizacion.actos.filter((item) => item.tipo_acto_id !== tipoActo.id);
         for (const quoteAct of additionalActs) {
@@ -396,6 +413,9 @@ export class CotizacionConversionService {
 
       return { expediente, alreadyConverted: false, correlationId, validatedAdvanceTotal: eligibility.validatedAdvanceTotal };
     }, { timeout: 20_000 });
+    // All conversion callers share this post-commit hook, including chat.
+    if (input.actor) result.ficha_expediente = await new CaseSheetService(this.prisma).automatic(input.actor, result.expediente.id, `auto:${input.cotizacionId}`);
+    return result;
   }
 
   private async resolveTipoActo(

@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Download, FileWarning, LoaderCircle, Maximize2, Search, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { ArrowLeftRight, ChevronLeft, ChevronRight, Download, FileWarning, LoaderCircle, Maximize2, Search, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './DocumentViewer.module.css';
@@ -36,13 +36,39 @@ function PreviewFallback({ onDownload }: { onDownload?: () => void }) {
 
 function PdfPreview({ url, name, onDownload }: { url: string; name: string; onDownload?: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [pages, setPages] = useState<Array<{ number: number; page: any; text: string }>>([]);
   const [totalPages, setTotalPages] = useState(0);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState<{ mode: 'page' | 'width' | 'manual'; scale: number }>({ mode: 'page', scale: 1 });
+  const [space, setSpace] = useState({ width: 796, height: 570, top: 76 });
   const [currentPage, setCurrentPage] = useState(1);
   const [query, setQuery] = useState('');
   const [searchMessage, setSearchMessage] = useState('');
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let frame = 0;
+    const measure = () => {
+      if (!container.clientWidth || !container.clientHeight) return;
+      const style = getComputedStyle(container);
+      const top = Math.ceil((toolbarRef.current?.getBoundingClientRect().height || 52) + 24);
+      const next = {
+        width: Math.max(1, container.clientWidth - parseFloat(style.paddingLeft || '0') - parseFloat(style.paddingRight || '0')),
+        height: Math.max(1, container.clientHeight - top - parseFloat(style.paddingBottom || '0') - 28),
+        top,
+      };
+      setSpace(previous => previous.width === next.width && previous.height === next.height && previous.top === next.top ? previous : next);
+    };
+    const schedule = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(measure); };
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule);
+    observer?.observe(container);
+    if (toolbarRef.current) observer?.observe(toolbarRef.current);
+    window.addEventListener('resize', schedule);
+    measure();
+    return () => { observer?.disconnect(); window.removeEventListener('resize', schedule); cancelAnimationFrame(frame); };
+  }, [state]);
 
   useEffect(() => {
     let active = true;
@@ -53,6 +79,7 @@ function PdfPreview({ url, name, onDownload }: { url: string; name: string; onDo
       setPages([]);
       setTotalPages(0);
       setCurrentPage(1);
+      setZoom({ mode: 'page', scale: 1 });
       setSearchMessage('');
       try {
         const [pdfjs, worker] = await Promise.all([
@@ -111,14 +138,35 @@ function PdfPreview({ url, name, onDownload }: { url: string; name: string; onDo
     if (!found) { setSearchMessage('No se encontró el texto en el PDF.'); return; }
     goToPage(found.number); setSearchMessage(`Coincidencia en la página ${found.number}.`);
   };
-  return <div ref={containerRef} className={styles.pdfPreview} aria-label={`Vista previa de ${name}`}>
+  const scaleFor = (page: any) => {
+    const base = page.getViewport({ scale: 1 });
+    return zoom.mode === 'manual' ? zoom.scale : zoom.mode === 'width'
+      ? space.width / base.width : Math.min(space.width / base.width, space.height / base.height);
+  };
+  const activePage = pages.find(item => item.number === currentPage)?.page;
+  const currentScale = activePage ? scaleFor(activePage) : 1;
+  const manualZoom = (delta: number) => setZoom({ mode: 'manual', scale: Math.min(4, Math.max(.1, currentScale + delta)) });
+  return <div ref={containerRef} className={styles.pdfPreview} data-zoom-mode={zoom.mode} style={{ paddingTop: space.top }} aria-label={`Vista previa de ${name}`}>
     {state === 'loading' && <p className={styles.previewLoading} role="status"><LoaderCircle aria-hidden="true" />Renderizando documento…</p>}
     {state === 'error' && <PreviewFallback onDownload={onDownload} />}
-    {state === 'ready' && <><div className={styles.pdfToolbar}><div className={styles.searchControl} role="search"><label htmlFor="document-viewer-search">Buscar en documento</label><div><input id="document-viewer-search" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); search(); } }} /><button type="button" aria-label="Buscar en PDF" onClick={search}><Search /></button></div></div><div className={styles.pageControl} aria-label="Navegación de páginas"><button type="button" aria-label="Página anterior" disabled={currentPage <= 1} onClick={() => goToPage(currentPage - 1)}><ChevronLeft /></button><span>{currentPage} / {totalPages || '—'}</span><button type="button" aria-label="Página siguiente" disabled={currentPage >= totalPages || !pages.some((item) => item.number === currentPage + 1)} onClick={() => goToPage(currentPage + 1)}><ChevronRight /></button></div><div className={styles.zoomToolbar} aria-label="Controles de zoom"><button type="button" aria-label="Ajustar a página" onClick={() => setZoom(1)}><Maximize2 /></button><button type="button" aria-label="Reducir zoom" onClick={() => setZoom((value) => Math.max(.6, value - .15))}><ZoomOut /></button><span>{Math.round(zoom * 100)}%</span><button type="button" aria-label="Aumentar zoom" onClick={() => setZoom((value) => Math.min(2, value + .15))}><ZoomIn /></button></div></div><p className={styles.visuallyHidden} aria-live="polite">{searchMessage}</p>{pages.length < totalPages && <p className={styles.pageLoadProgress} role="status"><LoaderCircle aria-hidden="true" />Cargando páginas {pages.length} de {totalPages}…</p>}<div className={styles.pdfPages}>{pages.map((item) => <PdfCanvas key={item.number} page={item.page} number={item.number} total={totalPages} name={name} zoom={zoom} container={containerRef.current} />)}</div></>}
+    {state === 'ready' && <>
+      <div ref={toolbarRef} className={styles.pdfToolbar}>
+        <div className={styles.searchControl} role="search"><label htmlFor="document-viewer-search">Buscar en documento</label><div><input id="document-viewer-search" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); search(); } }} /><button type="button" aria-label="Buscar en PDF" onClick={search}><Search /></button></div></div>
+        <div className={styles.pageControl} aria-label="Navegación de páginas"><button type="button" aria-label="Página anterior" disabled={currentPage <= 1} onClick={() => goToPage(currentPage - 1)}><ChevronLeft /></button><span>{currentPage} / {totalPages || '—'}</span><button type="button" aria-label="Página siguiente" disabled={currentPage >= totalPages || !pages.some((item) => item.number === currentPage + 1)} onClick={() => goToPage(currentPage + 1)}><ChevronRight /></button></div>
+        <div className={styles.zoomToolbar} aria-label="Controles de zoom">
+          <button type="button" aria-label="Ajustar a página" aria-pressed={zoom.mode === 'page'} onClick={() => setZoom({ mode: 'page', scale: 1 })}><Maximize2 /></button>
+          <button type="button" aria-label="Ajustar al ancho" aria-pressed={zoom.mode === 'width'} onClick={() => setZoom({ mode: 'width', scale: 1 })}><ArrowLeftRight /></button>
+          <button type="button" aria-label="Reducir zoom" onClick={() => manualZoom(-.15)}><ZoomOut /></button><span aria-label="Nivel de zoom">{Math.round(currentScale * 100)}%</span><button type="button" aria-label="Aumentar zoom" onClick={() => manualZoom(.15)}><ZoomIn /></button>
+        </div>
+      </div>
+      <p className={styles.visuallyHidden} aria-live="polite">{searchMessage}</p>
+      {pages.length < totalPages && <p className={styles.pageLoadProgress} role="status"><LoaderCircle aria-hidden="true" />Cargando páginas {pages.length} de {totalPages}…</p>}
+      <div className={styles.pdfPages}>{pages.map(item => <PdfCanvas key={item.number} page={item.page} number={item.number} total={totalPages} name={name} scale={scaleFor(item.page)} />)}</div>
+    </>}
   </div>;
 }
 
-function PdfCanvas({ page, number, total, name, zoom, container }: { page: any; number: number; total: number; name: string; zoom: number; container: HTMLDivElement | null }) {
+function PdfCanvas({ page, number, total, name, scale }: { page: any; number: number; total: number; name: string; scale: number }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -129,9 +177,7 @@ function PdfCanvas({ page, number, total, name, zoom, container }: { page: any; 
       setFailed(false);
       const canvas = ref.current; if (!canvas) return;
       try {
-        const base = page.getViewport({ scale: 1 });
-        const available = Math.max(280, (container?.clientWidth || 860) - 64);
-        const viewport = page.getViewport({ scale: Math.min(1.7, available / base.width) * zoom });
+        const viewport = page.getViewport({ scale });
         const pixelRatio = Math.min(window.devicePixelRatio || 1, 2); const context = canvas.getContext('2d', { alpha: false }); if (!context) return;
         canvas.width = Math.floor(viewport.width * pixelRatio); canvas.height = Math.floor(viewport.height * pixelRatio); canvas.style.width = `${Math.floor(viewport.width)}px`; canvas.style.height = `${Math.floor(viewport.height)}px`;
         const renderTask = page.render({ canvas, canvasContext: context, viewport, transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0] });
@@ -143,7 +189,7 @@ function PdfCanvas({ page, number, total, name, zoom, container }: { page: any; 
       }
     };
     void render(); return () => { active = false; task?.cancel(); };
-  }, [page, zoom, container]);
+  }, [page, scale]);
   return <figure data-pdf-page={number}><canvas ref={ref} data-preview-loaded={ready ? 'true' : 'false'} aria-label={`Página ${number} de ${name}`} />{failed && <p role="alert">No se pudo dibujar esta página.</p>}<figcaption>Página {number} de {total}</figcaption></figure>;
 }
 

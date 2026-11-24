@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseQuotePropertyValues, quotePropertyValuesPayload } from './quotePropertyValues';
+import { effectiveQuotePropertyValues, parseQuotePropertyValues, quotePropertyValuesPayload } from './quotePropertyValues';
 
 describe('Cotización · cuatro datos inmobiliarios opcionales separados', () => {
   it('preserva omisiones, permite borrar y distingue cero explícito de información ausente', () => {
@@ -21,5 +21,15 @@ describe('Cotización · cuatro datos inmobiliarios opcionales separados', () =>
   it('rechaza metadatos desconocidos e inyección de workflow', () => {
     expect(() => parseQuotePropertyValues({ estado: 'ACEPTADA' })).toThrow();
     expect(() => parseQuotePropertyValues(null)).toThrow();
+  });
+  it('añade avalúo sin limpiar los datos históricos omitidos', () => {
+    expect(parseQuotePropertyValues({ appraisalValue: '0' })).toEqual({ valor_avaluo: '0.00' });
+    expect(parseQuotePropertyValues({ appraisalValue: '' })).toEqual({ valor_avaluo: null });
+    expect(() => parseQuotePropertyValues({ appraisalValue: '-1' })).toThrow();
+  });
+  it('lee el maestro vinculado, mantiene cero y no sustituye sus vacíos por cifras manuales', () => {
+    const source = { valor_operacion: '999', valor_catastral: '888', valor_avaluo: '777', importe_predial: '12', predio_principal: { valor_operacion: '0', valor_catastral: null } };
+    expect(effectiveQuotePropertyValues(source)).toMatchObject({ valor_operacion: '0', valor_catastral: null, valor_avaluo: null, importe_predial: '12' });
+    expect(source.valor_operacion).toBe('999');
   });
 });

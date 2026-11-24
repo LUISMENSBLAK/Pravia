@@ -39,6 +39,12 @@ const mockApi = (options: MockOptions = {}) => {
       batch_total_max_bytes: 200 * 1024 * 1024,
     });
     if (url.endsWith('/auth/me')) return response(session(options.permissions));
+    if (/\/cotizaciones\/[^/]+\/inmueble$/.test(url)) {
+      const source = quotes.find(item => url.includes(`/${item.id}/`)) ?? quotes[0];
+      return response({ data: { property: null, source: 'MANUAL', expected_updated_at: source?.updated_at,
+        values: { operationValue: null, cadastralValue: null, appraisalValue: null },
+        capabilities: { canWrite: (options.permissions ?? ['cotizaciones.write']).includes('cotizaciones.write'), canCreateProperty: false, canOpenProperty: false } } });
+    }
     if (url.endsWith('/cotizaciones/expediente-series')) return response([{ code: '', label: 'Ordinaria' }]);
     if (url.endsWith('/cotizaciones/quote-1/responsables-expediente')) return response([
       { id: 'user-1', nombre: 'Andrea', apellido: 'Ruiz' },

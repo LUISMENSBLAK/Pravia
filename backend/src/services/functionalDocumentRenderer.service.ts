@@ -65,6 +65,7 @@ export async function renderFunctionalDocumentBuffer(
   mimeType: string,
   data: Record<string, unknown>,
   mapping?: unknown,
+  options: { strictMapping?: boolean } = {},
 ) {
   const values = mappedValues(data, mapping);
   if (mimeType === DOCX_MIME || source.subarray(0, 2).toString('latin1') === 'PK') {
@@ -82,6 +83,7 @@ export async function renderFunctionalDocumentBuffer(
       catch { throw new FunctionalDocumentRenderError('FUNCTIONAL_TEMPLATE_RENDER_FAILED', 'El formato DOCX configurado no pudo combinarse con los datos estructurados.'); }
       return { buffer: document.getZip().generate({ type: 'nodebuffer', compression: 'DEFLATE' }) as Buffer, mimeType: DOCX_MIME, extension: 'docx' as const };
     }
+    if (options.strictMapping) throw new FunctionalDocumentRenderError('FUNCTIONAL_TEMPLATE_MAPPING_REQUIRED', 'El formato necesita variables explícitas {{campo}} y un mapeo configurado. No se modificó su estructura.');
     appendDocxSummary(zip, values);
     return { buffer: zip.generate({ type: 'nodebuffer', compression: 'DEFLATE' }) as Buffer, mimeType: DOCX_MIME, extension: 'docx' as const };
   }
@@ -107,6 +109,7 @@ export async function renderFunctionalDocumentBuffer(
       // Un PDF sin AcroForm sigue siendo una fuente válida: los datos se anexan abajo.
     }
     if (!populated) {
+      if (options.strictMapping) throw new FunctionalDocumentRenderError('FUNCTIONAL_TEMPLATE_MAPPING_REQUIRED', 'Este PDF necesita campos de formulario con nombres mapeados. No se alteró su estructura.');
       const font = await pdf.embedFont(StandardFonts.Helvetica);
       const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
       const page = pdf.addPage([612, 792]);
@@ -128,12 +131,12 @@ export async function renderFunctionalDocumentBuffer(
   throw new FunctionalDocumentRenderError('FUNCTIONAL_TEMPLATE_TYPE_UNSUPPORTED', 'El formato configurado debe ser DOCX o PDF.');
 }
 
-export async function renderConfiguredFunctionalDocument(version: ConfiguredVersion, data: Record<string, unknown>, mapping?: unknown) {
+export async function renderConfiguredFunctionalDocument(version: ConfiguredVersion, data: Record<string, unknown>, mapping?: unknown, options?: { strictMapping?: boolean }) {
   if (!version.storage_key) throw new FunctionalDocumentRenderError('FUNCTIONAL_TEMPLATE_FILE_MISSING', 'La versión configurada no tiene archivo vigente.');
   const source = await downloadFile(version.storage_key);
   const checksum = createHash('sha256').update(source).digest('hex');
   if (version.checksum_sha256 && checksum !== version.checksum_sha256) {
     throw new FunctionalDocumentRenderError('FUNCTIONAL_TEMPLATE_CHECKSUM_MISMATCH', 'El archivo configurado no coincide con la versión registrada.');
   }
-  return { ...(await renderFunctionalDocumentBuffer(source, version.mime_type || '', data, mapping)), sourceChecksum: checksum };
+  return { ...(await renderFunctionalDocumentBuffer(source, version.mime_type || '', data, mapping, options)), sourceChecksum: checksum };
 }

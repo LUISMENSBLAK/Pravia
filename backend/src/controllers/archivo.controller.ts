@@ -15,6 +15,12 @@ const actor = (req: Request) => {
 export const getArchivoOverview = async (req: Request, res: Response) => {
   try { return res.json(await service.overview(actor(req))); } catch (error) { return handle(res, error); }
 };
+export const listArchivoRecords = async (req: Request, res: Response) => {
+  try { return res.json(await service.listRecords(actor(req), req.query)); } catch (error) { return handle(res, error); }
+};
+export const configureArchivoProtocol = async (req: Request, res: Response) => {
+  try { return res.json(await service.configureProtocol(actor(req), req.body)); } catch (error) { return handle(res, error); }
+};
 export const getExpedienteArchivo = async (req: Request, res: Response) => {
   try { return res.json(await service.forExpediente(actor(req), req.params.id)); } catch (error) { return handle(res, error); }
 };

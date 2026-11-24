@@ -7,14 +7,15 @@ import { quoteStructuredBudget, quoteTemplateData, renderQuoteTemplate, resolveQ
 describe('Datos inmobiliarios opcionales en el formato de Cotización', () => {
   const input = { folio: 'COT-QA', date: new Date('2026-11-21T00:00:00Z'), client: 'SINTÉTICO', act: 'Compraventa', notary: 'QA', concepts: [], validatedAdvanceCents: 0n };
   it('mapea sólo valores explícitos y no los incorpora al presupuesto ni al saldo', () => {
-    const data = quoteTemplateData({ ...input, propertyValues: { valor_operacion: '2000000.50', valor_catastral: '1200000.25', cuenta_predial: '0001-a', importe_predial: '0.00' } });
+    const data = quoteTemplateData({ ...input, propertyValues: { valor_operacion: '2000000.50', valor_catastral: '1200000.25', valor_avaluo: '2100000.75', cuenta_predial: '0001-a', importe_predial: '0.00' } });
     expect(data['operacion.valor']).toContain('2,000,000.50'); expect(data['inmueble.valor_catastral']).toContain('1,200,000.25');
     expect(data['inmueble.cuenta_predial']).toBe('0001-a'); expect(data['inmueble.importe_predial']).toContain('0.00');
     expect(data['cotizacion.total']).toContain('0.00');
+    expect(data['inmueble.valor_avaluo']).toContain('2,100,000.75');
   });
   it('los valores desconocidos no se imprimen como cero', () => {
     const data = quoteTemplateData(input);
-    for (const key of ['operacion.valor', 'inmueble.valor_catastral', 'inmueble.cuenta_predial', 'inmueble.importe_predial'] as const) expect(data[key]).toBe('Sin información');
+    for (const key of ['operacion.valor', 'inmueble.valor_catastral', 'inmueble.valor_avaluo', 'inmueble.cuenta_predial', 'inmueble.importe_predial'] as const) expect(data[key]).toBe('Sin información');
   });
 });
 
@@ -78,7 +79,7 @@ describe('Corrección 002 · datos canónicos de la cotización generada', () =>
     ];
     const data = quoteTemplateData({ folio: 'COT-QA', date: new Date('2026-11-12T12:00:00Z'), client: 'Cliente sintético', act: 'Acto QA', notary: 'Notaría QA', responsible: 'Responsable QA', concepts, validatedAdvanceCents: 0n });
     const xml = new PizZip(renderQuoteTemplate(source, data, concepts)).file('word/document.xml')!.asText();
-    for (const text of ['Cliente sintético', 'Responsable QA', 'Honorario QA', 'Derecho QA', 'Otro gasto QA', '144.80', 'IVA DE OTROS GASTOS', 'CONDICIONES ORIGINALES QA', 'POR CONFIRMAR']) expect(xml).toContain(text);
+    for (const text of ['Cliente sintético', 'Responsable QA', 'Honorario QA', 'Derecho QA', 'Otro gasto QA', '144.80', 'IVA DE OTROS GASTOS', 'CONDICIONES ORIGINALES QA', 'Sin información']) expect(xml).toContain(text);
     expect(xml).not.toContain('EJEMPLO ESTADO'); expect(xml).not.toContain('IVA 16%'); expect(xml).not.toContain('[ESCRIBA');
     expect((xml.match(/TOTAL GENERAL/g) || [])).toHaveLength(1);
     expect((xml.match(/<w:tbl>/g) || [])).toHaveLength(1); expect(source.equals(before)).toBe(true);
@@ -89,6 +90,15 @@ describe('Corrección 002 · datos canónicos de la cotización generada', () =>
     const xml = new PizZip(renderQuoteTemplate(source, {}, [{ concepto: 'Único honorario', categoria: 'HONORARIOS', importeCents: 100n }])).file('word/document.xml')!.asText();
     expect(xml).toContain('Sin impuestos ni derechos'); expect(xml).toContain('POR CONFIRMAR'); expect(xml).toContain('1.00');
     expect(xml).not.toContain('$[0.00]');
+  });
+  it('llena el avalúo explícito de la ficha sin alterar estructura, honorarios ni total', () => {
+    const source = sectionedQuoteTemplate();
+    const before = Buffer.from(source);
+    const rendered = new PizZip(renderQuoteTemplate(source, { 'inmueble.valor_avaluo': '2,100,000.75' }, [{ concepto: 'Honorario QA', categoria: 'HONORARIOS', importeCents: 100n }])).file('word/document.xml')!.asText();
+    expect(rendered).toContain('VALOR AVALÚO $2,100,000.75');
+    expect(rendered).toContain('1.00'); expect(rendered).toContain('CONDICIONES ORIGINALES QA');
+    expect((rendered.match(/<w:tbl>/g) || [])).toHaveLength(1);
+    expect(source.equals(before)).toBe(true);
   });
   it('combina las variables de doble llave usadas por la biblioteca CFG-002', () => {
     const rendered = renderQuoteTemplate(standardQuoteTemplate(), {

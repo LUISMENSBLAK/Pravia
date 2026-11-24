@@ -9,6 +9,7 @@ import { resolveExpedienteCreationContext, resolveExpedienteReturn } from '../ca
 import { propertiesService } from './properties.service';
 import type { PropertyAIReview, PropertyBoundary, PropertyForm, PropertyImportableDocument, PropertyRecord } from './properties.types';
 import styles from './PropertyWorkspace.module.css';
+import { resolveCommercialPropertyReturn } from './commercialProperty';
 
 const blank: PropertyForm = { apodo: '', clave_catastral: '', cuenta_predial: '', folio_real: '', datos_registrales_texto: '', ubicacion_texto: '', calle: '', numero_exterior: '', numero_interior: '', colonia: '', localidad: '', municipio: '', estado: '', codigo_postal: '', pais: 'México', superficie_terreno_m2: '', superficie_construccion_m2: '', superficie_construccion_comercial_m2: '', valor_catastral: '', valor_avaluo: '', valor_operacion: '', regimen: '', descripcion: '', colindancias: [] };
 const fieldLabels: Record<string, string> = { apodo: 'Apodo', clave_catastral: 'Clave catastral', cuenta_predial: 'Cuenta predial', folio_real: 'Folio real', datos_registrales: 'Datos registrales', ubicacion_texto: 'Ubicación', calle: 'Calle', numero_exterior: 'Número exterior', numero_interior: 'Número interior', colonia: 'Colonia', localidad: 'Localidad', municipio: 'Municipio', estado: 'Estado', codigo_postal: 'Código postal', pais: 'País', superficie_terreno_m2: 'Superficie de terreno', superficie_construccion_m2: 'Superficie de construcción', superficie_construccion_comercial_m2: 'Componente comercial', valor_catastral: 'Valor fiscal / catastral', valor_avaluo: 'Avalúo', valor_operacion: 'Valor de operación', regimen: 'Régimen', descripcion: 'Descripción', colindancias: 'Medidas y colindancias' };
@@ -82,7 +83,8 @@ const displayValue = (field: string, value?: string | null) => {
 
 export function PropertyWorkspace() {
   const { id } = useParams(); const isNew = !id || id === 'nuevo'; const location = useLocation(); const navigate = useNavigate(); const { user } = useAuth();
-  const creationContext = resolveExpedienteCreationContext(location.search); const returnPath = resolveExpedienteReturn(location.search) || '/expedientes';
+  const creationContext = resolveExpedienteCreationContext(location.search); const commercialContext = resolveCommercialPropertyReturn(location.search);
+  const returnPath = resolveExpedienteReturn(location.search) || commercialContext?.returnPath || '/predios';
   const [record, setRecord] = useState<PropertyRecord | null>(null); const [form, setForm] = useState<PropertyForm>(blank);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(isNew ? 'ready' : 'loading'); const [saving, setSaving] = useState(false); const [message, setMessage] = useState('');
   const [documentFile, setDocumentFile] = useState<File | null>(null); const [documentType, setDocumentType] = useState('TÍTULO / ESCRITURA'); const [documentVigencia, setDocumentVigencia] = useState<'VIGENTE' | 'HISTORICO'>('VIGENTE'); const [documentPrincipal, setDocumentPrincipal] = useState(false); const [uploading, setUploading] = useState(false);
@@ -108,6 +110,7 @@ export function PropertyWorkspace() {
       const saved = isNew ? await propertiesService.create(payload) : await propertiesService.update(id!, payload);
       setRecord(saved); setForm(toForm(saved));
       if (isNew && creationContext) navigate(creationContext.returnPath, { replace: true, state: { prd001NewPredioId: saved.id } });
+      else if (isNew && commercialContext) navigate(commercialContext.returnPath, { replace: true, state: { commercialNewPredioId: saved.id } });
       else if (isNew) navigate(`/predios/${saved.id}`, { replace: true });
       else setMessage('Ficha maestra guardada.');
     } catch (error) { setMessage(error instanceof Error ? error.message : 'No fue posible guardar la ficha.'); }
@@ -136,7 +139,7 @@ export function PropertyWorkspace() {
   if (status === 'loading') return <div className={styles.state}><LoaderCircle className={styles.spin} />Preparando ficha maestra…</div>;
   if (status === 'error') return <section className={styles.state} role="alert"><h1>No pudimos abrir este inmueble.</h1><Link to={returnPath}>Volver</Link></section>;
   return <div className={styles.page}>
-    <Link className={styles.back} to={returnPath}><ArrowLeft size={17} />{creationContext ? 'Volver al expediente' : 'Volver'}</Link>
+    <Link className={styles.back} to={returnPath}><ArrowLeft size={17} />{creationContext ? 'Volver al expediente' : commercialContext?.kind === 'cotizacion' ? 'Volver a la cotización' : commercialContext ? 'Volver al prospecto' : 'Volver a Predios'}</Link>
     <header className={styles.header}><div><span className={styles.eyebrow}><Building2 size={16} />Ficha maestra reutilizable</span><h1>{isNew ? 'Nuevo predio / inmueble' : form.apodo || 'Predio / inmueble'}</h1><p>La identidad vive una sola vez en la organización. Los expedientes, actos e ISR sólo consumen relaciones o copias operativas.</p></div>{canWrite && <button type="button" className={styles.primary} disabled={saving} onClick={() => void save()}><Save size={17} />{saving ? 'Guardando…' : 'Guardar ficha'}</button>}</header>
     {message && <div className={styles.notice} role="status">{message}</div>}
     {isNew && <section className={styles.card} aria-label="Extracción documental del inmueble"><div className={styles.sectionTitle}><Bot size={20} aria-hidden="true" /><div><h2>Cargar datos desde documentos con IA</h2><p>Guarda primero la ficha con un apodo o identificador. Después podrás cargar documentos del inmueble, seleccionar las fuentes y revisar los datos extraídos antes de aplicarlos.</p></div></div></section>}

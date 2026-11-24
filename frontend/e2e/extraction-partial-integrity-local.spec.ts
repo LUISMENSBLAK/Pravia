@@ -50,6 +50,13 @@ test('alta: extracción parcial real conserva errores, fuentes retryables y dato
     await summary.focus(); await page.keyboard.press('Enter'); await expect(review.getByText(/SIN PROPUESTA/).first()).toBeVisible();
     for (const width of [1440,390,320]) {
       await page.setViewportSize({width,height:900});
+      // Sidebar collapse is animated. Wait for the actual layout to fit, not
+      // merely for setViewportSize to dispatch the resize event. Persistent
+      // overflow still fails; check visible bounds as well as document width.
+      await expect.poll(() => page.evaluate(() => Math.max(
+        document.documentElement.scrollWidth - innerWidth,
+        ...[...document.querySelectorAll<HTMLElement>('#main-content, [role=banner], main form')].map(element => element.getBoundingClientRect().right-innerWidth),
+      )), { message: `El contenido debe caber a ${width}px tras la transición responsive.` }).toBeLessThanOrEqual(0.5);
       expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     }
     const session=await db.comparecienteAltaSession.findUniqueOrThrow({where:{id:sessionId}});

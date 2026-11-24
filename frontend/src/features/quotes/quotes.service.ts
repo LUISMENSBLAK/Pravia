@@ -67,7 +67,7 @@ export const quotesService = {
   async updateOperationTerritory(id: string, operationTerritory: { jurisdiction: string; state: string; municipality: string | null; confirm: true } | null, expectedUpdatedAt: string): Promise<unknown> {
     return apiRequest(`/cotizaciones/${id}/presupuesto`, { method: 'PUT', body: JSON.stringify({ operationTerritory, expectedUpdatedAt }) });
   },
-  async updatePropertyValues(id: string, propertyValues: { operationValue: string | null; cadastralValue: string | null; propertyTaxAccount: string | null; predialAmount: string | null }, expectedUpdatedAt: string): Promise<unknown> {
+  async updatePropertyValues(id: string, propertyValues: { operationValue: string | null; cadastralValue: string | null; appraisalValue: string | null }, expectedUpdatedAt: string): Promise<unknown> {
     return apiRequest(`/cotizaciones/${encodeURIComponent(id)}/presupuesto`, { method: 'PUT', body: JSON.stringify({ propertyValues, expectedUpdatedAt }) });
   },
   async updateBudget(id: string, input: { concepts: Array<Pick<QuoteBudgetConcept, 'categoria' | 'concepto' | 'importe' | 'tratamiento_iva' | 'iva_tasa' | 'regla_fiscal_fuente' | 'regla_fiscal_version'>>; origin: 'MANUAL' | 'IMPORTADO'; operationContext: string; expectedUpdatedAt: string }): Promise<{ presupuesto: QuoteBudget; updated_at: string; stage: string | null }> {

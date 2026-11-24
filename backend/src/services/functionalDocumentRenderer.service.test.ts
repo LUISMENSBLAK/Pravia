@@ -5,6 +5,19 @@ import { describe, expect, it } from 'vitest';
 import { DOCX_MIME, PDF_MIME, renderFunctionalDocumentBuffer } from './functionalDocumentRenderer.service';
 
 describe('CFG-002 · render operativo desde el archivo exacto', () => {
+  it('requires explicit variables in strict mode and preserves package styles and fixed text',async()=>{
+    const source=await Packer.toBuffer(new Document({sections:[{children:[new Paragraph('SINTÉTICO · TEXTO FIJO'),new Paragraph('{{nombre}}'),new Paragraph('{{faltante}}')]}]}));
+    const result=await renderFunctionalDocumentBuffer(source,DOCX_MIME,{nombre:'QA confirmado',faltante:null},undefined,{strictMapping:true});
+    const zip=new PizZip(result.buffer),original=new PizZip(source);
+    expect(zip.file('word/styles.xml')?.asText()).toBe(original.file('word/styles.xml')?.asText());
+    expect(zip.file('word/document.xml')?.asText()).toContain('SINTÉTICO · TEXTO FIJO');
+    expect(zip.file('word/document.xml')?.asText()).toContain('QA confirmado');
+    expect(zip.file('word/document.xml')?.asText()).toContain('[PENDIENTE: DATO NO DISPONIBLE]');
+    const plain=await Packer.toBuffer(new Document({sections:[{children:[new Paragraph('*** sin mapeo')]}]}));
+    await expect(renderFunctionalDocumentBuffer(plain,DOCX_MIME,{nombre:'QA'},undefined,{strictMapping:true})).rejects.toMatchObject({code:'FUNCTIONAL_TEMPLATE_MAPPING_REQUIRED'});
+    const pdf=await PDFDocument.create();pdf.addPage();
+    await expect(renderFunctionalDocumentBuffer(Buffer.from(await pdf.save()),PDF_MIME,{nombre:'QA'},undefined,{strictMapping:true})).rejects.toMatchObject({code:'FUNCTIONAL_TEMPLATE_MAPPING_REQUIRED'});
+  });
   it('conserva el testigo del DOCX seleccionado y sustituye variables estructuradas', async () => {
     const source = await Packer.toBuffer(new Document({ sections: [{ children: [
       new Paragraph('PLANTILLA TESTIGO B'),

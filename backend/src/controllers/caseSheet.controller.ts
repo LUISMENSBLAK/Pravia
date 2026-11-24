@@ -1,0 +1,10 @@
+import type { Request, Response } from 'express';
+import prisma from '../config/prisma';
+import { CaseSheetError, CaseSheetService } from '../services/caseSheet.service';
+import { CatalogConfigurationError } from '../services/configurationCatalogError';
+import { FunctionalDocumentRenderError } from '../services/functionalDocumentRenderer.service';
+const service=new CaseSheetService(prisma);
+const fail=(res:Response,error:unknown)=>error instanceof CaseSheetError||error instanceof CatalogConfigurationError?res.status(error.status).json({code:error.code,error:error.message}):error instanceof FunctionalDocumentRenderError?res.status(422).json({code:error.code,error:error.message}):res.status(500).json({code:'CASE_SHEET_FAILED',error:'No pudimos completar la ficha. El expediente y las versiones anteriores se conservan.'});
+export const readCaseSheets=async(req:Request,res:Response)=>{try{return res.json(await service.read(req.user!,req.params.id));}catch(error){return fail(res,error);}};
+export const generateCaseSheet=async(req:Request,res:Response)=>{try{return res.status(201).json(await service.generate(req.user!,req.params.id,String(req.body?.idempotency_key||'')));}catch(error){return fail(res,error);}};
+export const caseSheetUrl=async(req:Request,res:Response)=>{try{return res.json(await service.url(req.user!,req.params.id,req.params.documentId));}catch(error){return fail(res,error);}};

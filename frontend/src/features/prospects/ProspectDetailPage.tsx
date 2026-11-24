@@ -16,6 +16,7 @@ import { prospectsService } from './prospects.service';
 import type { Prospect, ProspectCatalogs, ProspectDocument, ProspectWorkflow } from './prospects.types';
 import { displayProspectName } from './prospects.types';
 import styles from './ProspectsPage.module.css';
+import { CommercialPropertyPicker } from '../properties/CommercialPropertyPicker';
 
 const formatDate = (value?: string | null, withTime = false) => value
   ? new Intl.DateTimeFormat('es-MX', withTime ? { dateStyle: 'medium', timeStyle: 'short' } : { dateStyle: 'medium' }).format(new Date(value))
@@ -116,6 +117,7 @@ export function ProspectDetailPage() {
     <h1 className={styles.srOnly}>{displayProspectName(prospect.nombre)}</h1>
     <div className={styles.detailGrid}>
       <main>
+        <CommercialPropertyPicker kind="prospecto" id={prospect.id} refreshKey={prospect.updated_at} onChange={()=>void reload()} />
         <ProspectInlineEditor block="summary" prospect={prospect} workflow={workflow} catalogs={catalogs} canWrite={canWrite && !mutationBusy} canAssign={canAssign} onBusyChange={setMutationBusy} onChanged={reload} notify={notify} />
         <ProspectWorkflowPanel prospect={prospect} workflow={workflow} canWrite={canWrite} blocked={mutationBusy} currentUserId={user?.id} onChanged={reload} />
         <ProspectInlineEditor block="contact" prospect={prospect} workflow={workflow} catalogs={catalogs} canWrite={canWrite && !mutationBusy} canAssign={canAssign} onBusyChange={setMutationBusy} onChanged={reload} notify={notify} />

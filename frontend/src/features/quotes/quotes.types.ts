@@ -87,6 +87,8 @@ export type ConversionEligibility = {
 export type Quote = {
   valor_operacion?: string | number | null;
   valor_catastral?: string | number | null;
+  valor_avaluo?: string | number | null;
+  predio_principal_id?: string | null;
   cuenta_predial?: string | null;
   importe_predial?: string | number | null;
   fuente_notarial_id?: string | null;

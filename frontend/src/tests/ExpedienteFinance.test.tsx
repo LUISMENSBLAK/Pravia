@@ -1,4 +1,6 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render as renderUI, screen, waitFor, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+const render = (node: React.ReactNode) => renderUI(<MemoryRouter>{node}</MemoryRouter>);
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FinanceTab } from '../features/cases/components/tabs/FinanceTab';

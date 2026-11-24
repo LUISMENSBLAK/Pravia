@@ -20,7 +20,7 @@ export type OpenExpedienteInput = {
   clienteComparecienteId?: string | null;
   caracterId?: string | null;
   descripcion?: string | null;
-  valorOperacion?: number | null;
+  valorOperacion?: number | string | null;
   datosOperacion?: Prisma.InputJsonValue;
   cotizacionId: string;
   folioSeries?: string | null;

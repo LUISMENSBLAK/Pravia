@@ -55,6 +55,8 @@ const mockApi = (seed: Prospect[] = [prospect()], permissions?: string[], defaul
       batch_total_max_bytes: 200 * 1024 * 1024,
     });
     if (url.pathname.endsWith('/auth/me')) return response(session(permissions));
+    if (/\/prospectos\/[^/]+\/inmueble$/.test(url.pathname)) return response({ data: { property: null, source: 'MANUAL', expected_updated_at: seed[0]?.updated_at,
+      values: { operationValue: null, cadastralValue: null, appraisalValue: null }, capabilities: { canWrite: false, canCreateProperty: false, canOpenProperty: false } } });
     if (url.pathname.endsWith('/settings/preferences')) {
       const selected = init?.method === 'PATCH' ? JSON.parse(String(init.body)).default_view : defaultView;
       return response({ preferences: { default_view: selected, density: 'COMFORTABLE', timezone: 'America/Mexico_City', date_format: 'DD/MM/YYYY', theme: 'LIGHT', notifications_enabled: true, assistant_suggestions_enabled: true } });

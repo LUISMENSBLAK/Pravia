@@ -344,6 +344,19 @@ function explicitEmptyAction(message: string, allowedActions: Set<string>) {
   return undefined;
 }
 
+function explicitDirectQuote(message:string,allowed:Set<string>) {
+  if(!allowed.has('quote.create'))return undefined;
+  const normalized=message.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('es-MX');
+  // Only an imperative in the user's own message; examples, questions about
+  // usage and per-action negations are not write authorization.
+  if(/\b(?:como|ejemplo|si alguien|imagina|supongamos|que pasaria)\b/.test(normalized))return undefined;
+  for(const clause of normalized.split(/[.;\n]/)) {
+    if(/\b(?:no|nunca|sin|evita)\b.{0,35}\b(?:crea|crees|crear|hazme|hagas|arma|armes|abre|abras|registra|registres)\b/.test(clause))continue;
+    if(/(?:^|\b(?:oye|por favor|ahora|entonces)\s*,?\s*)(?:crea(?:me)?|hazme|arma(?:me)?|abre(?:me)?|registra(?:me)?)\s+(?:una\s+)?(?:nueva\s+)?cotizacion\b/.test(clause.trim()))return {action:'quote.create',args:{operationContext:message}};
+  }
+  return undefined;
+}
+
 function explicitAttachmentCreate(message: string, allowed: Set<string>, attachmentIds?: string[]) {
   if (!attachmentIds?.length) return undefined;
   const normalized=message.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLocaleLowerCase('es-MX');
@@ -662,6 +675,8 @@ export function createAssistantChatService(dependencies: ChatDependencies = {}) 
     if (explicitFormAction) plan.actionCalls.splice(0, plan.actionCalls.length, explicitFormAction);
     if (explicitProspectAction) plan.actionCalls.splice(0, plan.actionCalls.length, explicitProspectAction);
     if (explicitProject) plan.actionCalls.splice(0, plan.actionCalls.length, explicitProject);
+    const directQuote=!input.actionState&&!plan.actionCalls.length&&!plan.toolCalls.length?explicitDirectQuote(message,allowedActions):undefined;
+    if(directQuote)plan.actionCalls.push(directQuote);
 
     if (plan.cancelPendingAction && input.conversationId) {
       await cancelAction(user, input.conversationId);

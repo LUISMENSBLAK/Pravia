@@ -10,6 +10,13 @@ const actor: Actor = { id: '11111111-1111-4111-8111-111111111111', email: 'qa@ex
   sessionId: 'local', permissions: ['expedientes.read'], requiresPasswordChange: false };
 
 describe('Mi Día Archivo cards use the canonical Archivo overview', () => {
+  it('uses the configured canonical folio balance unchanged after requery', async () => {
+    const overview = vi.fn().mockResolvedValue({protocol:{position:{folios_restantes:17}}});
+    const source = new MiDiaArchiveCardsService({overview} as unknown as ArchivoService);
+    expect((await source.readVisible(actor,['FOLIOS_LEFT'])).FOLIOS_LEFT).toMatchObject({value:'17',available:true});
+    overview.mockResolvedValue({protocol:{position:{folios_restantes:0}}});
+    expect((await source.readVisible(actor,['FOLIOS_LEFT'])).FOLIOS_LEFT).toMatchObject({value:'0',available:true});
+  });
   it('uses Archivo values unchanged with a single read for both visible cards', async () => {
     const overview = vi.fn().mockResolvedValue({ next_numero_escritura: '103', next_folio: '201', libro_tomo: 'I' });
     const source = new MiDiaArchiveCardsService({ overview } as unknown as ArchivoService);

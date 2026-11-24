@@ -8,7 +8,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { ConvertQuoteDialog } from './components/ConvertQuoteDialog';
 import { QuoteActivity } from './components/QuoteActivity';
 import { QuoteConcepts } from './components/QuoteConcepts';
-import { QuotePropertyValues } from './components/QuotePropertyValues';
+import { QuotePropertySection } from './components/QuotePropertySection';
 import { QuoteActSelector } from './components/QuoteActSelector';
 import { QuoteContractActionDialog } from './components/QuoteContractActionDialog';
 import type { QuoteAcceptanceResume } from './components/QuoteContractActionDialog';
@@ -199,7 +199,7 @@ export function QuoteDetailPage() {
     <div className={styles.detailGrid}>
       <main>
         {quote.fuente_notarial && <section className={styles.detailSection}><h2>Cotización de Notaría · Fuente de origen</h2><p>Primera recepción: {shortDate(quote.fuente_notarial.received_at)} · Versión {quote.fuente_notarial.version}</p><button type="button" className={styles.secondaryButton} onClick={() => void viewSource()}>Visualizar {quote.fuente_notarial.documento.nombre_original}</button></section>}
-        <QuotePropertyValues quote={quote} canWrite={canWrite} onSaved={() => load()} notify={notify} />
+        <QuotePropertySection key={quote.id} quote={quote} canWrite={canWrite} onSaved={() => load()} notify={notify} />
         <QuoteConcepts quote={quote} canWrite={canWrite} onSaved={() => load()} notify={notify} />
         <QuoteActivity quote={quote} />
       </main>

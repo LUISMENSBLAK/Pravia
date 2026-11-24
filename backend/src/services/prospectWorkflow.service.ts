@@ -293,6 +293,11 @@ export class ProspectWorkflowService {
       let quoteId: string | null = null;
       if (action === 'CONVERTIR') {
         if (p.etapa_contractual !== Stage.LISTO_PARA_COTIZAR) return failProspect(409, 'PRO001_NOT_READY_TO_QUOTE', 'Marca el prospecto como listo para cotizar antes de convertirlo.');
+        if (p.predio_principal_id) {
+          await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:predio-master:${actor.organizationId}:${p.predio_principal_id}`}))`);
+          const property = await tx.predio.findFirst({ where: { id: p.predio_principal_id, organization_id: actor.organizationId, archived_at: null }, select: { id: true } });
+          if (!property) return failProspect(409, 'PRO001_PROPERTY_UNAVAILABLE', 'Revisa el inmueble vinculado: no está disponible para crear una cotización.');
+        }
         const assignedId = p.cotizacion_responsable_id || quoteAssignee?.user_id;
         if (!assignedId) return failProspect(409, 'PRO001_QUOTE_ASSIGNEE_REQUIRED', 'Selecciona quién continuará con la cotización.');
         const currentAssignee = await tx.organizationMembership.findFirst({ where: {
@@ -318,6 +323,7 @@ export class ProspectWorkflowService {
           total: inheritedTotals?.total ?? null,
         });
         const quote = await tx.cotizacion.create({ data: { organization_id: actor.organizationId, prospecto_id: id, user_id: assignedId,
+          predio_principal_id: p.predio_principal_id,
           numero_cotizacion: quoteFolio, estado: 'BORRADOR', cuerpo_correo_cliente: template.body,
           contexto_operacion: p.contexto_operacion || p.necesidad,
           honorarios_pravia: null, total_notaria: inheritedTotals?.total ?? p.total_estimado, total_cliente: inheritedTotals?.total ?? p.total_estimado,

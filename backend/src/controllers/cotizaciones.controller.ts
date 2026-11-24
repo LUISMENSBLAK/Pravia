@@ -847,6 +847,7 @@ export const convertToExpediente = async (req: Request, res: Response) => {
       idempotent: result.alreadyConverted,
       correlation_id: result.correlationId,
       anticipo_validado: result.validatedAdvanceTotal,
+      ficha_expediente: result.ficha_expediente,
     });
   } catch (error: any) {
     return quoteWorkflowError(res, error);

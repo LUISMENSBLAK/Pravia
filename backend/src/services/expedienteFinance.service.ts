@@ -21,6 +21,7 @@ import {
 import { FunctionalDocumentRenderError, renderConfiguredFunctionalDocument } from './functionalDocumentRenderer.service';
 import { canonicalUploadedDocumentMime } from './documentUploadValidation';
 import { extractDocxText } from './docxText';
+import { placeReceiptQr, RECEIPT_QR_MARKER } from './receiptQr.service';
 
 export type ExpedienteFinanceActor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -122,7 +123,7 @@ export class ExpedienteFinanceError extends Error {
 }
 
 const include = {
-  ingresosReportados: { orderBy: { created_at: 'desc' as const }, include: { documentos: { where: { estatus: 'ACTIVO' as const, documento: { estatus: 'VIGENTE' as const } }, include: { documento: true } }, propuestasIA: { orderBy: { created_at: 'desc' as const } }, movimiento: { include: { comprobanteInterno: true } }, facturarAVinculo: { include: { compareciente: { select: { id: true, nombre_busqueda: true, tipo_persona: true } } } }, reportadoPor: { select: { id: true, nombre: true, apellido: true } }, aplicadoPor: { select: { id: true, nombre: true, apellido: true } } } },
+  ingresosReportados: { orderBy: { created_at: 'desc' as const }, include: { documentosCfdi: { where: { estado: { notIn: ['CANCELADO','CANCELADA'] as string[] } }, select: { id: true, estado: true, internal_folio: true, xmlDocumento: { select: { id: true, nombre_original: true, mime_type: true } }, pdfDocumento: { select: { id: true, nombre_original: true, mime_type: true } }, prefacturaRepresentaciones: { orderBy: { version: 'desc' as const }, take: 1, select: { version: true, documento: { select: { id: true, nombre_original: true, mime_type: true } } } } } }, documentos: { where: { estatus: 'ACTIVO' as const, documento: { estatus: 'VIGENTE' as const } }, include: { documento: true } }, propuestasIA: { orderBy: { created_at: 'desc' as const } }, movimiento: { include: { comprobanteInterno: true } }, facturarAVinculo: { include: { compareciente: { select: { id: true, nombre_busqueda: true, tipo_persona: true } } } }, reportadoPor: { select: { id: true, nombre: true, apellido: true } }, aplicadoPor: { select: { id: true, nombre: true, apellido: true } } } },
   solicitudesPago: { orderBy: { created_at: 'desc' as const }, include: { documentos: { where: { estatus: 'ACTIVO' as const, documento: { estatus: 'VIGENTE' as const } }, include: { documento: true } }, propuestasIA: { orderBy: { created_at: 'desc' as const } }, movimiento: { include: { comprobanteInterno: true } }, creadoPor: { select: { id: true, nombre: true, apellido: true } }, pagadoPor: { select: { id: true, nombre: true, apellido: true } } } },
   presupuesto: { select: { subtotal_honorarios: true, subtotal_impuestos_derechos: true, total: true, version: true } },
 } as const;
@@ -144,7 +145,9 @@ export class ExpedienteFinanceService {
       orderBy: [{ orden_comparecencia: 'asc' }, { created_at: 'asc' }],
     }) : [];
     const accountStatement = await this.accountStatement(actor, expedienteId);
-    return { expediente: { id: expediente.id, numero_pravia: expediente.numero_pravia }, ...data, accountStatement, catalogs: { accounts, categories, parties }, capabilities: this.capabilities(actor) };
+    const receipts=await this.prisma.expedienteFinanzaDocumento.findMany({where:{organization_id:actor.organizationId,expediente_id:expedienteId,tipo:'COMPROBANTE_PRAVIA',estatus:'ACTIVO',documento:{estatus:'VIGENTE'}},include:{documento:true}});
+    const incomes=data?.ingresosReportados.map(item=>({...item,documentos:[...item.documentos,...receipts.filter(link=>link.movimiento_id===item.movimiento_id)]}));
+    return { expediente: { id: expediente.id, numero_pravia: expediente.numero_pravia }, ...data, ingresosReportados:incomes??[], accountStatement, catalogs: { accounts, categories, parties }, capabilities: this.capabilities(actor) };
   }
 
   async accountStatement(actor: ExpedienteFinanceActor, expedienteId: string) {
@@ -238,13 +241,16 @@ export class ExpedienteFinanceService {
     await this.assertExpediente(this.prisma, actor, expedienteId);
     const payment = normalizeExp008PaymentMethod(input.forma_pago, input.forma_pago_detalle);
     const partyLinkId = clean(input.facturar_a_vinculo_id, 36);
-    if (!partyLinkId) throw new ExpedienteFinanceError(400, 'EXP008_INVOICE_PARTY_REQUIRED', 'Debe seleccionar a quién corresponde la factura.');
-    const party = await this.prisma.expedienteCompareciente.findFirst({ where: { id: partyLinkId, organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', archived_at: null }, select: { id: true, compareciente_id: true } });
-    if (!party) throw new ExpedienteFinanceError(403, 'EXP008_INVOICE_PARTY_DENIED', 'El compareciente seleccionado no pertenece a este expediente.');
+    const publicRecipient = input.facturar_publico_general === true || input.facturar_publico_general === 'true';
+    if (publicRecipient && partyLinkId) throw new ExpedienteFinanceError(400, 'EXP008_RECIPIENT_CONFLICT', 'Elige público en general o un compareciente, no ambos.');
+    if (!publicRecipient && !partyLinkId) throw new ExpedienteFinanceError(400, 'EXP008_INVOICE_PARTY_REQUIRED', 'Debe seleccionar a quién corresponde la factura.');
+    const party = publicRecipient ? null : await this.prisma.expedienteCompareciente.findFirst({ where: { id: partyLinkId, organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', archived_at: null }, select: { id: true, compareciente_id: true } });
+    if (!publicRecipient && !party) throw new ExpedienteFinanceError(403, 'EXP008_INVOICE_PARTY_DENIED', 'El compareciente seleccionado no pertenece a este expediente.');
     const pending = String(input.factura_pendiente) === 'true' || input.factura_pendiente === true || input.factura_pendiente === 'on';
     assertExp008InvoiceFile(files.invoicePdf, 'PDF');
     assertExp008InvoiceFile(files.invoiceXml, 'XML');
-    if (!pending && (!files.invoicePdf || !files.invoiceXml)) throw new ExpedienteFinanceError(400, 'EXP008_INVOICE_FILES_REQUIRED', 'Para marcar la factura como cargada debe adjuntar PDF y XML.');
+    if (publicRecipient && (files.invoicePdf || files.invoiceXml)) throw new ExpedienteFinanceError(400, 'EXP008_PUBLIC_RECIPIENT_NO_INVOICE', 'Público en general registra el ingreso sin emitir ni cargar una factura individual.');
+    if (!publicRecipient && !pending && (!files.invoicePdf || !files.invoiceXml)) throw new ExpedienteFinanceError(400, 'EXP008_INVOICE_FILES_REQUIRED', 'Para marcar la factura como cargada debe adjuntar PDF y XML.');
     const existing = await this.prisma.expedienteIngresoReportado.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, idempotency_key: key }, include: { documentos: { include: { documento: true } } } });
     if (existing) return { item: existing, idempotent: true };
     const uploads = [
@@ -259,15 +265,15 @@ export class ExpedienteFinanceService {
         if (concurrent) return { item: concurrent, idempotent: true };
         await this.assertExpediente(tx, actor, expedienteId);
         const completedAt = pending ? null : new Date();
-        const report = await tx.expedienteIngresoReportado.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, concepto_contexto: clean(input.concepto_contexto, 500) || null, referencia_solicitud: clean(input.referencia_solicitud, 180) || null, monto_reportado: input.monto_reportado ? moneyDecimal(input.monto_reportado, 'Monto reportado') : null, forma_pago: payment.method, forma_pago_detalle: payment.detail, factura_estado: pending ? 'PENDIENTE' : 'CARGADA', facturar_a_vinculo_id: party.id, facturar_a_compareciente_id: party.compareciente_id, factura_completada_por_id: pending ? null : actor.id, factura_completada_at: completedAt, reportado_por_id: actor.id, idempotency_key: key } });
+        const report = await tx.expedienteIngresoReportado.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, concepto_contexto: clean(input.concepto_contexto, 500) || null, referencia_solicitud: clean(input.referencia_solicitud, 180) || null, monto_reportado: input.monto_reportado ? moneyDecimal(input.monto_reportado, 'Monto reportado') : null, forma_pago: payment.method, forma_pago_detalle: payment.detail, factura_estado: publicRecipient ? null : pending ? 'PENDIENTE' : 'CARGADA', facturar_publico_general: publicRecipient, facturar_a_vinculo_id: party?.id, facturar_a_compareciente_id: party?.compareciente_id, factura_completada_por_id: publicRecipient || pending ? null : actor.id, factura_completada_at: publicRecipient ? null : completedAt, reportado_por_id: actor.id, idempotency_key: key } });
         await openReceiptApplicationTiming(tx, actor.organizationId, { sourceId: report.id, openedAt: report.created_at });
         const documentIds: string[] = [];
         for (const upload of uploads) {
-          const document = await this.createDocument(tx, actor, expedienteId, upload.stored, `EXP008_${upload.role}`, { source: 'EXP-008', role: upload.role, income_id: report.id, invoice_state: report.factura_estado, invoicee_link_id: party.id, auto_applied: false });
+          const document = await this.createDocument(tx, actor, expedienteId, upload.stored, `EXP008_${upload.role}`, { source: 'EXP-008', role: upload.role, income_id: report.id, invoice_state: report.factura_estado, invoicee_link_id: party?.id ?? null, public_recipient: publicRecipient, auto_applied: false });
           await this.linkDocument(tx, actor, expedienteId, document.id, upload.role, `${key}:${upload.suffix}`, { ingreso_reportado_id: report.id });
           documentIds.push(document.id);
         }
-        await this.record(tx, actor, expedienteId, 'EXP008_REPORT_INCOME', report.id, 'Ingreso reportado', pending ? 'Se registró el ingreso con factura pendiente.' : 'Se registró el ingreso con factura PDF y XML.', { documento_ids: documentIds, factura_estado: report.factura_estado, facturar_a_vinculo_id: party.id, forma_pago: payment.method, auto_applied: false });
+        await this.record(tx, actor, expedienteId, 'EXP008_REPORT_INCOME', report.id, 'Ingreso reportado', publicRecipient ? 'Ingreso para público en general; no se emitió factura.' : pending ? 'Se registró el ingreso con factura pendiente.' : 'Se registró el ingreso con factura PDF y XML.', { documento_ids: documentIds, factura_estado: report.factura_estado, facturar_a_vinculo_id: party?.id ?? null, facturar_publico_general: publicRecipient, forma_pago: payment.method, auto_applied: false });
         return { item: await tx.expedienteIngresoReportado.findUniqueOrThrow({ where: { id: report.id }, include: { documentos: { include: { documento: true } }, facturarAVinculo: { include: { compareciente: true } } } }), idempotent: false };
       });
       if (result.idempotent) await Promise.all(uploads.map(({ stored }) => deleteFile(stored.storageKey).catch(() => undefined)));
@@ -587,9 +593,13 @@ export class ExpedienteFinanceService {
     const movement = await this.prisma.movimientoFinanciero.findFirst({ where: { id: movementId, organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'APLICADO' }, include: { comprobanteInterno: true } });
     if (!movement?.comprobanteInterno) throw new ExpedienteFinanceError(409, 'EXP008_RECEIPT_SOURCE_INVALID', 'El movimiento aplicado no tiene comprobante financiero canónico.');
     const format = await this.resolveFormat(actor.organizationId, 'comprobante');
+    let verificationOrigin: URL;
+    try { verificationOrigin = new URL(String(process.env.PUBLIC_API_URL || '')); if (!['http:', 'https:'].includes(verificationOrigin.protocol) || verificationOrigin.username || verificationOrigin.password) throw Error(); }
+    catch { throw new ExpedienteFinanceError(409, 'EXP008_VERIFICATION_URL_REQUIRED', 'Configura PUBLIC_API_URL con la URL del backend existente para generar un QR verificable.'); }
     const token = randomBytes(32).toString('base64url');
     const code = token.slice(0, 12).toUpperCase();
-    const verificationUrl = `/api/expedientes/comprobantes-pravia/verificar/${token}`;
+    const verificationPath = `/api/expedientes/comprobantes-pravia/verificar/${token}`;
+    const verificationUrl = new URL(verificationPath,verificationOrigin).href;
     const rendered = await this.renderFormat(format, {
       'comprobante.folio': movement.comprobanteInterno.folio,
       'expediente.folio': expediente.numero_pravia,
@@ -599,9 +609,11 @@ export class ExpedienteFinanceService {
       'comprobante.codigo_verificacion': code,
       'comprobante.url_verificacion': verificationUrl,
       'comprobante.leyenda': 'No es CFDI',
+      'comprobante.qr': RECEIPT_QR_MARKER,
       'formato.fuente': format.source,
     });
-    const stored = await this.storeBuffer(actor, expedienteId, rendered.buffer, `Comprobante_PRAVIA_${safeName(movement.comprobanteInterno.folio)}.${rendered.extension}`, rendered.mimeType, 'comprobantes-pravia');
+    const securedBuffer = await placeReceiptQr(rendered.buffer, rendered.mimeType, verificationUrl);
+    const stored = await this.storeBuffer(actor, expedienteId, securedBuffer, `Comprobante_PRAVIA_${safeName(movement.comprobanteInterno.folio)}.${rendered.extension}`, rendered.mimeType, 'comprobantes-pravia');
     try {
       const result = await this.prisma.$transaction(async (tx) => {
         await this.lock(tx, `receipt:${actor.organizationId}:${movementId}`);

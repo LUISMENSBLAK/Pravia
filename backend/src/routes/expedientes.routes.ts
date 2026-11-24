@@ -1,4 +1,5 @@
 import express from 'express';
+import { readCaseSheets, generateCaseSheet, caseSheetUrl } from '../controllers/caseSheet.controller';
 import {
   getExpedientes,
   getEligibleCotizacionesForExpediente,
@@ -95,6 +96,8 @@ import {
   generateExpedienteArtifact,
   getExpedienteArtifactUrl,
   getExpedienteArtifacts,
+  getExpedienteInstitutions,
+  selectExpedienteInstitutions,
   materializeExpedienteArtifacts,
   previewExpedienteArtifactGeneration,
   uploadExp006Multer,
@@ -163,6 +166,8 @@ router.put('/:id/seguimiento/actividades/:activityId/dependencias', requirePermi
 router.post('/:id/seguimiento/actividades/:activityId/reabrir', requirePermission('expedientes.write'), reopenExpedienteSeguimientoActividad);
 router.get('/:id/plantillas-formatos', requirePermission('documentos.read'), getExpedienteArtifacts);
 router.post('/:id/plantillas-formatos/materializar', requirePermission('documentos.write'), materializeExpedienteArtifacts);
+router.get('/:id/plantillas-formatos/instituciones', requirePermission('documentos.read'), getExpedienteInstitutions);
+router.put('/:id/plantillas-formatos/instituciones', requirePermission('expedientes.write'), requirePermission('documentos.write'), selectExpedienteInstitutions);
 router.post('/:id/plantillas-formatos/:pendingId/generar/preview', requirePermission('ia.execute'), previewExpedienteArtifactGeneration);
 router.post('/:id/plantillas-formatos/:pendingId/generar', requirePermission('ia.execute'), generateExpedienteArtifact);
 router.post('/:id/plantillas-formatos/:pendingId/upload', requirePermission('documentos.write'), uploadExp006Multer.single('file'), uploadExpedienteArtifact);
@@ -249,4 +254,7 @@ router.post('/:id/proyecto/analizar-ia', requirePermission('documentos.write'), 
 router.get('/:id/proyecto/reporte-ia/visualizar', requirePermission('expedientes.project.read'), streamIAReport);
 router.get('/:id/proyecto/reporte-ia/descargar', requirePermission('expedientes.project.read'), downloadIAReport);
 
+router.get('/:id/ficha', requirePermission('expedientes.read'), requirePermission('documentos.read'), readCaseSheets);
+router.post('/:id/ficha', requirePermission('expedientes.write'), requirePermission('documentos.write'), generateCaseSheet);
+router.get('/:id/ficha/:documentId/url', requirePermission('expedientes.read'), requirePermission('documentos.read'), caseSheetUrl);
 export default router;

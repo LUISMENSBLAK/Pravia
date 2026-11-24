@@ -1,4 +1,5 @@
 import express from 'express';
+import { commercialPropertyHandler } from '../controllers/commercialProperty.controller';
 import { 
   getProspectos, 
   createProspecto, 
@@ -17,6 +18,9 @@ import { getProspectDocumentReview, runProspectDocumentReview } from '../control
 
 const router = express.Router();
 router.param('id', requireProspectoObjectAccess);
+router.get('/:id/inmueble', commercialPropertyHandler('prospecto','read'));
+router.get('/:id/inmueble/opciones', commercialPropertyHandler('prospecto','options'));
+router.put('/:id/inmueble', requirePermission('prospectos.write'), commercialPropertyHandler('prospecto','select'));
 
 router.get('/', getProspectos);
 router.post('/', createProspecto);

@@ -1,4 +1,5 @@
-import { Archive, Clock3, LoaderCircle, MessageSquareText, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { Archive, Clock3, LoaderCircle, MessageSquareText, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react';
+import { useState } from 'react';
 import { useAssistant } from '../AssistantProvider';
 import type { AssistantConversationStatus } from '../assistant.types';
 import styles from './AssistantDrawer.module.css';
@@ -13,6 +14,9 @@ const formatDate = (value: string) => new Intl.DateTimeFormat('es-MX', { day: 'n
 
 export function AssistantConversationPanel() {
   const assistant = useAssistant();
+  const [editing, setEditing] = useState<string>();
+  const [title, setTitle] = useState('');
+  const [saving, setSaving] = useState(false);
   if (!assistant.historyOpen) return null;
   return <section className={styles.historyPanel} aria-label="Historial de conversaciones">
     <header><div><strong>Conversaciones</strong><small>Tu historial privado de PRAVIA IA</small></div><button type="button" onClick={assistant.newConversation}><Plus size={16}/>Nueva</button></header>
@@ -25,7 +29,12 @@ export function AssistantConversationPanel() {
         <button type="button" className={styles.historySelect} onClick={() => void assistant.selectConversation(conversation.id)}>
           <MessageSquareText size={16}/><span><strong>{conversation.title}</strong><small><Clock3 size={11}/>{formatDate(conversation.last_message_at)} · {conversation.message_count} mensajes</small></span>
         </button>
+        {editing === conversation.id && <form className={styles.historyRename} aria-label="Renombrar conversación" onSubmit={event => {
+          event.preventDefault(); if (!title.trim() || saving) return; setSaving(true);
+          void assistant.renameConversation(conversation.id, title.trim()).finally(() => { setSaving(false); setEditing(undefined); });
+        }}><label>Nombre de conversación<input value={title} maxLength={160} onChange={event => setTitle(event.target.value)} autoFocus disabled={saving}/></label><button type="submit" disabled={saving || !title.trim()}>Guardar nombre</button><button type="button" disabled={saving} onClick={() => setEditing(undefined)}>Cancelar</button></form>}
         <div className={styles.historyActions}>
+          <button type="button" onClick={() => { setTitle(conversation.title); setEditing(conversation.id); }} aria-label={`Renombrar ${conversation.title}`}><Pencil size={15}/></button>
           {assistant.conversationScope === 'ACTIVE' && <><button type="button" onClick={() => void assistant.archiveConversation(conversation.id)} aria-label={`Archivar ${conversation.title}`}><Archive size={15}/></button>
             <button type="button" onClick={() => void assistant.trashConversation(conversation.id)} aria-label={`Enviar ${conversation.title} a papelera`}><Trash2 size={15}/></button></>}
           {assistant.conversationScope === 'ARCHIVED' && <button type="button" onClick={() => void assistant.restoreConversation(conversation.id)} aria-label={`Restaurar ${conversation.title}`}><RotateCcw size={15}/></button>}

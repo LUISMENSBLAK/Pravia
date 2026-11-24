@@ -21,6 +21,7 @@ model Organization {
   email                             String?
   logo_storage_key                  String?
   institutional_header              String?
+  archive_protocol_config           Json?
   status                            String                                       @default("ACTIVE")
   created_at                        DateTime                                     @default(now())
   updated_at                        DateTime                                     @updatedAt
@@ -637,6 +638,8 @@ model Prospecto {
   estado                       ProspectoEstado               @default(NUEVO)
   user_id                      String?                       @db.Uuid
   cotizacion_responsable_id    String?                       @db.Uuid
+  predio_principal_id          String?                       @db.Uuid
+  predio_principal             Predio?                       @relation("ProspectoPredioPrincipal", fields: [predio_principal_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "fk_prospecto_predio_principal_tenant")
   created_at                   DateTime                      @default(now())
   updated_at                   DateTime                      @updatedAt
   archived_at                  DateTime?
@@ -677,6 +680,7 @@ model Prospecto {
   @@index([archived_by], map: "idx_prospectos_archivado_por_fk")
   @@index([user_id], map: "idx_prospectos_user_fk")
   @@index([organization_id, cotizacion_responsable_id], map: "idx_prospecto_quote_assignee")
+  @@index([predio_principal_id, organization_id], map: "idx_prospecto_predio_principal")
   @@index([etapa_operativa_codigo], map: "idx_prospectos_etapa_operativa_fk")
   @@index([servicio_catalogo_codigo], map: "idx_prospectos_servicio_catalogo_fk")
   @@index([notaria_id, organization_id], map: "idx_prospecto_notaria_org")
@@ -938,6 +942,9 @@ model Cotizacion {
   territorio_operacion           Json?
   valor_operacion                Decimal?                    @db.Decimal(18, 2)
   valor_catastral                Decimal?                    @db.Decimal(18, 2)
+  valor_avaluo                   Decimal?                    @db.Decimal(18, 2)
+  predio_principal_id             String?                     @db.Uuid
+  predio_principal                Predio?                     @relation("CotizacionPredioPrincipal", fields: [predio_principal_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction, map: "fk_cotizacion_predio_principal_tenant")
   cuenta_predial                 String?                     @db.VarChar(180)
   importe_predial                Decimal?                    @db.Decimal(18, 2)
   cuerpo_correo_notaria          String?
@@ -989,6 +996,7 @@ model Cotizacion {
   @@index([transicion_actual_id], map: "idx_cotizacion_current_transition")
   @@index([organization_id, etapa_contractual], map: "idx_cotizacion_contract_stage")
   @@index([organization_id, solicitante_formal_id], map: "idx_cotizaciones_solicitante_formal")
+  @@index([predio_principal_id, organization_id], map: "idx_cotizacion_predio_principal")
   @@map("cotizaciones")
 }
 
@@ -2392,6 +2400,8 @@ model Predio {
   documentos                           PredioDocumento[]
   expedienteDocumentFolders            ExpedienteDocumentoCarpeta[] @relation("ExpedienteFolderPredio")
   datosFuente                          PredioDatoFuente[]
+  prospectosPrincipales                Prospecto[]                  @relation("ProspectoPredioPrincipal")
+  cotizacionesPrincipales               Cotizacion[]                 @relation("CotizacionPredioPrincipal")
 
   @@unique([id, organization_id], map: "uq_predios_id_org")
   @@index([organization_id, archived_at], map: "idx_predios_org_archived")
@@ -3657,6 +3667,7 @@ model ExpedienteIngresoReportado {
   forma_pago_detalle           String?
   referencia                   String?
   factura_estado               ExpedienteFacturaEstado?
+  facturar_publico_general     Boolean                          @default(false)
   facturar_a_vinculo_id        String?                          @db.Uuid
   facturar_a_compareciente_id  String?                          @db.Uuid
   factura_completada_por_id    String?                          @db.Uuid
@@ -7525,6 +7536,7 @@ enum CatalogoDestinoFuncional {
   FINANZAS_SOLICITUD_PAGO
   PROYECTO_MACHOTE
   EXPEDIENTE_DOCUMENTO_GENERICO
+  EXPEDIENTE_FICHA
   ARCHIVO_NOTA
   CUMPLIMIENTO_PLD_UIF
   SIN_ASIGNAR

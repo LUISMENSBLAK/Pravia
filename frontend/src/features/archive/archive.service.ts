@@ -12,11 +12,14 @@ export type ArchivoOverview = {
   next_numero_escritura: string | null; next_folio: string | null;
   libro_tomo: string | null; libro_tomo_configured: boolean;
   legacy_reconciliation_required: boolean; legacy_count: number;
+  protocol?: { config: { revision: number; anchor_folio: string; anchor_libro: number; anchor_tomo: number; tomos_por_libro: number; folios_por_tomo: number }; position: {next_folio: string; libro: string; tomo: string; folios_restantes: number} | null } | null;
 };
 export type ArchivoInput = { numero_escritura: string; folio_inicio: string; folio_fin: string; fecha_instrumento: string; libro_tomo: string; no_paso?: boolean };
 export type ArchivoAppendix = { id: string; documento: { id: string; nombre_original: string; mime_type: string; size_bytes: number; fecha_carga: string } };
 
 export const archivoService = {
+  configureProtocol(input: NonNullable<ArchivoOverview['protocol']>['config'] & {reason: string}) { return apiRequest('/archivo/protocolo/configuracion', {method:'PUT',body:JSON.stringify(input)}); },
+  records(search: string, page: number, signal?: AbortSignal) { return apiRequest<{data: ArchivoRecord[]; total: number; page: number; pageSize: number; pages: number}>(`/archivo/escrituras?${new URLSearchParams({search,page:String(page),pageSize:'25'})}`, { signal }); },
   overview(signal?: AbortSignal) { return apiRequest<ArchivoOverview>('/archivo', { signal }); },
   expediente(id: string, signal?: AbortSignal) { return apiRequest<{ record: ArchivoRecord | null; appendix: ArchivoAppendix[]; notes: ArchivoAppendix[]; format: { available: boolean; name: string | null; reason: string | null }; overview: ArchivoOverview }>(`/expedientes/${encodeURIComponent(id)}/archivo`, { signal }); },
   assign(expedienteId: string, input: ArchivoInput) { return apiRequest<ArchivoRecord>(`/expedientes/${encodeURIComponent(expedienteId)}/archivo`, { method: 'POST', body: JSON.stringify(input) }); },

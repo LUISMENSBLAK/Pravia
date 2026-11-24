@@ -9,6 +9,7 @@ import { functionalDestinationService } from './functionalDestination.service';
 import { CatalogConfigurationError } from './configurationCatalogError';
 import Docxtemplater from 'docxtemplater';
 import PizZip from 'pizzip';
+import { archiveProtocolPosition, parseArchiveProtocol } from '../domain/archiveProtocol';
 
 type Actor = NonNullable<Request['user']>;
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -65,12 +66,20 @@ const serialized = (record: any, canReadCompliance = false) => ({
     abogado: record.expediente.abogado,
     acto: record.expediente.actos?.find((item: any) => item.estatus === 'ACTIVO' && !item.removed_at)?.tipo_acto?.nombre ?? record.expediente.tipo_acto?.nombre ?? null,
     vulnerable: canReadCompliance
-      ? record.expediente.complianceStates?.[0]
-        ? (record.expediente.complianceStates[0].currentReview?.legalRuleResults?.length ? 'Sí' : 'No')
+        ? record.expediente.complianceStates?.[0]
+        ? archiveVulnerability(record.expediente.complianceStates[0].currentReview?.legalRuleResults)
         : 'Sin evaluar'
       : 'Restringido',
   } : null,
 });
+
+// An absent or incomplete legal evaluation is not a negative result.
+export function archiveVulnerability(results?: Array<{vulnerable_activity:boolean|null;applicability?:string}>) {
+  if(!results?.length)return 'Sin evaluar';
+  if(results.some(item=>item.vulnerable_activity===true))return 'Sí';
+  if(results.some(item=>item.vulnerable_activity===null||!['NO_APLICA','APLICA_SIN_AVISO','APLICA_CON_AVISO'].includes(item.applicability||'')))return 'No verificable';
+  return 'No';
+}
 
 const recordInclude = {
   expediente: {
@@ -78,7 +87,7 @@ const recordInclude = {
       abogado: { select: { id: true, nombre: true, apellido: true } },
       tipo_acto: { select: { nombre: true } },
       actos: { where: { estatus: 'ACTIVO' as const, removed_at: null }, include: { tipo_acto: { select: { nombre: true } } }, orderBy: { created_at: 'asc' as const } },
-      complianceStates: { orderBy: { updated_at: 'desc' as const }, take: 1, select: { currentReview: { select: { legalRuleResults: { where: { vulnerable_activity: true }, take: 1, select: { id: true } } } } } },
+      complianceStates: { orderBy: { updated_at: 'desc' as const }, take: 1, select: { currentReview: { select: { legalRuleResults: { where: { outcome_purpose:'ACTIVITY_APPLICABILITY' as const }, select: { vulnerable_activity:true,applicability:true } } } } } },
     },
   },
 };
@@ -99,6 +108,39 @@ export function renderArchivoDocx(templateBuffer: Buffer, fields: Record<string,
 
 export class ArchivoService {
   constructor(private readonly prisma: PrismaClient) {}
+
+  async configureProtocol(actor: Actor, input: any) {
+    if (!actor.permissions.includes('configuracion.actos_tiempos.manage') || !actor.permissions.includes('expedientes.write')) throw new ArchivoError(403, 'ARCHIVO_PROTOCOL_DENIED', 'Sólo Administración o Dirección autorizada puede configurar el protocolo.');
+    let proposed: ReturnType<typeof parseArchiveProtocol>;
+    try { proposed = parseArchiveProtocol(input); } catch { throw new ArchivoError(400, 'ARCHIVO_PROTOCOL_INVALID', 'Captura el folio de referencia, libro, tomo y capacidades explícitas válidas.'); }
+    const reason = String(input.reason ?? '').trim();
+    if (!reason || reason.length > 500) throw new ArchivoError(400, 'ARCHIVO_PROTOCOL_REASON_REQUIRED', 'Explica el motivo de esta configuración.');
+    return this.prisma.$transaction(async tx => {
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`archive-protocol:${actor.organizationId}`}))`);
+      const organization = await tx.organization.findUniqueOrThrow({ where: { id: actor.organizationId }, select: { archive_protocol_config: true } });
+      const previous = organization.archive_protocol_config as any;
+      if ((previous?.revision ?? 0) !== proposed.revision) throw new ArchivoError(409, 'ARCHIVO_PROTOCOL_STALE', 'La configuración cambió. Recarga antes de guardar.');
+      const next = { ...proposed, revision: proposed.revision + 1 };
+      await tx.organization.update({ where: { id: actor.organizationId }, data: { archive_protocol_config: next } });
+      await tx.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: 'ARCHIVO_PROTOCOL_CONFIGURED', entidad: 'Organization', entidad_id: actor.organizationId, valores_anteriores: previous ?? Prisma.JsonNull, valores_nuevos: { ...next, reason, historical_assignments_changed: false } } });
+      return next;
+    });
+  }
+
+  async listRecords(actor: Actor, query: { search?: unknown; page?: unknown; pageSize?: unknown } = {}) {
+    const page = Number(query.page ?? 1), pageSize = Number(query.pageSize ?? 25);
+    const search = String(query.search ?? '').trim();
+    if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100 || !Number.isSafeInteger((page - 1) * pageSize) || (page - 1) * pageSize > 2147483647 || (search && !/^[1-9]\d{0,18}$/.test(search))) {
+      throw new ArchivoError(400, 'ARCHIVO_QUERY_INVALID', 'Busca un número de escritura positivo y selecciona una página válida.');
+    }
+    const number = search ? positive(search, 'El número de escritura') : undefined;
+    const where: Prisma.ArchivoRegistroWhereInput = { organization_id: actor.organizationId, clase: 'INSTRUMENTO', expediente: { is: expedienteReadWhere(actor) }, ...(number === undefined ? {} : { numero_escritura: number }) };
+    const [count, records] = await this.prisma.$transaction([
+      this.prisma.archivoRegistro.count({ where }),
+      this.prisma.archivoRegistro.findMany({ where, include: recordInclude, orderBy: [{ numero_escritura: 'desc' }, { id: 'desc' }], skip: (page - 1) * pageSize, take: pageSize }),
+    ], { isolationLevel: 'RepeatableRead' });
+    return { data: records.map(record => serialized(record, actor.permissions.includes('compliance.read'))), total: count, page, pageSize, pages: Math.ceil(count / pageSize) };
+  }
 
   /** Mi Día reads actual instrument assignments, not the bounded overview list. */
   async assignmentsInRange(actor: Actor, from: Date, to: Date, limit: number, offset = 0) {
@@ -137,13 +179,20 @@ export class ArchivoService {
       this.prisma.archivoRegistro.findFirst({ where: { organization_id: actor.organizationId }, orderBy: { folio_fin: 'desc' }, select: { folio_fin: true } }),
       this.legacyCount(this.prisma, actor),
     ]);
+    const organization = await this.prisma.organization.findUniqueOrThrow({ where: { id: actor.organizationId }, select: { archive_protocol_config: true } });
+    let protocol = null;
+    if (organization.archive_protocol_config) {
+      try { const config = parseArchiveProtocol(organization.archive_protocol_config); protocol = { config, position: archiveProtocolPosition(config, latestFolio ? (latestFolio.folio_fin + 1n).toString() : null) }; }
+      catch { throw new ArchivoError(409, 'ARCHIVO_PROTOCOL_INVALID', 'La configuración de protocolo requiere revisión en Archivo.'); }
+    }
     return {
       records: records.map((record) => serialized(record, actor.permissions.includes('compliance.read'))),
       unused_folios: unused.map((record) => serialized(record)),
       next_numero_escritura: latestNumber?.numero_escritura === null || latestNumber?.numero_escritura === undefined ? null : (latestNumber.numero_escritura + BigInt(1)).toString(),
       next_folio: latestFolio ? (latestFolio.folio_fin + BigInt(1)).toString() : null,
       libro_tomo: latestNumber?.libro_tomo ?? null,
-      libro_tomo_configured: false,
+      libro_tomo_configured: Boolean(protocol),
+      protocol,
       legacy_reconciliation_required: legacy > 0,
       legacy_count: legacy,
     };

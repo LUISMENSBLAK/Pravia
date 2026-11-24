@@ -34,8 +34,10 @@ export class MiDiaArchiveCardsService {
         continue;
       }
       if (key === 'FOLIOS_LEFT') {
-        result[key] = { value: null, href: '/archivo', source: 'Archivo', available: false,
-          message: 'Sin información: Archivo no tiene un rango o capacidad final configurada para calcular folios restantes.' };
+        const remaining = overview?.protocol?.position?.folios_restantes;
+        const value = remaining === undefined || remaining === null ? null : String(remaining);
+        result[key] = { value, href: '/archivo', source: 'Archivo', available: value !== null,
+          message: value === null ? 'Sin información: Archivo no tiene un rango o capacidad final configurada para calcular folios restantes.' : null };
         continue;
       }
       const value = key === 'NEXT_DEED' ? overview?.next_numero_escritura ?? null : overview?.next_folio ?? null;

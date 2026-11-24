@@ -8,6 +8,7 @@ import { deleteFile, downloadFile, getSignedUrl, uploadFile } from '../storage/s
 import { generateOperationalArtifactWithOpenAI } from './openaiDocument.service';
 import { extractDocxText } from './docxText';
 import { canonicalUploadedDocumentMime } from './documentUploadValidation';
+import { DOCX_MIME, renderFunctionalDocumentBuffer } from './functionalDocumentRenderer.service';
 import { PlatformDomainError } from '../platform/platform.errors';
 
 export type Exp006Actor = { id: string; organizationId: string; membershipId: string; sessionId: string; rol: any; permissions: any[]; scope: 'GLOBAL' | 'ASSIGNED_OBJECTS' };
@@ -34,6 +35,33 @@ function institutionIdsFrom(value: unknown): string[] {
 
 export class ExpedienteArtifactsService {
   constructor(private readonly prisma: PrismaClient) {}
+
+  async institutions(actor:Exp006Actor,expedienteId:string) {
+    const item=await this.assertExpediente(this.prisma,actor,expedienteId,'read');
+    const institutions=await this.prisma.catalogoInstitucion.findMany({where:{organization_id:actor.organizationId,activa:true},select:{id:true,nombre:true,tipo:true},orderBy:{nombre:'asc'}});
+    const selected=institutionIdsFrom(item.datos_operacion);
+    const current=await this.prisma.expediente.findUniqueOrThrow({where:{id:expedienteId},select:{version:true}});
+    return {institutions,selected,version:current.version};
+  }
+
+  async selectInstitutions(actor:Exp006Actor,expedienteId:string,input:{ids:string[];expected_version:number;reason:string}) {
+    if(!actor.permissions.includes('expedientes.write')||!actor.permissions.includes('documentos.write'))throw new ExpedienteArtifactsError(403,'EXP006_INSTITUTIONS_DENIED','No puedes cambiar las instituciones de este expediente.');
+    if(!Array.isArray(input.ids)||input.ids.length>50||new Set(input.ids).size!==input.ids.length||input.ids.some(id=>!(/^[0-9a-f-]{36}$/i.test(id)))||!input.reason?.trim()||input.reason.length>500)throw new ExpedienteArtifactsError(400,'EXP006_INSTITUTIONS_INVALID','Selecciona instituciones válidas y explica el cambio.');
+    return this.prisma.$transaction(async tx=>{
+      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`exp006-institutions:${actor.organizationId}:${expedienteId}`}))`);
+      const item=await this.assertExpediente(tx,actor,expedienteId);
+      const current=await tx.expediente.findUniqueOrThrow({where:{id:expedienteId},select:{version:true}});
+      if(current.version!==input.expected_version)throw new ExpedienteArtifactsError(409,'EXP006_INSTITUTIONS_STALE','El expediente cambió. Recarga antes de guardar.');
+      if(await tx.catalogoInstitucion.count({where:{organization_id:actor.organizationId,id:{in:input.ids},activa:true}})!==input.ids.length)throw new ExpedienteArtifactsError(400,'EXP006_INSTITUTION_UNAVAILABLE','Una institución no pertenece a esta Notaría o ya no está activa.');
+      const previous=conditionObject(item.datos_operacion);
+      // Preserve detected fiduciary references. Manual selections are explicit,
+      // additional context; they never rewrite legal acts or master institutions.
+      await tx.expediente.update({where:{id:expedienteId},data:{datos_operacion:json({...previous,pravia_institucion_ids:input.ids}),version:{increment:1}}});
+      await this.reconcileContextChangeInTransaction(tx,actor,expedienteId,'EXP006_INSTITUTIONS_CHANGE');
+      await this.audit(tx,actor,'EXP006_INSTITUTIONS_CHANGE','Expediente',expedienteId,{selected:input.ids,previous:previous.pravia_institucion_ids??[],reason:input.reason.trim(),detected_references_preserved:true});
+      return {selected:input.ids,version:current.version+1};
+    });
+  }
 
   async read(actor: Exp006Actor, expedienteId: string) {
     const context = await this.buildContext(this.prisma, actor, expedienteId, 'read');
@@ -103,9 +131,12 @@ export class ExpedienteArtifactsService {
       if (!master || master.artefacto_id !== pending.artefacto_id || master.content_kind !== 'FILE' || !master.storage_key || !master.mime_type || !master.nombre_original) throw new ExpedienteArtifactsError(409, 'EXP006_MASTER_VERSION_UNAVAILABLE', 'La versión maestra de archivo ya no está disponible. Revisa el pendiente.');
       const masterBuffer = await downloadFile(master.storage_key);
       const masterText = await this.readText(masterBuffer, master.mime_type, master.nombre_original);
+      const variables=[...new Set([...masterText.matchAll(/\{\{\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\}\}/g)].map(item=>item[1]))];
+      if(master.mime_type!==DOCX_MIME||!variables.length||variables.length>100)throw new ExpedienteArtifactsError(422,'EXP006_MAPPING_REQUIRED','Este formato debe ser Word con variables explícitas {{campo}}. Configura su mapeo; no se reconstruirá ni cambiará su estructura.');
       const generation = await generateOperationalArtifactWithOpenAI({
         artifactName: master.artefacto.nombre, masterText, structuredData: sources.structuredData,
         currentPartyDocuments: sources.documents,
+        variables,
         economicContext: {
           actor: { userId: actor.id, organizationId: actor.organizationId, membershipId: actor.membershipId,
             role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId },
@@ -117,10 +148,8 @@ export class ExpedienteArtifactsService {
       if (currentSources.revision !== sources.revision) {
         throw new ExpedienteArtifactsError(409, 'EXP006_GENERATION_SOURCES_CHANGED', 'Las fuentes cambiaron durante la generación. Revisa y vuelve a intentarlo.');
       }
-      const paragraphs = [new Paragraph({ text: master.artefacto.nombre, heading: HeadingLevel.TITLE }), ...generation.content.split(/\n+/).filter(Boolean).map((line) => new Paragraph({ children: [new TextRun(line)] }))];
-      if (generation.missing_fields.length) paragraphs.push(new Paragraph({ text: `Datos pendientes de revisión: ${generation.missing_fields.join(', ')}`, heading: HeadingLevel.HEADING_2 }));
-      if (generation.conflicts.length) paragraphs.push(new Paragraph({ text: 'Se detectaron datos contradictorios. Requiere revisión humana.', heading: HeadingLevel.HEADING_2 }));
-      const buffer = await Packer.toBuffer(new Document({ sections: [{ children: paragraphs }] }));
+      const values=Object.fromEntries(variables.map(field=>[field,generation.mapped_fields?.find(item=>item.field===field)?.value??null]));
+      const buffer=(await renderFunctionalDocumentBuffer(masterBuffer,master.mime_type,values,undefined,{strictMapping:true})).buffer;
       storageKey = `organizations/${actor.organizationId}/expedientes/${expedienteId}/exp006/${randomUUID()}_${safe(master.artefacto.nombre)}.docx`;
       await uploadFile(buffer, storageKey, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
       const result = await this.persistDocument(actor, expedienteId, pending, {

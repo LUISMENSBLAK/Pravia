@@ -167,6 +167,19 @@ describe('PRAVIA IA multi-intent planner', () => {
     expect(requestBodies(fetchImpl)[0].instructions).toContain('no exige Prospecto');
   });
 
+  it.each(['Oye, hazme una cotización nueva para revisar un arrendamiento. No generes documentos ni cobres nada.','Por favor, arma una cotización para revisión documental.','Crea una nueva cotización sin prospecto.'])('ejecuta la orden cotidiana aunque el plan haya omitido la acción: %s',async message=>{
+    const fetchImpl=vi.fn().mockResolvedValueOnce(planResponse([],{actionCalls:[],actionRequested:true}));
+    const executeAction=vi.fn().mockResolvedValue({status:'success',message:'Borrador creado'});
+    const send=createAssistantChatService({gateway:gatewayFromFetch(fetchImpl) as any,executeAction});
+    await send({message,conversationId:'c',messageId:'m'},{...actionUser,permissions:[...actionUser.permissions,'cotizaciones.write']},'quote-natural');
+    expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({actionKey:'quote.create',args:{operationContext:message}}));expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+  it.each(['No crees una cotización.','Dime cómo crear una cotización.','Imagina que alguien dice: hazme una cotización.'])('no transforma negaciones o ejemplos en alta: %s',async message=>{
+    const fetchImpl=vi.fn().mockResolvedValueOnce(planResponse([],{actionCalls:[]})).mockResolvedValueOnce(textResponse('No guardé cambios.'));
+    const executeAction=vi.fn();const send=createAssistantChatService({gateway:gatewayFromFetch(fetchImpl) as any,executeAction:executeAction as any});
+    await send({message,conversationId:'c',messageId:'m'},{...actionUser,permissions:[...actionUser.permissions,'cotizaciones.write']},'quote-negative');expect(executeAction).not.toHaveBeenCalled();
+  });
+
   it('TEST 1 conserva la consulta simple de pendientes de hoy', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(planResponse([{ tool: 'getCurrentUserWork', arguments: { period: 'TODAY', limit: 10 } }], { intents: ['pending_items'] }))

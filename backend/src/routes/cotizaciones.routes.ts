@@ -1,4 +1,5 @@
 import express from 'express';
+import { commercialPropertyHandler } from '../controllers/commercialProperty.controller';
 import multer from 'multer';
 import { DOCUMENT_UPLOAD_MAX_BYTES } from '../config/uploadLimits';
 import {
@@ -34,6 +35,9 @@ import { requirePermission } from '../middleware/auth.middleware';
 import { requireCotizacionObjectAccess, requireDocumentoObjectAccess } from '../middleware/objectAccess.middleware';
 
 const router = express.Router();
+router.get('/:id/inmueble', commercialPropertyHandler('cotizacion','read'));
+router.get('/:id/inmueble/opciones', commercialPropertyHandler('cotizacion','options'));
+router.put('/:id/inmueble', requirePermission('cotizaciones.write'), commercialPropertyHandler('cotizacion','select'));
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: DOCUMENT_UPLOAD_MAX_BYTES, files: 1 } });
 router.param('id', requireCotizacionObjectAccess);
 

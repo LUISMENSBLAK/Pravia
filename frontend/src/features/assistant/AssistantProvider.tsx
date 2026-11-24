@@ -71,8 +71,11 @@ export function AssistantProvider({ children, service = assistantService }: Prop
   const [alertsLoading, setAlertsLoading] = useState(false);
   const lastSubmission = useRef<Submission>();
   const activeConversationIdRef = useRef<string>();
+  const selectingConversation = useRef(false);
   const conversationCreation = useRef<Promise<string>>();
   const conversationSelectionEpoch = useRef(0);
+  const historyEpoch = useRef(0);
+  const conversationScopeRef = useRef<AssistantConversationStatus>('ACTIVE');
   const explicitBlankConversation = useRef(false);
   const projectDraft = useRef<AssistantContext['projectDraft']>();
   const lastActivator = useRef<HTMLElement | null>(null);
@@ -108,26 +111,35 @@ export function AssistantProvider({ children, service = assistantService }: Prop
     if (reply.message) setMessages((current) => [...current, { id: reply.messageId || messageId(), role: 'assistant', content: reply.message!, timestamp: now(),
       ...(reply.sources?.length ? { sources: reply.sources } : {}), ...(reply.confirmation ? { confirmation: reply.confirmation } : {}) }]);
     if (reply.refresh) notifyAssistantDataChange(reply.refresh);
-    if (nextStatus === 'success') { if (successTimer.current) window.clearTimeout(successTimer.current); successTimer.current = window.setTimeout(() => setStatus('idle'), 2200); }
+    if (nextStatus === 'success') { if (successTimer.current) window.clearTimeout(successTimer.current); const epoch = conversationSelectionEpoch.current; successTimer.current = window.setTimeout(() => { if (epoch === conversationSelectionEpoch.current) setStatus('idle'); }, 2200); }
   }, []);
 
-  const selectConversation = useCallback(async (id: string) => {
+  const selectConversation = useCallback(async (id: string, automatic = false) => {
+    selectingConversation.current = true;
+    activeConversationIdRef.current = id;
+    setActiveConversationId(id); setMessages([]); setStatus('processing');
     const selectionEpoch = ++conversationSelectionEpoch.current;
+    activeRequest.current?.abort(); activeRequest.current = null;
+    lastSubmission.current = undefined;
+    setDraft(''); setPendingAttachments([]); setConfirmation(null); setCollection(null); setProcessLabel(undefined);
     explicitBlankConversation.current = false;
     setHistoryLoading(true); setErrorMessage(undefined);
     try { const detail = await service.getConversation(id); if (selectionEpoch !== conversationSelectionEpoch.current) return;
       activeConversationIdRef.current = detail.id; setActiveConversationId(detail.id); setMessages(mapConversationMessages(detail));
-      setPendingAttachments(detail.attachments || []); setConfirmation(detail.pending_confirmation ?? null); setCollection(detail.pending_collection ?? null); setHistoryOpen(false); setStatus(detail.pending_confirmation ? 'confirmation-required' : 'idle'); }
-    catch { setErrorMessage('No pude abrir esa conversación.'); }
-    finally { setHistoryLoading(false); }
+      setPendingAttachments(detail.attachments || []); setConfirmation(detail.pending_confirmation ?? null); setCollection(detail.pending_collection ?? null); if (!automatic) setHistoryOpen(false); setStatus(detail.pending_confirmation ? 'confirmation-required' : 'idle'); }
+    catch { if (selectionEpoch === conversationSelectionEpoch.current) { activeConversationIdRef.current=undefined; setActiveConversationId(undefined); explicitBlankConversation.current=true; setStatus('error'); setErrorMessage('No pude abrir esa conversación.'); } }
+    finally { if (selectionEpoch === conversationSelectionEpoch.current) { selectingConversation.current = false; setHistoryLoading(false); } }
   }, [service]);
 
   const loadConversations = useCallback(async (scope: AssistantConversationStatus = conversationScope) => {
+    const epoch = ++historyEpoch.current;
+    conversationScopeRef.current = scope;
+    const selectionEpoch = conversationSelectionEpoch.current;
     setHistoryLoading(true);
-    try { const items = await service.listConversations(scope); setConversationScope(scope); setConversations(items);
-      if (scope === 'ACTIVE' && !explicitBlankConversation.current && !activeConversationId && !messages.length && items[0]) await selectConversation(items[0].id); }
-    catch { setConversations([]); }
-    finally { setHistoryLoading(false); }
+    try { const items = await service.listConversations(scope); if (epoch !== historyEpoch.current) return; setConversationScope(scope); setConversations(items);
+      if (selectionEpoch === conversationSelectionEpoch.current && scope === 'ACTIVE' && !explicitBlankConversation.current && !activeConversationIdRef.current && !messages.length && items[0]) await selectConversation(items[0].id, true); }
+    catch { if (epoch === historyEpoch.current) setConversations([]); }
+    finally { if (epoch === historyEpoch.current) setHistoryLoading(false); }
   }, [activeConversationId, conversationScope, messages.length, selectConversation, service]);
 
   useEffect(() => { if (isOpen && !conversations.length && !activeConversationId) void loadConversations('ACTIVE'); }, [activeConversationId, conversations.length, isOpen, loadConversations]);
@@ -174,42 +186,51 @@ export function AssistantProvider({ children, service = assistantService }: Prop
   }, [status]);
 
   const ensureConversation = useCallback(async () => {
-    const currentId = activeConversationIdRef.current || activeConversationId;
+    if (selectingConversation.current) throw new DOMException('Conversation still loading', 'AbortError');
+    const currentId = activeConversationIdRef.current;
     if (currentId) return currentId;
     if (!conversationCreation.current) {
+      const epoch = conversationSelectionEpoch.current;
       explicitBlankConversation.current = false;
-      conversationCreation.current = service.createConversation(context).then((created) => {
+      const creation = service.createConversation(context).then((created) => {
+        if (epoch !== conversationSelectionEpoch.current) throw new DOMException('Conversation changed', 'AbortError');
         activeConversationIdRef.current = created.id;
         setActiveConversationId(created.id);
         setConversations((current) => [created, ...current.filter((item) => item.id !== created.id)]);
         return created.id;
-      }).finally(() => { conversationCreation.current = undefined; });
+      }).finally(() => { if (conversationCreation.current === creation) conversationCreation.current = undefined; });
+      conversationCreation.current = creation;
     }
     return conversationCreation.current;
   }, [activeConversationId, context, service]);
 
   const performSubmission = useCallback(async (submission: Submission, appendUser: boolean) => {
+    const epoch = conversationSelectionEpoch.current;
     setErrorMessage(undefined); setConfirmation(null);
     if (appendUser) setMessages((current) => [...current, { id: submission.clientMessageId, role: 'user', content: submission.prompt, timestamp: now(), attachments: pendingAttachments }]);
     setStatus('thinking'); const controller = new AbortController(); activeRequest.current?.abort(); activeRequest.current = controller;
     try { const reply = await service.sendMessage({ message: submission.prompt, context: submission.context, suggestionId: selectedSuggestion?.id, conversationId: submission.conversationId,
         clientMessageId: submission.clientMessageId, attachmentIds: submission.attachmentIds, history: submission.history }, controller.signal);
+      if (controller.signal.aborted || epoch !== conversationSelectionEpoch.current || activeConversationIdRef.current !== submission.conversationId) return;
       setPendingAttachments([]); applyReply(reply); void loadConversations('ACTIVE'); }
-    catch (error) { if (error instanceof DOMException && error.name === 'AbortError') return; setStatus('error'); setErrorMessage('No pude completar esa consulta.'); }
+    catch (error) { if (controller.signal.aborted || epoch !== conversationSelectionEpoch.current || error instanceof DOMException && error.name === 'AbortError') return; setStatus('error'); setErrorMessage('No pude completar esa consulta.'); }
     finally { if (activeRequest.current === controller) activeRequest.current = null; }
   }, [applyReply, loadConversations, pendingAttachments, selectedSuggestion?.id, service]);
 
   const sendMessage = useCallback(async (value?: string) => {
-    const prompt = (value ?? draft).trim(); if (!prompt || status === 'thinking' || status === 'processing') return; setDraft('');
+    const prompt = (value ?? draft).trim(); if (!prompt || selectingConversation.current || status === 'thinking' || status === 'processing') return; setDraft('');
+    const epoch = conversationSelectionEpoch.current;
+    setStatus('thinking');
     try { const conversationId = await ensureConversation(); const submission: Submission = { prompt, conversationId, clientMessageId: messageId(),
         attachmentIds: pendingAttachments.map((item) => item.id), history: messages.slice(-8).map(({ role, content }) => ({ role, content })),
         context: { ...context, ...(projectDraft.current ? { projectDraft: projectDraft.current } : {}) } };
       lastSubmission.current = submission; await performSubmission(submission, true); }
-    catch { setStatus('error'); setErrorMessage('No pude preparar la conversación.'); }
+    catch { if (epoch === conversationSelectionEpoch.current) { setStatus('error'); setErrorMessage('No pude preparar la conversación.'); } }
   }, [context, draft, ensureConversation, messages, pendingAttachments, performSubmission, status]);
 
   const retry = useCallback(async () => { if (lastSubmission.current) await performSubmission(lastSubmission.current, false); }, [performSubmission]);
   const newConversation = useCallback(() => {
+    selectingConversation.current = false;
     activeRequest.current?.abort();
     conversationSelectionEpoch.current += 1;
     explicitBlankConversation.current = true;
@@ -218,46 +239,59 @@ export function AssistantProvider({ children, service = assistantService }: Prop
     }
     activeConversationIdRef.current = undefined; conversationCreation.current = undefined;
     setActiveConversationId(undefined); setMessages([]); setPendingAttachments([]); setDraft('');
-    setConfirmation(null); setCollection(null); setErrorMessage(undefined); setStatus('idle'); setHistoryOpen(false); lastSubmission.current = undefined;
+    setConfirmation(null); setCollection(null); setErrorMessage(undefined); setStatus('idle'); setHistoryOpen(false); setHistoryLoading(false); setProcessLabel(undefined); lastSubmission.current = undefined;
   }, [activeConversationId, pendingAttachments, service]);
-  const renameConversation = useCallback(async (id: string, title: string) => { const updated = await service.renameConversation(id, title); setConversations((current) => current.map((item) => item.id === id ? updated : item)); }, [service]);
+  const renameConversation = useCallback(async (id: string, title: string) => {
+    try { const updated = await service.renameConversation(id, title); setConversations(current => current.map(item => item.id === id ? updated : item)); }
+    catch { setErrorMessage('No pude cambiar el nombre de esa conversación. Intenta de nuevo.'); }
+  }, [service]);
   const transitionConversation = useCallback(async (id: string, action: 'archive' | 'trash' | 'restore') => {
-    if (action === 'archive') await service.archiveConversation(id); else if (action === 'trash') await service.trashConversation(id); else await service.restoreConversation(id);
-    if (activeConversationId === id && action !== 'restore') newConversation(); await loadConversations(conversationScope);
+    try {
+      if (action === 'archive') await service.archiveConversation(id); else if (action === 'trash') await service.trashConversation(id); else await service.restoreConversation(id);
+      if (activeConversationIdRef.current === id && action !== 'restore') newConversation(); await loadConversations(conversationScopeRef.current);
+    } catch { setErrorMessage('No pude cambiar el estado de esa conversación. Intenta de nuevo.'); }
   }, [activeConversationId, conversationScope, loadConversations, newConversation, service]);
 
   const uploadAttachment = useCallback(async (file: File) => {
+    const epoch = conversationSelectionEpoch.current;
     setProcessLabel('Adjuntando archivo…'); setStatus('processing');
     try { const conversationId = await ensureConversation(); const attachment = await service.uploadAttachment(conversationId, file);
+      if (epoch !== conversationSelectionEpoch.current || activeConversationIdRef.current !== conversationId) return;
       setPendingAttachments((current) => current.some((item) => item.id === attachment.id) ? current : [...current, attachment]); setStatus('idle'); }
-    catch { setStatus('error'); setErrorMessage('No pude adjuntar ese archivo.'); }
+    catch { if (epoch === conversationSelectionEpoch.current) { setStatus('error'); setErrorMessage('No pude adjuntar ese archivo.'); } }
   }, [ensureConversation, service]);
   const removeAttachment = useCallback(async (id: string) => { if (!activeConversationId) return;
-    try { await service.archiveAttachment(activeConversationId, id); setPendingAttachments((current) => current.filter((item) => item.id !== id)); }
-    catch { setErrorMessage('No pude retirar ese adjunto.'); }
+    const epoch = conversationSelectionEpoch.current;
+    try { await service.archiveAttachment(activeConversationId, id); if (epoch === conversationSelectionEpoch.current) setPendingAttachments((current) => current.filter((item) => item.id !== id)); }
+    catch { if (epoch === conversationSelectionEpoch.current) setErrorMessage('No pude retirar ese adjunto.'); }
   }, [activeConversationId, service]);
   const transcribeAudio = useCallback(async (file: File) => {
+    const epoch = conversationSelectionEpoch.current;
     setRecording(false); setProcessLabel('Transcribiendo audio…'); setStatus('processing');
     try { const conversationId = await ensureConversation(); const attachment = await service.uploadAttachment(conversationId, file);
+      if (epoch !== conversationSelectionEpoch.current) return;
       setPendingAttachments((current) => current.some((item) => item.id === attachment.id) ? current : [...current, attachment]);
       const result = await service.transcribeAttachment(conversationId, attachment.id);
+      if (epoch !== conversationSelectionEpoch.current || activeConversationIdRef.current !== conversationId) return;
       setDraft((current) => [current.trim(), result.transcript.trim()].filter(Boolean).join(current.trim() ? '\n' : ''));
       setPendingAttachments((current) => current.map((item) => item.id === attachment.id ? { ...item, transcription: result.transcript, transcribed_at: now() } : item)); setStatus('idle'); }
-    catch { setStatus('error'); setErrorMessage('No pude transcribir la grabación.'); }
+    catch { if (epoch === conversationSelectionEpoch.current) { setStatus('error'); setErrorMessage('No pude transcribir la grabación.'); } }
   }, [ensureConversation, service]);
 
   const confirmAction = useCallback(async () => { if (!confirmation || !activeConversationId || status === 'processing') return; setStatus('processing'); setProcessLabel('Ejecutando acción…'); setErrorMessage(undefined);
     const controller = new AbortController(); activeRequest.current = controller;
-    try { applyReply(await service.confirmAction(confirmation.id, activeConversationId, context, controller.signal)); }
-    catch (error) { if (error instanceof DOMException && error.name === 'AbortError') return; setStatus('error'); setErrorMessage('No pude completar esa acción.'); }
+    const epoch = conversationSelectionEpoch.current;
+    try { const reply = await service.confirmAction(confirmation.id, activeConversationId, context, controller.signal); if (!controller.signal.aborted && epoch === conversationSelectionEpoch.current) applyReply(reply); else if (reply.refresh) notifyAssistantDataChange(reply.refresh); }
+    catch (error) { if (controller.signal.aborted || epoch !== conversationSelectionEpoch.current || error instanceof DOMException && error.name === 'AbortError') return; setStatus('error'); setErrorMessage('No pude completar esa acción.'); }
     finally { if (activeRequest.current === controller) activeRequest.current = null; }
   }, [activeConversationId, applyReply, confirmation, context, service, status]);
   const submitCollection = useCallback(async (args: Record<string, unknown>) => {
     if (!collection || !activeConversationId || status === 'processing') return;
     setStatus('processing'); setProcessLabel('Validando datos…'); setErrorMessage(undefined);
     const controller = new AbortController(); activeRequest.current = controller;
-    try { applyReply(await service.submitCollection(collection, args, activeConversationId, context, controller.signal)); }
-    catch (error) { if (error instanceof DOMException && error.name === 'AbortError') return; setStatus('error'); setErrorMessage('No pude validar los datos del formulario.'); }
+    const epoch = conversationSelectionEpoch.current;
+    try { const reply = await service.submitCollection(collection, args, activeConversationId, context, controller.signal); if (!controller.signal.aborted && epoch === conversationSelectionEpoch.current) applyReply(reply); }
+    catch (error) { if (controller.signal.aborted || epoch !== conversationSelectionEpoch.current || error instanceof DOMException && error.name === 'AbortError') return; setStatus('error'); setErrorMessage('No pude validar los datos del formulario.'); }
     finally { if (activeRequest.current === controller) activeRequest.current = null; }
   }, [activeConversationId, applyReply, collection, context, service, status]);
   const cancelCollection = useCallback(() => { setCollection(null); setStatus('idle'); }, []);

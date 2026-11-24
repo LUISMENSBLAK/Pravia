@@ -22,7 +22,7 @@ vi.mock('./expedienteBudget.service', () => ({
 
 import { CotizacionConversionService } from './cotizacionConversion.service';
 
-function database(options: { failAudit?: boolean; prospectAct?: string | null; canonical?: boolean; inactiveAdditionalAct?: boolean } = {}) {
+function database(options: { failAudit?: boolean; prospectAct?: string | null; canonical?: boolean; inactiveAdditionalAct?: boolean; property?: boolean; archivedProperty?: boolean } = {}) {
   const state = { linked: null as any, quoteState: 'ACEPTADA' };
   let transactionTail = Promise.resolve();
   const candidate = () => ({
@@ -30,6 +30,7 @@ function database(options: { failAudit?: boolean; prospectAct?: string | null; c
     prospecto: { id: 'prospect-1', nombre: 'Cliente heredado', tipo_acto: options.prospectAct === undefined ? 'Compraventa' : options.prospectAct }, expediente: state.linked,
     versiones: [{ id: 'version-1', version: 1, aprobada: true, desglose_notaria: { rubros: [{ concepto: 'Honorarios' }] }, total_notaria: 100_000, honorarios_pravia: 25_000, total_cliente: 125_000 }],
     pagos: [{ id: 'payment-1', categoria_ingreso: 'ANTICIPO_NOTARIA', estatus: 'VALIDADO', monto: 30_000 }],
+    ...(options.property ? { predio_principal_id: 'property-1', valor_operacion: '111.11', predio_principal: { valor_operacion: '2500000.50', archived_at: options.archivedProperty ? new Date() : null } } : {}),
     ...(options.canonical ? {
       etapa_contractual: 'ACEPTADA', version_operativa: 3,
       actos: [
@@ -53,6 +54,7 @@ function database(options: { failAudit?: boolean; prospectAct?: string | null; c
     prospectoDocumento: { findMany: vi.fn().mockResolvedValue([{ documento_id: 'document-1' }]) },
     cotizacionDocumento: { findMany: vi.fn().mockResolvedValue([{ documento_id: 'document-2' }]) },
     expedienteDocumento: { upsert: vi.fn().mockResolvedValue({}) },
+    expedientePredio: { create: vi.fn().mockResolvedValue({ id: 'property-link-1' }) },
     pago: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     prospecto: { update: vi.fn().mockResolvedValue({}) },
     expedienteActividad: { create: vi.fn().mockResolvedValue({}) },
@@ -83,6 +85,21 @@ describe('EXP-001 conversión canónica y atómica', () => {
     vi.clearAllMocks();
     dependencies.attachFee.mockResolvedValue({ count: 1 });
     dependencies.createBudget.mockResolvedValue({ id: 'budget-1' });
+  });
+  it('hereda la misma ficha de Predio y su valor canónico sin duplicar el maestro ni copiar sus documentos', async () => {
+    const { prisma, tx } = database({ property: true });
+    const service = new CotizacionConversionService(prisma);
+    await service.convert({ cotizacionId: 'quote-1', actorUserId: 'user-1', actorOrganizationId: 'org-1' });
+    expect(dependencies.open).toHaveBeenCalledWith(tx, expect.objectContaining({ valorOperacion: '2500000.50' }));
+    expect(tx.expedientePredio.create).toHaveBeenCalledWith({ data: { organization_id: 'org-1', expediente_id: 'exp-1', predio_id: 'property-1', created_by: 'user-1', idempotency_key: 'QUOTE:quote-1:PROPERTY' } });
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ accion: 'INHERIT_QUOTE_PROPERTY', detalles: expect.objectContaining({ documents_copied: false, act_assignment_inferred: false }) }) }));
+    await service.convert({ cotizacionId: 'quote-1', actorUserId: 'user-1', actorOrganizationId: 'org-1' });
+    expect(tx.expedientePredio.create).toHaveBeenCalledTimes(1);
+  });
+  it('rechaza un Predio archivado antes de crear expediente y revierte la transacción', async () => {
+    const { prisma, tx } = database({ property: true, archivedProperty: true });
+    await expect(new CotizacionConversionService(prisma).convert({ cotizacionId: 'quote-1', actorUserId: 'user-1', actorOrganizationId: 'org-1' })).rejects.toMatchObject({ code: 'QUOTE_PROPERTY_ARCHIVED' });
+    expect(dependencies.open).not.toHaveBeenCalled(); expect(tx.expedientePredio.create).not.toHaveBeenCalled();
   });
 
   it('hereda cliente, acto, responsable, notaría, presupuesto, documentos y anticipo en una transacción', async () => {

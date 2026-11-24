@@ -6,7 +6,7 @@ import { Prisma } from '@prisma/client';
 import type { Request } from 'express';
 import prisma from '../config/prisma';
 import { budgetTotals, moneyToCents, type BudgetTaxTreatment } from '../domain/expedienteBudget';
-import type { QuotePropertyRecord } from '../domain/quotePropertyValues';
+import { effectiveQuotePropertyValues, type QuotePropertyRecord } from '../domain/quotePropertyValues';
 import { quoteActName, quoteClientName } from '../domain/quoteIdentity';
 import {
   AdministrativeQuoteTemplateError,
@@ -206,6 +206,15 @@ export function fillStructuredQuoteBudget(documentBuffer: Buffer, concepts: Quot
     };
     for (const paragraph of Array.from(xmlDoc.getElementsByTagName('w:p'))) {
       const original = textIn(paragraph);
+      // Fill only a named property field; never treat every monetary placeholder
+      // as an appraisal or borrow an amount from the economic budget.
+      const propertyKey = /^VALOR\s+(?:DE\s+)?AVAL[ÚU]O\b/i.test(original) ? 'inmueble.valor_avaluo'
+        : /^VALOR\s+CATASTRAL\b/i.test(original) ? 'inmueble.valor_catastral'
+        : /^VALOR\s+(?:DE\s+LA\s+|DE\s+)?OPERACI[ÓO]N\b/i.test(original) ? 'operacion.valor' : null;
+      if (propertyKey && data[propertyKey]) {
+        replaceSpan(paragraph, '$[0.00]', data[propertyKey] === 'Sin información' ? data[propertyKey] : `$${data[propertyKey]}`);
+        replaceSpan(paragraph, '[0.00]', data[propertyKey]);
+      }
       for (const [token, replacement] of Object.entries(replacements)) replaceSpan(paragraph, token, replacement);
       if (/REFERENCIA\/CONCEPTO:\s*(?:CANTIDAD:|$)/.test(original)) replaceSpan(paragraph, 'REFERENCIA/CONCEPTO:', `REFERENCIA/CONCEPTO: ${data['cotizacion.folio'] || 'Pendiente'}`);
       if (/CANTIDAD:\s*\$\s*(?:TITULAR:|$)/.test(original)) replaceSpan(paragraph, 'CANTIDAD: $', `CANTIDAD: $${money(moneyToCents(totals.total))}`);
@@ -361,6 +370,7 @@ export function quoteTemplateData(input: {
     'operacion.municipio': input.municipality || 'Pendiente',
     'operacion.valor': input.propertyValues?.valor_operacion == null ? 'Sin información' : money(moneyToCents(input.propertyValues.valor_operacion)),
     'inmueble.valor_catastral': input.propertyValues?.valor_catastral == null ? 'Sin información' : money(moneyToCents(input.propertyValues.valor_catastral)),
+    'inmueble.valor_avaluo': input.propertyValues?.valor_avaluo == null ? 'Sin información' : money(moneyToCents(input.propertyValues.valor_avaluo)),
     'inmueble.cuenta_predial': input.propertyValues?.cuenta_predial || 'Sin información',
     'inmueble.importe_predial': input.propertyValues?.importe_predial == null ? 'Sin información' : money(moneyToCents(input.propertyValues.importe_predial)),
     'inmueble.referencia|[PENDIENTE/NO APLICA]': 'Pendiente / no aplica',
@@ -524,6 +534,7 @@ export class QuoteDocumentService {
     const quote = await prisma.cotizacion.findFirst({
       where: { id: cotizacionId, organization_id: actor.organizationId },
       include: {
+        predio_principal: true,
         prospecto: true,
         solicitante_formal: { select: { nombre_busqueda: true } },
         actos: { include: { tipo_acto: { select: { nombre: true } } }, orderBy: { orden: 'asc' } },
@@ -533,6 +544,7 @@ export class QuoteDocumentService {
       },
     });
     if (!quote) throw new QuoteDocumentError(404, 'QUOTE_NOT_FOUND', 'No se encontró la cotización.');
+    if (quote.predio_principal?.archived_at) throw new QuoteDocumentError(409, 'QUOTE_PROPERTY_ARCHIVED', 'El inmueble vinculado está archivado. Revísalo antes de generar documentos nuevos.');
     if (quote.etapa_contractual && !quote.actos?.length) throw new QuoteDocumentError(409, 'QUOTE_ACT_REQUIRED', 'Selecciona al menos un acto en la cotización antes de generar el documento.');
     if (!quote.conceptos.length) throw new QuoteDocumentError(409, 'QUOTE_STRUCTURED_BUDGET_REQUIRED', 'Captura y confirma el presupuesto estructurado antes de generar la cotización.');
     if (quote.conceptos.some((row) => row.tratamiento_iva === 'REQUIERE_REVISION')) throw new QuoteDocumentError(409, 'QUOTE_TAX_REVIEW_REQUIRED', 'Revisa el tratamiento fiscal pendiente antes de generar un total definitivo.');
@@ -548,6 +560,10 @@ export class QuoteDocumentService {
       throw error;
     }
     const { artifact, version: template, source } = resolvedTemplate;
+    const propertyValues = effectiveQuotePropertyValues(quote);
+    const propertySource = quote.predio_principal
+      ? { kind: 'PREDIO_MASTER', id: quote.predio_principal.id, version: quote.predio_principal.version }
+      : { kind: 'MANUAL', quote_updated_at: quote.updated_at.toISOString() };
     const concepts = quote.conceptos.map((row) => ({ concepto: row.concepto, categoria: row.categoria, importeCents: moneyToCents(String(row.importe)),
       tratamiento_iva: row.tratamiento_iva, iva_tasa: row.iva_tasa == null ? null : String(row.iva_tasa) }));
     const data = quoteTemplateData({
@@ -555,7 +571,7 @@ export class QuoteDocumentService {
       date: new Date(), client: quoteClientName(quote) || 'Cliente pendiente',
       act: quoteActName(quote) || 'Acto pendiente', notary: organization.name, concepts,
       responsible: [quote.creada_por?.nombre, quote.creada_por?.apellido].filter(Boolean).join(' '),
-      propertyValues: quote,
+      propertyValues,
       state: quote.territorio_operacion && typeof quote.territorio_operacion === 'object' && !Array.isArray(quote.territorio_operacion)
         ? String(quote.territorio_operacion.state || '') : '',
       municipality: quote.territorio_operacion && typeof quote.territorio_operacion === 'object' && !Array.isArray(quote.territorio_operacion)
@@ -579,6 +595,9 @@ export class QuoteDocumentService {
         throw new QuoteDocumentError(503, 'QUOTE_WORD_STORAGE_UNVERIFIED', 'El almacenamiento no confirmó el Word íntegro. Reintenta la generación.');
       }
       const persisted = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:cot001:${actor.organizationId}:${cotizacionId}`}))`);
+        await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:quote-budget:${actor.organizationId}:${cotizacionId}`}))`);
+        if (quote.predio_principal_id) await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:predio-master:${actor.organizationId}:${quote.predio_principal_id}`}))`);
         await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:quote-document:${actor.organizationId}:${cotizacionId}`}))`);
         if (idempotencyKey) {
           const concurrent = await tx.cotizacionDocumento.findFirst({
@@ -587,12 +606,18 @@ export class QuoteDocumentService {
           });
           if (concurrent) return { document: concurrent.documento, discardUpload: true };
         }
+        const current = await tx.cotizacion.findFirst({ where: { id: cotizacionId, organization_id: actor.organizationId }, include: { predio_principal: { select: { version: true, archived_at: true } } } });
+        if (!current || current.updated_at.getTime() !== quote.updated_at.getTime()
+          || current.predio_principal_id !== quote.predio_principal_id
+          || current.predio_principal?.version !== quote.predio_principal?.version || current.predio_principal?.archived_at) {
+          throw new QuoteDocumentError(409, 'QUOTE_DOCUMENT_SOURCE_CHANGED', 'La cotización o el inmueble cambió durante la generación. Revisa los valores y vuelve a generar.');
+        }
         const document = await tx.documento.create({ data: {
           organization_id: actor.organizationId, cotizacion_id: quote.id,
           nombre_original: fileName, nombre_interno: storageKey, storage_key: storageKey,
           tipo: 'COTIZACION_GENERADA', categoria: 'OTROS', mime_type: DOCX, size_bytes: output.length,
           checksum_sha256: checksum, estatus: 'VIGENTE', subido_por_id: actor.id,
-          datos_extraidos: { generation: { source: 'CFG-002', artifact_id: artifact.id, artifact_version_id: template.id, artifact_version: template.version, mapping_checksum: resolvedTemplate.mapping ? createHash('sha256').update(JSON.stringify(resolvedTemplate.mapping)).digest('hex') : null, structured_budget_checksum: createHash('sha256').update(JSON.stringify(data)).digest('hex'), pdf_status: 'PENDING' } },
+          datos_extraidos: { generation: { source: 'CFG-002', artifact_id: artifact.id, artifact_version_id: template.id, artifact_version: template.version, mapping_checksum: resolvedTemplate.mapping ? createHash('sha256').update(JSON.stringify(resolvedTemplate.mapping)).digest('hex') : null, structured_budget_checksum: createHash('sha256').update(JSON.stringify(data)).digest('hex'), property_source: propertySource, property_values: { operation: propertyValues.valor_operacion == null ? null : String(propertyValues.valor_operacion), cadastral: propertyValues.valor_catastral == null ? null : String(propertyValues.valor_catastral), appraisal: propertyValues.valor_avaluo == null ? null : String(propertyValues.valor_avaluo) }, pdf_status: 'PENDING' } },
         } });
         await tx.cotizacionDocumento.create({ data: { organization_id: actor.organizationId, cotizacion_id: quote.id, documento_id: document.id, tipo_vinculo: 'COTIZACION_GENERADA', creado_por_id: actor.id, observaciones: `CFG-002 Cotización · versión ${template.version}`, idempotency_key: idempotencyKey } });
         await tx.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: 'QUOTE_DOCUMENT_GENERATED', entidad: 'Documento', entidad_id: document.id, valores_nuevos: { cotizacion_id: quote.id, template_version_id: template.id, checksum }, session_id: actor.sessionId } });
