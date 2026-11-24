@@ -2,6 +2,8 @@
 
 Estado: candidato en validación final, NO publicado todavía. Este registro prevalece sobre conteos históricos, sin convertir pruebas sintéticas en homologación notarial. Base de código: 190fa74. Sin infraestructura ni proveedores nuevos.
 
+Actualización de consolidación: código en 63e86d22d9b7e4b4ff11738af8c2312e94c51981. Frontend exacto 576/576; backend 2712/2712. Chrome final: chat 1/1 (incluye archivadas y restauración), PDF 1/1 (tres monedas, todos los anchos/modos), operaciones 1/1 (público general, factura ida/vuelta a EXP008, ficha Word privada real, instituciones y búsqueda de Archivo; 1440/1024/768/390/320 sin overflow). Test afectado de selección demorada y fallida añadido; grupo asistente/visor 48/48. El nuevo recorrido de operaciones no timbra, no aplica cobros y conserva el estado fiscal pendiente. CI/promoción y publicación siguen pendientes en esta nota.
+
 ## Resultado verificable
 
 - Backend consolidado: 233 archivos, 2.712/2.712 PASS con LibreOffice real; cero omitidas. Frontend: 72 archivos, 574/574 PASS antes del último endurecimiento de selección de chat; repetición afectada/CI final pendientes.
@@ -14,7 +16,7 @@ Estado: candidato en validación final, NO publicado todavía. Este registro pre
 
 ## Recorrido N23-06…N23-20
 
-El resultado individual y las dependencias están en CLIENT_UPDATES_20261121.md. Los quince fueron inspeccionados. No son quince PASS integrales: N23-08/09/19 tienen certificaciones Chrome pendientes; N23-10/11/12/13 dependen de fuentes/reglas/formatos vigentes; N23-14 requiere configurar y ejecutar su operación Gateway; N23-15 permanece parcial, y N23-20 espera el formato anunciado por el cliente. No inventar anexos, umbrales, fuentes, acuses ni timbrados para cerrar una matriz.
+El resultado individual y las dependencias están en CLIENT_UPDATES_20261121.md. Los quince fueron inspeccionados. No son quince PASS integrales: N23-08 tiene retorno Chrome PASS pero no una factura timbrada nueva; N23-09 muestra versiones Word reales en Chrome, sin prueba nueva de apertura formal con formato productivo; N23-19 tiene búsqueda Chrome y paginación PostgreSQL PASS. N23-10/11/12/13 dependen de fuentes/reglas/formatos vigentes; N23-14 requiere configurar y ejecutar su operación Gateway; N23-15 permanece parcial, y N23-20 espera el formato anunciado por el cliente. No inventar anexos, umbrales, fuentes, acuses ni timbrados para cerrar una matriz.
 
 Se implementaron elección Público en general; recibo con QR verificable y referencia al movimiento sin romper su constraint; reutilización de archivos generados; ficha CFG002 versionada; selección manual tenant-scoped de institución; mapeo literal sin rehacer Word; configuración explícita del protocolo y búsqueda/paginación. No se borraron históricos ni documentos del usuario.
 
