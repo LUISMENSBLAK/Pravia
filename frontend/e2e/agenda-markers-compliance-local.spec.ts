@@ -31,6 +31,18 @@ test('Agenda: indicadores mensuales reales, privacidad, expiración; Cumplimient
     await page.goto('/agenda?date=2030-12-15');
     const calendar=page.getByRole('region',{name:'Calendario mensual',exact:true});
     await expect(calendar.getByRole('button',{name:/15 de diciembre.*Con pendientes/})).toBeVisible();
+    for (const width of [1440,1366,1024,768,390,320]) {
+      await page.setViewportSize({width,height:900});
+      for (const day of [15,16]) {
+        const marked = calendar.getByRole('button',{name:new RegExp(day+' de diciembre.*Con pendientes')});
+        await expect(marked).toBeVisible();
+        const {number,dot} = await marked.evaluate(el => ({number:el.querySelector('span')!.getBoundingClientRect().toJSON(),dot:el.querySelector('i')!.getBoundingClientRect().toJSON()}));
+        expect(dot.y + dot.height, 'El punto debe estar por encima del número').toBeLessThan(number.y);
+        expect(Math.abs(dot.x + dot.width/2 - number.x - number.width/2), JSON.stringify({width,day,dot,number})).toBeLessThan(1);
+      }
+      if(width===1440)await calendar.screenshot({path:test.info().outputPath('agenda-punto-arriba.png')});
+    }
+    await page.setViewportSize({width:1440,height:900});
     await page.clock.setSystemTime(new Date('2030-12-15T18:01:00Z')); await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
     await expect(calendar.getByRole('button',{name:/15 de diciembre.*Con pendientes/})).toHaveCount(0);
     await expect(calendar.getByRole('button',{name:/16 de diciembre.*Con pendientes/})).toBeVisible();

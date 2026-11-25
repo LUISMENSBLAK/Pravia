@@ -2,11 +2,18 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MiniCalendar } from '../features/agenda/components/MiniCalendar';
 import { agendaService } from '../features/agenda/agenda.service';
+import calendarCss from '../features/agenda/Agenda.module.css?raw';
 
 vi.mock('../features/agenda/agenda.service', () => ({ agendaService: { markers: vi.fn() } }));
 afterEach(() => vi.restoreAllMocks());
 const event = (start: string, end: string, user_id = 'own', estatus = 'ACTIVO') => ({ fecha_inicio: start, fecha_fin: end, user_id, estatus } as any);
 describe('permission-scoped monthly agenda indicators', () => {
+  it('positions the yellow indicator above the number without shifting surrounding days', () => {
+    const dot = calendarCss.match(/\.pendingDayDot\s*\{([^}]+)\}/)?.[1];
+    expect(dot).toContain('top: 2px'); expect(dot).not.toContain('bottom:');
+    expect(dot).toContain('position: absolute'); expect(dot).toContain('pointer-events: none');
+    expect(dot).toContain('var(--color-gold-500');
+  });
   it('marks only unfinished visible events, outside the selected week too; filters and expires without reload', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(+new Date('2026-11-24T17:00:00Z'));
     vi.mocked(agendaService.markers).mockResolvedValue({ eventos: [event('2026-11-25T17:00:00Z','2026-11-25T18:00:00Z'), event('2026-11-29T17:00:00Z','2026-11-29T18:00:00Z','team'), event('2026-11-23T17:00:00Z','2026-11-23T18:00:00Z'), event('2026-11-26T17:00:00Z','2026-11-26T18:00:00Z','own','CANCELADO')] });

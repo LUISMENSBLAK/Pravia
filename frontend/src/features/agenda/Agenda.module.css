@@ -270,7 +270,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .viewSwitcher button { flex: 1; padding: 0 5px; }
   .agendaLayout { display: flex; flex-direction: column; }
   .leftRail { width: 100%; order: 2; grid-template-columns: 1fr; }
-  .miniCalendar { display: none; }
+  .miniCalendar { display: block; width: 100%; max-width: 320px; justify-self: center; }
   .teamFilters, .tasksPanel { display: none; }
   .calendarCard { width: 100%; order: 1; }
   .upcoming { width: 100%; order: 3; }
@@ -307,5 +307,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   .eventDrawer, .eventFormDrawer, .agendaLoading span, .agendaLoading div, .toast { animation: none; transition: none; }
 }
 .monthDays button { position: relative; }
-.pendingDayDot { position: absolute; width: 5px; height: 5px; border-radius: 50%; background: var(--color-gold-500, #c49a38); bottom: 3px; left: calc(50% - 2.5px); pointer-events: none; }
+.calendarDayNumber { line-height: 1; transform: translateY(2px); }
+.pendingDayDot { position: absolute; width: 5px; height: 5px; border-radius: 50%; background: var(--color-gold-500, #c49a38); top: 2px; left: calc(50% - 2.5px); pointer-events: none; }
 .calendarMarkerError { margin: 8px 0 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
