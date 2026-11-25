@@ -11,6 +11,8 @@ test('Chat: archivos reales, drag/drop, extracción natural, follow-up, alta con
   const db = new PrismaClient({ datasourceUrl: url.href });
   const org = '21110000-0000-4000-8000-000000000001', run = randomUUID().slice(0,8);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  let authorization = '';
+  page.on('request', request => { if (request.url().startsWith(baseURL + '/api/') && request.headers().authorization) authorization = request.headers().authorization; });
   const eventsBefore = await db.eventoAgenda.count({ where: { organization_id: org } });
   try {
     await page.goto('/login'); await page.getByLabel('Correo electrónico').fill('documentos.qa@pravia.test');
@@ -61,6 +63,14 @@ test('Chat: archivos reales, drag/drop, extracción natural, follow-up, alta con
         await confirmation.click(); expect((await confirmed).status()).toBe(200);
         const link = chat.getByRole('link', { name: 'Ver cambios', exact: true }); await expect(link).toBeVisible();
         const href = await link.getAttribute('href'); expect(href).toMatch(/^\/comparecientes\//);
+        const title = 'QA documentos recarga ' + run;
+        const renamed = await page.request.patch('/api/ia/assistant/conversations/' + persisted.conversation_id, { headers: { Authorization: authorization }, data: { title } });
+        expect(renamed.status()).toBe(200);
+        await page.reload();
+        await page.getByRole('button', { name: 'Abrir PRAVIA IA', exact: true }).click();
+        await chat.getByRole('button', { name: 'Ver historial de conversaciones', exact: true }).click();
+        await chat.getByRole('button', { name: new RegExp(title) }).first().click();
+        await expect(link).toHaveAttribute('href', href!);
         const party = await db.compareciente.findUniqueOrThrow({ where: { id: href!.split('/').pop()! }, include: { personaFisica: true } });
         expect(party.organization_id).toBe(org); expect(party.personaFisica?.nombre).toBe('ELISA'); expect(party.personaFisica?.rfc).toBeNull(); expect(party.personaFisica?.curp).toBeNull();
         await link.click(); await page.waitForURL('**/comparecientes/*');

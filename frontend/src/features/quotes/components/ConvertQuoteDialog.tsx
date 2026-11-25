@@ -115,7 +115,7 @@ export function ConvertQuoteDialog({ quote, onClose, onDone }: { quote: Quote; o
     </button>
   </>}>
     <dl className={styles.confirmationList}>
-      <div><dt>Cliente</dt><dd>{quote.prospecto?.nombre || 'Sin cliente visible'}</dd></div>
+      <div><dt>Cliente</dt><dd>{quote.solicitante_formal?.nombre_busqueda || quote.prospecto?.nombre || 'Sin cliente seleccionado'}</dd></div>
       <div><dt>Actos</dt><dd>{actTypes.length ? actTypes.map((item) => item.nombre).join(' · ') : quote.prospecto?.tipo_acto || 'Sin especificar'}</dd></div>
       <div><dt>Solicitante formal</dt><dd>{quote.solicitante_formal?.nombre_busqueda || 'Sin confirmar'}</dd></div>
       <div><dt>Cotización</dt><dd>{quote.numero_cotizacion || quote.numero_solicitud}</dd></div>

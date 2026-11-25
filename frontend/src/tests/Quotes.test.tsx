@@ -353,6 +353,22 @@ describe('Cotizaciones', () => {
     expect(JSON.parse(String(call?.[1]?.body)).abogado_id).toBe('user-2');
   });
 
+  it.each([null, { nombre: 'NOMBRE HISTÓRICO DEL PROSPECTO' }])('muestra el cliente canónico al convertir aunque el Prospecto sea %s', async (prospecto) => {
+    const accepted = quote({ prospecto_id: prospecto ? 'prospect-1' : null, prospecto,
+      solicitante_formal: { id: 'party-1', nombre_busqueda: 'CLIENTE FORMAL', tipo_persona: 'FISICA' },
+      estado: 'ACEPTADA', workflow: workflow('ACEPTADA', ['CONVERTIR'], 3),
+      conversion: { eligible: true, accepted: true, approvedVersion: true, validatedAdvance: false, validatedAdvanceTotal: 0, notConverted: true, linkedProspect: Boolean(prospecto), failures: [] } });
+    mockApi({ quotes: [accepted] });
+    const user = userEvent.setup();
+    render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>);
+    await screen.findByRole('heading', { name: 'COT-2026-001' });
+    await user.click(screen.getByRole('button', { name: 'Convertir en expediente' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Cliente', { exact: true }).parentElement).toHaveTextContent('CLIENTE FORMAL');
+    expect(within(dialog).queryByText('Sin cliente visible')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('NOMBRE HISTÓRICO DEL PROSPECTO')).not.toBeInTheDocument();
+  });
+
   it('bloquea la conversión canónica cuando faltan actos estructurados', async () => {
     const accepted = quote({ actos: [], prospecto: { id: 'prospect-1', nombre: 'Constructora Horizonte', tipo_acto: null }, estado: 'ACEPTADA', workflow: workflow('ACEPTADA', ['CONVERTIR'], 3), transiciones_permitidas: [], conversion: { eligible: true, accepted: true, approvedVersion: true, validatedAdvance: false, validatedAdvanceTotal: 0, notConverted: true, linkedProspect: true, failures: [] } });
     mockApi({ quotes: [accepted] }); const user = userEvent.setup(); render(<MemoryRouter initialEntries={['/cotizaciones/quote-1']}><App /></MemoryRouter>); await screen.findByRole('heading', { name: 'COT-2026-001' }); await user.click(screen.getByRole('button', { name: 'Convertir en expediente' }));
