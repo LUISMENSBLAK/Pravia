@@ -2,6 +2,7 @@ import type { Request } from 'express';
 import { Prisma } from '@prisma/client';
 import path from 'path';
 import JSZip from 'jszip';
+import { assistantImageForAnalysis } from './assistantImage.service';
 import prisma from '../config/prisma';
 import { assistantConversationService } from './assistantConversation.service';
 import { extraerMultiplesDocumentos, type AIUsageMetrics, type DocumentExtractionResult } from './openaiDocument.service';
@@ -18,6 +19,7 @@ function storedExtraction(result: DocumentExtractionResult, metadata?: Record<st
     domicilios_detectados: result.domicilios_detectados,
     actividades_economicas: result.actividades_economicas,
     regimenes: result.regimenes,
+    errores: result.errores || [],
     trazabilidad: metadata,
   };
 }
@@ -34,6 +36,7 @@ function contextFromExtraction(name: string, extraction: any) {
       fragmento: String(field?.fragmento || '').slice(0, 300) || undefined,
     })),
     alertas: (Array.isArray(extraction?.alertas) ? extraction.alertas : []).slice(0, 20).map((value: unknown) => String(value).slice(0, 300)),
+    errores: (Array.isArray(extraction?.errores) ? extraction.errores : []).slice(0, 20).map((value: any) => ({ archivo: String(value.nombre || '').slice(0,180), aviso: String(value.error || 'Lectura incompleta').slice(0,300) })),
     trazabilidad: extraction?.trazabilidad || undefined,
   };
 }
@@ -107,7 +110,8 @@ export async function prepareAssistantAttachmentContext(
             documentoId: attachment.documento_id || attachment.id,
             nombreOriginal: attachment.original_name,
           }];
-        const result = await extraerMultiplesDocumentos(documents, {
+        const analysisDocuments = await Promise.all(documents.map(async document => ({ ...document, ...await assistantImageForAnalysis(document.buffer, document.mimeType) })));
+        const result = await extraerMultiplesDocumentos(analysisDocuments, {
           actor: { userId: user.id, organizationId: user.organizationId, membershipId: user.membershipId,
             role: user.rol, permissions: user.permissions, scope: user.scope, sessionId: user.sessionId },
           idempotencyKey: `${operationId}:attachment:${attachment.id}`,
@@ -121,16 +125,20 @@ export async function prepareAssistantAttachmentContext(
           requested_by: user.id,
           organization_id: user.organizationId,
           files_analyzed: documents.map((item) => item.nombreOriginal),
+          derivatives: analysisDocuments.filter((item, index) => item.mimeType !== documents[index].mimeType).map(item => ({ source: item.nombreOriginal, analysis_mime: item.mimeType, original_preserved: true })),
         });
-        await prisma.assistantAttachment.update({
+        if (!result.errores?.length) await prisma.assistantAttachment.update({
           where: { id: attachment.id },
           data: { extraction: extraction as Prisma.InputJsonValue },
         });
-      } catch {
+      } catch (error: any) {
+        const code = typeof error?.code === 'string' && /^[A-Z0-9_]{3,80}$/.test(error.code) ? error.code : 'DOCUMENT_EXTRACTION_FAILED';
+        console.error(JSON.stringify({ type: 'assistant_attachment_extraction_failed', code, error_name: error?.name || 'Error', operation_id: operationId, attachment_id: attachment.id }));
         contexts.push({
           archivo: attachment.original_name,
           estado: 'NO_PROCESADO',
           aviso: 'No fue posible extraer el contenido. No infieras datos de este archivo.',
+          motivo: code === 'AI_BALANCE_EXHAUSTED' ? 'El saldo IA no alcanza para esta extracción.' : code === 'AI_EXTERNAL_DISABLED' ? 'El procesamiento IA está deshabilitado.' : 'La lectura no terminó. Puedes reintentar; no es necesario crear datos a mano ni asumirlos.',
         });
         continue;
       }

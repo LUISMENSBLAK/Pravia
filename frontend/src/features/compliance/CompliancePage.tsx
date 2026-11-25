@@ -78,7 +78,7 @@ export function CompliancePage() {
       <section className={styles.h8Panel}>
         <div className={styles.h8PrimaryFilters} role="group" aria-label="Estado de Cumplimiento">{primaryFilters.map((item) => <button type="button" key={item.code} aria-pressed={filters.filter === item.code} onClick={() => change('filter', item.code)}>{item.label}</button>)}</div>
         <div className={styles.h8Tools}>
-          <label className={styles.h8Search}><span className="sr-only">Buscar por expediente, escritura o compareciente</span><Search/><input value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Expediente, escritura o compareciente…"/></label>
+          <label className={styles.h8Search}><Search aria-hidden="true"/><input aria-label="Buscar por expediente, escritura o compareciente" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="Expediente, escritura o compareciente…"/></label>
           <details className={styles.h8MoreFilters}><summary>Más filtros</summary><div>
             <label>Abogado responsable<select aria-label="Abogado responsable" value={filters.lawyer_id} onChange={(event) => change('lawyer_id', event.target.value)}><option value="">Todos</option>{data.filters.lawyers.map((item) => <option value={item.id} key={item.id}>{item.nombre}</option>)}</select></label>
             <label>Acto<select aria-label="Acto" value={filters.act_id} onChange={(event) => change('act_id', event.target.value)}><option value="">Todos</option>{data.filters.acts.map((item) => <option value={item.id} key={item.id}>{item.nombre}</option>)}</select></label>

@@ -306,3 +306,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 @media (prefers-reduced-motion: reduce) {
   .eventDrawer, .eventFormDrawer, .agendaLoading span, .agendaLoading div, .toast { animation: none; transition: none; }
 }
+.monthDays button { position: relative; }
+.pendingDayDot { position: absolute; width: 5px; height: 5px; border-radius: 50%; background: var(--color-gold-500, #c49a38); bottom: 3px; left: calc(50% - 2.5px); pointer-events: none; }
+.calendarMarkerError { margin: 8px 0 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }

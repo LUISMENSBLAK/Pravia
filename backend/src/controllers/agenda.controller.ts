@@ -279,6 +279,16 @@ export class AgendaController {
       if (!['TODOS', 'ACTIVO', 'COMPLETADO', 'CANCELADO'].includes(status)) {
         throw new AgendaError('El estado solicitado no es válido.', 'AGENDA_STATUS_INVALID');
       }
+      if (req.query.mode === 'markers') {
+        if (+to - +from > 43 * 24 * 60 * 60 * 1000) throw new AgendaError('Consulta como máximo 42 días de indicadores.', 'AGENDA_QUERY_RANGE_TOO_LONG');
+        const events = await prisma.eventoAgenda.findMany({
+          where: { AND: [agendaObjectWhere(req), { estatus: 'ACTIVO', fecha_inicio: { lte: to }, OR: [{ fecha_fin: { gte: from } }, { fecha_fin: null, fecha_inicio: { gte: from } }] }] },
+          // No 750-row UI limit: indicators cover every visible event. Only
+          // dates/status/owner are returned; no hidden titles or private counts.
+          select: { fecha_inicio: true, fecha_fin: true, estatus: true, user_id: true },
+        });
+        return res.json({ success: true, eventos: events, meta: { total: events.length, desde: from, hasta: to, timezone: AGENDA_TIME_ZONE } });
+      }
       const events = await prisma.eventoAgenda.findMany({
         where: {
           fecha_inicio: { lte: to },

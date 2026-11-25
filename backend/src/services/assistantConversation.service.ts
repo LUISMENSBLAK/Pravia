@@ -51,7 +51,7 @@ export type AssistantActionState = {
     impact?: string;
     guard?: { kind: string; id: string; version: string | number };
   };
-  result?: { status: 'success'; message: string; refresh?: string };
+  result?: { status: 'success'; message: string; refresh?: string; sources?: Array<{ id: string; entityId?: string; type?: string; label: string; reference?: string }> };
 };
 
 export type AssistantCollection = {
@@ -191,6 +191,7 @@ function extensionFor(name: string, mimeType: string) {
 }
 
 const ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
+  'image/heic', 'image/heif', 'image/gif', 'text/plain',
   'application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/xml', 'text/xml', 'application/zip', 'application/x-zip-compressed',
@@ -198,6 +199,19 @@ const ALLOWED_ATTACHMENT_MIME_TYPES = new Set([
 ]);
 
 export const assistantConversationService = {
+  async contextualAttachmentIds(user: AuthUser, conversationId: string, message: string, rawIds: unknown): Promise<string[]> {
+    const selected = [...new Set((Array.isArray(rawIds) ? rawIds : []).map(String).filter(Boolean))].slice(0, 6);
+    if (selected.length) return selected;
+    const normalized = message.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    if (!/\b(?:adjunt[oa]s?|(?:est[eaos]+|es[eaos]+|el|la|los|las)\s+(?:datos|informacion|pdf|archivo|documento|foto|imagen)(?:s)?|con\s+(?:sus|los)\s+datos)\b/.test(normalized)) return [];
+    await ownedConversation(user, conversationId);
+    const previous = await prisma.assistantMessage.findFirst({
+      where: { conversation_id: conversationId, role: 'USER', status: 'COMPLETE', attachments: { some: { status: { not: 'ARCHIVED' } } } },
+      orderBy: { created_at: 'desc' },
+      select: { attachments: { where: { organization_id: user.organizationId, status: { not: 'ARCHIVED' }, OR: [{ expires_at: null }, { expires_at: { gt: new Date() } }] }, select: { id: true }, take: 6 } },
+    });
+    return previous?.attachments.map(item => item.id) || [];
+  },
   async create(user: AuthUser, input?: { title?: string; context?: AssistantConversationContext }) {
     const title = String(input?.title || '').trim().replace(/\s+/g, ' ').slice(0, 100) || 'Nueva conversación';
     const record = await prisma.assistantConversation.create({

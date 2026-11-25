@@ -345,7 +345,7 @@ export async function planLiteralProjectPatchesWithOpenAI(input: {
     idempotencyKey: input.economicContext.idempotencyKey,
     traceId: input.economicContext.traceId,
     timeoutMs: Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 180000),
-    payload: { body: {
+    payload: { fitOutputToOperationLimit: true, body: {
       model,
       store: false,
       // Simple substitutions stay economical. Express lawyer instructions
@@ -473,7 +473,7 @@ export async function generateOperationalArtifactWithOpenAI(input: {
     idempotencyKey: input.economicContext.idempotencyKey,
     traceId: input.economicContext.traceId,
     timeoutMs: Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000),
-    payload: { body: {
+    payload: { fitOutputToOperationLimit: true, body: {
       model, store: false, max_output_tokens: 8192,
       reasoning: { effort: getReasoningEffort() },
       input: [{ role: 'user', content: [{ type: 'input_text', text: [
@@ -824,6 +824,9 @@ No agregues texto antes ni después del JSON.`;
         type: 'input_text',
         text: `[DOCUMENTO XML "${doc.nombreOriginal}" (ID: ${doc.documentoId})]:\n${xml.slice(0, 250_000)}`,
       });
+    } else if (mime === 'text/plain') {
+      const text = new TextDecoder('utf-8', { fatal: true }).decode(doc.buffer);
+      content.push({ type: 'input_text', text: `[DOCUMENTO DE TEXTO "${doc.nombreOriginal}" (ID: ${doc.documentoId})]:\n${text.slice(0, 250_000)}` });
     } else if (isDocx || isDoc) {
       try {
         const textVal = (await extractDocxText(doc.buffer)).trim();
@@ -854,6 +857,8 @@ No agregues texto antes ni después del JSON.`;
       const safeMime = mime.includes('pdf') ? 'application/pdf'
         : mime.includes('jpeg') || mime.includes('jpg') ? 'image/jpeg'
         : mime.includes('png') ? 'image/png'
+        : mime === 'image/webp' ? 'image/webp'
+        : mime === 'image/gif' ? 'image/gif'
         : 'application/octet-stream';
 
       if (safeMime === 'application/pdf') {
@@ -978,7 +983,7 @@ No agregues texto antes ni después del JSON.`;
     idempotencyKey: economicContext.idempotencyKey,
     traceId: economicContext.traceId,
     timeoutMs: Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000),
-    payload: { retryHttp: 3, body: {
+    payload: { fitOutputToOperationLimit: true, retryHttp: 3, body: {
       model, store: false, input: [{ role: 'user', content }],
       reasoning: { effort: getDocumentExtractionReasoningEffort() }, max_output_tokens: 16_384,
       text: { format: { type: 'json_schema', name: 'extraccion_documental_notarial', strict: true, schema: responseSchema } },
@@ -1465,7 +1470,7 @@ async function analizarProyectoNotarialBatch(
     idempotencyKey: economicContext.idempotencyKey,
     traceId: economicContext.traceId,
     timeoutMs: Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000),
-    payload: { body: requestBody, retryHttp: attempts },
+    payload: { fitOutputToOperationLimit: true, body: requestBody, retryHttp: attempts },
   });
   if (data.status === 'incomplete') {
     throw new Error(`OpenAI no completó la revisión: ${data.incomplete_details?.reason || 'causa no especificada'}`);
@@ -1710,7 +1715,7 @@ export async function extraerPredioDesdeDocumento(
     idempotencyKey: economicContext.idempotencyKey,
     traceId: economicContext.traceId,
     timeoutMs: Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000),
-    payload: { retryHttp: 3, body: {
+    payload: { fitOutputToOperationLimit: true, retryHttp: 3, body: {
       model, store: false, input: [{ role: 'user', content }], reasoning: { effort: getDocumentExtractionReasoningEffort() }, max_output_tokens: 8192,
       text: { format: { type: 'json_schema', name: 'predio_document_proposal', strict: true, schema } },
     } },
@@ -1775,7 +1780,7 @@ export async function extraerFinanzasDesdeDocumento(
     idempotencyKey: economicContext.idempotencyKey,
     traceId: economicContext.traceId,
     timeoutMs: Number(process.env.AI_DOCUMENT_TIMEOUT_MS || 120000),
-    payload: { retryHttp: 3, body: { model, store: false, input: [{ role: 'user', content }], reasoning: { effort: getDocumentExtractionReasoningEffort() }, max_output_tokens: 16_384, text: { format: { type: 'json_schema', name: 'exp008_financial_document_proposal', strict: true, schema } } } },
+    payload: { fitOutputToOperationLimit: true, retryHttp: 3, body: { model, store: false, input: [{ role: 'user', content }], reasoning: { effort: getDocumentExtractionReasoningEffort() }, max_output_tokens: 16_384, text: { format: { type: 'json_schema', name: 'exp008_financial_document_proposal', strict: true, schema } } } },
   });
   if (data.status === 'incomplete') throw new Error(`OpenAI no completó la extracción: ${data.incomplete_details?.reason || 'causa no especificada'}`);
   const output = (data.output || []).flatMap((item: any) => item.content || []);

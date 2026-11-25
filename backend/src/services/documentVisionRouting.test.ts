@@ -19,6 +19,15 @@ const field = (id: string, campo: string, valor: string, confianza: string) => (
 afterEach(() => vi.unstubAllEnvs());
 
 describe('Contrato de visión documental · Gateway simulado, no proveedor real', () => {
+  it.each(['image/webp', 'image/gif', 'text/plain'])('pasa contenido real compatible de %s, no octet-stream', async mimeType => {
+    vi.stubEnv('AI_IDENTITY_LOCAL_ONLY', 'false'); vi.stubEnv('AI_ESCALATION_ENABLED', 'false');
+    const buffer = Buffer.from(mimeType === 'text/plain' ? 'SINTETICO QA - Nombre: ELISA' : 'synthetic encoded image bytes');
+    const execute = vi.fn().mockResolvedValue(reply({ campos: [], alertas: [] }));
+    await extraerMultiplesDocumentos([{ buffer, mimeType, tipoDocumento: 'ADJUNTO_CONVERSACION', documentoId: 'source', nombreOriginal: mimeType === 'text/plain' ? 'qa.txt' : mimeType === 'image/gif' ? 'qa.gif' : 'qa.webp' }], { actor, idempotencyKey: 'formats', traceId: 'formats', gateway: { execute } });
+    const content = execute.mock.calls[0][0].payload.body.input[0].content;
+    expect(content).toContainEqual(mimeType === 'text/plain' ? expect.objectContaining({ type: 'input_text', text: expect.stringContaining('Nombre: ELISA') }) : { type: 'input_image', detail: 'high', image_url: `data:${mimeType};base64,${buffer.toString('base64')}` });
+    expect(execute.mock.calls[0][0].payload.fitOutputToOperationLimit).toBe(true);
+  });
   it('envía bytes de la foto; una segunda lectura conserva las otras fuentes y declara discrepancias', async () => {
     vi.stubEnv('AI_IDENTITY_LOCAL_ONLY', 'false');
     vi.stubEnv('AI_ESCALATION_ENABLED', 'true');

@@ -1,5 +1,5 @@
 import { ArrowUp, BellRing, CheckCircle2, Clock3, History, LoaderCircle, Mic, Paperclip, Plus, RotateCcw, Square, X } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, type ChangeEvent, type FormEvent, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, type ChangeEvent, type DragEvent, type FormEvent, type KeyboardEvent } from 'react';
 import { useState } from 'react';
 import { useAssistant } from '../AssistantProvider';
 import { DocumentViewer } from '../../../components/documents/DocumentViewer';
@@ -28,6 +28,8 @@ export function AssistantDrawer() {
   const recorderStreamRef = useRef<MediaStream>();
   const audioChunksRef = useRef<Blob[]>([]);
   const [viewer, setViewer] = useState<{ source: AssistantSource; url?: string; loading?: boolean; error?: string }>();
+  const [dragging, setDragging] = useState(false);
+  const uploadQueue = useRef(false);
 
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -65,13 +67,29 @@ export function AssistantDrawer() {
   };
   const busy = assistant.status === 'thinking' || assistant.status === 'processing' || assistant.status === 'confirmation-required';
   const contextDetail = assistant.context.entityType && assistant.context.entityId
-    ? `${assistant.context.entityType[0].toUpperCase()}${assistant.context.entityType.slice(1)} · ${assistant.context.entityId}`
+    ? `${assistant.context.label} · Registro actual`
     : assistant.context.label;
 
+  const attachFiles = async (incoming: File[]) => {
+    if (busy || uploadQueue.current) return;
+    const capacity = Math.max(0, 6 - assistant.pendingAttachments.length);
+    if (incoming.length > capacity) { assistant.reportError('Puedes adjuntar hasta 6 archivos por mensaje. Retira alguno o envía los restantes en otro mensaje.'); return; }
+    uploadQueue.current = true;
+    try { await assistant.uploadAttachments(incoming); }
+    finally { uploadQueue.current = false; }
+  };
   const selectFile = (event: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(event.target.files || []).slice(0, Math.max(0, 6 - assistant.pendingAttachments.length));
+    const files = Array.from(event.target.files || []);
     event.target.value = '';
-    if (files.length) void files.reduce((chain, file) => chain.then(() => assistant.uploadAttachment(file)), Promise.resolve());
+    if (files.length) void attachFiles(files);
+  };
+  const dragOver = (event: DragEvent) => {
+    if (!event.dataTransfer.types.includes('Files')) return;
+    event.preventDefault(); event.dataTransfer.dropEffect = busy ? 'none' : 'copy'; setDragging(!busy);
+  };
+  const drop = (event: DragEvent) => {
+    if (!event.dataTransfer.types.includes('Files')) return;
+    event.preventDefault(); setDragging(false); void attachFiles(Array.from(event.dataTransfer.files));
   };
 
   const stopRecording = () => {
@@ -124,7 +142,8 @@ export function AssistantDrawer() {
   }, []);
 
   return (
-    <aside ref={panelRef} className={styles.drawer} role="dialog" aria-modal="true" aria-labelledby="pravia-assistant-title">
+    <aside ref={panelRef} className={styles.drawer} role="dialog" aria-modal="true" aria-labelledby="pravia-assistant-title" onDragOver={dragOver} onDrop={drop} onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }}>
+      {dragging && <div className={styles.dropOverlay} role="status"><Paperclip/><strong>Suelta tus archivos aquí</strong><span>PDF, documentos y fotos · máximo 50 MiB por archivo</span></div>}
       <header className={styles.header}>
         <div><div className={styles.titleLine}><h2 id="pravia-assistant-title">PRAVIA IA</h2><span className={styles.online}><i />En línea</span></div><p>{contextDetail}</p></div>
         <div className={styles.headerActions}><button type="button" onClick={() => assistant.setHistoryOpen(!assistant.historyOpen)} aria-label="Ver historial de conversaciones" aria-expanded={assistant.historyOpen}><History size={18}/></button>
@@ -169,7 +188,7 @@ export function AssistantDrawer() {
       <form className={styles.composer} onSubmit={submit}>
         <label htmlFor="pravia-assistant-message">Pregúntame algo...</label>
         {!!assistant.pendingAttachments.length && <div className={styles.pendingAttachments} aria-label="Adjuntos temporales">{assistant.pendingAttachments.map((item) => <span key={item.id}><Paperclip size={13}/><b>{item.original_name}</b><small>Temporal · no forma parte del expediente</small><button type="button" onClick={() => void assistant.removeAttachment(item.id)} aria-label={`Retirar ${item.original_name}`}><X size={13}/></button></span>)}</div>}
-        <div><div className={styles.composerTools}><input ref={fileInputRef} type="file" hidden multiple onChange={selectFile} accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx,.xml,.zip,.mp3,.m4a,.wav,.ogg,.webm" />
+        <div><div className={styles.composerTools}><input ref={fileInputRef} type="file" hidden multiple onChange={selectFile} accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.txt,.doc,.docx,.xml,.zip,.mp3,.m4a,.wav,.ogg,.webm" />
           <button type="button" disabled={busy} onClick={() => fileInputRef.current?.click()} aria-label="Adjuntar archivo temporal"><Paperclip size={17}/></button>
           <button type="button" disabled={busy && !assistant.recording} onClick={() => void toggleRecording()} aria-label={assistant.recording ? 'Detener grabación' : 'Grabar mensaje de voz'} className={assistant.recording ? styles.recordingButton : undefined}>{assistant.recording ? <Square size={15}/> : <Mic size={17}/>}</button></div>
           <textarea ref={composerRef} id="pravia-assistant-message" value={assistant.draft} onChange={(event) => assistant.setDraft(event.target.value)} onKeyDown={keyDown} placeholder="Pregúntame algo..." rows={1} disabled={busy} />

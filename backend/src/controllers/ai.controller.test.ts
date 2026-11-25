@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({
   auditCreate: vi.fn(), assistantMessageFind: vi.fn(), sendAssistantMessage: vi.fn(), preferenceFind: vi.fn(), recordAIUsages: vi.fn(), recordAIFailure: vi.fn(),
   confirmAssistantAction: vi.fn(), cancelAssistantConfirmation: vi.fn(),
   conversation: {
-    ensureActive: vi.fn(), addUserMessage: vi.fn(), linkAttachmentsToMessage: vi.fn(), history: vi.fn(), actionState: vi.fn(), addAssistantMessage: vi.fn(), refreshExtractiveSummary: vi.fn(),
+    ensureActive: vi.fn(), addUserMessage: vi.fn(), linkAttachmentsToMessage: vi.fn(), contextualAttachmentIds: vi.fn(), history: vi.fn(), actionState: vi.fn(), addAssistantMessage: vi.fn(), refreshExtractiveSummary: vi.fn(),
   },
   attachmentContext: vi.fn(),
 }));
@@ -25,6 +25,7 @@ vi.mock('../services/assistantConversation.service', () => ({
 vi.mock('../services/assistantAttachmentContext.service', () => ({ prepareAssistantAttachmentContext: mocks.attachmentContext }));
 vi.mock('../services/aiUsage.service', () => ({ recordAIUsages: mocks.recordAIUsages, recordAIFailure: mocks.recordAIFailure }));
 vi.mock('../services/assistantActions.service', () => ({
+  prepareUndoLastAssistantEdit: vi.fn(),
   AssistantActionError: class AssistantActionError extends Error { constructor(message: string, readonly code: string, readonly status = 400) { super(message); } },
   assistantActionCatalog: vi.fn(() => []),
   prepareOrExecuteAssistantAction: vi.fn(),
@@ -51,6 +52,7 @@ describe('confirmación humana de PRAVIA IA', () => {
     mocks.conversation.ensureActive.mockReset().mockResolvedValue({ id: 'conversation-1' });
     mocks.conversation.addUserMessage.mockReset().mockResolvedValue({ message: { id: 'message-user', created_at: new Date() }, duplicate: false });
     mocks.conversation.linkAttachmentsToMessage.mockReset().mockResolvedValue([]);
+    mocks.conversation.contextualAttachmentIds.mockReset().mockImplementation(async (_user, _conversation, _message, ids) => ids || []);
     mocks.conversation.history.mockReset().mockResolvedValue({ messages: [{ role: 'assistant', content: 'Respuesta persistida' }], summary: 'Resumen anterior' });
     mocks.conversation.actionState.mockReset().mockResolvedValue(undefined);
     mocks.conversation.addAssistantMessage.mockReset().mockResolvedValue({ id: 'message-assistant' });

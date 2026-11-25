@@ -49,6 +49,15 @@ export type AssistantActionContext = {
 type FieldType = 'string' | 'number' | 'boolean' | 'string[]' | 'object';
 type Field = { type: FieldType; required?: boolean; enum?: readonly string[]; max?: number };
 type ActionResult = { entityType: string; entityId?: string; message: string; refresh: string; details?: Array<{ label: string; value: string }> };
+function resultSources(result: ActionResult, args: Record<string, any>) {
+  const routes: Record<string, string> = { Cotizacion: '/cotizaciones/', Prospecto: '/prospectos/', Compareciente: '/comparecientes/', Predio: '/predios/', Expediente: '/expedientes/' };
+  if (!result.entityId) return undefined;
+  if (result.entityType === 'Documento') return [{ id: result.entityId, entityId: result.entityId, type: 'Documento', label: 'Documento generado' }];
+  let reference = routes[result.entityType] ? routes[result.entityType] + encodeURIComponent(result.entityId) : undefined;
+  if (result.entityType === 'EventoAgenda') reference = `/agenda#evento=${encodeURIComponent(result.entityId)}`;
+  if (!reference && args.expediente_id) reference = `/expedientes/${encodeURIComponent(args.expediente_id)}#${({ proyecto: 'proyecto', comparecientes: 'comparecientes', predios: 'predios', actos: 'actos', finanzas: 'finanzas', seguimiento: 'seguimiento', presupuesto: 'finanzas' } as Record<string, string>)[result.refresh] || 'documentos'}`;
+  return reference ? [{ id: result.entityId, entityId: result.entityId, type: 'Resultado', label: 'Ver cambios', reference }] : undefined;
+}
 type ActionPreview = {
   object?: { type: string; id?: string; label?: string };
   before?: unknown;
@@ -1122,9 +1131,30 @@ export type AssistantOperationalReply = {
   status: 'success'; message: string; confirmation?: { id: string; title: string; summary?: string; level?: 'STANDARD' | 'REINFORCED'; details: Array<{ label: string; value: string }>; confirmLabel?: string };
   refresh?: string;
   collection?: AssistantCollection;
+  sources?: Array<{ id: string; entityId?: string; type?: string; label: string; reference?: string }>;
 };
 
-export async function prepareOrExecuteAssistantAction(input: { actor: Actor; conversationId: string; messageId: string; actionKey: string; args: unknown; context?: AssistantActionContext; correlationId: string; origin?: 'USER_COMMAND' | 'PROACTIVE' }): Promise<AssistantOperationalReply> {
+/** Deliberately bounded undo: only the last confirmed basic party edit in this
+ * owned chat, and only if no intervening master revision exists. New records,
+ * payments, legal acts and stamped documents are never generically reversed. */
+export async function prepareUndoLastAssistantEdit(input: { actor: Actor; conversationId: string; messageId: string; correlationId: string }): Promise<AssistantOperationalReply> {
+  const state = await assistantConversationService.actionState(input.actor, input.conversationId);
+  if (state?.status !== 'COMPLETED' || state.actionKey !== 'party.update' || !state.preview?.guard || !state.preview.before || typeof state.preview.before !== 'object') {
+    return { status: 'success', message: 'No hay una última edición básica de compareciente que pueda deshacer de forma segura en este chat. Indica el registro y la corrección que necesitas; no borraré registros, pagos ni auditoría automáticamente.' };
+  }
+  if (!hasPermissions(input.actor, ['ai.actions.prepare', 'comparecientes.write'])) throw new AssistantActionError('No tienes permiso para modificar esa ficha.', 'AI_ACTION_DENIED', 403);
+  const id = state.preview.guard.id;
+  if (!(await canAccessCompareciente(input.actor, id))) throw new AssistantActionError('No tienes acceso a ese compareciente.', 'AI_ACTION_TARGET_DENIED', 403);
+  const current = await prisma.compareciente.findFirst({ where: { id, organization_id: input.actor.organizationId, archived_at: null }, select: { version: true } });
+  if (!current || current.version !== Number(state.preview.guard.version) + 1) throw new AssistantActionError('La ficha cambió después de esa edición. No la sobrescribí. Revisa la versión actual e indica qué dato quieres corregir.', 'AI_ACTION_STALE', 409);
+  const before = state.preview.before as Record<string, unknown>;
+  const allowed = byKey.get('party.update')!.fields;
+  const changes = Object.fromEntries(Object.entries(before).filter(([key]) => key in allowed && !['compareciente_id', 'compareciente_query'].includes(key)));
+  if (!Object.keys(changes).length) throw new AssistantActionError('No hay valores anteriores verificables para esa edición.', 'AI_UNDO_SOURCE_MISSING', 409);
+  return prepareOrExecuteAssistantAction({ ...input, actionKey: 'party.update', args: { ...changes, compareciente_id: id }, origin: 'PROACTIVE', expectedMasterVersion: current.version });
+}
+
+export async function prepareOrExecuteAssistantAction(input: { actor: Actor; conversationId: string; messageId: string; actionKey: string; args: unknown; context?: AssistantActionContext; correlationId: string; origin?: 'USER_COMMAND' | 'PROACTIVE'; expectedMasterVersion?: number }): Promise<AssistantOperationalReply> {
   const definition = byKey.get(input.actionKey);
   if (!definition) throw new AssistantActionError('Esa acción no está disponible.', 'AI_ACTION_UNKNOWN', 404);
   if (!hasPermissions(input.actor, definition.permissions)) throw new AssistantActionError('No tienes permiso para hacer eso.', 'AI_ACTION_DENIED', 403);
@@ -1202,6 +1232,7 @@ export async function prepareOrExecuteAssistantAction(input: { actor: Actor; con
       if (error instanceof ProspectWorkflowError) throw new AssistantActionError(error.message, error.code, error.status);
       throw error;
     }
+    if (input.expectedMasterVersion !== undefined && preview.guard?.version !== input.expectedMasterVersion) throw new AssistantActionError('La ficha cambió mientras preparaba la corrección. No guardé cambios; revisa su estado actual.', 'AI_ACTION_STALE', 409);
     const confirmationId = randomUUID();
     const details = [
       { label: 'Acción', value: definition.description },
@@ -1228,7 +1259,7 @@ export async function prepareOrExecuteAssistantAction(input: { actor: Actor; con
     return { status: 'success', message: `Voy a ${definition.description.charAt(0).toLowerCase()}${definition.description.slice(1)} ¿Confirmas?`, confirmation };
   }
   const result = await execute(definition, input.actor, input.conversationId, args, invocationId, input.correlationId);
-  const reply = { status: 'success' as const, message: result.message, refresh: result.refresh };
+  const reply = { status: 'success' as const, message: result.message, refresh: result.refresh, sources: resultSources(result, args) };
   await assistantConversationService.setActionState(input.actor, input.conversationId, {
     status: 'COMPLETED', actionKey: definition.key, args, invocationId, result: reply,
   });
@@ -1249,7 +1280,7 @@ export async function confirmAssistantAction(input: { actor: Actor; conversation
   if (missing.length) throw new AssistantActionError(missingQuestion[missing[0]] || `Falta ${missing[0]} para ejecutar la acción.`, 'AI_CONFIRMATION_DATA_INCOMPLETE', 409);
   try {
     const result = await execute(definition, input.actor, input.conversationId, args, state.invocationId, input.correlationId, state.preview);
-    const reply = { status: 'success' as const, message: result.message, refresh: result.refresh };
+    const reply = { status: 'success' as const, message: result.message, refresh: result.refresh, sources: resultSources(result, args) };
     await assistantConversationService.setActionState(input.actor, input.conversationId, { ...state, status: 'COMPLETED', result: reply, confirmation: undefined, executingAt: undefined });
     return reply;
   } catch (error) {

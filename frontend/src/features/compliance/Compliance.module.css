@@ -66,6 +66,7 @@
 .h8Search { flex: 1; min-width: 0; min-height: 44px; border: 1px solid var(--color-border-strong); border-radius: 9px; display: flex; align-items: center; gap: 8px; padding: 0 11px; }
 .h8Search svg { width: 18px; color: var(--color-text-muted); flex: 0 0 auto; }
 .h8Search input { border: 0; outline: 0; padding: 10px 0; width: 100%; min-width: 0; font: inherit; }
+.h8Search:focus-within { outline: 2px solid var(--color-gold-600); outline-offset: 3px; }
 .h8MoreFilters { position: relative; }
 .h8MoreFilters > summary { min-height: 44px; box-sizing: border-box; list-style: none; border: 1px solid var(--color-border-strong); border-radius: 9px; padding: 10px 14px; font-weight: 650; cursor: pointer; white-space: nowrap; }
 .h8MoreFilters > summary::-webkit-details-marker { display: none; }
@@ -91,6 +92,7 @@
 .h8Pagination svg { width: 17px; }
 .h8Empty { padding: 48px 20px; text-align: center; border-top: 1px solid var(--color-border); }
 .h8Empty svg { width: 36px; color: #9b762f; }
+.h8Empty > svg { margin: 0 auto 12px; }
 .h8Empty h2 { margin: 10px 0 5px; font-size: 18px; }
 .h8Empty p { margin: 0; color: var(--color-text-secondary); }
 .h8DialogBackdrop { position: fixed; inset: 0; z-index: 80; background: rgb(20 24 31 / 45%); padding: 20px; display: grid; place-items: center; }

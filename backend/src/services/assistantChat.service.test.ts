@@ -74,6 +74,18 @@ const gatewayFromFetch = (fetchImpl: ReturnType<typeof vi.fn>) => ({
 });
 
 describe('PRAVIA IA multi-intent planner', () => {
+  it('routes a literal edit of the visible party through canonical confirmation, not provider prose', async () => {
+    const executeAction=vi.fn().mockResolvedValue({status:'success',message:'Revisa',confirmation:{id:'c',title:'Actualizar',details:[]}});
+    const gateway={execute:vi.fn()}; const send=createAssistantChatService({gateway:gateway as any,executeAction});
+    await send({message:'Cambia la ocupación de este compareciente a ARQUITECTA QA',conversationId:'c',messageId:'m',context:{entityType:'compareciente',entityId:'party-current'}},{...actionUser,permissions:[...actionUser.permissions,'comparecientes.read','comparecientes.write']},'edit');
+    expect(executeAction).toHaveBeenCalledWith(expect.objectContaining({actionKey:'party.update',args:{compareciente_id:'party-current',ocupacion:'ARQUITECTA QA'}}));expect(gateway.execute).not.toHaveBeenCalled();
+  });
+  it('uses the bounded server-side undo path only for explicit undo intent', async () => {
+    const undoAction=vi.fn().mockResolvedValue({status:'success',message:'Revisa la reversión',confirmation:{id:'undo',title:'Revertir',details:[]}}); const gateway={execute:vi.fn()};
+    const send=createAssistantChatService({gateway:gateway as any,undoAction});
+    expect((await send({message:'Deshaz ese cambio',conversationId:'owned',messageId:'m'},actionUser,'undo')).confirmation?.id).toBe('undo');
+    expect(undoAction).toHaveBeenCalledWith(expect.objectContaining({conversationId:'owned'}));expect(gateway.execute).not.toHaveBeenCalled();
+  });
   const previousKey = process.env.OPENAI_API_KEY;
 
   beforeEach(() => { process.env.OPENAI_API_KEY = 'test-key-never-sent'; });

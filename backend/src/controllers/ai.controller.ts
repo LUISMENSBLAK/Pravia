@@ -92,9 +92,10 @@ export class AIController {
       if (!userMessage.duplicate) {
         await assistantConversationService.linkAttachmentsToMessage(req.user, conversation.id, userMessage.message.id, req.body?.attachmentIds);
       }
+      const attachmentIds = await assistantConversationService.contextualAttachmentIds(req.user, conversation.id, message, req.body?.attachmentIds);
       const [history, attachmentData] = await Promise.all([
         assistantConversationService.history(req.user, conversation.id, userMessage.message.id),
-        prepareAssistantAttachmentContext(req.user, conversation.id, req.body?.attachmentIds, `assistant-attachment:${userMessage.message.id}`),
+        prepareAssistantAttachmentContext(req.user, conversation.id, attachmentIds, `assistant-attachment:${userMessage.message.id}`),
       ]);
       const actionState = await assistantConversationService.actionState(req.user, conversation.id);
       const preferenceReader = (prisma as any).userPreference?.findUnique;
@@ -112,7 +113,7 @@ export class AIController {
           timezone: preference?.timezone,
           conversationId: conversation.id,
           messageId: userMessage.message.id,
-          attachmentIds: Array.isArray(req.body?.attachmentIds) ? req.body.attachmentIds.map(String).slice(0, 6) : undefined,
+          attachmentIds,
           attachmentFacts: attachmentData.facts,
           actionState: actionState?.status === 'COLLECTING' || actionState?.status === 'AWAITING_CONFIRMATION' ? actionState : undefined,
         },

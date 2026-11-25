@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type PropsWithChildren } from 'react';
 import { useLocation } from 'react-router-dom';
-import { notifyAssistantDataChange } from '../../services/api/client';
+import { ApiError, notifyAssistantDataChange } from '../../services/api/client';
 import { getAssistantActions, resolveAssistantContext } from './assistantContext';
 import { assistantService, type AssistantService } from './assistant.service';
 import type {
@@ -32,6 +32,7 @@ type AssistantContextValue = {
   renameConversation(id: string, title: string): Promise<void>; archiveConversation(id: string): Promise<void>;
   trashConversation(id: string): Promise<void>; restoreConversation(id: string): Promise<void>;
   uploadAttachment(file: File): Promise<void>; removeAttachment(id: string): Promise<void>; transcribeAudio(file: File): Promise<void>;
+  uploadAttachments(files: File[]): Promise<void>;
   setRecording(value: boolean): void; reportError(message: string): void;
   focusDocument(document?: { id: string; label: string }): void;
   transitionAlert(id: string, action: 'ACKNOWLEDGE' | 'SNOOZE' | 'RESOLVE'): Promise<void>;
@@ -126,7 +127,7 @@ export function AssistantProvider({ children, service = assistantService }: Prop
     setHistoryLoading(true); setErrorMessage(undefined);
     try { const detail = await service.getConversation(id); if (selectionEpoch !== conversationSelectionEpoch.current) return;
       activeConversationIdRef.current = detail.id; setActiveConversationId(detail.id); setMessages(mapConversationMessages(detail));
-      setPendingAttachments(detail.attachments || []); setConfirmation(detail.pending_confirmation ?? null); setCollection(detail.pending_collection ?? null); if (!automatic) setHistoryOpen(false); setStatus(detail.pending_confirmation ? 'confirmation-required' : 'idle'); }
+      setPendingAttachments((detail.attachments || []).filter(item => !item.message_id)); setConfirmation(detail.pending_confirmation ?? null); setCollection(detail.pending_collection ?? null); if (!automatic) setHistoryOpen(false); setStatus(detail.pending_confirmation ? 'confirmation-required' : 'idle'); }
     catch { if (selectionEpoch === conversationSelectionEpoch.current) { activeConversationIdRef.current=undefined; setActiveConversationId(undefined); explicitBlankConversation.current=true; setStatus('error'); setErrorMessage('No pude abrir esa conversación.'); } }
     finally { if (selectionEpoch === conversationSelectionEpoch.current) { selectingConversation.current = false; setHistoryLoading(false); } }
   }, [service]);
@@ -207,7 +208,12 @@ export function AssistantProvider({ children, service = assistantService }: Prop
   const performSubmission = useCallback(async (submission: Submission, appendUser: boolean) => {
     const epoch = conversationSelectionEpoch.current;
     setErrorMessage(undefined); setConfirmation(null);
-    if (appendUser) setMessages((current) => [...current, { id: submission.clientMessageId, role: 'user', content: submission.prompt, timestamp: now(), attachments: pendingAttachments }]);
+    if (appendUser) {
+      setMessages((current) => [...current, { id: submission.clientMessageId, role: 'user', content: submission.prompt, timestamp: now(), attachments: pendingAttachments }]);
+      // The submitted files belong to that message, not to the next composer.
+      // A retry keeps the original IDs/idempotency key in lastSubmission.
+      setPendingAttachments([]);
+    }
     setStatus('thinking'); const controller = new AbortController(); activeRequest.current?.abort(); activeRequest.current = controller;
     try { const reply = await service.sendMessage({ message: submission.prompt, context: submission.context, suggestionId: selectedSuggestion?.id, conversationId: submission.conversationId,
         clientMessageId: submission.clientMessageId, attachmentIds: submission.attachmentIds, history: submission.history }, controller.signal);
@@ -253,13 +259,21 @@ export function AssistantProvider({ children, service = assistantService }: Prop
   }, [activeConversationId, conversationScope, loadConversations, newConversation, service]);
 
   const uploadAttachment = useCallback(async (file: File) => {
+    if (!file.size || file.size > 50 * 1024 * 1024) { setStatus('error'); setErrorMessage(!file.size ? 'El archivo está vacío.' : 'El archivo supera el límite de 50 MiB.'); return; }
     const epoch = conversationSelectionEpoch.current;
     setProcessLabel('Adjuntando archivo…'); setStatus('processing');
     try { const conversationId = await ensureConversation(); const attachment = await service.uploadAttachment(conversationId, file);
       if (epoch !== conversationSelectionEpoch.current || activeConversationIdRef.current !== conversationId) return;
       setPendingAttachments((current) => current.some((item) => item.id === attachment.id) ? current : [...current, attachment]); setStatus('idle'); }
-    catch { if (epoch === conversationSelectionEpoch.current) { setStatus('error'); setErrorMessage('No pude adjuntar ese archivo.'); } }
+    catch (error) { if (epoch === conversationSelectionEpoch.current) { setStatus('error'); setErrorMessage(error instanceof ApiError && error.status < 500 ? error.message : 'No pude adjuntar ese archivo. Intenta de nuevo; se conservan los demás adjuntos.'); } }
   }, [ensureConversation, service]);
+  const uploadAttachments = useCallback(async (files: File[]) => {
+    const epoch = conversationSelectionEpoch.current;
+    for (const file of files) {
+      if (epoch !== conversationSelectionEpoch.current) break;
+      await uploadAttachment(file);
+    }
+  }, [uploadAttachment]);
   const removeAttachment = useCallback(async (id: string) => { if (!activeConversationId) return;
     const epoch = conversationSelectionEpoch.current;
     try { await service.archiveAttachment(activeConversationId, id); if (epoch === conversationSelectionEpoch.current) setPendingAttachments((current) => current.filter((item) => item.id !== id)); }
@@ -318,11 +332,11 @@ export function AssistantProvider({ children, service = assistantService }: Prop
     historyOpen, historyLoading, recording, alerts, alertsLoading, openAssistant, closeAssistant, setDraft, sendMessage, retry, confirmAction, editConfirmation, cancelConfirmation,
     dismissSuggestion, setHistoryOpen, loadConversations, selectConversation, newConversation, renameConversation,
     archiveConversation: (id) => transitionConversation(id, 'archive'), trashConversation: (id) => transitionConversation(id, 'trash'), restoreConversation: (id) => transitionConversation(id, 'restore'),
-    uploadAttachment, removeAttachment, transcribeAudio, setRecording, reportError, focusDocument, transitionAlert, submitCollection, cancelCollection,
+    uploadAttachment, uploadAttachments, removeAttachment, transcribeAudio, setRecording, reportError, focusDocument, transitionAlert, submitCollection, cancelCollection,
   }), [isOpen, status, context, messages, suggestion, selectedSuggestion, draft, processLabel, errorMessage, confirmation, collection, conversations, conversationScope,
     activeConversationId, pendingAttachments, historyOpen, historyLoading, recording, openAssistant, closeAssistant, sendMessage, retry, confirmAction,
     editConfirmation, cancelConfirmation, dismissSuggestion, loadConversations, selectConversation, newConversation, renameConversation, transitionConversation,
-    uploadAttachment, removeAttachment, transcribeAudio, reportError, focusDocument, alerts, alertsLoading, transitionAlert, submitCollection, cancelCollection]);
+    uploadAttachment, uploadAttachments, removeAttachment, transcribeAudio, reportError, focusDocument, alerts, alertsLoading, transitionAlert, submitCollection, cancelCollection]);
   return <AssistantContextStore.Provider value={value}>{children}</AssistantContextStore.Provider>;
 }
 

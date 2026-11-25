@@ -29,7 +29,7 @@ export const formatPeriod = (date: Date, view: AgendaView) => {
     : `${new Intl.DateTimeFormat('es-MX', { day: 'numeric', month: 'short' }).format(from)}–${new Intl.DateTimeFormat('es-MX', { day: 'numeric', month: 'short', year: 'numeric' }).format(to)}`;
 };
 
-export const eventEnd = (event: AgendaEvent) => new Date(event.fecha_fin || new Date(event.fecha_inicio).getTime() + 30 * 60_000);
+export const eventEnd = (event: Pick<AgendaEvent, 'fecha_inicio' | 'fecha_fin'>) => new Date(event.fecha_fin || new Date(event.fecha_inicio).getTime() + 30 * 60_000);
 export const eventDurationMinutes = (event: AgendaEvent) => Math.max(30, Math.round((eventEnd(event).getTime() - new Date(event.fecha_inicio).getTime()) / 60_000));
 export const zonedParts = (value: Date | string, timeZone: string) => { const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23' }).formatToParts(new Date(value)); const get=(type:Intl.DateTimeFormatPartTypes)=>Number(parts.find((part)=>part.type===type)?.value||0); return { year:get('year'),month:get('month'),day:get('day'),hour:get('hour'),minute:get('minute') }; };
 export const dateKeyInZone = (value: Date | string, timeZone: string) => { const part=zonedParts(value,timeZone); return `${part.year}-${pad(part.month)}-${pad(part.day)}`; };

@@ -26,6 +26,35 @@ function setup(api: AssistantService) { render(<MemoryRouter><AssistantProvider 
 const file = () => new File(['synthetic'], 'qa.pdf', { type: 'application/pdf' });
 
 describe('Conversation isolation under delayed responses', () => {
+  it('stops a multi-file drop after a chat switch instead of uploading the rest into the next chat', async () => {
+    const uploaded = deferred<AssistantAttachment>(); const api = service({ uploadAttachment: vi.fn(() => uploaded.promise) }); setup(api);
+    await act(async () => assistant.selectConversation('A'));
+    let batch!: Promise<void>; act(() => { batch = assistant.uploadAttachments([file(), file()]); });
+    await waitFor(() => expect(api.uploadAttachment).toHaveBeenCalledTimes(1));
+    await act(async () => assistant.selectConversation('B'));
+    await act(async () => { uploaded.resolve(attachment); await batch; });
+    expect(api.uploadAttachment).toHaveBeenCalledTimes(1); expect(assistant.pendingAttachments).toEqual([]);
+  });
+  it('moves submitted files into their message immediately and retries the same IDs after failure', async () => {
+    const reply = deferred<AssistantReply>(); const api = service({ sendMessage: vi.fn(() => reply.promise) }); setup(api);
+    await act(async () => assistant.selectConversation('A'));
+    await act(async () => assistant.uploadAttachment(file()));
+    let sending!: Promise<void>; act(() => { sending = assistant.sendMessage('Extrae la información importante'); });
+    await waitFor(() => expect(api.sendMessage).toHaveBeenCalled());
+    expect(assistant.pendingAttachments).toEqual([]);
+    expect(assistant.messages[0].attachments?.[0].id).toBe(attachment.id);
+    await act(async () => { reply.reject(Error('offline')); await sending; });
+    expect(assistant.pendingAttachments).toEqual([]);
+    vi.mocked(api.sendMessage).mockResolvedValueOnce({ status: 'success', message: 'Extraído' });
+    await act(async () => assistant.retry());
+    expect(vi.mocked(api.sendMessage).mock.calls[1][0].attachmentIds).toEqual([attachment.id]);
+    expect(vi.mocked(api.sendMessage).mock.calls[1][0].clientMessageId).toBe(vi.mocked(api.sendMessage).mock.calls[0][0].clientMessageId);
+    expect(assistant.messages.filter(item => item.role === 'user')).toHaveLength(1);
+  });
+  it('never puts already sent attachments back in the composer on reopen', async () => {
+    setup(service({ getConversation: vi.fn(async id => ({ ...detail(id), attachments: [{ ...attachment, message_id: 'sent' }] })) }));
+    await act(async () => assistant.selectConversation('A')); expect(assistant.pendingAttachments).toEqual([]);
+  });
   it('cannot send to the previous chat while the requested chat is still loading',async()=>{
     const pending=deferred<AssistantConversationDetail>();const api=service({getConversation:vi.fn(id=>id==='B'?pending.promise:Promise.resolve(detail(id)))});setup(api);
     await act(async()=>assistant.selectConversation('A'));

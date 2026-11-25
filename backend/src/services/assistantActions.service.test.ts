@@ -14,6 +14,7 @@ import {
   cancelAssistantConfirmation,
   confirmAssistantAction,
   prepareOrExecuteAssistantAction,
+  prepareUndoLastAssistantEdit,
 } from './assistantActions.service';
 
 const actor = {
@@ -26,6 +27,23 @@ const actor = {
 const base = { actor, conversationId: 'conversation-1', messageId: 'message-1', correlationId: 'correlation-1' };
 
 describe('PRAVIA IA action layer', () => {
+  it('prepares a reversible edit from server-side previous values, requires confirmation and rejects later revisions', async () => {
+    const partyActor = { ...actor, permissions: [...actor.permissions, 'comparecientes.write'] };
+    let stored: any = { status: 'COMPLETED', actionKey: 'party.update', args: { compareciente_id: 'p', ocupacion: 'NUEVA' }, preview: { before: { ocupacion: 'ANTERIOR' }, after: { ocupacion: 'NUEVA' }, guard: { id: 'p', kind: 'PARTY_VERSION', version: 3 } } };
+    vi.spyOn(assistantConversationService,'actionState').mockImplementation(async () => stored);
+    vi.spyOn(assistantConversationService,'setActionState').mockImplementation(async (_a,_c,state) => { stored=state; });
+    const find = vi.spyOn(prisma.compareciente,'findFirst').mockResolvedValue({ id: 'p', version: 4, tipo_persona: 'FISICA', nombre_busqueda: 'CLIENTE QA', personaFisica: { ocupacion: 'NUEVA' }, contactos: [] } as any);
+    const update = vi.spyOn(ComparecienteService.prototype,'actualizarMaster').mockResolvedValue({} as any);
+    const reply = await prepareUndoLastAssistantEdit({ ...base, actor: partyActor });
+    expect(reply.confirmation).toBeTruthy(); expect(stored.preview.before).toEqual({ ocupacion: 'NUEVA' }); expect(stored.preview.after).toEqual({ ocupacion: 'ANTERIOR' }); expect(update).not.toHaveBeenCalled();
+    stored = { status: 'COMPLETED', actionKey: 'party.update', preview: { before: { ocupacion: 'ANTERIOR' }, guard: { id: 'p', version: 3 } } };
+    find.mockResolvedValue({ id: 'p', version: 5 } as any);
+    await expect(prepareUndoLastAssistantEdit({ ...base, actor: partyActor })).rejects.toMatchObject({ code: 'AI_ACTION_STALE' });
+  });
+  it('never offers generic undo of payments or legal records', async () => {
+    vi.spyOn(assistantConversationService,'actionState').mockResolvedValue({ status: 'COMPLETED', actionKey: 'finance.payment.request', args: {}, invocationId: 'x' });
+    expect((await prepareUndoLastAssistantEdit(base)).message).toContain('No hay una última edición');
+  });
   it('crea una cotización por el servicio directo, sin Prospecto ficticio y con idempotencia canónica',async()=>{
     vi.spyOn(assistantConversationService,'actionState').mockResolvedValue(undefined);
     vi.spyOn(assistantConversationService,'setActionState').mockResolvedValue(undefined as any);

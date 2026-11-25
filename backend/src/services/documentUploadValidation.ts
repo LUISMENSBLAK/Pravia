@@ -6,6 +6,9 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.png': 'image/png',
   '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.heic': 'image/heic',
+  '.heif': 'image/heif',
   '.bmp': 'image/bmp',
   '.doc': 'application/msword',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -22,6 +25,9 @@ function detectedMime(buffer: Buffer, extension: string) {
   if (startsWith(buffer, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image/png';
   if (buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
   if (buffer.subarray(0, 2).toString('ascii') === 'BM') return 'image/bmp';
+  if (['GIF87a', 'GIF89a'].includes(buffer.subarray(0, 6).toString('ascii'))) return 'image/gif';
+  if (['.heic', '.heif'].includes(extension) && buffer.length >= 16 && buffer.readUInt32BE(0) >= 16 && buffer.readUInt32BE(0) <= buffer.length && buffer.subarray(4, 8).toString('ascii') === 'ftyp'
+    && ['heic', 'heix', 'hevc', 'hevx', 'mif1', 'msf1'].includes(buffer.subarray(8, 12).toString('ascii'))) return MIME_BY_EXTENSION[extension];
   if (startsWith(buffer, [0xd0, 0xcf, 0x11, 0xe0]) && extension === '.doc') return 'application/msword';
   if (startsWith(buffer, [0x50, 0x4b]) && extension === '.docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   if (startsWith(buffer, [0x50, 0x4b]) && extension === '.zip') return 'application/zip';
@@ -43,7 +49,7 @@ export function canonicalUploadedDocumentMime(file: { buffer: Buffer; originalna
   if (!file.buffer?.length) throw new Error('El archivo está vacío o no pudo leerse.');
   const extension = path.extname(file.originalname || '').toLowerCase();
   const expected = MIME_BY_EXTENSION[extension];
-  if (!expected) throw new Error('Tipo de archivo no permitido. Usa PDF, JPG/JPEG, PNG, WEBP, BMP, DOC, DOCX, XML, TXT o ZIP.');
+  if (!expected) throw new Error('Tipo de archivo no permitido. Usa PDF, JPG/JPEG, PNG, WEBP, GIF, HEIC/HEIF, BMP, DOC, DOCX, XML, TXT o ZIP.');
   const detected = detectedMime(file.buffer, extension);
   if (!detected) throw new Error(`El archivo ${file.originalname || ''} está corrupto o su contenido no corresponde con la extensión ${extension}.`);
   if (detected !== expected) throw new Error(`El contenido de ${file.originalname || ''} no corresponde con su extensión ${extension}.`);

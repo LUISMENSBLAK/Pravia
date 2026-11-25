@@ -2,6 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { OpenAiResponsesGatewayAdapter } from './openaiResponsesGateway.adapter';
 
 describe('OpenAI Responses economic adapter', () => {
+  it('fits opted-in domain output to the operation catalog without changing the input or raising the ceiling', async () => {
+    const db = { resourceCostVersion: { findFirst: vi.fn().mockResolvedValue({ id: 'cost-fit', unit: 'MILLION_TOKENS', currency: 'MXN', cost_amount: '1', effective_from: new Date('2026-11-24T00:00:00Z'), metadata: { output_per_million: '2', cached_input_per_million: '0.5' } }) } } as any;
+    const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'completed', output: [], usage: { input_tokens: 3, output_tokens: 2 } }), { status: 200 }));
+    const adapter = new OpenAiResponsesGatewayAdapter(db, fetcher as any, 'synthetic-key');
+    const payload = { fitOutputToOperationLimit: true, body: { max_output_tokens: 16384, input: [] } };
+    await adapter.execute({ modelCode: 'qa-model', payload, timeoutMs: 2000, traceId: 'fit', maxOutputTokens: 8192 });
+    expect(JSON.parse(fetcher.mock.calls[0][1].body).max_output_tokens).toBe(8192);
+    expect(payload.body.max_output_tokens).toBe(16384);
+  });
   it('rechaza una salida superior al límite del catálogo antes de llamar al proveedor', async () => {
     const db = { resourceCostVersion: { findFirst: vi.fn() } } as any;
     const fetcher = vi.fn();

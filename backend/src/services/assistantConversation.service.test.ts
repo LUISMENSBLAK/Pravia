@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
     $transaction: vi.fn(),
     assistantConversation: { findFirst: vi.fn(), findMany: vi.fn(), update: vi.fn() },
     assistantAttachment: { findFirst: vi.fn(), findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
+    assistantMessage: { findFirst: vi.fn() },
     documento: { findUnique: vi.fn(), create: vi.fn() },
     expedienteDocumento: { create: vi.fn() },
     auditLog: { create: vi.fn() },
@@ -42,6 +43,19 @@ const conversation = {
 };
 
 describe('conversaciones persistentes de PRAVIA IA', () => {
+  it('resolves an explicit follow-up only from the owned conversation, without relinking old messages', async () => {
+    mocks.db.assistantConversation.findFirst.mockResolvedValue(conversation);
+    mocks.db.assistantMessage.findFirst.mockResolvedValue({ attachments: [{ id: 'old-photo' }] });
+    expect(await assistantConversationService.contextualAttachmentIds(user, conversation.id, 'Con esos datos crea un compareciente', [])).toEqual(['old-photo']);
+    expect(mocks.db.assistantMessage.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ conversation_id: conversation.id, role: 'USER' }) }));
+    expect(mocks.db.assistantAttachment.updateMany).not.toHaveBeenCalled();
+  });
+  it('does not silently reuse previous documents for unrelated requests or foreign chats', async () => {
+    expect(await assistantConversationService.contextualAttachmentIds(user, conversation.id, 'Qué tengo mañana en mi agenda', [])).toEqual([]);
+    expect(mocks.db.assistantMessage.findFirst).not.toHaveBeenCalled();
+    mocks.db.assistantConversation.findFirst.mockResolvedValue(null);
+    await expect(assistantConversationService.contextualAttachmentIds(user, 'foreign', 'Resume ese PDF', [])).rejects.toMatchObject({ status: 404 });
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.db.$transaction.mockImplementation(async (callback: (tx: typeof mocks.db) => unknown) => callback(mocks.db));

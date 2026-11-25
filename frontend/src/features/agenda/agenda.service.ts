@@ -17,6 +17,7 @@ const payload = (draft: AgendaDraft, timezone: string) => ({
 });
 
 export const agendaService = {
+  markers: (from: Date, to: Date, signal?: AbortSignal) => apiRequest<{ eventos: Pick<AgendaEvent, 'fecha_inicio' | 'fecha_fin' | 'estatus' | 'user_id'>[] }>(`/agenda?${query({ desde: from.toISOString(), hasta: to.toISOString(), mode: 'markers' })}`, { signal }),
   list: (from: Date, to: Date, userId?: string, signal?: AbortSignal) => apiRequest<AgendaLoadResult>(`/agenda?${query({ desde: from.toISOString(), hasta: to.toISOString(), estatus: 'TODOS', user_id: userId })}`, { signal }),
   catalogs: (signal?: AbortSignal) => apiRequest<{ success: true; catalogos: AgendaCatalogs }>('/agenda/catalogos', { signal }).then((result) => result.catalogos),
   tasks: (userId?: string, signal?: AbortSignal) => apiRequest<{ success: true; tareas: AgendaTask[]; meta: { total: number } }>(`/agenda/tareas?${query({ user_id: userId, estatus: 'TODOS' })}`, { signal }),

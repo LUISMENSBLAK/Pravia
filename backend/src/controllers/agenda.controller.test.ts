@@ -28,6 +28,20 @@ const event = {
 };
 
 describe('Agenda endpoints', () => {
+  it('queries every monthly marker with the canonical private/tenant boundary and no UI row cap', async () => {
+    db.eventoAgenda.findMany.mockResolvedValue([]);
+    const req: any = { query: { mode: 'markers', desde: '2026-11-01T00:00:00Z', hasta: '2026-12-13T00:00:00Z' }, user: baseUser };
+    const res = response(); await AgendaController.list(req, res);
+    const query = db.eventoAgenda.findMany.mock.calls[0][0];
+    expect(query.take).toBeUndefined(); expect(query.select).toEqual({ fecha_inicio: true, fecha_fin: true, estatus: true, user_id: true });
+    expect(query.where.AND[0].organization_id).toBe(baseUser.organizationId);
+    expect(JSON.stringify(query.where)).toContain('ORGANIZATION'); expect(JSON.stringify(query.where)).toContain(baseUser.id);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ eventos: [], success: true }));
+  });
+  it('rejects oversized monthly marker ranges before querying', async () => {
+    const res = response(); await AgendaController.list({ query: { mode: 'markers', desde: '2026-01-01T00:00:00Z', hasta: '2026-06-01T00:00:00Z' }, user: baseUser } as any, res);
+    expect(res.status).toHaveBeenCalledWith(400); expect(db.eventoAgenda.findMany).not.toHaveBeenCalled();
+  });
   beforeEach(() => vi.clearAllMocks());
 
   it('permite eventos compartidos y privados propios sin abrir expedientes ajenos', async () => {

@@ -4,7 +4,7 @@ import { openAiProviderFetch } from './openaiProvider.adapter';
 import type { AiProviderAdapter, AiProviderResult } from './aiGateway.service';
 import { PlatformDomainError } from './platform.errors';
 
-type ResponsesPayload = { body: Record<string, unknown>; retryIncomplete?: boolean; retryHttp?: number };
+type ResponsesPayload = { body: Record<string, unknown>; retryIncomplete?: boolean; retryHttp?: number; fitOutputToOperationLimit?: boolean };
 type TranscriptionPayload = { kind: 'transcription'; buffer: Buffer; mimeType: string; filename: string;
   language?: string; retryHttp?: number };
 type RateMetadata = { output_per_million?: unknown; cached_input_per_million?: unknown;
@@ -32,9 +32,14 @@ export class OpenAiResponsesGatewayAdapter implements AiProviderAdapter {
     if (rawPayload && 'kind' in rawPayload && rawPayload.kind === 'transcription') {
       return this.executeTranscription<T>(input, rawPayload);
     }
-    const payload = rawPayload as ResponsesPayload | null;
+    const rawResponse = rawPayload as ResponsesPayload | null;
+    const payload = rawResponse?.body ? { ...rawResponse, body: { ...rawResponse.body } } : rawResponse;
     if (!payload?.body || typeof payload.body !== 'object' || Array.isArray(payload.body)) {
       throw new PlatformDomainError('AI_PROVIDER_PAYLOAD_INVALID', 'La solicitud IA no tiene un cuerpo válido.', 400);
+    }
+    if (payload.fitOutputToOperationLimit && input.maxOutputTokens != null && Number.isSafeInteger(input.maxOutputTokens)
+      && input.maxOutputTokens > 0 && Number.isSafeInteger(payload.body.max_output_tokens) && Number(payload.body.max_output_tokens) > 0) {
+      payload.body.max_output_tokens = Math.min(Number(payload.body.max_output_tokens), input.maxOutputTokens);
     }
     if (input.maxOutputTokens != null && (!Number.isSafeInteger(payload.body.max_output_tokens)
       || Number(payload.body.max_output_tokens) <= 0 || Number(payload.body.max_output_tokens) > input.maxOutputTokens)) {
