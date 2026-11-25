@@ -297,7 +297,7 @@ export class AIController {
       const confirmationId = String(req.body?.confirmationId || '').trim();
       if (!conversationId || !confirmationId) return res.status(400).json({ success: false, code: 'AI_CONFIRMATION_REFERENCE_REQUIRED', error: 'No se encontró la acción preparada.' });
       const reply = await confirmAssistantAction({ actor: req.user, conversationId, confirmationId, correlationId: req.correlationId || crypto.randomUUID() });
-      const message = await assistantConversationService.addAssistantMessage(req.user, conversationId, { content: reply.message, promptVersion: 'assistant-actions-v1' });
+      const message = await assistantConversationService.addAssistantMessage(req.user, conversationId, { content: reply.message, sources: reply.sources, promptVersion: 'assistant-actions-v1' });
       return res.json({ ...reply, conversationId, messageId: message.id });
     } catch (error: any) {
       const status = error instanceof AssistantActionError ? error.status : 500;
@@ -329,6 +329,7 @@ export class AIController {
       const assistantMessage = await assistantConversationService.addAssistantMessage(req.user, conversationId, {
         content: reply.message,
         promptVersion: 'assistant-dynamic-form-v1',
+        sources: reply.sources,
         inReplyToMessageId: userMessage.message.id,
       });
       return res.json({ ...reply, conversationId, messageId: assistantMessage.id });

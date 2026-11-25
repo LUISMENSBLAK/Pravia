@@ -98,6 +98,8 @@ describe('confirmación humana de PRAVIA IA', () => {
   });
 
   it('ejecuta la acción preparada mediante su confirmación persistida', async () => {
+    const sources = [{ id: 'result', entityId: 'event', type: 'Resultado', label: 'Ver cambios', reference: '/agenda#evento=event' }];
+    mocks.confirmAssistantAction.mockResolvedValueOnce({ status: 'success', message: 'El evento quedó cancelado.', refresh: 'agenda', sources });
     const req: any = {
       user: {
         id: 'user-1', sessionId: 'session-1', rol: 'ABOGADO',
@@ -111,7 +113,7 @@ describe('confirmación humana de PRAVIA IA', () => {
     const res = response();
     await AIController.confirmPreparedAction(req, res);
     expect(mocks.confirmAssistantAction).toHaveBeenCalledWith(expect.objectContaining({ actor: req.user, conversationId: 'conversation-1', confirmationId: 'confirmation-1', correlationId: 'corr-confirm' }));
-    expect(mocks.conversation.addAssistantMessage).toHaveBeenCalledWith(req.user, 'conversation-1', expect.objectContaining({ content: 'El evento quedó cancelado.' }));
+    expect(mocks.conversation.addAssistantMessage).toHaveBeenCalledWith(req.user, 'conversation-1', expect.objectContaining({ content: 'El evento quedó cancelado.', sources }));
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ status: 'success', refresh: 'agenda', conversationId: 'conversation-1', messageId: 'message-assistant' }));
   });
 
