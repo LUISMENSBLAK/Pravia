@@ -113,7 +113,11 @@ test('Prefacturas reales: MXN/USD/CAD, PostgreSQL, Storage, visor, descarga y re
       const canvas=viewer.locator('canvas[data-preview-loaded="true"]').first();
       await page.setViewportSize({width:768,height:1024});
       await expect.poll(async()=>{const box=await canvas.boundingBox(),dialog=await viewer.boundingBox();return box&&dialog?box.width-dialog.width:Infinity;}).toBeLessThanOrEqual(0.5);
+      const fitted = await canvas.boundingBox(); expect(fitted).not.toBeNull();
       await viewer.getByRole('button',{name:'Aumentar zoom',exact:true}).click();
+      // Wait for the new canvas render, not the old fitted canvas still marked
+      // ready in the click frame. Orientation must preserve this manual width.
+      await expect.poll(async()=>{const box=await canvas.boundingBox();return (box?.width??0)-fitted!.width;}).toBeGreaterThan(1);
       const manual=await canvas.boundingBox();expect(manual).not.toBeNull();
       const percent=await viewer.locator('[aria-label="Nivel de zoom"]').textContent().catch(()=>null);
       await page.setViewportSize({width:1024,height:768});

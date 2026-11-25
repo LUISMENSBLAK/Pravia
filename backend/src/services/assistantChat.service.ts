@@ -606,6 +606,7 @@ export function createAssistantChatService(dependencies: ChatDependencies = {}) 
     const actionKeys = assistantActionCatalog(user).map((action) => action.key);
     const allowedActions = new Set(actionKeys);
     const explicitAction = explicitEmptyAction(message, allowedActions)
+      || (!input.actionState ? explicitDirectQuote(message, allowedActions) : undefined)
       || explicitCurrentPartyEdit(message, allowedActions, input.context)
       || explicitAttachmentCreate(message, allowedActions, input.attachmentIds)
       || explicitProspectWorkflowAction(message, allowedActions)
