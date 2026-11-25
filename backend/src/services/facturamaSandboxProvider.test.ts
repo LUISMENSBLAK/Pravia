@@ -31,6 +31,15 @@ describe('Facturama sandbox · frontera aislada sin resultados fabricados', () =
     if (kind === 'quantity') p.Items[0].Quantity = 0; if (kind === 'missing') p.Receiver.TaxZipCode = '';
     const http = vi.fn(); await expect(new FacturamaSandboxProvider(credentials, http).stamp(data)).rejects.toMatchObject({ code: 'FACTURAMA_DRAFT_INVALID' }); expect(http).not.toHaveBeenCalled();
   });
+  it.each([['USD',17],['CAD',12.5]] as const)('serializa %s con CurrencyExchangeRate sin modificar el snapshot',async(currency,rate)=>{
+    const data=draft();data.facturamaPayload.Currency=currency;data.facturamaPayload.ExchangeRate=rate;
+    const foreignXml=Buffer.from(xml().toString().replace('Moneda="MXN"',`Moneda="${currency}" TipoCambio="${rate}"`));
+    const http=vi.fn().mockResolvedValueOnce(json({Id:'foreign-qa-id',XmlBase64:foreignXml.toString('base64'),TaxStamp:{Uuid:uuid}})).mockResolvedValueOnce(json({Content:Buffer.from('%PDF-1.7 synthetic').toString('base64')}));
+    await new FacturamaSandboxProvider(credentials,http).stamp(data);
+    const sent=JSON.parse(http.mock.calls[0][1].body);
+    expect(sent.CurrencyExchangeRate).toBe(rate);expect(sent).not.toHaveProperty('ExchangeRate');
+    expect(data.facturamaPayload.ExchangeRate).toBe(rate);expect(data.facturamaPayload).not.toHaveProperty('CurrencyExchangeRate');
+  });
   it('no fabrica UUID si el proveedor responde sin XML', async () => {
     const http = vi.fn().mockResolvedValue(json({ Id: 'provider-qa-id' }));
     await expect(new FacturamaSandboxProvider(credentials, http).stamp(draft())).rejects.toMatchObject({ code: 'FACTURAMA_STAMP_RESPONSE_INVALID' }); expect(http).toHaveBeenCalledTimes(1);

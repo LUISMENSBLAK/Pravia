@@ -86,10 +86,13 @@ export class FacturamaSandboxProvider implements CfdiProvider {
     validateFacturamaPayload(draft, payload);
     // Explicit serialization prevents unexpected email, URL or complement
     // fields injected into a loosely typed request from reaching the provider.
-    const body: FacturamaPayload = {
+    // Facturama's request field is CurrencyExchangeRate. ExchangeRate is a
+    // response/internal snapshot name; sending it silently drops foreign FX.
+    // Keep stored intents immutable and translate only at the API boundary.
+    const body: Omit<FacturamaPayload, 'ExchangeRate'> & { CurrencyExchangeRate?: number } = {
       Folio: payload.Folio, Date: payload.Date, Serie: payload.Serie, CfdiType: payload.CfdiType, Currency: payload.Currency,
       PaymentForm: payload.PaymentForm, PaymentMethod: payload.PaymentMethod, ExpeditionPlace: payload.ExpeditionPlace,
-      Exportation: payload.Exportation, ExchangeRate: payload.ExchangeRate, PaymentConditions: payload.PaymentConditions,
+      Exportation: payload.Exportation, CurrencyExchangeRate: payload.ExchangeRate, PaymentConditions: payload.PaymentConditions,
       Observations: payload.Observations,
       Issuer: { Rfc: payload.Issuer.Rfc, Name: payload.Issuer.Name, FiscalRegime: payload.Issuer.FiscalRegime },
       Receiver: { Rfc: payload.Receiver.Rfc, Name: payload.Receiver.Name, FiscalRegime: payload.Receiver.FiscalRegime, TaxZipCode: payload.Receiver.TaxZipCode, CfdiUse: payload.Receiver.CfdiUse },

@@ -354,6 +354,8 @@ Esta tabla no transforma evidencia puntual en certificación universal. `EVIDENC
 
 ## Pulido de Expediente y corrección de Proyecto
 
+Actualización PAC del 25-11-2026: repetición desde Chrome con **MXN/USD/CAD, XML/PDF reales privados, reload, checksums y reintentos idempotentes PASS**. Corregida traducción del tipo de cambio hacia `CurrencyExchangeRate` exigido por Facturama. Detalle y límites en `PRAVIA_CHAT_AGENDA_RELEASE_20261125.md`. Las firmas empresariales nuevas no se subieron: las pruebas API-Lite usan únicamente el CSD público de pruebas ya registrado. Esto no certifica timbrado productivo ni elimina los pendientes jurídicos/ISR de esta matriz.
+
 - La tarjeta conserva la información editable y los campos canónicos de Archivo en sólo lectura. Escritura y rango de folios comparten línea de entrada en escritorio, altura de control y rótulos claros. El cliente histórico sin enlace se distingue de una selección real de Comparecientes.
 - Navegación con barra compacta fija, anterior/siguiente, retorno a la ficha y selector en espacio estrecho. El hash sigue identificando la sección al recargar. La barra comparte permisos y protección de cambios de Presupuesto con los demás controles de navegación.
 - Proyecto distingue la indicación para generar del motivo para corregir. La corrección dirigida muestra estado, error y confirmación en el mismo lugar, congela campos durante el envío y conserva lo capturado si el servidor la rechaza.
