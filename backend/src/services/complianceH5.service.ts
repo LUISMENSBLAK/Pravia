@@ -1940,7 +1940,7 @@ export class ComplianceH5Service {
             actor: { userId: user.id, organizationId: user.organizationId, membershipId: user.membershipId,
               role: user.rol, permissions: user.permissions, scope: user.scope, sessionId: user.sessionId },
             idempotencyKey: `${usageOperationId}:document:${document.id}`,
-            traceId: correlationId || usageOperationId,
+            traceId: `${usageOperationId}:document:${document.id}`,
           });
         extractions.push(extraction);
       }

@@ -43,6 +43,15 @@ const conversation = {
 };
 
 describe('conversaciones persistentes de PRAVIA IA', () => {
+  it('recupera los seis documentos ante referencias humanas con cantidad o adjunté', async () => {
+    mocks.db.assistantConversation.findFirst.mockResolvedValue(conversation);
+    const ids = ['a','b','c','d','e','f'];
+    mocks.db.assistantMessage.findFirst.mockResolvedValue({ attachments: ids.map(id => ({ id })) });
+    for (const message of ['Vuelve a revisar los seis documentos que adjunté antes', 'Saca los datos de las dos fotos', 'Resume los 6 archivos', 'Revisa lo que adjunté antes']) {
+      expect(await assistantConversationService.contextualAttachmentIds(user, conversation.id, message, [])).toEqual(ids);
+    }
+    expect(mocks.db.assistantAttachment.updateMany).not.toHaveBeenCalled();
+  });
   it('resolves an explicit follow-up only from the owned conversation, without relinking old messages', async () => {
     mocks.db.assistantConversation.findFirst.mockResolvedValue(conversation);
     mocks.db.assistantMessage.findFirst.mockResolvedValue({ attachments: [{ id: 'old-photo' }] });

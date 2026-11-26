@@ -46,6 +46,23 @@ describe('territorio confirmado y aplicabilidad conservadora', () => {
 describe('decisión de propuesta: revisión, concurrencia y permisos', () => {
   const actor: any = { id:'u',organizationId:'org',rol:'DIRECCION',scope:'GLOBAL',permissions:['cotizaciones.write','ai.use'] };
   const now = new Date('2026-11-11T12:00:00Z');
+  it('conserva el paquete jurídico en la propuesta sin convertir texto legal en impuestos ni aplicar el presupuesto', async () => {
+    const source = { source_id:'source-qa',inventory_code:'QA-LEY',title:'Fuente sintética',version:1,label:'QA',article_fragment:'Artículo QA sobre honorarios',official_url:'https://oficial.test/qa',validity:{from:'2026-01-01',to:null},jurisdiction:'NAYARIT',category:'LEY',score:1 };
+    const db: any = {
+      cotizacion: { findFirst: vi.fn().mockResolvedValue({ id:'q',organization_id:'org',updated_at:now,territorio_operacion:territory,prospecto:{tipo_acto:'COMPRAVENTA'},actos:[{tipo_acto:{nombre:'COMPRAVENTA'}}],etapa_contractual:'EN_ELABORACION' }),findMany:vi.fn().mockResolvedValue([{id:'old',conceptos:[row('Honorarios','100','old')]}]), update:vi.fn() },
+      cotizacionIAProposal: { findFirst:vi.fn().mockResolvedValue(null),create:vi.fn().mockImplementation(({data})=>({id:'proposal',...data})) },
+      knowledgeSource:{findMany:vi.fn().mockResolvedValue([])},knowledgeCriterion:{findMany:vi.fn().mockResolvedValue([])},
+      $queryRaw:vi.fn().mockResolvedValue([source]),auditLog:{create:vi.fn()},cotizacionConcepto:{createMany:vi.fn(),deleteMany:vi.fn()},
+    };
+    const result = await new QuoteAIProposalService(db).generate(actor,'q',{idempotency_key:'qa-legal-packet'});
+    expect(result.data.evidence_packet.layers.legal_library.evidence).toEqual([source]);
+    expect(result.data.proposal.concepts).toEqual([expect.objectContaining({categoria:'HONORARIOS',importe:100})]);
+    expect(result.data.proposal.totals.impuestos_derechos).toBe('0.00');
+    expect(db.cotizacion.update).not.toHaveBeenCalled();
+    expect(db.cotizacionConcepto.createMany).not.toHaveBeenCalled();
+    expect(db.cotizacionConcepto.deleteMany).not.toHaveBeenCalled();
+    expect(db.auditLog.create).toHaveBeenCalled();
+  });
   const scope = { kind:'ARANCEL_PROPIO',jurisdiction:'NAYARIT',state:'NAYARIT',municipality:'TEPIC',approval_status:'APROBADO',review_status:'REVISADO',fixed_honorarium:'100',version:2,act:'COMPRAVENTA' };
   const setup = (overrides: Record<string, any> = {}) => {
     const quote = { id:'q',updated_at:now,territorio_operacion:territory,prospecto:{ tipo_acto:'COMPRAVENTA' },etapa_contractual:'EN_ELABORACION',...overrides.quote };

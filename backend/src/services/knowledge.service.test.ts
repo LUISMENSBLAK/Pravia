@@ -1,8 +1,24 @@
 import { PrismaClient } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
-import { buildEvidencePacket, exactArticleHeadingPattern, INSUFFICIENT_LEGAL_FOUNDATION, KnowledgeService, normalizeCriterionScope, normalizeInventoryRow, splitLegalArticles } from './knowledge.service';
+import { buildEvidencePacket, exactArticleHeadingPattern, INSUFFICIENT_LEGAL_FOUNDATION, KnowledgeService, normalizeCriterionScope, normalizeInventoryRow, splitLegalArticles, relevantInternalCriteria } from './knowledge.service';
 
 describe('KNOW-001 domain',()=>{
+  it.each(['2026-02-30','2026-01-01 extra'])('no consulta una fecha jurídica inválida %s',async(date)=>{
+    const query=vi.fn(),service=new KnowledgeService({$queryRaw:query} as any);
+    await expect(service.retrieve({id:'qa',organizationId:'org'},{query:'artículo legal',legal_date:date})).rejects.toMatchObject({code:'KNOW_DATE_INVALID'});expect(query).not.toHaveBeenCalled();
+  });
+  it('no verifica una vigencia inexistente ni convierte febrero 30 en marzo',async()=>{
+    const update=vi.fn();const tx:any={knowledgeSourceVersion:{findFirst:vi.fn().mockResolvedValue({content_text:'Artículo QA',source:{source_url:'https://www.diputados.gob.mx/',active:true}}),update}};
+    const service=new KnowledgeService({$transaction:(cb:any)=>cb(tx)} as any);
+    await expect(service.verifyVersion({id:'qa',organizationId:'qa'},'source','version','2026-02-30')).rejects.toMatchObject({code:'KNOW_EFFECTIVE_DATE_INVALID'});
+    expect(update).not.toHaveBeenCalled();
+  });
+  it('IA recibe sólo criterios revisados/aprobados, vigentes y del ámbito solicitado, separados de normas',()=>{
+    const scope={approval_status:'APROBADO',review_status:'REVISADO',jurisdiction:'NAYARIT',effective_from:'2026-01-01'};
+    const row={id:'c',title:'Compraventa',content:'Regla interna QA',scope};
+    const result=relevantInternalCriteria([row,{...row,id:'draft',scope:{...scope,approval_status:'BORRADOR'}},{...row,id:'future',scope:{...scope,effective_from:'2027-01-01'}},{...row,id:'other',scope:{...scope,jurisdiction:'JALISCO'}}],'compraventa','NAYARIT',new Date('2026-11-26'));
+    expect(result).toHaveLength(1);expect(result[0]).toMatchObject({id:'c',label:'CRITERIO INTERNO — NO ES NORMA.'});
+  });
   it('normaliza metadata sin declarar una versión verificada',()=>expect(normalizeInventoryRow({ID:'x',codigo:'nay-1',titulo:'Ley',jurisdiccion:'nayarit',tipo:'ley',estado_ingesta:'obtener original oficial'})).toMatchObject({inventory_code:'NAY-1',jurisdiction:'NAYARIT',category:'LEY',ingestion_status:'PENDIENTE_ORIGINAL'}));
   it('devuelve literalmente el bloqueo contractual sin evidencia',()=>expect(buildEvidencePacket([])).toMatchObject({status:'INSUFFICIENT_FOUNDATION',message:INSUFFICIENT_LEGAL_FOUNDATION,evidence:[]}));
   it('no expone razonamiento interno',()=>expect(buildEvidencePacket([{source_id:'s',inventory_code:'F-1',title:'Ley',version:1,label:'V1',article_fragment:'Texto',official_url:'https://oficial.test',validity:{from:null,to:null},jurisdiction:'FEDERAL',category:'LEY',score:1}])).toMatchObject({internal_reasoning:null,disclosure:expect.stringContaining('no razonamiento interno')}));
@@ -54,7 +70,8 @@ describe('KNOW-001 domain',()=>{
     const updateMany = vi.fn().mockResolvedValue({ count: 1 });
     const update = vi.fn().mockResolvedValue({ id: 'version-2', verification_status: 'VERIFICADA' });
     const tx = {
-      knowledgeSourceVersion: { findFirst: vi.fn().mockResolvedValue({ id: 'version-2', content_text: 'Artículo 1. Texto.', source: { source_url: 'https://oficial.test/ley' }, checksum_sha256: 'abc', effective_from: null }), updateMany, update },
+      $executeRaw:vi.fn(),
+      knowledgeSourceVersion: { findFirst: vi.fn().mockResolvedValueOnce({ id: 'version-2', content_text: 'Artículo 1. Texto.', source: { source_url: 'https://oficial.test/ley' }, checksum_sha256: 'abc', effective_from: null }).mockResolvedValueOnce({id:'version-2',verification_status:'PENDIENTE',effective_from:null,effective_to:null}).mockResolvedValueOnce(null), updateMany, update },
       knowledgeSource: { update: vi.fn().mockResolvedValue({}) }, auditLog: { create: vi.fn().mockResolvedValue({}) },
     };
     const service = new KnowledgeService({ $transaction: (callback: (value: typeof tx) => unknown) => callback(tx) } as unknown as PrismaClient);
@@ -64,5 +81,16 @@ describe('KNOW-001 domain',()=>{
       data: { verification_status: 'SUPERADA', legal_status: 'HISTORICA', effective_to: new Date('2026-12-31T00:00:00.000Z'), review_required: false },
     }));
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ effective_from: new Date('2027-01-01T00:00:00.000Z'), verification_status: 'VERIFICADA' }) }));
+  });
+  it('bloquea vigencias iguales o fuera de orden sin cambiar los históricos',async()=>{
+    const updateMany=vi.fn(),update=vi.fn(),tx:any={$executeRaw:vi.fn(),knowledgeSourceVersion:{findFirst:vi.fn().mockResolvedValueOnce({content_text:'QA',source:{source_url:'https://oficial.test/qa'}}).mockResolvedValueOnce({verification_status:'PENDIENTE'}).mockResolvedValueOnce({id:'already-verified'}),updateMany,update}};
+    const service=new KnowledgeService({$transaction:(cb:any)=>cb(tx)} as any);
+    await expect(service.verifyVersion({id:'qa',organizationId:'org'},'source','new','2026-01-01')).rejects.toMatchObject({code:'KNOW_VALIDITY_CONFLICT',status:409});
+    expect(updateMany).not.toHaveBeenCalled();expect(update).not.toHaveBeenCalled();
+  });
+  it('un reintento de la misma verificación es idempotente, sin otra auditoría',async()=>{
+    const current={verification_status:'VERIFICADA',effective_from:new Date('2026-01-01T00:00:00Z')},audit=vi.fn(),tx:any={$executeRaw:vi.fn(),knowledgeSourceVersion:{findFirst:vi.fn().mockResolvedValueOnce({content_text:'QA',source:{source_url:'https://oficial.test/qa'}}).mockResolvedValueOnce(current)},auditLog:{create:audit}};
+    const service=new KnowledgeService({$transaction:(cb:any)=>cb(tx)} as any);
+    expect(await service.verifyVersion({id:'qa',organizationId:'org'},'source','version','2026-01-01')).toEqual(current);expect(audit).not.toHaveBeenCalled();
   });
 });

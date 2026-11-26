@@ -240,3 +240,13 @@
 .caseFinanceStatusLine{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.caseFinanceCheckbox{grid-column:1/-1;min-height:44px;display:flex!important;align-items:center!important;flex-direction:row!important;padding:9px 11px;border:1px solid var(--color-border);border-radius:9px;background:var(--color-surface-subtle)}.caseFinanceCheckbox input{width:18px!important;min-height:18px!important;margin:0}.caseFinanceFiscalPair{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:14px}.caseFinanceFiscalPair label{min-width:0}.caseFinanceForm>small{grid-column:1/-1;color:var(--color-text-muted);font-size:.59rem;line-height:1.45}
 @media(max-width:767px){.caseFinanceFiscalPair{grid-template-columns:1fr}.caseFinanceStatusLine{padding-right:8px}.caseFinanceRowActions{grid-template-columns:1fr}}
 .caseFinanceOperationalList > article:focus-visible{outline:3px solid var(--color-focus);outline-offset:2px;border-radius:var(--radius-md)}
+.manualFormats { display: grid; gap: 16px; padding: 20px; }
+.manualFormats > label { display: grid; gap: 8px; }
+.manualFormats select,.manualFormats > label input { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); color: var(--color-text-primary); font: inherit; }
+.manualFormats select[multiple] { height: auto; min-height: 144px; }
+.manualFormats select[multiple] option { padding: 6px 8px; }
+.manualFormats fieldset { display: grid; gap: 12px; min-width: 0; padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.manualFormats fieldset label { display: flex; align-items: center; gap: 12px; min-height: 44px; }
+.manualFormats fieldset input { width: 20px; height: 20px; flex: 0 0 auto; }
+.manualFormats fieldset span { display: grid; gap: 4px; overflow-wrap: anywhere; }
+.manualFormats small { color: var(--color-text-muted); }

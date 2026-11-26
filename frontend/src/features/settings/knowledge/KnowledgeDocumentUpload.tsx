@@ -1,0 +1,31 @@
+import { useEffect, useState, type FormEvent } from 'react';
+import { CatalogModal } from '../catalogs/CatalogModal';
+import { settingsService } from '../settings.service';
+import styles from './KnowledgeLibrary.module.css';
+
+export function KnowledgeDocumentUpload({source,onClose,onSaved}:{source?:{id:string;title:string};onClose:()=>void;onSaved:()=>void}) {
+ const [file,setFile]=useState<File|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ const [form,setForm]=useState({title:'',inventory_code:'',jurisdiction:'FEDERAL',category:'LEY',authority:'',source_url:'',applicability:'',label:'',content_text:''});
+ const update=(key:keyof typeof form,value:string)=>setForm(current=>({...current,[key]:value}));
+ const submit=async(event:FormEvent)=>{event.preventDefault();if(!file||busy)return;setBusy(true);setError('');try{const body=new FormData();body.set('file',file);for(const [key,value]of Object.entries(form))body.set(key,value);if(source)body.set('source_id',source.id);await settingsService.uploadKnowledgeDocument(body);onSaved();}catch(cause){setError(cause instanceof Error?cause.message:'No se pudo cargar el documento. Revisa el archivo e inténtalo nuevamente.');}finally{setBusy(false);}};
+ return <CatalogModal title={source?'Agregar versión documental':'Cargar documento jurídico'} description={source?source.title:'PDF, Word DOCX o TXT. Se conserva el original privado; no se activa ni verifica automáticamente.'} onClose={()=>{if(!busy)onClose();}}><form className={styles.uploadForm} onSubmit={event=>void submit(event)} aria-busy={busy}>
+ {error&&<p role="alert" className={styles.error}>{error}</p>}
+ <div className={styles.formGrid}>
+ <label className={styles.wide}>Archivo jurídico<input type="file" accept=".pdf,.docx,.txt" required disabled={busy} onChange={event=>setFile(event.target.files?.[0]||null)}/></label>
+ {!source&&<><label>Título<input required maxLength={500} value={form.title} onChange={e=>update('title',e.target.value)}/></label><label>Código de inventario (opcional)<input maxLength={80} value={form.inventory_code} onChange={e=>update('inventory_code',e.target.value)}/></label>
+ <label>Jurisdicción<input required maxLength={80} value={form.jurisdiction} onChange={e=>update('jurisdiction',e.target.value)}/></label><label>Categoría<select value={form.category} onChange={e=>update('category',e.target.value)}>{['LEY','CODIGO','JURISPRUDENCIA','FUENTE ADMINISTRATIVA','ARANCEL','OTRO'].map(v=><option key={v}>{v}</option>)}</select></label>
+ <label>Autoridad o tribunal<input maxLength={240} value={form.authority} onChange={e=>update('authority',e.target.value)}/></label><label>URL oficial de procedencia<input type="url" value={form.source_url} onChange={e=>update('source_url',e.target.value)}/></label>
+ <label className={styles.wide}>Materia o actos aplicables<input value={form.applicability} onChange={e=>update('applicability',e.target.value)}/></label></>}
+ <label className={styles.wide}>Edición / etiqueta de versión<input required maxLength={160} value={form.label} onChange={e=>update('label',e.target.value)} placeholder="Publicación, reforma o edición del documento"/></label>
+ <label className={styles.wide}>Transcripción revisada (opcional, para archivos escaneados)<textarea rows={5} value={form.content_text} onChange={e=>update('content_text',e.target.value)}/><small>Si se proporciona, sustituye el texto nativo para esta versión. El original no cambia. Si el escaneo no tiene texto, podrá conservarse pendiente sin inventar contenido.</small></label>
+ </div><p>Para uso jurídico por la IA se necesita revisión humana, procedencia y vigencia. Los criterios internos siguen separados de la legislación.</p>
+ <footer><button type="button" disabled={busy} onClick={onClose}>Cancelar</button><button type="submit" disabled={!file||busy}>{busy?'Conservando e indexando documento…':'Cargar como pendiente'}</button></footer></form></CatalogModal>;
+}
+
+export function KnowledgeVersionReview({sourceId,version,canManage,onClose,onVerified}:{sourceId:string;version:{id:string;label:string;verification_status:string};canManage:boolean;onClose:()=>void;onVerified:()=>void}) {
+ const [data,setData]=useState<{content_text?:string;url?:string;file_name?:string}|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[date,setDate]=useState(''),[checked,setChecked]=useState(false);
+ // The parent mounts a new component per version; no cross-source late response can replace another review.
+ useEffect(()=>{let active=true;setData(null);void settingsService.knowledgeVersion(sourceId,version.id).then(result=>{if(active)setData(result);}).catch(cause=>{if(active)setError(cause instanceof Error?cause.message:'No se pudo abrir la versión.');});return()=>{active=false;};},[sourceId,version.id]);
+ const verify=async()=>{if(!checked||!date)return;setBusy(true);setError('');try{await settingsService.verifyKnowledgeVersion(sourceId,version.id,date);onVerified();}catch(cause){setError(cause instanceof Error?cause.message:'No se pudo verificar la versión.');}finally{setBusy(false);}};
+ return <CatalogModal title={`Revisar ${version.label}`} onClose={()=>{if(!busy)onClose();}}><div className={styles.uploadForm}>{error&&<p role="alert" className={styles.error}>{error}</p>}{!data&&!error&&<p role="status">Cargando texto y original privado…</p>}{data&&<><p>Estado: {version.verification_status}</p>{data.url&&<a href={data.url} target="_blank" rel="noreferrer">Abrir original privado: {data.file_name}</a>}<pre className={styles.legalText}>{data.content_text||'Sin texto disponible: conserva el original y carga una nueva versión con transcripción revisada.'}</pre>{canManage&&version.verification_status==='PENDIENTE'&&<><label>Vigente desde<input type="date" required value={date} onChange={e=>setDate(e.target.value)}/></label><label className={styles.confirmReview}><input type="checkbox" checked={checked} onChange={e=>setChecked(e.target.checked)}/>Cotejé el texto con el original, su procedencia oficial y vigencia.</label><button type="button" disabled={!checked||!date||!data.content_text||busy} onClick={()=>void verify()}>{busy?'Verificando…':'Verificar y habilitar para consultas'}</button></>}</>}</div></CatalogModal>;
+}

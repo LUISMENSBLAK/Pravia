@@ -83,6 +83,21 @@ import { ComparecienteAltaSessionService } from './comparecienteAltaSession.serv
 
 describe('H3-F-001 · alta asistida canónica', () => {
   beforeEach(() => { fixture.reset(); vi.clearAllMocks(); });
+  it('no elimina datos manuales ausentes ni deduce la autoridad del nombre de un archivo', async () => {
+    fixture.getSession().borrador_json = { telefono: '3111234567', correo: 'qa@example.test', regimen_matrimonial: 'SEPARACION' };
+    fixture.db.cargaTemporalDocumento.findMany.mockResolvedValueOnce([
+      { id: 'photo', nombre_original: 'INE-no-legible.jpg', mime_type: 'image/jpeg', tipo_documento: 'IDENTIFICACION', storage_key_temporal: 'private/photo' },
+    ]);
+    network.downloadFile.mockResolvedValue(Buffer.from('synthetic-bytes'));
+    network.extract.mockResolvedValueOnce({ campos: [], alertas: ['Ilegible'], proveedor: 'OpenAI', modelo: 'QA', tipo_persona_detectado: 'FISICA', identificadores_ine: { cic: '123456789', ocr: '1234567890123' }, domicilios_detectados: [{ tipo_sugerido: 'FISCAL', municipio: 'TEPIC' }] });
+    const result = await ComparecienteAltaSessionService.extraerDatosConIA(ids.session, [], undefined, 'manual');
+    expect(result.borrador_actualizado).toMatchObject({ telefono: '3111234567', correo: 'qa@example.test', regimen_matrimonial: 'SEPARACION' });
+    expect(result.borrador_actualizado).not.toHaveProperty('autoridad_emisora');
+    expect(result.identificadores_ine).toEqual({ cic: '123456789', ocr: '1234567890123' });
+    expect(result.borrador_actualizado._ia_identificadores_ine).toEqual(result.identificadores_ine);
+    expect(result.borrador_actualizado.dom_fiscal_ciudad).toBe('');
+    expect(result.borrador_actualizado.dom_fiscal_pais).toBe('');
+  });
 
   it('inicia la sesión con una consulta compatible con el scoping tenant-aware', async () => {
     await ComparecienteAltaSessionService.iniciarOSentarseSesion({
@@ -107,6 +122,16 @@ describe('H3-F-001 · alta asistida canónica', () => {
     expect(fixture.queries).toHaveLength(1); expect(fixture.queries[0]).toMatchObject({ contract_version: 'CUM-LST-001', query_kind: 'MASTER', trigger_reason: 'COMPARECIENTE_CREATED', execution_state: 'NOT_CONFIGURED' });
     expect(fixture.getSession()).toMatchObject({ estatus: 'COMPLETADO' });
     expect(network.uploadFile).not.toHaveBeenCalled(); expect(network.downloadFile).not.toHaveBeenCalled(); expect(network.extract).not.toHaveBeenCalled();
+  });
+
+  it('traslada el hash del original temporal al documento definitivo sin reescribir Storage', async () => {
+    const hash = 'c'.repeat(64);
+    fixture.db.cargaTemporalDocumento.findMany.mockResolvedValueOnce([{ id: 'temp', nombre_original: 'qa.pdf', storage_key_temporal: 'private/qa.pdf', tipo_documento: 'IDENTIFICACION', mime_type: 'application/pdf', tamano_bytes: 42, sha256: hash }]);
+    fixture.db.documento.create.mockResolvedValueOnce({ id: 'official' });
+    await ComparecienteAltaSessionService.confirmarAltaDefinitiva({ sessionId: ids.session, usuarioId: ids.user, documentosIntegrarIds: ['temp'], datosFormulario: { tipo_persona: 'FISICA', nombre: 'QA' } });
+    expect(fixture.db.documento.create).toHaveBeenCalledWith({ data: expect.objectContaining({ checksum_sha256: hash, storage_key: 'private/qa.pdf', size_bytes: 42 }) });
+    expect(network.uploadFile).not.toHaveBeenCalled();
+    expect(network.downloadFile).not.toHaveBeenCalled();
   });
 
   it('conserva los errores parciales en el borrador y no marca procesada una fuente fallida', async () => {

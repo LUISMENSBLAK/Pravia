@@ -22,7 +22,9 @@ function Field({ draft, name, label, readOnly, onChange, type = 'text', required
 
 function SelectField({ draft, name, label, readOnly, onChange, options, source }: { draft: NewComparecienteDraft; name: string; label: string; readOnly: boolean; onChange(name:string,value:string):void; options: Array<[string,string]>; source?: any }) {
   const id = `compareciente-${name}`;
-  return <label className={styles.workspaceField} htmlFor={id}><span>{label}</span><select id={id} name={name} value={draft[name] || ''} disabled={readOnly} onChange={(event) => onChange(name,event.target.value)}>{options.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select>{source && <small className={source.estado === 'EN_CONFLICTO' ? styles.sourceConflict : styles.sourceHint}>{source.estado === 'EN_CONFLICTO' ? 'Conflicto entre documentos · revisa el valor' : `Fuente: ${source.fuente || 'Documento cargado'}`}</small>}</label>;
+  const literal = draft[name] || '';
+  const needsReview = Boolean(literal && !options.some(([value]) => value === literal));
+  return <label className={styles.workspaceField} htmlFor={id}><span>{label}</span><select id={id} name={name} value={literal} aria-invalid={needsReview || undefined} aria-describedby={needsReview ? `${id}-review` : undefined} disabled={readOnly} onChange={(event) => onChange(name,event.target.value)}>{needsReview && <option value={literal}>{literal} · por revisar</option>}{options.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select>{needsReview && <small id={`${id}-review`} className={styles.sourceConflict}>Lectura literal sin equivalencia confirmada. Revisa y selecciona el valor correcto.</small>}{source && <small className={source.estado === 'EN_CONFLICTO' ? styles.sourceConflict : styles.sourceHint}>{source.estado === 'EN_CONFLICTO' ? 'Conflicto entre documentos · revisa el valor' : `Fuente: ${source.fuente || 'Documento cargado'}`}</small>}</label>;
 }
 
 function Section({ icon: Icon, title, children }: { icon: LucideIcon; title: string; children: React.ReactNode }) {

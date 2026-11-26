@@ -6,7 +6,7 @@ const read = (path: string) => readFileSync(`${root}/${path}`, 'utf8');
 const schema = read('prisma/schema.prisma');
 const migration = read('prisma/migrations/20260828040000_create_exp006_operational_artifacts/migration.sql');
 const domain = read('src/domain/expedienteArtifacts.ts');
-const service = read('src/services/expedienteArtifacts.service.ts');
+const service = read('src/services/expedienteArtifacts.service.ts').replace(/"/g,"'").replace(/\s+/g,' ').replace(/,\s*([)}\]])/g,'$1');
 const controller = read('src/controllers/expedienteArtifacts.controller.ts');
 const routes = read('src/routes/expedientes.routes.ts');
 const openai = read('src/services/openaiDocument.service.ts');
@@ -16,7 +16,7 @@ const parties = read('src/services/expedienteParties.service.ts');
 const properties = read('src/services/expedientePredios.service.ts');
 const tracking = read('src/services/expedienteSeguimiento.service.ts');
 const headers = read('src/controllers/expedientes.controller.ts');
-const ui = read('../frontend/src/features/cases/components/tabs/TemplatesFormatsTab.tsx');
+const ui = read('../frontend/src/features/cases/components/tabs/TemplatesFormatsTab.tsx').replace(/\s+/g,' ').replace(/>\s+/g,'>').replace(/\s+</g,'<');
 const workspace = read('../frontend/src/features/cases/ExpedienteWorkspace.tsx');
 const api = read('../frontend/src/features/cases/expedientes.service.ts');
 
@@ -56,7 +56,7 @@ const checks: Array<[string, () => void]> = [
   ['33 upload deja revisión', () => expect(service).toContain("via: 'CARGA_EXTERNA'")],
   ['34 IA usa datos estructurados del sujeto', () => expect(service).toContain('structuredData')],
   ['35 IA usa documentos vigentes del sujeto', () => expect(service).toContain("documentos: { where: { estatus: 'ACTIVO', archived_at: null }")],
-  ['36 históricos excluidos', () => expect(service).toContain("excluded: ['HISTORICAL_PARTY'")],
+  ['36 históricos excluidos', () => expect(service).toMatch(/excluded:\s*\[\s*'HISTORICAL_PARTY'/)],
   ['37 documentos generales excluidos', () => expect(service).toContain("'GENERAL_EXPEDIENTE'")],
   ['38 documentos de otra persona excluidos', () => expect(service).toContain("'OTHER_PARTY'")],
   ['39 documentos de inmueble excluidos', () => expect(service).toContain("'PROPERTY'")],
@@ -96,7 +96,7 @@ const checks: Array<[string, () => void]> = [
   ['73 provenance versión de fuente', () => { expect(service).toContain('source_revision'); expect(service).toContain('source_manifest'); }],
   ['74 fallo IA seguro', () => { expect(service).toContain('error instanceof PlatformDomainError'); expect(controller).toContain('No pudimos completar la operación de Plantillas y formatos'); }],
   ['75 fallo Storage seguro', () => { expect(service).toContain('deleteFile(storageKey)'); expect(service).toContain('try {'); }],
-  ['76 fallo Seguimiento transaccional', () => { expect(service).toContain('completeLinkedTracking(tx'); expect(service).toContain('this.prisma.$transaction'); }],
+  ['76 fallo Seguimiento transaccional', () => { expect(service).toMatch(/completeLinkedTracking\(\s*tx/); expect(service).toContain('this.prisma.$transaction'); }],
   ['77 legacy preservado', () => { expect(migration).not.toContain('DELETE FROM "pravia_os"."expedientes"'); expect(migration).not.toContain('UPDATE "pravia_os"."expedientes"'); }],
   ['78 no inventa pendientes históricos', () => expect(migration).toContain('No historical pending instances are invented')],
   ['79 RBAC', () => ["requirePermission('documentos.read')", "requirePermission('documentos.write')", "requirePermission('ia.execute')"].forEach((value) => expect(routes).toContain(value))],

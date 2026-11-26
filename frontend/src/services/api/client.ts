@@ -1,4 +1,4 @@
-import { apiConfig, apiUploadUrl, apiUrl } from './config';
+import { apiConfig, apiOperationUrl, apiUploadUrl, apiUrl } from './config';
 
 type TokenPayload = Record<string, unknown> | null;
 
@@ -189,7 +189,7 @@ export const apiRequest = async <T>(path: string, options: RequestOptions = {}):
   if (init.body && !(init.body instanceof FormData)) requestHeaders.set('Content-Type', 'application/json');
   if (token) requestHeaders.set('Authorization', `Bearer ${token}`);
 
-  const requestUrl = init.body instanceof FormData ? apiUploadUrl(path) : apiUrl(path);
+  const requestUrl = init.body instanceof FormData ? apiUploadUrl(path) : apiOperationUrl(path, init.method || 'GET');
   const response = await fetchWithConnectionError(requestUrl, {
     ...init,
     credentials: requestUrl === apiUrl(path) ? 'include' : 'omit',

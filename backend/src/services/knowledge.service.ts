@@ -110,6 +110,19 @@ export function buildEvidencePacket(items: KnowledgeEvidenceItem[], limit = 8) {
   };
 }
 
+export function relevantInternalCriteria(rows:any[],query:string,jurisdiction:string,legalDate:Date) {
+  const norm=(s:string)=>s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
+  const terms=norm(query).split(/\W+/).filter(s=>s.length>3);
+  const date=legalDate.toISOString().slice(0,10);
+  return rows.filter(row=>{
+    const s=row.scope||{};
+    if(s.review_status!=='REVISADO'||s.approval_status!=='APROBADO')return false;
+    if(s.effective_from&&s.effective_from>date||s.effective_to&&s.effective_to<date)return false;
+    if(jurisdiction&&norm(s.jurisdiction||'')!==norm(jurisdiction))return false;
+    return terms.some(term=>norm(`${row.title} ${row.content} ${s.act||''}`).includes(term));
+  }).slice(0,8).map(row=>({id:row.id,code:row.code,title:row.title,content:row.content,scope:row.scope,label:'CRITERIO INTERNO — NO ES NORMA.',legal_effect:'Orientación interna; no sustituye legislación ni acredita vigencia de una norma.'}));
+}
+
 export function splitLegalArticles(content: string) {
   const normalized = content.replace(/\r\n?/g, '\n').trim();
   const markers = [...normalized.matchAll(/(?:^|\n)\s*(ART[IÍ]CULO\s+(?:\d+[A-Z]?(?:\s*BIS|\s*TER)?|[ÚU]NICO|PRIMERO|SEGUNDO|TERCERO)[^\n]*)/giu)];
@@ -209,7 +222,7 @@ export class KnowledgeService {
       ...(search ? { OR: [{ inventory_code: { contains: search, mode: 'insensitive' } }, { title: { contains: search, mode: 'insensitive' } }, { applicability: { contains: search, mode: 'insensitive' } }] } : {}),
     };
     const [data, total] = await Promise.all([
-      this.db.knowledgeSource.findMany({ where, include: { versions: { orderBy: { version: 'desc' }, take: 1 } }, orderBy: [{ jurisdiction: 'asc' }, { inventory_code: 'asc' }], skip: (page - 1) * pageSize, take: pageSize }),
+      this.db.knowledgeSource.findMany({ where, include: { versions: { orderBy: { version: 'desc' }, take: 50, select:{id:true,version:true,label:true,verification_status:true,effective_from:true,effective_to:true} } }, orderBy: [{ jurisdiction: 'asc' }, { inventory_code: 'asc' }], skip: (page - 1) * pageSize, take: pageSize }),
       this.db.knowledgeSource.count({ where }),
     ]);
     return { data, pagination: { page, page_size: pageSize, total, pages: Math.ceil(total / pageSize) } };
@@ -261,9 +274,19 @@ export class KnowledgeService {
   async verifyVersion(actor: Actor, sourceId: string, versionId: string, effectiveFrom?: string) {
     return this.db.$transaction(async (tx) => {
       const version = await tx.knowledgeSourceVersion.findFirst({ where: { id: versionId, source_id: sourceId, organization_id: actor.organizationId }, include: { source: true } });
-      if (!version?.content_text || !version.source.source_url) throw new KnowledgeValidationError('KNOW_VERSION_NOT_VERIFIABLE', 'La versión necesita texto y URL oficial antes de validarse.', 409);
-      const nextEffectiveFrom = effectiveFrom ? new Date(`${effectiveFrom}T00:00:00Z`) : version.effective_from || new Date();
+      if (!version?.content_text || !version.source.source_url || version.source.active === false) throw new KnowledgeValidationError('KNOW_VERSION_NOT_VERIFIABLE', 'La versión necesita texto, fuente activa y URL oficial antes de validarse.', 409);
+      const nextEffectiveFrom = effectiveFrom ? new Date(`${effectiveFrom}T00:00:00Z`) : version.effective_from || new Date(`${new Date().toISOString().slice(0,10)}T00:00:00Z`);
       if (Number.isNaN(nextEffectiveFrom.getTime())) throw new KnowledgeValidationError('KNOW_EFFECTIVE_DATE_INVALID', 'La fecha inicial de vigencia no es válida.');
+      if(effectiveFrom&&(!/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom)||nextEffectiveFrom.toISOString().slice(0,10)!==effectiveFrom))throw new KnowledgeValidationError('KNOW_EFFECTIVE_DATE_INVALID','La fecha inicial debe existir en el calendario y usar AAAA-MM-DD.');
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`knowledge-verify:${actor.organizationId}:${sourceId}`}))`;
+      // Reload after acquiring the lock: another verification may have completed while waiting.
+      const current=await tx.knowledgeSourceVersion.findFirst({where:{id:versionId,source_id:sourceId,organization_id:actor.organizationId}});
+      if(!current)throw new KnowledgeValidationError('KNOW_VERSION_NOT_FOUND','La versión no existe dentro de esta organización.',404);
+      if(current.verification_status==='VERIFICADA'&&current.effective_from?.getTime()===nextEffectiveFrom.getTime())return current;
+      if(current.verification_status!=='PENDIENTE')throw new KnowledgeValidationError('KNOW_VERSION_ALREADY_REVIEWED','La versión ya fue revisada. Su vigencia histórica no se modifica mediante otra verificación.',409);
+      if(current.effective_to&&current.effective_to<nextEffectiveFrom)throw new KnowledgeValidationError('KNOW_EFFECTIVE_DATE_INVALID','La fecha final no puede ser anterior a la inicial.');
+      const later=await tx.knowledgeSourceVersion.findFirst({where:{organization_id:actor.organizationId,source_id:sourceId,id:{not:versionId},verification_status:{in:['VERIFICADA','SUPERADA']},effective_from:{gte:nextEffectiveFrom}},select:{id:true}});
+      if(later)throw new KnowledgeValidationError('KNOW_VALIDITY_CONFLICT','Ya existe una versión verificada con vigencia igual o posterior. Revisa las fechas; no se superponen versiones ni se reescriben históricos automáticamente.',409);
       const priorEffectiveTo = new Date(nextEffectiveFrom); priorEffectiveTo.setUTCDate(priorEffectiveTo.getUTCDate() - 1);
       await tx.knowledgeSourceVersion.updateMany({
         where: { source_id: sourceId, organization_id: actor.organizationId, verification_status: 'VERIFICADA', id: { not: versionId }, OR: [{ effective_from: null }, { effective_from: { lt: nextEffectiveFrom } }] },
@@ -288,6 +311,8 @@ export class KnowledgeService {
     const jurisdiction = clean(input.jurisdiction, 80).toUpperCase();
     const category = clean(input.category, 120).toUpperCase();
     const legalDate = input.legal_date ? new Date(`${clean(input.legal_date, 10)}T12:00:00Z`) : new Date();
+    if(Number.isNaN(legalDate.getTime()))throw new KnowledgeValidationError('KNOW_DATE_INVALID','La fecha de consulta no es válida.');
+    if(input.legal_date&&(!/^\d{4}-\d{2}-\d{2}$/.test(String(input.legal_date).trim())||legalDate.toISOString().slice(0,10)!==String(input.legal_date).trim()))throw new KnowledgeValidationError('KNOW_DATE_INVALID','La fecha de consulta debe existir en el calendario y usar AAAA-MM-DD.');
     const limit = Math.min(20, Math.max(1, Number(input.limit) || 8));
     const articlePattern = exactArticleHeadingPattern(query);
     const rows = await this.db.$queryRaw<KnowledgeEvidenceItem[]>(Prisma.sql`
@@ -313,7 +338,8 @@ export class KnowledgeService {
           OR similarity(s.title, ${query}) > 0.15 OR s.inventory_code ILIKE ${`%${query}%`})
       ORDER BY score DESC, s.inventory_code ASC LIMIT ${limit}
     `);
-    return buildEvidencePacket(rows.map((row) => ({ ...row, score: Number(row.score || 0) })), limit);
+    const criteria=await this.db.knowledgeCriterion.findMany({where:{organization_id:actor.organizationId,active:true},select:{id:true,code:true,title:true,content:true,scope:true},take:200});
+    return {...buildEvidencePacket(rows.map((row) => ({ ...row, score: Number(row.score || 0) })), limit),internal_criteria:relevantInternalCriteria(criteria,query,jurisdiction,legalDate)};
   }
 }
 

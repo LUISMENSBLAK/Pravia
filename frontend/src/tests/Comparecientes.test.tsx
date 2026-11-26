@@ -33,7 +33,7 @@ function mockApi(options:{empty?:boolean;fail?:boolean;permissions?:string[]}={}
     if(url.includes('/comparecientes?'))return options.fail?json({error:'No disponible'},500):json(options.empty?{...list,data:[],metrics:{total:0,physical:0,legal:0},meta:{...list.meta,total:0}}:list);
     if(url.endsWith('/comparecientes/altas')&&init?.method==='POST')return json({session:{id:'11111111-1111-4111-8111-111111111111'}},201);
     if(url.includes('/comparecientes/altas/')&&url.endsWith('/documentos')&&init?.method==='POST')return json({documento:{id:'temp-1',nombre_original:'constancia.pdf'}},201);
-    if(url.includes('/comparecientes/altas/')&&url.endsWith('/extraer')&&init?.method==='POST')return json({borrador_actualizado:{rfc:'LORM900101AA1',_ia_propuesta:{rfc:{valor:'LORM900101AA1',fuente:'Constancia Fiscal.pdf',estado:'PENDIENTE_CONFIRMACION'}}}});
+    if(url.includes('/comparecientes/altas/')&&url.endsWith('/extraer')&&init?.method==='POST')return json({borrador_actualizado:{tipo_identificacion:'PASAPORTE',rfc:'LORM900101AA1',_ia_propuesta:{rfc:{valor:'LORM900101AA1',fuente:'Constancia Fiscal.pdf',estado:'PENDIENTE_CONFIRMACION'}}}});
     if(url.includes('/comparecientes/altas/')&&url.endsWith('/confirmar')&&init?.method==='POST')return json({compareciente:{id:'created-party'}});
     if(url.endsWith('/comparecientes/party-1/extraer-ia')&&init?.method==='POST')return json({success:true,data:{values:{ocupacion:'ARQUITECTA'},proposals:{ocupacion:{valor:'ARQUITECTA',fuente:'INE.pdf',estado:'PENDIENTE_CONFIRMACION'}},conflicts:[],domicilios_detectados:[],identificadores_ine:{cic:'IDMEX183657717',ocr:'0747116375842'}}});
     if(url.includes('/comparecientes/party-1/documentos/')&&url.endsWith('/visualizar'))return new Response(new Blob(['preview'],{type:url.includes('doc-2')?'image/png':'application/pdf'}),{status:200});
@@ -49,6 +49,36 @@ function mockApi(options:{empty?:boolean;fail?:boolean;permissions?:string[]}={}
 const renderPath=(path:string)=>render(<MemoryRouter initialEntries={[path]}><App/></MemoryRouter>);
 
 describe('Comparecientes client workspace',()=>{
+  it('muestra una etiqueta IA ambigua en el selector y no guarda hasta su revisión', async () => {
+    mockApi(); const normalFetch = fetch;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/comparecientes/party-1/extraer-ia')) return Promise.resolve(json({ success: true, data: {
+        values: { sexo: 'M' }, proposals: { sexo: { valor: 'M', fuente: 'Foto.jpg', estado: 'PENDIENTE_CONFIRMACION' } },
+      } }));
+      return normalFetch(input, init);
+    }));
+    const user = userEvent.setup(); renderPath('/comparecientes/party-1');
+    await user.click(await screen.findByRole('button', { name: 'Extraer información con IA' }));
+    expect(await screen.findByRole('option', { name: 'M · por revisar' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /^Sexo/ })).toHaveAttribute('aria-invalid', 'true');
+    await user.click(screen.getByRole('button', { name: 'Guardar cambios' }));
+    expect(await screen.findByText(/selecciona su valor correcto antes de guardar/)).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.some(([url, init]) => String(url).endsWith('/party-1') && init?.method === 'PATCH')).toBe(false);
+  });
+  it('también en alta nueva conserva una captura manual y pide resolver diferencias con la IA', async () => {
+    mockApi(); const user = userEvent.setup(); renderPath('/comparecientes/nuevo');
+    await screen.findByRole('heading', { name: 'Nuevo compareciente' });
+    await user.type(screen.getByRole('textbox', { name: /^RFC/ }), 'QAFA900101QA1');
+    await user.upload(screen.getByLabelText(/Arrastra archivos aquí/), new File(['pdf'], 'constancia.pdf', { type: 'application/pdf' }));
+    const extract = screen.getByRole('button', { name: /^Extraer información con IA$/ });
+    await waitFor(() => expect(extract).toBeEnabled()); await user.click(extract);
+    expect(await screen.findByText('Diferencias con datos guardados')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /^Tipo de identificación/ })).toHaveValue('PASAPORTE');
+    expect(screen.getByRole('textbox', { name: /^RFC/ })).toHaveValue('QAFA900101QA1');
+    await user.click(screen.getByRole('button', { name: /^Conservar actual$/ }));
+    expect(screen.getByRole('textbox', { name: /^RFC/ })).toHaveValue('QAFA900101QA1');
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/confirmar'))).toBe(false);
+  });
   it('reconsulta el maestro después del chat y conserva una edición local sin sobrescribirla',async()=>{
     mockApi();const normalFetch=fetch;let occupation='ORIGINAL QA';
     vi.stubGlobal('fetch',vi.fn((input:RequestInfo|URL,init?:RequestInit)=>{

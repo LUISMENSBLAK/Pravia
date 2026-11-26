@@ -139,6 +139,7 @@ describe("H5 service behavioral security and lifecycle", () => {
       expect(result.field_provenance.amount_original[0]).toMatchObject({ document_id: "doc-a", checksum: "checksum-doc-a", page: 2, model: "synthetic-model", locator: null });
       expect(mocks.extract).toHaveBeenCalledTimes(2); expect(mocks.usage).not.toHaveBeenCalled();
       expect(mocks.extract.mock.calls[0][3]).toMatchObject({ idempotencyKey: `h5:${actor.organizationId}:${review.id}:prepare-test:document:doc-a` });
+      expect(new Set(mocks.extract.mock.calls.map(call => call[3].traceId)).size).toBe(2);
       expect(JSON.stringify(mocks.db.complianceAiProposal.create.mock.calls)).not.toContain("SENSITIVE OCR");
       expect(mocks.db.complianceOperationPayment.create).not.toHaveBeenCalled(); expect(mocks.db.complianceOperationPaymentRevision.create).not.toHaveBeenCalled();
     });

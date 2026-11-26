@@ -46,7 +46,7 @@ export type Exp006Context = {
   institutionIds: string[];
   currentStageId?: string | null;
   acts: Array<{ id: string; typeId: string; name: string }>;
-  parties: Array<{ relationId: string; partyId: string; actId: string; personType: 'FISICA' | 'MORAL'; roleId: string; name: string; nationality?: string | null; migrationStatus?: string | null }>;
+  parties: Array<{ relationId: string; partyId: string; actId: string | null; personType: 'FISICA' | 'MORAL'; roleId: string; name: string; nationality?: string | null; migrationStatus?: string | null }>;
   properties: Array<{ relationId: string; propertyId: string; actIds: string[]; name: string }>;
   complianceFacts?: Record<string, boolean | string | null | undefined>;
 };
@@ -54,7 +54,7 @@ export type Exp006Context = {
 export type Exp006Resolution = {
   identityKey: string;
   artifactId: string;
-  ruleId: string;
+  ruleId: string | null;
   masterVersionId: string;
   expedienteActoId: string | null;
   subjectType: Exp006Subject;
@@ -228,7 +228,7 @@ export function resolveExp006(
       if (rule.multiplicidad === 'EXPEDIENTE') {
         push('EXPEDIENTE', context.expedienteId, 1, matchingActs[0].id, 'Expediente');
       } else if (rule.multiplicidad === 'COMPARECIENTE') {
-        for (const party of context.parties.filter((item) => actIds.has(item.actId) && (!rule.tipo_persona || item.personType === rule.tipo_persona) && (!rule.caracter_compareciente_id || item.roleId === rule.caracter_compareciente_id))) {
+        for (const party of context.parties.filter((item) => actIds.has(item.actId || '') && (!rule.tipo_persona || item.personType === rule.tipo_persona) && (!rule.caracter_compareciente_id || item.roleId === rule.caracter_compareciente_id))) {
           push('COMPARECIENTE', party.relationId, 1, party.actId, party.name, party);
         }
       } else if (rule.multiplicidad === 'INMUEBLE') {

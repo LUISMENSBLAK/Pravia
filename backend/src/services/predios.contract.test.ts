@@ -75,7 +75,7 @@ const cases: Array<[string, () => void]> = [
   ['55 valida el MIME real de documentos DOCX con el validador canónico', () => { expect(controller).toContain('canonicalUploadedDocumentMime'); expect(read('backend/src/services/documentUploadValidation.ts')).toContain('application/vnd.openxmlformats-officedocument.wordprocessingml.document'); }],
   ['56 expone actividad persistente y tenant-scoped', () => { expect(master).toContain('auditLog.findMany'); expect(master).toContain("organization_id: actor.organizationId"); expect(workspace).toContain('Actividad / últimos movimientos'); }],
   ['57 elimina sólo el vínculo documental y conserva el archivo maestro', () => { expect(routes).toContain("requirePermission('documentos.unlink')"); expect(controller).toContain('master_document_preserved: true'); expect(workspace).toContain('unlinkDocument'); }],
-  ['58 reporta explícitamente campos faltantes sin persistir el sentinel', () => { expect(master).toContain('DATO\\s+NO\\s+ENCONTRADO'); expect(master).toContain('faltantes'); expect(workspace).toContain('DATO NO ENCONTRADO'); }],
+  ['58 reporta explícitamente campos faltantes sin persistir el sentinel', () => { expect(master).toContain('!isAbsentDocumentValue(field.valor)'); expect(read('backend/src/domain/documentExtraction.ts')).toContain('DATO NO ENCONTRADO'); expect(master).toContain('faltantes'); expect(workspace).toContain('DATO NO ENCONTRADO'); }],
 ];
 
 describe('PRD-001 contrato atómico', () => {

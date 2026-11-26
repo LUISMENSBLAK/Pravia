@@ -1,33 +1,87 @@
-import { createHash, randomUUID } from 'crypto';
-import { DOCUMENT_UPLOAD_MAX_BYTES, uploadLimitLabel } from '../config/uploadLimits';
-import { Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
-import { Prisma, PrismaClient } from '@prisma/client';
-import { expedienteAccessWhere, expedienteReadWhere } from '../middleware/auth.middleware';
-import { assertStrictPartySourceScope, exp006ResolutionRevision, resolveExp006, type Exp006Context, type Exp006Resolution, type Exp006UnresolvedDecision } from '../domain/expedienteArtifacts';
-import { deleteFile, downloadFile, getSignedUrl, uploadFile } from '../storage/storage.service';
-import { generateOperationalArtifactWithOpenAI } from './openaiDocument.service';
-import { extractDocxText } from './docxText';
-import { canonicalUploadedDocumentMime } from './documentUploadValidation';
-import { DOCX_MIME, renderFunctionalDocumentBuffer } from './functionalDocumentRenderer.service';
-import { PlatformDomainError } from '../platform/platform.errors';
+import { createHash, randomUUID } from "crypto";
+import {
+  DOCUMENT_UPLOAD_MAX_BYTES,
+  uploadLimitLabel,
+} from "../config/uploadLimits";
+import { Prisma, PrismaClient } from "@prisma/client";
+import {
+  expedienteAccessWhere,
+  expedienteReadWhere,
+} from "../middleware/auth.middleware";
+import {
+  assertStrictPartySourceScope,
+  exp006ResolutionRevision,
+  resolveExp006,
+  type Exp006Context,
+  type Exp006Resolution,
+  type Exp006UnresolvedDecision,
+} from "../domain/expedienteArtifacts";
+import {
+  deleteFile,
+  downloadFile,
+  getSignedUrl,
+  uploadFile,
+} from "../storage/storage.service";
+import { extractDocxText } from "./docxText";
+import { canonicalUploadedDocumentMime } from "./documentUploadValidation";
+import { PlatformDomainError } from "../platform/platform.errors";
+import {
+  parseManualArtifactSelections,
+  resolveManualArtifacts,
+} from "../domain/manualArtifactSelection";
+import { renderOperationalFormat } from "./operationalFormatRenderer.service";
 
-export type Exp006Actor = { id: string; organizationId: string; membershipId: string; sessionId: string; rol: any; permissions: any[]; scope: 'GLOBAL' | 'ASSIGNED_OBJECTS' };
+export type Exp006Actor = {
+  id: string;
+  organizationId: string;
+  membershipId: string;
+  sessionId: string;
+  rol: any;
+  permissions: any[];
+  scope: "GLOBAL" | "ASSIGNED_OBJECTS";
+};
 type Db = PrismaClient | Prisma.TransactionClient;
-const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
-const sha = (value: Buffer | string) => createHash('sha256').update(value).digest('hex');
-const safe = (value: string) => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 120);
-const conditionObject = (value: unknown) => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+const json = (value: unknown) =>
+  JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+const sha = (value: Buffer | string) =>
+  createHash("sha256").update(value).digest("hex");
+const safe = (value: string) =>
+  value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9_.-]/g, "_")
+    .slice(0, 120);
+const conditionObject = (value: unknown) =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 
 export class ExpedienteArtifactsError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string) { super(message); }
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 function institutionIdsFrom(value: unknown): string[] {
   const ids = new Set<string>();
-  const walk = (item: unknown, key = '') => {
+  const walk = (item: unknown, key = "") => {
     if (Array.isArray(item)) return item.forEach((entry) => walk(entry, key));
-    if (item && typeof item === 'object') return Object.entries(item as Record<string, unknown>).forEach(([childKey, child]) => walk(child, childKey));
-    if (typeof item === 'string' && /(?:institucion|banco|fiduciaria).*id|(?:institucion_id|banco_id|fiduciaria_id)/i.test(key) && /^[0-9a-f-]{36}$/i.test(item)) ids.add(item);
+    if (item && typeof item === "object")
+      return Object.entries(item as Record<string, unknown>).forEach(
+        ([childKey, child]) => walk(child, childKey),
+      );
+    if (
+      typeof item === "string" &&
+      /(?:institucion|banco|fiduciaria).*id|(?:institucion_id|banco_id|fiduciaria_id)/i.test(
+        key,
+      ) &&
+      /^[0-9a-f-]{36}$/i.test(item)
+    )
+      ids.add(item);
   };
   walk(value);
   return [...ids];
@@ -36,323 +90,1352 @@ function institutionIdsFrom(value: unknown): string[] {
 export class ExpedienteArtifactsService {
   constructor(private readonly prisma: PrismaClient) {}
 
-  async institutions(actor:Exp006Actor,expedienteId:string) {
-    const item=await this.assertExpediente(this.prisma,actor,expedienteId,'read');
-    const institutions=await this.prisma.catalogoInstitucion.findMany({where:{organization_id:actor.organizationId,activa:true},select:{id:true,nombre:true,tipo:true},orderBy:{nombre:'asc'}});
-    const selected=institutionIdsFrom(item.datos_operacion);
-    const current=await this.prisma.expediente.findUniqueOrThrow({where:{id:expedienteId},select:{version:true}});
-    return {institutions,selected,version:current.version};
+  async manualOptions(actor: Exp006Actor, expedienteId: string) {
+    const context = await this.buildContext(
+      this.prisma,
+      actor,
+      expedienteId,
+      "read",
+    );
+    const record = await this.prisma.expediente.findFirstOrThrow({
+      where: { id: expedienteId, organization_id: actor.organizationId },
+      select: { version: true, datos_operacion: true },
+    });
+    const artifacts = await this.masterArtifacts(
+      this.prisma,
+      actor.organizationId,
+    );
+    return {
+      version: record.version,
+      selections:
+        conditionObject(record.datos_operacion).pravia_manual_artifacts || [],
+      subjects: [
+        { id: expedienteId, type: "EXPEDIENTE", name: "Expediente completo" },
+        ...context.parties.map((p) => ({
+          id: p.relationId,
+          type: "COMPARECIENTE",
+          name: p.name,
+        })),
+      ],
+      artifacts: artifacts
+        .filter(
+          (a) =>
+            a.versiones.length &&
+            (a.propietario_tipo === "ORGANIZACION" ||
+              (a.propietario_tipo === "NOTARIA" &&
+                a.notaria_id === context.notariaId) ||
+              (a.propietario_tipo === "INSTITUCION" &&
+                context.institutionIds.includes(a.institucion_id || ""))),
+        )
+        .map((a) => ({
+          id: a.id,
+          name: a.nombre,
+          owner: a.propietario_tipo,
+          institution_id: a.institucion_id,
+        })),
+    };
   }
 
-  async selectInstitutions(actor:Exp006Actor,expedienteId:string,input:{ids:string[];expected_version:number;reason:string}) {
-    if(!actor.permissions.includes('expedientes.write')||!actor.permissions.includes('documentos.write'))throw new ExpedienteArtifactsError(403,'EXP006_INSTITUTIONS_DENIED','No puedes cambiar las instituciones de este expediente.');
-    if(!Array.isArray(input.ids)||input.ids.length>50||new Set(input.ids).size!==input.ids.length||input.ids.some(id=>!(/^[0-9a-f-]{36}$/i.test(id)))||!input.reason?.trim()||input.reason.length>500)throw new ExpedienteArtifactsError(400,'EXP006_INSTITUTIONS_INVALID','Selecciona instituciones válidas y explica el cambio.');
-    return this.prisma.$transaction(async tx=>{
-      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`exp006-institutions:${actor.organizationId}:${expedienteId}`}))`);
-      const item=await this.assertExpediente(tx,actor,expedienteId);
-      const current=await tx.expediente.findUniqueOrThrow({where:{id:expedienteId},select:{version:true}});
-      if(current.version!==input.expected_version)throw new ExpedienteArtifactsError(409,'EXP006_INSTITUTIONS_STALE','El expediente cambió. Recarga antes de guardar.');
-      if(await tx.catalogoInstitucion.count({where:{organization_id:actor.organizationId,id:{in:input.ids},activa:true}})!==input.ids.length)throw new ExpedienteArtifactsError(400,'EXP006_INSTITUTION_UNAVAILABLE','Una institución no pertenece a esta Notaría o ya no está activa.');
-      const previous=conditionObject(item.datos_operacion);
+  async selectManual(
+    actor: Exp006Actor,
+    expedienteId: string,
+    input: { selections: unknown; expected_version: number; reason: string },
+  ) {
+    if (
+      !actor.permissions.includes("expedientes.write") ||
+      !actor.permissions.includes("documentos.write")
+    )
+      throw new ExpedienteArtifactsError(
+        403,
+        "EXP006_MANUAL_DENIED",
+        "No puedes seleccionar formatos de este expediente.",
+      );
+    let selections;
+    try {
+      selections = parseManualArtifactSelections(input?.selections);
+    } catch {
+      throw new ExpedienteArtifactsError(
+        400,
+        "EXP006_MANUAL_INVALID",
+        "La selección de formatos no es válida.",
+      );
+    }
+    if (!input.reason?.trim() || input.reason.length > 500)
+      throw new ExpedienteArtifactsError(
+        400,
+        "EXP006_MANUAL_REASON",
+        "Explica el cambio de formatos.",
+      );
+    return this.prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw(
+          Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`exp006-institutions:${actor.organizationId}:${expedienteId}`}))`,
+        );
+        const context = await this.buildContext(tx, actor, expedienteId);
+        const current = await tx.expediente.findUniqueOrThrow({
+          where: { id: expedienteId },
+          select: { version: true, datos_operacion: true },
+        });
+        if (current.version !== input.expected_version)
+          throw new ExpedienteArtifactsError(
+            409,
+            "EXP006_MANUAL_STALE",
+            "El expediente cambió. Recarga antes de seleccionar.",
+          );
+        const artifacts = await this.masterArtifacts(tx, actor.organizationId);
+        if (
+          resolveManualArtifacts(artifacts as any, context, selections)
+            .length !== selections.length
+        )
+          throw new ExpedienteArtifactsError(
+            400,
+            "EXP006_MANUAL_SCOPE",
+            "Un formato, banco o compareciente no está disponible en este expediente.",
+          );
+        const previous = conditionObject(current.datos_operacion);
+        await tx.expediente.update({
+          where: { id: expedienteId },
+          data: {
+            datos_operacion: json({
+              ...previous,
+              pravia_manual_artifacts: selections,
+            }),
+            version: { increment: 1 },
+          },
+        });
+        await this.reconcileContextChangeInTransaction(
+          tx,
+          actor,
+          expedienteId,
+          "EXP006_MANUAL_SELECTION",
+        );
+        await this.audit(
+          tx,
+          actor,
+          "EXP006_MANUAL_SELECTION",
+          "Expediente",
+          expedienteId,
+          {
+            previous: previous.pravia_manual_artifacts || [],
+            selected: selections,
+            reason: input.reason.trim(),
+            automatic_obligations_preserved: true,
+          },
+        );
+        return { version: current.version + 1, selections };
+      },
+      { timeout: 25000 },
+    );
+  }
+
+  private async resolution(
+    db: Db,
+    actor: Exp006Actor,
+    expedienteId: string,
+    artifacts: any[],
+    context: Exp006Context,
+    unresolved: Exp006UnresolvedDecision[] = [],
+  ) {
+    const record = await db.expediente.findFirstOrThrow({
+      where: { id: expedienteId, organization_id: actor.organizationId },
+      select: { datos_operacion: true },
+    });
+    const selected =
+      conditionObject(record.datos_operacion).pravia_manual_artifacts || [];
+    const automatic = resolveExp006(artifacts, context, unresolved);
+    const manual = resolveManualArtifacts(
+      artifacts,
+      context,
+      parseManualArtifactSelections(selected),
+    );
+    return [
+      ...automatic,
+      ...manual.filter(
+        (m) =>
+          !automatic.some(
+            (a) =>
+              a.artifactId === m.artifactId &&
+              a.subjectType === m.subjectType &&
+              a.subjectId === m.subjectId,
+          ),
+      ),
+    ];
+  }
+
+  async institutions(actor: Exp006Actor, expedienteId: string) {
+    const item = await this.assertExpediente(
+      this.prisma,
+      actor,
+      expedienteId,
+      "read",
+    );
+    const institutions = await this.prisma.catalogoInstitucion.findMany({
+      where: { organization_id: actor.organizationId, activa: true },
+      select: { id: true, nombre: true, tipo: true },
+      orderBy: { nombre: "asc" },
+    });
+    const selected = institutionIdsFrom(item.datos_operacion);
+    const current = await this.prisma.expediente.findUniqueOrThrow({
+      where: { id: expedienteId },
+      select: { version: true },
+    });
+    return { institutions, selected, version: current.version };
+  }
+
+  async selectInstitutions(
+    actor: Exp006Actor,
+    expedienteId: string,
+    input: { ids: string[]; expected_version: number; reason: string },
+  ) {
+    if (
+      !actor.permissions.includes("expedientes.write") ||
+      !actor.permissions.includes("documentos.write")
+    )
+      throw new ExpedienteArtifactsError(
+        403,
+        "EXP006_INSTITUTIONS_DENIED",
+        "No puedes cambiar las instituciones de este expediente.",
+      );
+    if (
+      !Array.isArray(input.ids) ||
+      input.ids.length > 50 ||
+      new Set(input.ids).size !== input.ids.length ||
+      input.ids.some((id) => !/^[0-9a-f-]{36}$/i.test(id)) ||
+      !input.reason?.trim() ||
+      input.reason.length > 500
+    )
+      throw new ExpedienteArtifactsError(
+        400,
+        "EXP006_INSTITUTIONS_INVALID",
+        "Selecciona instituciones válidas y explica el cambio.",
+      );
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw(
+        Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`exp006-institutions:${actor.organizationId}:${expedienteId}`}))`,
+      );
+      const item = await this.assertExpediente(tx, actor, expedienteId);
+      const current = await tx.expediente.findUniqueOrThrow({
+        where: { id: expedienteId },
+        select: { version: true },
+      });
+      if (current.version !== input.expected_version)
+        throw new ExpedienteArtifactsError(
+          409,
+          "EXP006_INSTITUTIONS_STALE",
+          "El expediente cambió. Recarga antes de guardar.",
+        );
+      if (
+        (await tx.catalogoInstitucion.count({
+          where: {
+            organization_id: actor.organizationId,
+            id: { in: input.ids },
+            activa: true,
+          },
+        })) !== input.ids.length
+      )
+        throw new ExpedienteArtifactsError(
+          400,
+          "EXP006_INSTITUTION_UNAVAILABLE",
+          "Una institución no pertenece a esta Notaría o ya no está activa.",
+        );
+      const previous = conditionObject(item.datos_operacion);
       // Preserve detected fiduciary references. Manual selections are explicit,
       // additional context; they never rewrite legal acts or master institutions.
-      await tx.expediente.update({where:{id:expedienteId},data:{datos_operacion:json({...previous,pravia_institucion_ids:input.ids}),version:{increment:1}}});
-      await this.reconcileContextChangeInTransaction(tx,actor,expedienteId,'EXP006_INSTITUTIONS_CHANGE');
-      await this.audit(tx,actor,'EXP006_INSTITUTIONS_CHANGE','Expediente',expedienteId,{selected:input.ids,previous:previous.pravia_institucion_ids??[],reason:input.reason.trim(),detected_references_preserved:true});
-      return {selected:input.ids,version:current.version+1};
+      await tx.expediente.update({
+        where: { id: expedienteId },
+        data: {
+          datos_operacion: json({
+            ...previous,
+            pravia_institucion_ids: input.ids,
+          }),
+          version: { increment: 1 },
+        },
+      });
+      await this.reconcileContextChangeInTransaction(
+        tx,
+        actor,
+        expedienteId,
+        "EXP006_INSTITUTIONS_CHANGE",
+      );
+      await this.audit(
+        tx,
+        actor,
+        "EXP006_INSTITUTIONS_CHANGE",
+        "Expediente",
+        expedienteId,
+        {
+          selected: input.ids,
+          previous: previous.pravia_institucion_ids ?? [],
+          reason: input.reason.trim(),
+          detected_references_preserved: true,
+        },
+      );
+      return { selected: input.ids, version: current.version + 1 };
     });
   }
 
   async read(actor: Exp006Actor, expedienteId: string) {
-    const context = await this.buildContext(this.prisma, actor, expedienteId, 'read');
-    const artifacts = await this.masterArtifacts(this.prisma, actor.organizationId);
+    const context = await this.buildContext(
+      this.prisma,
+      actor,
+      expedienteId,
+      "read",
+    );
+    const artifacts = await this.masterArtifacts(
+      this.prisma,
+      actor.organizationId,
+    );
     const unresolved: Exp006UnresolvedDecision[] = [];
-    const resolution = resolveExp006(artifacts as any, context, unresolved);
+    const resolution = await this.resolution(
+      this.prisma,
+      actor,
+      expedienteId,
+      artifacts,
+      context,
+      unresolved,
+    );
     const persisted = await this.prisma.expedienteArtefactoPendiente.findMany({
-      where: { organization_id: actor.organizationId, expediente_id: expedienteId }, orderBy: [{ en_alcance: 'desc' }, { created_at: 'asc' }],
+      where: {
+        organization_id: actor.organizationId,
+        expediente_id: expedienteId,
+      },
+      orderBy: [{ en_alcance: "desc" }, { created_at: "asc" }],
     });
     return {
       data: persisted.map((row) => this.toResponse(row)),
-      preview: { revision: exp006ResolutionRevision(resolution), applicable: resolution.length, creates: resolution.filter((row) => !persisted.some((item) => item.identity_key === row.identityKey)).length, unresolved },
-      source: 'CFG-002', master_rules_editable: false, auto_generated_documents: 0,
+      preview: {
+        revision: exp006ResolutionRevision(resolution),
+        applicable: resolution.length,
+        creates: resolution.filter(
+          (row) =>
+            !persisted.some((item) => item.identity_key === row.identityKey),
+        ).length,
+        unresolved,
+      },
+      source: "CFG-002",
+      master_rules_editable: false,
+      auto_generated_documents: 0,
     };
   }
 
-  async materialize(actor: Exp006Actor, expedienteId: string, expectedRevision: string) {
-    return this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp006-materialize:${actor.organizationId}:${expedienteId}`}))`);
-      const context = await this.buildContext(tx, actor, expedienteId);
-      const artifacts = await this.masterArtifacts(tx, actor.organizationId);
-      const resolution = resolveExp006(artifacts as any, context);
-      const actualRevision = exp006ResolutionRevision(resolution);
-      if (!expectedRevision || expectedRevision !== actualRevision) throw new ExpedienteArtifactsError(409, 'EXP006_STALE_PREVIEW', 'La configuración o el expediente cambió. Revisa los pendientes antes de aplicar.');
-      const changes = await this.applyResolution(tx, actor, expedienteId, resolution);
-      await this.audit(tx, actor, 'EXP006_MATERIALIZE', 'Expediente', expedienteId, { revision: actualRevision, ...changes, cfg002_mutated: false, generated_documents: 0 });
-      return { revision: actualRevision, ...changes, idempotent: Object.values(changes).every((value) => value === 0) };
-    }, { timeout: 25_000 });
+  async materialize(
+    actor: Exp006Actor,
+    expedienteId: string,
+    expectedRevision: string,
+  ) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw(
+          Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp006-materialize:${actor.organizationId}:${expedienteId}`}))`,
+        );
+        const context = await this.buildContext(tx, actor, expedienteId);
+        const artifacts = await this.masterArtifacts(tx, actor.organizationId);
+        const resolution = await this.resolution(
+          tx,
+          actor,
+          expedienteId,
+          artifacts,
+          context,
+        );
+        const actualRevision = exp006ResolutionRevision(resolution);
+        if (!expectedRevision || expectedRevision !== actualRevision)
+          throw new ExpedienteArtifactsError(
+            409,
+            "EXP006_STALE_PREVIEW",
+            "La configuración o el expediente cambió. Revisa los pendientes antes de aplicar.",
+          );
+        const changes = await this.applyResolution(
+          tx,
+          actor,
+          expedienteId,
+          resolution,
+        );
+        await this.audit(
+          tx,
+          actor,
+          "EXP006_MATERIALIZE",
+          "Expediente",
+          expedienteId,
+          {
+            revision: actualRevision,
+            ...changes,
+            cfg002_mutated: false,
+            generated_documents: 0,
+          },
+        );
+        return {
+          revision: actualRevision,
+          ...changes,
+          idempotent: Object.values(changes).every((value) => value === 0),
+        };
+      },
+      { timeout: 25_000 },
+    );
   }
 
-  async reconcileContextChangeInTransaction(tx: Prisma.TransactionClient, actor: Exp006Actor, expedienteId: string, reason: string) {
-    await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp006-reconcile:${actor.organizationId}:${expedienteId}`}))`);
+  async reconcileContextChangeInTransaction(
+    tx: Prisma.TransactionClient,
+    actor: Exp006Actor,
+    expedienteId: string,
+    reason: string,
+  ) {
+    await tx.$executeRaw(
+      Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp006-reconcile:${actor.organizationId}:${expedienteId}`}))`,
+    );
     const artifacts = await this.masterArtifacts(tx, actor.organizationId);
-    if (artifacts.length === 0) return { created: 0, restored: 0, retired: 0, protected: 0 };
+    if (artifacts.length === 0)
+      return { created: 0, restored: 0, retired: 0, protected: 0 };
     const context = await this.buildContext(tx, actor, expedienteId);
-    const resolution = resolveExp006(artifacts as any, context);
-    const changes = await this.applyResolution(tx, actor, expedienteId, resolution);
+    const resolution = await this.resolution(
+      tx,
+      actor,
+      expedienteId,
+      artifacts,
+      context,
+    );
+    const changes = await this.applyResolution(
+      tx,
+      actor,
+      expedienteId,
+      resolution,
+    );
     if (!Object.values(changes).every((value) => value === 0)) {
-      await this.audit(tx, actor, 'EXP006_RECONCILE_CONTEXT', 'Expediente', expedienteId, {
-        reason, revision: exp006ResolutionRevision(resolution), ...changes,
-        protected_work_preserved: true, cfg002_mutated: false, generated_documents: 0,
-      });
+      await this.audit(
+        tx,
+        actor,
+        "EXP006_RECONCILE_CONTEXT",
+        "Expediente",
+        expedienteId,
+        {
+          reason,
+          revision: exp006ResolutionRevision(resolution),
+          ...changes,
+          protected_work_preserved: true,
+          cfg002_mutated: false,
+          generated_documents: 0,
+        },
+      );
     }
     return changes;
   }
 
-  async generationPreview(actor: Exp006Actor, expedienteId: string, pendingId: string, requestedDocumentIds?: string[]) {
+  async generationPreview(
+    actor: Exp006Actor,
+    expedienteId: string,
+    pendingId: string,
+    requestedDocumentIds?: string[],
+  ) {
     await this.assertExpediente(this.prisma, actor, expedienteId);
-    const pending = await this.pending(this.prisma, actor, expedienteId, pendingId, 'read');
-    assertStrictPartySourceScope({ subjectType: pending.sujeto_tipo, subjectId: pending.sujeto_id }, requestedDocumentIds);
-    const sources = await this.partySources(this.prisma, actor, pending);
-    return { pending_id: pending.id, pending_version: pending.version, source_revision: sources.revision, source_manifest: sources.manifest, missing: sources.missing, conflicts: sources.conflicts, can_generate: true };
+    const pending = await this.pending(
+      this.prisma,
+      actor,
+      expedienteId,
+      pendingId,
+      "read",
+    );
+    this.assertSourceScope(pending, requestedDocumentIds);
+    const sources = await this.generationSources(this.prisma, actor, pending);
+    return {
+      pending_id: pending.id,
+      pending_version: pending.version,
+      source_revision: sources.revision,
+      source_manifest: sources.manifest,
+      missing: sources.missing,
+      conflicts: sources.conflicts,
+      can_generate: true,
+    };
   }
 
-  async generate(actor: Exp006Actor, expedienteId: string, pendingId: string, input: { expected_version: number; source_revision: string; idempotency_key: string; document_ids?: string[] }) {
+  async generate(
+    actor: Exp006Actor,
+    expedienteId: string,
+    pendingId: string,
+    input: {
+      expected_version: number;
+      source_revision: string;
+      idempotency_key: string;
+      document_ids?: string[];
+    },
+  ) {
     const operationId = `exp006:${actor.organizationId}:${pendingId}:${input.idempotency_key}`;
-    let storageKey = '';
+    let storageKey = "";
     try {
-      const pending = await this.pending(this.prisma, actor, expedienteId, pendingId);
-      if (pending.version !== input.expected_version) throw new ExpedienteArtifactsError(409, 'EXP006_PENDING_STALE', 'El pendiente cambió. Recarga antes de generar.');
-      assertStrictPartySourceScope({ subjectType: pending.sujeto_tipo, subjectId: pending.sujeto_id }, input.document_ids);
-      const existing = await this.prisma.expedienteArtefactoDocumento.findFirst({ where: { organization_id: actor.organizationId, pendiente_id: pending.id, idempotency_key: input.idempotency_key } });
-      if (existing) return { document_id: existing.documento_id, idempotent: true, estado: 'PENDIENTE_REVISION' };
-      const sources = await this.partySources(this.prisma, actor, pending);
-      if (sources.revision !== input.source_revision) throw new ExpedienteArtifactsError(409, 'EXP006_GENERATION_SOURCES_STALE', 'Las fuentes del compareciente cambiaron. Revisa nuevamente antes de generar.');
-      const master = await this.prisma.catalogoArtefactoVersion.findFirst({ where: { id: pending.artefacto_version_id, organization_id: actor.organizationId, activa: true }, include: { artefacto: true } });
-      if (!master || master.artefacto_id !== pending.artefacto_id || master.content_kind !== 'FILE' || !master.storage_key || !master.mime_type || !master.nombre_original) throw new ExpedienteArtifactsError(409, 'EXP006_MASTER_VERSION_UNAVAILABLE', 'La versión maestra de archivo ya no está disponible. Revisa el pendiente.');
+      const pending = await this.pending(
+        this.prisma,
+        actor,
+        expedienteId,
+        pendingId,
+      );
+      this.assertSourceScope(pending, input.document_ids);
+      const existing = await this.prisma.expedienteArtefactoDocumento.findFirst(
+        {
+          where: {
+            organization_id: actor.organizationId,
+            pendiente_id: pending.id,
+            idempotency_key: input.idempotency_key,
+          },
+        },
+      );
+      if (existing)
+        return {
+          document_id: existing.documento_id,
+          idempotent: true,
+          estado: "PENDIENTE_REVISION",
+        };
+      if (pending.version !== input.expected_version)
+        throw new ExpedienteArtifactsError(409,"EXP006_PENDING_STALE","El pendiente cambió. Recarga antes de generar.");
+      const sources = await this.generationSources(this.prisma, actor, pending);
+      if (sources.revision !== input.source_revision)
+        throw new ExpedienteArtifactsError(
+          409,
+          "EXP006_GENERATION_SOURCES_STALE",
+          "Las fuentes del compareciente cambiaron. Revisa nuevamente antes de generar.",
+        );
+      const master = await this.prisma.catalogoArtefactoVersion.findFirst({
+        where: {
+          id: pending.artefacto_version_id,
+          organization_id: actor.organizationId,
+          activa: true,
+        },
+        include: { artefacto: true },
+      });
+      if (
+        !master ||
+        master.artefacto_id !== pending.artefacto_id ||
+        master.content_kind !== "FILE" ||
+        !master.storage_key ||
+        !master.mime_type ||
+        !master.nombre_original
+      )
+        throw new ExpedienteArtifactsError(
+          409,
+          "EXP006_MASTER_VERSION_UNAVAILABLE",
+          "La versión maestra de archivo ya no está disponible. Revisa el pendiente.",
+        );
       const masterBuffer = await downloadFile(master.storage_key);
-      const masterText = await this.readText(masterBuffer, master.mime_type, master.nombre_original);
-      const variables=[...new Set([...masterText.matchAll(/\{\{\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\}\}/g)].map(item=>item[1]))];
-      if(master.mime_type!==DOCX_MIME||!variables.length||variables.length>100)throw new ExpedienteArtifactsError(422,'EXP006_MAPPING_REQUIRED','Este formato debe ser Word con variables explícitas {{campo}}. Configura su mapeo; no se reconstruirá ni cambiará su estructura.');
-      const generation = await generateOperationalArtifactWithOpenAI({
-        artifactName: master.artefacto.nombre, masterText, structuredData: sources.structuredData,
-        currentPartyDocuments: sources.documents,
-        variables,
-        economicContext: {
-          actor: { userId: actor.id, organizationId: actor.organizationId, membershipId: actor.membershipId,
-            role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId },
-          idempotencyKey: operationId,
-          traceId: operationId,
+      if (
+        master.checksum_sha256 &&
+        sha(masterBuffer) !== master.checksum_sha256
+      )
+        throw new ExpedienteArtifactsError(
+          409,
+          "EXP006_MASTER_CHECKSUM",
+          "El archivo maestro no coincide con su hash. No se generó ningún formato.",
+        );
+      const masterText = await this.readText(
+        masterBuffer,
+        master.mime_type,
+        master.nombre_original,
+      );
+      const generation = await renderOperationalFormat(
+        masterBuffer,
+        master.mime_type,
+        {
+          artifactName: master.artefacto.nombre,
+          masterText,
+          structuredData: sources.structuredData,
+          currentPartyDocuments: sources.documents,
+          sourcePolicy: sources.manifest.policy,
+          economicContext: {
+            actor: {
+              userId: actor.id,
+              organizationId: actor.organizationId,
+              membershipId: actor.membershipId,
+              role: actor.rol,
+              permissions: actor.permissions,
+              scope: actor.scope,
+              sessionId: actor.sessionId,
+            },
+            idempotencyKey: operationId,
+            traceId: operationId,
+          },
+        },
+      );
+      const currentSources = await this.generationSources(
+        this.prisma,
+        actor,
+        pending,
+      );
+      if (currentSources.revision !== sources.revision) {
+        throw new ExpedienteArtifactsError(
+          409,
+          "EXP006_GENERATION_SOURCES_CHANGED",
+          "Las fuentes cambiaron durante la generación. Revisa y vuelve a intentarlo.",
+        );
+      }
+      const buffer = generation.buffer;
+      storageKey = `organizations/${actor.organizationId}/expedientes/${expedienteId}/exp006/${randomUUID()}_${safe(master.artefacto.nombre)}.${generation.extension}`;
+      await uploadFile(buffer, storageKey, generation.mimeType);
+      const result = await this.persistDocument(actor, expedienteId, pending, {
+        buffer,
+        storageKey,
+        originalName: `${master.artefacto.nombre}.${generation.extension}`,
+        mimeType: generation.mimeType,
+        via: "IA",
+        idempotencyKey: input.idempotency_key,
+        sourceRevision: sources.revision,
+        sourceManifest: sources.manifest,
+        review: {
+          missing_fields: generation.missing_fields,
+          conflicts: generation.conflicts,
+          possible_residues: generation.possible_residues,
+          model: generation.model,
         },
       });
-      const currentSources = await this.partySources(this.prisma, actor, pending);
-      if (currentSources.revision !== sources.revision) {
-        throw new ExpedienteArtifactsError(409, 'EXP006_GENERATION_SOURCES_CHANGED', 'Las fuentes cambiaron durante la generación. Revisa y vuelve a intentarlo.');
-      }
-      const values=Object.fromEntries(variables.map(field=>[field,generation.mapped_fields?.find(item=>item.field===field)?.value??null]));
-      const buffer=(await renderFunctionalDocumentBuffer(masterBuffer,master.mime_type,values,undefined,{strictMapping:true})).buffer;
-      storageKey = `organizations/${actor.organizationId}/expedientes/${expedienteId}/exp006/${randomUUID()}_${safe(master.artefacto.nombre)}.docx`;
-      await uploadFile(buffer, storageKey, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-      const result = await this.persistDocument(actor, expedienteId, pending, {
-        buffer, storageKey, originalName: `${master.artefacto.nombre}.docx`, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        via: 'IA', idempotencyKey: input.idempotency_key, sourceRevision: sources.revision, sourceManifest: sources.manifest,
-        review: { missing_fields: generation.missing_fields, conflicts: generation.conflicts, model: generation.model },
-      });
-      return { ...result, idempotent: false, estado: 'PENDIENTE_REVISION', missing: generation.missing_fields, conflicts: generation.conflicts };
+      return {
+        ...result,
+        idempotent: false,
+        estado: "PENDIENTE_REVISION",
+        missing: generation.missing_fields,
+        conflicts: generation.conflicts,
+      };
     } catch (error: any) {
       if (storageKey) await deleteFile(storageKey).catch(() => undefined);
-      if (error instanceof PlatformDomainError) throw new ExpedienteArtifactsError(error.status, error.code, error.message);
+      if (error instanceof PlatformDomainError)
+        throw new ExpedienteArtifactsError(
+          error.status,
+          error.code,
+          error.message,
+        );
       throw error;
     }
   }
 
-  async uploadExternal(actor: Exp006Actor, expedienteId: string, pendingId: string, input: { expected_version: number; idempotency_key: string }, file: Express.Multer.File) {
-    const pending = await this.pending(this.prisma, actor, expedienteId, pendingId);
-    if (pending.version !== input.expected_version) throw new ExpedienteArtifactsError(409, 'EXP006_PENDING_STALE', 'El pendiente cambió. Recarga antes de cargar el archivo.');
-    if (!file?.buffer?.length) throw new ExpedienteArtifactsError(400, 'EXP006_FILE_REQUIRED', 'Selecciona un archivo.');
+  async uploadExternal(
+    actor: Exp006Actor,
+    expedienteId: string,
+    pendingId: string,
+    input: { expected_version: number; idempotency_key: string },
+    file: Express.Multer.File,
+  ) {
+    const pending = await this.pending(
+      this.prisma,
+      actor,
+      expedienteId,
+      pendingId,
+    );
+    if (pending.version !== input.expected_version)
+      throw new ExpedienteArtifactsError(
+        409,
+        "EXP006_PENDING_STALE",
+        "El pendiente cambió. Recarga antes de cargar el archivo.",
+      );
+    if (!file?.buffer?.length)
+      throw new ExpedienteArtifactsError(
+        400,
+        "EXP006_FILE_REQUIRED",
+        "Selecciona un archivo.",
+      );
     let canonicalMime: string;
-    try { canonicalMime = canonicalUploadedDocumentMime(file); }
-    catch (error) { throw new ExpedienteArtifactsError(400, 'EXP006_FILE_INVALID', error instanceof Error ? error.message : 'El archivo no es compatible.'); }
-    if (file.size > DOCUMENT_UPLOAD_MAX_BYTES) throw new ExpedienteArtifactsError(413, 'EXP006_FILE_TOO_LARGE', `El archivo supera ${uploadLimitLabel(DOCUMENT_UPLOAD_MAX_BYTES)}.`);
-    const existing = await this.prisma.expedienteArtefactoDocumento.findFirst({ where: { organization_id: actor.organizationId, pendiente_id: pending.id, idempotency_key: input.idempotency_key } });
-    if (existing) return { document_id: existing.documento_id, idempotent: true, estado: 'PENDIENTE_REVISION' };
+    try {
+      canonicalMime = canonicalUploadedDocumentMime(file);
+    } catch (error) {
+      throw new ExpedienteArtifactsError(
+        400,
+        "EXP006_FILE_INVALID",
+        error instanceof Error ? error.message : "El archivo no es compatible.",
+      );
+    }
+    if (file.size > DOCUMENT_UPLOAD_MAX_BYTES)
+      throw new ExpedienteArtifactsError(
+        413,
+        "EXP006_FILE_TOO_LARGE",
+        `El archivo supera ${uploadLimitLabel(DOCUMENT_UPLOAD_MAX_BYTES)}.`,
+      );
+    const existing = await this.prisma.expedienteArtefactoDocumento.findFirst({
+      where: {
+        organization_id: actor.organizationId,
+        pendiente_id: pending.id,
+        idempotency_key: input.idempotency_key,
+      },
+    });
+    if (existing)
+      return {
+        document_id: existing.documento_id,
+        idempotent: true,
+        estado: "PENDIENTE_REVISION",
+      };
     const storageKey = `organizations/${actor.organizationId}/expedientes/${expedienteId}/exp006/${randomUUID()}_${safe(file.originalname)}`;
     await uploadFile(file.buffer, storageKey, canonicalMime);
     try {
-      return { ...(await this.persistDocument(actor, expedienteId, pending, { buffer: file.buffer, storageKey, originalName: file.originalname, mimeType: canonicalMime, via: 'CARGA_EXTERNA', idempotencyKey: input.idempotency_key, sourceRevision: pending.source_revision, sourceManifest: null, review: {} })), idempotent: false, estado: 'PENDIENTE_REVISION' };
-    } catch (error) { await deleteFile(storageKey).catch(() => undefined); throw error; }
+      return {
+        ...(await this.persistDocument(actor, expedienteId, pending, {
+          buffer: file.buffer,
+          storageKey,
+          originalName: file.originalname,
+          mimeType: canonicalMime,
+          via: "CARGA_EXTERNA",
+          idempotencyKey: input.idempotency_key,
+          sourceRevision: pending.source_revision,
+          sourceManifest: null,
+          review: {},
+        })),
+        idempotent: false,
+        estado: "PENDIENTE_REVISION",
+      };
+    } catch (error) {
+      await deleteFile(storageKey).catch(() => undefined);
+      throw error;
+    }
   }
 
-  async validate(actor: Exp006Actor, expedienteId: string, pendingId: string, input: { expected_version: number; idempotency_key: string }) {
-    return this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp006-validate:${actor.organizationId}:${pendingId}`}))`);
-      const pending = await this.pending(tx, actor, expedienteId, pendingId);
-      if (pending.estado === 'VALIDADO') return { pending: this.toResponse(pending), idempotent: true, tracking_completed: false };
-      if (pending.version !== input.expected_version) throw new ExpedienteArtifactsError(409, 'EXP006_PENDING_STALE', 'El pendiente cambió. Recarga antes de validar.');
-      if (!pending.current_document_id || pending.estado !== 'PENDIENTE_REVISION') throw new ExpedienteArtifactsError(409, 'EXP006_REVIEW_REQUIRED', 'Obtén y revisa un documento antes de validarlo.');
-      const updated = await tx.expedienteArtefactoPendiente.update({ where: { id: pending.id }, data: { estado: 'VALIDADO', validado_por_id: actor.id, validado_at: new Date(), requiere_revision: false, motivo_revision: null, version: { increment: 1 } } });
-      const conditions = conditionObject(pending.explicacion_snapshot).conditions;
-      const activityMasterId = conditionObject(conditions).actividad_id;
-      const trackingCompleted = typeof activityMasterId === 'string' ? await this.completeLinkedTracking(tx, actor, expedienteId, pending.expediente_acto_id, activityMasterId) : false;
-      if (trackingCompleted) {
-        const context = await this.buildContext(tx, actor, expedienteId);
-        const artifacts = await this.masterArtifacts(tx, actor.organizationId);
-        await this.applyResolution(tx, actor, expedienteId, resolveExp006(artifacts as any, context));
-      }
-      await this.audit(tx, actor, 'EXP006_VALIDATE_DOCUMENT', 'ExpedienteArtefactoPendiente', pending.id, { idempotency_key: input.idempotency_key, document_id: pending.current_document_id, tracking_activity_master_id: activityMasterId || null, tracking_completed: trackingCompleted });
-      return { pending: this.toResponse(updated), idempotent: false, tracking_completed: trackingCompleted };
-    }, { timeout: 20_000 });
+  async validate(
+    actor: Exp006Actor,
+    expedienteId: string,
+    pendingId: string,
+    input: { expected_version: number; idempotency_key: string },
+  ) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw(
+          Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp006-validate:${actor.organizationId}:${pendingId}`}))`,
+        );
+        const pending = await this.pending(tx, actor, expedienteId, pendingId);
+        if (pending.estado === "VALIDADO")
+          return {
+            pending: this.toResponse(pending),
+            idempotent: true,
+            tracking_completed: false,
+          };
+        if (pending.version !== input.expected_version)
+          throw new ExpedienteArtifactsError(
+            409,
+            "EXP006_PENDING_STALE",
+            "El pendiente cambió. Recarga antes de validar.",
+          );
+        if (
+          !pending.current_document_id ||
+          pending.estado !== "PENDIENTE_REVISION"
+        )
+          throw new ExpedienteArtifactsError(
+            409,
+            "EXP006_REVIEW_REQUIRED",
+            "Obtén y revisa un documento antes de validarlo.",
+          );
+        const updated = await tx.expedienteArtefactoPendiente.update({
+          where: { id: pending.id },
+          data: {
+            estado: "VALIDADO",
+            validado_por_id: actor.id,
+            validado_at: new Date(),
+            requiere_revision: false,
+            motivo_revision: null,
+            version: { increment: 1 },
+          },
+        });
+        const conditions = conditionObject(
+          pending.explicacion_snapshot,
+        ).conditions;
+        const activityMasterId = conditionObject(conditions).actividad_id;
+        const trackingCompleted =
+          typeof activityMasterId === "string"
+            ? await this.completeLinkedTracking(
+                tx,
+                actor,
+                expedienteId,
+                pending.expediente_acto_id,
+                activityMasterId,
+              )
+            : false;
+        if (trackingCompleted) {
+          const context = await this.buildContext(tx, actor, expedienteId);
+          const artifacts = await this.masterArtifacts(
+            tx,
+            actor.organizationId,
+          );
+          await this.applyResolution(
+            tx,
+            actor,
+            expedienteId,
+            await this.resolution(tx, actor, expedienteId, artifacts, context),
+          );
+        }
+        await this.audit(
+          tx,
+          actor,
+          "EXP006_VALIDATE_DOCUMENT",
+          "ExpedienteArtefactoPendiente",
+          pending.id,
+          {
+            idempotency_key: input.idempotency_key,
+            document_id: pending.current_document_id,
+            tracking_activity_master_id: activityMasterId || null,
+            tracking_completed: trackingCompleted,
+          },
+        );
+        return {
+          pending: this.toResponse(updated),
+          idempotent: false,
+          tracking_completed: trackingCompleted,
+        };
+      },
+      { timeout: 20_000 },
+    );
   }
 
   async signedUrl(actor: Exp006Actor, expedienteId: string, pendingId: string) {
-    const pending = await this.pending(this.prisma, actor, expedienteId, pendingId, 'read');
-    if (!pending.current_document_id) throw new ExpedienteArtifactsError(404, 'EXP006_DOCUMENT_NOT_FOUND', 'Este pendiente todavía no tiene un documento.');
-    const document = await this.prisma.documento.findFirst({ where: { id: pending.current_document_id, organization_id: actor.organizationId, expediente_id: expedienteId }, select: { storage_key: true, nombre_original: true, mime_type: true } });
-    if (!document) throw new ExpedienteArtifactsError(403, 'EXP006_DOCUMENT_ACCESS_DENIED', 'No tienes acceso a este documento.');
-    return { url: await getSignedUrl(document.storage_key, 600), expires_in: 600, file_name: document.nombre_original, mime_type: document.mime_type };
+    const pending = await this.pending(
+      this.prisma,
+      actor,
+      expedienteId,
+      pendingId,
+      "read",
+      true,
+    );
+    if (!pending.current_document_id)
+      throw new ExpedienteArtifactsError(
+        404,
+        "EXP006_DOCUMENT_NOT_FOUND",
+        "Este pendiente todavía no tiene un documento.",
+      );
+    const document = await this.prisma.documento.findFirst({
+      where: {
+        id: pending.current_document_id,
+        organization_id: actor.organizationId,
+        expediente_id: expedienteId,
+      },
+      select: { storage_key: true, nombre_original: true, mime_type: true },
+    });
+    if (!document)
+      throw new ExpedienteArtifactsError(
+        403,
+        "EXP006_DOCUMENT_ACCESS_DENIED",
+        "No tienes acceso a este documento.",
+      );
+    return {
+      url: await getSignedUrl(document.storage_key, 600),
+      expires_in: 600,
+      file_name: document.nombre_original,
+      mime_type: document.mime_type,
+    };
   }
 
-  private async persistDocument(actor: Exp006Actor, expedienteId: string, pending: any, file: { buffer: Buffer; storageKey: string; originalName: string; mimeType: string; via: 'IA' | 'CARGA_EXTERNA'; idempotencyKey: string; sourceRevision: string; sourceManifest: unknown; review: unknown }) {
-    return this.prisma.$transaction(async (tx) => {
-      await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp006-document:${actor.organizationId}:${pending.id}`}))`);
-      const current = await this.pending(tx, actor, expedienteId, pending.id);
-      if (current.version !== pending.version) throw new ExpedienteArtifactsError(409, 'EXP006_PENDING_STALE', 'El pendiente cambió durante la operación. Recarga antes de continuar.');
-      const existing = await tx.expedienteArtefactoDocumento.findFirst({ where: { organization_id: actor.organizationId, pendiente_id: pending.id, idempotency_key: file.idempotencyKey } });
-      if (existing) return { document_id: existing.documento_id };
-      const document = await tx.documento.create({ data: {
-        organization_id: actor.organizationId, nombre_original: file.originalName, nombre_interno: `${randomUUID()}-${safe(file.originalName)}`,
-        tipo: 'EXP006_PLANTILLA_FORMATO', categoria: 'PROYECTO', storage_key: file.storageKey, mime_type: file.mimeType,
-        size_bytes: file.buffer.length, checksum_sha256: sha(file.buffer), estatus: 'PENDIENTE', subido_por_id: actor.id, expediente_id: expedienteId,
-        observaciones: 'Documento operativo pendiente de revisión humana.', datos_extraidos: json({ exp006: { pending_id: pending.id, via: file.via, review: file.review } }),
-      } });
-      await tx.expedienteArtefactoDocumento.updateMany({ where: { organization_id: actor.organizationId, pendiente_id: pending.id, vigente: true }, data: { vigente: false } });
-      await tx.expedienteArtefactoDocumento.create({ data: {
-        organization_id: actor.organizationId, expediente_id: expedienteId, pendiente_id: pending.id, documento_id: document.id,
-        via: file.via, source_manifest: file.sourceManifest ? json(file.sourceManifest) : Prisma.JsonNull,
-        provenance: json({ source: 'EXP-006', cfg002_artifact_id: pending.artefacto_id, cfg002_rule_id: pending.regla_id, cfg002_master_version_id: pending.artefacto_version_id, via: file.via, generated_auto_validated: false }),
-        source_revision: file.sourceRevision, idempotency_key: file.idempotencyKey, created_by: actor.id,
-      } });
-      await tx.expedienteArtefactoPendiente.update({ where: { id: pending.id }, data: { current_document_id: document.id, estado: 'PENDIENTE_REVISION', validado_at: null, validado_por_id: null, requiere_revision: Boolean((file.review as any)?.conflicts?.length), motivo_revision: (file.review as any)?.conflicts?.length ? 'Se detectaron datos contradictorios; requiere revisión humana.' : null, version: { increment: 1 } } });
-      await tx.expedienteDocumento.create({ data: {
-        organization_id: actor.organizationId, expediente_id: expedienteId, documento_id: document.id, tipo_vinculo: 'EXP006_RESULTADO', creado_por_id: actor.id,
-        origen: 'CFG002', source_entity_type: 'ExpedienteArtefactoPendiente', source_entity_id: pending.id, source_context: file.via,
-        source_key: `CFG002:ExpedienteArtefactoPendiente:${pending.id}:${document.id}:${file.via}`.slice(0, 320), document_version: sha(file.buffer),
-        provenance: json({ source: 'EXP-006', pending_id: pending.id, cfg002_artifact_id: pending.artefacto_id, cfg002_rule_id: pending.regla_id, via: file.via }),
-      } });
-      await this.audit(tx, actor, file.via === 'IA' ? 'EXP006_GENERATE_AI' : 'EXP006_UPLOAD_EXTERNAL', 'ExpedienteArtefactoPendiente', pending.id, { document_id: document.id, status: 'PENDIENTE_REVISION', auto_validated: false, storage_key: '[PRIVATE]' });
-      return { document_id: document.id };
-    }, { timeout: 25_000 });
+  private async persistDocument(
+    actor: Exp006Actor,
+    expedienteId: string,
+    pending: any,
+    file: {
+      buffer: Buffer;
+      storageKey: string;
+      originalName: string;
+      mimeType: string;
+      via: "IA" | "CARGA_EXTERNA";
+      idempotencyKey: string;
+      sourceRevision: string;
+      sourceManifest: unknown;
+      review: unknown;
+    },
+  ) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw(
+          Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:exp006-document:${actor.organizationId}:${pending.id}`}))`,
+        );
+        const current = await this.pending(tx, actor, expedienteId, pending.id);
+        const existing = await tx.expedienteArtefactoDocumento.findFirst({
+          where: {
+            organization_id: actor.organizationId,
+            pendiente_id: pending.id,
+            idempotency_key: file.idempotencyKey,
+          },
+        });
+        if (existing) return { document_id: existing.documento_id };
+        if(current.version!==pending.version)throw new ExpedienteArtifactsError(409,"EXP006_PENDING_STALE","El pendiente cambió durante la operación. Recarga antes de continuar.");
+        const document = await tx.documento.create({
+          data: {
+            organization_id: actor.organizationId,
+            nombre_original: file.originalName,
+            nombre_interno: `${randomUUID()}-${safe(file.originalName)}`,
+            tipo: "EXP006_PLANTILLA_FORMATO",
+            categoria: "PROYECTO",
+            storage_key: file.storageKey,
+            mime_type: file.mimeType,
+            size_bytes: file.buffer.length,
+            checksum_sha256: sha(file.buffer),
+            estatus: "PENDIENTE",
+            subido_por_id: actor.id,
+            expediente_id: expedienteId,
+            observaciones: "Documento operativo pendiente de revisión humana.",
+            datos_extraidos: json({
+              exp006: {
+                pending_id: pending.id,
+                via: file.via,
+                review: file.review,
+              },
+            }),
+          },
+        });
+        await tx.expedienteArtefactoDocumento.updateMany({
+          where: {
+            organization_id: actor.organizationId,
+            pendiente_id: pending.id,
+            vigente: true,
+          },
+          data: { vigente: false },
+        });
+        await tx.expedienteArtefactoDocumento.create({
+          data: {
+            organization_id: actor.organizationId,
+            expediente_id: expedienteId,
+            pendiente_id: pending.id,
+            documento_id: document.id,
+            via: file.via,
+            source_manifest: file.sourceManifest
+              ? json(file.sourceManifest)
+              : Prisma.JsonNull,
+            provenance: json({
+              source: "EXP-006",
+              cfg002_artifact_id: pending.artefacto_id,
+              cfg002_rule_id: pending.regla_id,
+              cfg002_master_version_id: pending.artefacto_version_id,
+              via: file.via,
+              generated_auto_validated: false,
+            }),
+            source_revision: file.sourceRevision,
+            idempotency_key: file.idempotencyKey,
+            created_by: actor.id,
+          },
+        });
+        await tx.expedienteArtefactoPendiente.update({
+          where: { id: pending.id },
+          data: {
+            current_document_id: document.id,
+            estado: "PENDIENTE_REVISION",
+            validado_at: null,
+            validado_por_id: null,
+            requiere_revision: Boolean((file.review as any)?.conflicts?.length),
+            motivo_revision: (file.review as any)?.conflicts?.length
+              ? "Se detectaron datos contradictorios; requiere revisión humana."
+              : null,
+            version: { increment: 1 },
+          },
+        });
+        await tx.expedienteDocumento.create({
+          data: {
+            organization_id: actor.organizationId,
+            expediente_id: expedienteId,
+            documento_id: document.id,
+            tipo_vinculo: "EXP006_RESULTADO",
+            creado_por_id: actor.id,
+            origen: "CFG002",
+            source_entity_type: "ExpedienteArtefactoPendiente",
+            source_entity_id: pending.id,
+            source_context: file.via,
+            source_key:
+              `CFG002:ExpedienteArtefactoPendiente:${pending.id}:${document.id}:${file.via}`.slice(
+                0,
+                320,
+              ),
+            document_version: sha(file.buffer),
+            provenance: json({
+              source: "EXP-006",
+              pending_id: pending.id,
+              cfg002_artifact_id: pending.artefacto_id,
+              cfg002_rule_id: pending.regla_id,
+              via: file.via,
+            }),
+          },
+        });
+        await this.audit(
+          tx,
+          actor,
+          file.via === "IA" ? "EXP006_GENERATE_AI" : "EXP006_UPLOAD_EXTERNAL",
+          "ExpedienteArtefactoPendiente",
+          pending.id,
+          {
+            document_id: document.id,
+            status: "PENDIENTE_REVISION",
+            auto_validated: false,
+            storage_key: "[PRIVATE]",
+          },
+        );
+        return { document_id: document.id };
+      },
+      { timeout: 25_000 },
+    );
   }
 
-  private async applyResolution(tx: Prisma.TransactionClient, actor: Exp006Actor, expedienteId: string, resolution: Exp006Resolution[]) {
+  private async applyResolution(
+    tx: Prisma.TransactionClient,
+    actor: Exp006Actor,
+    expedienteId: string,
+    resolution: Exp006Resolution[],
+  ) {
     const activeKeys = new Set(resolution.map((item) => item.identityKey));
-    let created = 0; let updated = 0; let preserved = 0; let inactivated = 0;
+    let created = 0;
+    let updated = 0;
+    let preserved = 0;
+    let inactivated = 0;
     for (const item of resolution) {
-      const existing = await tx.expedienteArtefactoPendiente.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, identity_key: item.identityKey } });
+      const existing = await tx.expedienteArtefactoPendiente.findFirst({
+        where: {
+          organization_id: actor.organizationId,
+          expediente_id: expedienteId,
+          identity_key: item.identityKey,
+        },
+      });
       if (!existing) {
-        await tx.expedienteArtefactoPendiente.create({ data: {
-          organization_id: actor.organizationId, expediente_id: expedienteId, expediente_acto_id: item.expedienteActoId,
-          artefacto_id: item.artifactId, regla_id: item.ruleId, artefacto_version_id: item.masterVersionId,
-          normativa_revision_id: item.normativeRevisionId,
-          sujeto_tipo: item.subjectType, sujeto_id: item.subjectId, ordinal: item.ordinal, identity_key: item.identityKey,
-          obligatoria: item.mandatory, explicacion_snapshot: json(item.snapshot),
-          hechos_evaluados_snapshot: json(item.evaluatedFacts), condiciones_pendientes_snapshot: json(item.pendingConditions),
-          source_revision: item.sourceRevision, created_by: actor.id,
-        } });
+        await tx.expedienteArtefactoPendiente.create({
+          data: {
+            organization_id: actor.organizationId,
+            expediente_id: expedienteId,
+            expediente_acto_id: item.expedienteActoId,
+            artefacto_id: item.artifactId,
+            regla_id: item.ruleId,
+            artefacto_version_id: item.masterVersionId,
+            normativa_revision_id: item.normativeRevisionId,
+            sujeto_tipo: item.subjectType,
+            sujeto_id: item.subjectId,
+            ordinal: item.ordinal,
+            identity_key: item.identityKey,
+            obligatoria: item.mandatory,
+            explicacion_snapshot: json(item.snapshot),
+            hechos_evaluados_snapshot: json(item.evaluatedFacts),
+            condiciones_pendientes_snapshot: json(item.pendingConditions),
+            source_revision: item.sourceRevision,
+            created_by: actor.id,
+          },
+        });
         created += 1;
         continue;
       }
-      const protectedWork = Boolean(existing.current_document_id) || existing.estado === 'VALIDADO' || existing.estado === 'PENDIENTE_REVISION';
+      const protectedWork =
+        Boolean(existing.current_document_id) ||
+        existing.estado === "VALIDADO" ||
+        existing.estado === "PENDIENTE_REVISION";
       if (existing.source_revision !== item.sourceRevision && protectedWork) {
-        await tx.expedienteArtefactoPendiente.update({ where: { id: existing.id }, data: {
-          en_alcance: true, requiere_revision: true,
-          motivo_revision: 'La regla o el contexto cambió; el trabajo existente se preservó para revisión humana.',
-          version: { increment: 1 },
-        } });
+        await tx.expedienteArtefactoPendiente.update({
+          where: { id: existing.id },
+          data: {
+            en_alcance: true,
+            requiere_revision: true,
+            motivo_revision:
+              "La regla o el contexto cambió; el trabajo existente se preservó para revisión humana.",
+            version: { increment: 1 },
+          },
+        });
         preserved += 1;
-      } else if (existing.source_revision !== item.sourceRevision || !existing.en_alcance) {
-        await tx.expedienteArtefactoPendiente.update({ where: { id: existing.id }, data: {
-          expediente_acto_id: item.expedienteActoId, artefacto_version_id: item.masterVersionId,
-          normativa_revision_id: item.normativeRevisionId,
-          sujeto_tipo: item.subjectType, sujeto_id: item.subjectId, ordinal: item.ordinal,
-          obligatoria: item.mandatory, explicacion_snapshot: json(item.snapshot),
-          hechos_evaluados_snapshot: json(item.evaluatedFacts), condiciones_pendientes_snapshot: json(item.pendingConditions), source_revision: item.sourceRevision,
-          en_alcance: true, estado: existing.current_document_id ? 'PENDIENTE_REVISION' : 'PENDIENTE',
-          requiere_revision: false, motivo_revision: null, version: { increment: 1 },
-        } });
+      } else if (
+        existing.source_revision !== item.sourceRevision ||
+        !existing.en_alcance
+      ) {
+        await tx.expedienteArtefactoPendiente.update({
+          where: { id: existing.id },
+          data: {
+            expediente_acto_id: item.expedienteActoId,
+            artefacto_version_id: item.masterVersionId,
+            normativa_revision_id: item.normativeRevisionId,
+            sujeto_tipo: item.subjectType,
+            sujeto_id: item.subjectId,
+            ordinal: item.ordinal,
+            obligatoria: item.mandatory,
+            explicacion_snapshot: json(item.snapshot),
+            hechos_evaluados_snapshot: json(item.evaluatedFacts),
+            condiciones_pendientes_snapshot: json(item.pendingConditions),
+            source_revision: item.sourceRevision,
+            en_alcance: true,
+            estado: existing.current_document_id
+              ? "PENDIENTE_REVISION"
+              : "PENDIENTE",
+            requiere_revision: false,
+            motivo_revision: null,
+            version: { increment: 1 },
+          },
+        });
         updated += 1;
       }
     }
-    const obsolete = await tx.expedienteArtefactoPendiente.findMany({ where: {
-      organization_id: actor.organizationId, expediente_id: expedienteId, en_alcance: true,
-      ...(activeKeys.size ? { identity_key: { notIn: [...activeKeys] } } : {}),
-    } });
+    const obsolete = await tx.expedienteArtefactoPendiente.findMany({
+      where: {
+        organization_id: actor.organizationId,
+        expediente_id: expedienteId,
+        en_alcance: true,
+        ...(activeKeys.size
+          ? { identity_key: { notIn: [...activeKeys] } }
+          : {}),
+      },
+    });
     for (const row of obsolete) {
-      const protectedWork = Boolean(row.current_document_id) || row.estado === 'VALIDADO' || row.estado === 'PENDIENTE_REVISION';
-      await tx.expedienteArtefactoPendiente.update({ where: { id: row.id }, data: protectedWork
-        ? { en_alcance: false, requiere_revision: true, motivo_revision: 'El requisito dejó de aplicar; el trabajo se conserva para decisión humana.', version: { increment: 1 } }
-        : { en_alcance: false, estado: 'NO_APLICA', requiere_revision: false, motivo_revision: 'El requisito dejó de aplicar sin trabajo previo.', version: { increment: 1 } } });
+      const protectedWork =
+        Boolean(row.current_document_id) ||
+        row.estado === "VALIDADO" ||
+        row.estado === "PENDIENTE_REVISION";
+      await tx.expedienteArtefactoPendiente.update({
+        where: { id: row.id },
+        data: protectedWork
+          ? {
+              en_alcance: false,
+              requiere_revision: true,
+              motivo_revision:
+                "El requisito dejó de aplicar; el trabajo se conserva para decisión humana.",
+              version: { increment: 1 },
+            }
+          : {
+              en_alcance: false,
+              estado: "NO_APLICA",
+              requiere_revision: false,
+              motivo_revision:
+                "El requisito dejó de aplicar sin trabajo previo.",
+              version: { increment: 1 },
+            },
+      });
       if (protectedWork) preserved += 1;
       else inactivated += 1;
     }
     return { created, updated, preserved, inactivated };
   }
 
-  private async buildContext(db: Db, actor: Exp006Actor, expedienteId: string, access: 'read' | 'write' = 'write'): Promise<Exp006Context> {
-    const expediente = await this.assertExpediente(db, actor, expedienteId, access);
-    const [acts, parties, properties, currentTracking, complianceState] = await Promise.all([
-      db.expedienteActo.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO' }, include: { tipo_acto: { select: { nombre: true } } } }),
-      db.expedienteCompareciente.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO', archived_at: null, expediente_acto_id: { not: null } }, include: { compareciente: { select: { id: true, tipo_persona: true, nombre_busqueda: true, personaFisica: { select: { nacionalidad: true, calidad_migratoria: true, pep_estado: true } }, personaMoral: { select: { nacionalidad: true } } } } } }),
-      db.expedientePredio.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, estatus: 'ACTIVO' }, include: { predio: { select: { id: true, apodo: true, ubicacion_texto: true } }, actos: { where: { estatus: 'ACTIVO' }, select: { expediente_acto_id: true } } } }),
-      db.expedienteSeguimientoActividad.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, en_alcance: true, estado: { notIn: ['COMPLETADO', 'NO_APLICA'] } }, orderBy: [{ etapa_orden_snapshot: 'asc' }, { created_at: 'asc' }], select: { etapa_maestra_id: true } }),
-      db.expedienteComplianceState.findFirst({ where: { organization_id: actor.organizationId, expediente_id: expedienteId }, select: { currentReview: { select: { estatus: true, revisado_at: true, resultado_json: true, canonical_state_snapshot: true } } } }),
-    ]);
-    const complianceSnapshot = conditionObject(complianceState?.currentReview?.canonical_state_snapshot || complianceState?.currentReview?.resultado_json);
-    const reviewed = Boolean(complianceState?.currentReview?.revisado_at) && ['VALIDADO', 'APROBADO', 'COMPLETADO', 'FINALIZADO'].includes(String(complianceState?.currentReview?.estatus || '').toUpperCase());
+  private async buildContext(
+    db: Db,
+    actor: Exp006Actor,
+    expedienteId: string,
+    access: "read" | "write" = "write",
+  ): Promise<Exp006Context> {
+    const expediente = await this.assertExpediente(
+      db,
+      actor,
+      expedienteId,
+      access,
+    );
+    const [acts, parties, properties, currentTracking, complianceState] =
+      await Promise.all([
+        db.expedienteActo.findMany({
+          where: {
+            organization_id: actor.organizationId,
+            expediente_id: expedienteId,
+            estatus: "ACTIVO",
+          },
+          include: { tipo_acto: { select: { nombre: true } } },
+        }),
+        db.expedienteCompareciente.findMany({
+          where: {
+            organization_id: actor.organizationId,
+            expediente_id: expedienteId,
+            estatus: "ACTIVO",
+            archived_at: null,
+          },
+          include: {
+            compareciente: {
+              select: {
+                id: true,
+                tipo_persona: true,
+                nombre_busqueda: true,
+                personaFisica: {
+                  select: {
+                    nacionalidad: true,
+                    calidad_migratoria: true,
+                    pep_estado: true,
+                  },
+                },
+                personaMoral: { select: { nacionalidad: true } },
+              },
+            },
+          },
+        }),
+        db.expedientePredio.findMany({
+          where: {
+            organization_id: actor.organizationId,
+            expediente_id: expedienteId,
+            estatus: "ACTIVO",
+          },
+          include: {
+            predio: {
+              select: { id: true, apodo: true, ubicacion_texto: true },
+            },
+            actos: {
+              where: { estatus: "ACTIVO" },
+              select: { expediente_acto_id: true },
+            },
+          },
+        }),
+        db.expedienteSeguimientoActividad.findFirst({
+          where: {
+            organization_id: actor.organizationId,
+            expediente_id: expedienteId,
+            en_alcance: true,
+            estado: { notIn: ["COMPLETADO", "NO_APLICA"] },
+          },
+          orderBy: [{ etapa_orden_snapshot: "asc" }, { created_at: "asc" }],
+          select: { etapa_maestra_id: true },
+        }),
+        db.expedienteComplianceState.findFirst({
+          where: {
+            organization_id: actor.organizationId,
+            expediente_id: expedienteId,
+          },
+          select: {
+            currentReview: {
+              select: {
+                estatus: true,
+                revisado_at: true,
+                resultado_json: true,
+                canonical_state_snapshot: true,
+              },
+            },
+          },
+        }),
+      ]);
+    const complianceSnapshot = conditionObject(
+      complianceState?.currentReview?.canonical_state_snapshot ||
+        complianceState?.currentReview?.resultado_json,
+    );
+    const reviewed =
+      Boolean(complianceState?.currentReview?.revisado_at) &&
+      ["VALIDADO", "APROBADO", "COMPLETADO", "FINALIZADO"].includes(
+        String(complianceState?.currentReview?.estatus || "").toUpperCase(),
+      );
     const confirmedBoolean = (...keys: string[]) => {
-      const present = keys.filter((key) => Object.prototype.hasOwnProperty.call(complianceSnapshot, key));
-      return present.length ? present.some((key) => complianceSnapshot[key] === true) : undefined;
+      const present = keys.filter((key) =>
+        Object.prototype.hasOwnProperty.call(complianceSnapshot, key),
+      );
+      return present.length
+        ? present.some((key) => complianceSnapshot[key] === true)
+        : undefined;
     };
-    const riskConfirmed = confirmedBoolean('riesgo_confirmado');
+    const riskConfirmed = confirmedBoolean("riesgo_confirmado");
     return {
-      expedienteId, organizationId: actor.organizationId, notariaId: expediente.notaria_id, institutionIds: institutionIdsFrom(expediente.datos_operacion), currentStageId: currentTracking?.etapa_maestra_id || null,
-      acts: acts.map((item) => ({ id: item.id, typeId: item.tipo_acto_id, name: item.tipo_acto.nombre })),
-      parties: parties.map((item) => ({ relationId: item.id, partyId: item.compareciente_id, actId: item.expediente_acto_id!, personType: item.compareciente.tipo_persona, roleId: item.caracter_id, name: item.compareciente.nombre_busqueda, nationality: item.compareciente.personaFisica?.nacionalidad || item.compareciente.personaMoral?.nacionalidad || null, migrationStatus: item.compareciente.personaFisica?.calidad_migratoria || null })),
-      properties: properties.map((item) => ({ relationId: item.id, propertyId: item.predio_id, actIds: item.actos.map((act) => act.expediente_acto_id), name: item.predio.apodo || item.predio.ubicacion_texto || 'Inmueble' })),
-      complianceFacts: reviewed ? {
-        actividad_vulnerable_confirmada: confirmedBoolean('actividad_vulnerable', 'vulnerable_activity'),
-        beneficiario_controlador_confirmado: confirmedBoolean('bc_confirmado'),
-        riesgo_aplicable_confirmado: riskConfirmed,
-        pep_aplicable_confirmado: confirmedBoolean('pep_aplicable'),
-        perfil_transaccional_aplicable: confirmedBoolean('perfil_transaccional_aplicable'),
-        alto_riesgo_confirmado: riskConfirmed === undefined ? undefined : riskConfirmed === true && complianceSnapshot.nivel_riesgo === 'ALTO',
-        nivel_riesgo_confirmado: riskConfirmed === true && complianceSnapshot.nivel_riesgo ? String(complianceSnapshot.nivel_riesgo) : undefined,
-        regimen_simplificado_confirmado: confirmedBoolean('regimen_simplificado_confirmado'),
-        solicitante_material_aplicable_confirmado: confirmedBoolean('solicitante_material_aplicable_confirmado'),
-        fideicomiso_aplicable_confirmado: confirmedBoolean('fideicomiso_aplicable_confirmado'),
-        persona_moral_derecho_publico_confirmada: confirmedBoolean('persona_moral_derecho_publico_confirmada'),
-        organismo_internacional_confirmado: confirmedBoolean('organismo_internacional_confirmado'),
-      } : {},
+      expedienteId,
+      organizationId: actor.organizationId,
+      notariaId: expediente.notaria_id,
+      institutionIds: institutionIdsFrom(expediente.datos_operacion),
+      currentStageId: currentTracking?.etapa_maestra_id || null,
+      acts: acts.map((item) => ({
+        id: item.id,
+        typeId: item.tipo_acto_id,
+        name: item.tipo_acto.nombre,
+      })),
+      parties: parties.map((item) => ({
+        relationId: item.id,
+        partyId: item.compareciente_id,
+        actId: item.expediente_acto_id,
+        personType: item.compareciente.tipo_persona,
+        roleId: item.caracter_id,
+        name: item.compareciente.nombre_busqueda,
+        nationality:
+          item.compareciente.personaFisica?.nacionalidad ||
+          item.compareciente.personaMoral?.nacionalidad ||
+          null,
+        migrationStatus:
+          item.compareciente.personaFisica?.calidad_migratoria || null,
+      })),
+      properties: properties.map((item) => ({
+        relationId: item.id,
+        propertyId: item.predio_id,
+        actIds: item.actos.map((act) => act.expediente_acto_id),
+        name: item.predio.apodo || item.predio.ubicacion_texto || "Inmueble",
+      })),
+      complianceFacts: reviewed
+        ? {
+            actividad_vulnerable_confirmada: confirmedBoolean(
+              "actividad_vulnerable",
+              "vulnerable_activity",
+            ),
+            beneficiario_controlador_confirmado:
+              confirmedBoolean("bc_confirmado"),
+            riesgo_aplicable_confirmado: riskConfirmed,
+            pep_aplicable_confirmado: confirmedBoolean("pep_aplicable"),
+            perfil_transaccional_aplicable: confirmedBoolean(
+              "perfil_transaccional_aplicable",
+            ),
+            alto_riesgo_confirmado:
+              riskConfirmed === undefined
+                ? undefined
+                : riskConfirmed === true &&
+                  complianceSnapshot.nivel_riesgo === "ALTO",
+            nivel_riesgo_confirmado:
+              riskConfirmed === true && complianceSnapshot.nivel_riesgo
+                ? String(complianceSnapshot.nivel_riesgo)
+                : undefined,
+            regimen_simplificado_confirmado: confirmedBoolean(
+              "regimen_simplificado_confirmado",
+            ),
+            solicitante_material_aplicable_confirmado: confirmedBoolean(
+              "solicitante_material_aplicable_confirmado",
+            ),
+            fideicomiso_aplicable_confirmado: confirmedBoolean(
+              "fideicomiso_aplicable_confirmado",
+            ),
+            persona_moral_derecho_publico_confirmada: confirmedBoolean(
+              "persona_moral_derecho_publico_confirmada",
+            ),
+            organismo_internacional_confirmado: confirmedBoolean(
+              "organismo_internacional_confirmado",
+            ),
+          }
+        : {},
     };
   }
 
   private masterArtifacts(db: Db, organizationId: string) {
     return db.catalogoArtefacto.findMany({
-      where: { organization_id: organizationId, activo: true, destinosFuncionales: { some: { destino: 'EXPEDIENTE_DOCUMENTO_GENERICO', activo: true } } },
-      include: { actos: true, reglas: { where: { activa: true }, include: { normativaRevision: true } }, versiones: { where: { activa: true }, orderBy: { version: 'desc' } } },
+      where: {
+        organization_id: organizationId,
+        activo: true,
+        destinosFuncionales: {
+          some: { destino: "EXPEDIENTE_DOCUMENTO_GENERICO", activo: true },
+        },
+      },
+      include: {
+        actos: true,
+        reglas: {
+          where: { activa: true },
+          include: { normativaRevision: true },
+        },
+        versiones: { where: { activa: true }, orderBy: { version: "desc" } },
+      },
     });
   }
 
   private async partySources(db: Db, actor: Exp006Actor, pending: any) {
-    const relation = await db.expedienteCompareciente.findFirst({ where: { id: pending.sujeto_id, organization_id: actor.organizationId, expediente_id: pending.expediente_id, estatus: 'ACTIVO', archived_at: null }, include: {
-      compareciente: { include: { personaFisica: true, personaMoral: true, documentos: { where: { estatus: 'ACTIVO', archived_at: null }, include: { documento: true }, orderBy: { updated_at: 'desc' } } } },
-    } });
-    if (!relation) throw new ExpedienteArtifactsError(403, 'EXP006_PARTY_SOURCE_ACCESS_DENIED', 'La comparecencia ya no está disponible en este expediente.');
+    const relation = await db.expedienteCompareciente.findFirst({
+      where: {
+        id: pending.sujeto_id,
+        organization_id: actor.organizationId,
+        expediente_id: pending.expediente_id,
+        estatus: "ACTIVO",
+        archived_at: null,
+      },
+      include: {
+        compareciente: {
+          include: {
+            personaFisica: true,
+            personaMoral: true,
+            contactos: {where:{archived_at:null}},
+            domicilios: {where:{archived_at:null}},
+            identificaciones: {where:{archived_at:null}},
+            documentos: {
+              where: { estatus: "ACTIVO", archived_at: null },
+              include: { documento: true },
+              orderBy: { updated_at: "desc" },
+            },
+          },
+        },
+      },
+    });
+    if (!relation)
+      throw new ExpedienteArtifactsError(
+        403,
+        "EXP006_PARTY_SOURCE_ACCESS_DENIED",
+        "La comparecencia ya no está disponible en este expediente.",
+      );
+    if(relation.compareciente.organization_id!==actor.organizationId)throw new ExpedienteArtifactsError(403,'EXP006_PARTY_TENANT_DENIED','La persona no pertenece a esta organización.');
     const current = new Map<string, any>();
-    for (const link of relation.compareciente.documentos) if (!current.has(link.categoria)) current.set(link.categoria, link);
-    const documents = [...current.values()].filter((link) => link.documento.organization_id === actor.organizationId && link.documento.compareciente_id === relation.compareciente_id && link.documento.estatus !== 'RECHAZADO');
-    const structuredData = relation.compareciente.tipo_persona === 'FISICA' ? relation.compareciente.personaFisica : relation.compareciente.personaMoral;
+    for (const link of relation.compareciente.documentos)
+      if (!current.has(link.categoria)) current.set(link.categoria, link);
+    const documents = [...current.values()].filter(
+      (link) =>
+        link.documento.organization_id === actor.organizationId &&
+        link.documento.compareciente_id === relation.compareciente_id &&
+        link.documento.estatus !== "RECHAZADO",
+    );
+    const personData =
+      relation.compareciente.tipo_persona === "FISICA"
+        ? relation.compareciente.personaFisica
+        : relation.compareciente.personaMoral;
+    const structuredData={...conditionObject(personData),nombre_busqueda:relation.compareciente.nombre_busqueda,
+      contactos:relation.compareciente.contactos,domicilios:relation.compareciente.domicilios,identificaciones:relation.compareciente.identificaciones};
     const manifest = {
-      policy: 'SAME_PARTY_CURRENT_ONLY',
+      policy: "SAME_PARTY_CURRENT_ONLY",
       subjectComparecienteId: relation.compareciente_id,
       subjectRelationId: relation.id,
       structuredFieldsUsed: Object.keys(conditionObject(structuredData)),
@@ -360,38 +1443,256 @@ export class ExpedienteArtifactsService {
       masterArtifactId: pending.artefacto_id,
       masterVersionId: pending.artefacto_version_id,
       structuredSource: relation.compareciente.tipo_persona,
-      excluded: ['HISTORICAL_PARTY', 'OTHER_PARTY', 'GENERAL_EXPEDIENTE', 'PROPERTY', 'BANK', 'NOTARY'], frontend_sources_accepted: false,
+      excluded: [
+        "HISTORICAL_PARTY",
+        "OTHER_PARTY",
+        "GENERAL_EXPEDIENTE",
+        "PROPERTY",
+        "BANK",
+        "NOTARY",
+      ],
+      frontend_sources_accepted: false,
     };
-    const revision = sha(JSON.stringify({ relation_version: relation.updated_at, party_version: relation.compareciente.version, structuredData, docs: documents.map((item) => [item.documento.id, item.documento.checksum_sha256, item.updated_at]) }));
+    const revision = sha(
+      JSON.stringify({
+        relation_version: relation.updated_at,
+        party_version: relation.compareciente.version,
+        structuredData,
+        docs: documents.map((item) => [
+          item.documento.id,
+          item.documento.checksum_sha256,
+          item.updated_at,
+        ]),
+      }),
+    );
     return {
-      revision, manifest, structuredData: json(structuredData || {}) as any,
-      documents: documents.map((item) => ({ id: item.documento.id, name: item.documento.nombre_original, text: item.documento.datos_extraidos ? JSON.stringify(item.documento.datos_extraidos) : '[Documento vigente sin texto estructurado disponible]' })),
-      missing: structuredData ? [] : ['Datos estructurados del compareciente'], conflicts: [],
+      revision,
+      manifest,
+      structuredData: json(structuredData || {}) as any,
+      documents: documents.map((item) => ({
+        id: item.documento.id,
+        name: item.documento.nombre_original,
+        text: item.documento.datos_extraidos
+          ? JSON.stringify(item.documento.datos_extraidos)
+          : "[Documento vigente sin texto estructurado disponible]",
+      })),
+      missing: personData ? [] : ["Datos estructurados del compareciente"],
+      conflicts: [],
+    };
+  }
+
+  private assertSourceScope(pending: any, documentIds?: string[]) {
+    if (pending.sujeto_tipo === "EXPEDIENTE") {
+      if (pending.sujeto_id !== pending.expediente_id)
+        throw new ExpedienteArtifactsError(
+          403,
+          "EXP006_CASE_SOURCE_DENIED",
+          "El formato no pertenece a este expediente.",
+        );
+      if (documentIds !== undefined)
+        throw new ExpedienteArtifactsError(
+          400,
+          "EXP006_FRONTEND_SOURCE_INJECTION",
+          "El navegador no puede inyectar fuentes documentales.",
+        );
+    } else
+      assertStrictPartySourceScope(
+        { subjectType: pending.sujeto_tipo, subjectId: pending.sujeto_id },
+        documentIds,
+      );
+  }
+
+  private async generationSources(db: Db, actor: Exp006Actor, pending: any) {
+    if (pending.sujeto_tipo !== "EXPEDIENTE")
+      return this.partySources(db, actor, pending);
+    await this.assertExpediente(db, actor, pending.expediente_id);
+    const record = await db.expediente.findFirstOrThrow({
+      where: {
+        id: pending.expediente_id,
+        organization_id: actor.organizationId,
+      },
+      select: {
+        id: true,
+        numero_pravia: true,
+        descripcion: true,
+        valor_operacion: true,
+        datos_operacion: true,
+        fecha_estimada_firma: true,
+        updated_at: true,
+      },
+    });
+    const [parties, properties, acts, institutions] = await Promise.all([
+      db.expedienteCompareciente.findMany({
+        where: {
+          organization_id: actor.organizationId,
+          expediente_id: record.id,
+          estatus: "ACTIVO",
+          archived_at: null,
+        },
+        include: {
+          compareciente: {
+            include: { personaFisica: true, personaMoral: true },
+          },
+        },
+      }),
+      db.expedientePredio.findMany({
+        where: {
+          organization_id: actor.organizationId,
+          expediente_id: record.id,
+          estatus: "ACTIVO",
+        },
+        include: { predio: true },
+      }),
+      db.expedienteActo.findMany({
+        where: {
+          organization_id: actor.organizationId,
+          expediente_id: record.id,
+          estatus: "ACTIVO",
+        },
+        include: { tipo_acto: { select: { nombre: true } } },
+      }),
+      db.catalogoInstitucion.findMany({
+        where: {
+          organization_id: actor.organizationId,
+          id: { in: institutionIdsFrom(record.datos_operacion) },
+          activa: true,
+        },
+        select: { id: true, nombre: true, tipo: true },
+      }),
+    ]);
+    if(parties.some(p=>p.compareciente.organization_id!==actor.organizationId)||properties.some(p=>p.predio.organization_id!==actor.organizationId))throw new ExpedienteArtifactsError(403,'EXP006_CASE_TENANT_DENIED','Una fuente del expediente no pertenece a esta organización.');
+    const structuredData = json({
+      expediente: record,
+      comparecientes: parties.map((p) => ({
+        relacion_id: p.id,
+        acto_id: p.expediente_acto_id,
+        caracter_id: p.caracter_id,
+        nombre: p.compareciente.nombre_busqueda,
+        tipo_persona: p.compareciente.tipo_persona,
+        datos: p.compareciente.personaFisica || p.compareciente.personaMoral,
+      })),
+      predios: properties.map((p) => p.predio),
+      actos: acts.map((a) => ({ id: a.id, nombre: a.tipo_acto.nombre })),
+      instituciones: institutions,
+    }) as any;
+    const manifest = {
+      policy: "SAME_CASE_STRUCTURED_ONLY",
+      subjectComparecienteId: null,
+      subjectRelationId: null,
+      structuredFieldsUsed: Object.keys(structuredData),
+      currentDocumentIds: [] as string[],
+      masterArtifactId: pending.artefacto_id,
+      masterVersionId: pending.artefacto_version_id,
+      structuredSource: "EXPEDIENTE",
+      excluded: [
+        "OTHER_CASE",
+        "OTHER_TENANT",
+        "UNSELECTED_PARTY_DOCUMENTS",
+        "HISTORICAL_DOCUMENTS",
+      ],
+      frontend_sources_accepted: false,
+    };
+    return {
+      revision: sha(JSON.stringify(structuredData)),
+      manifest,
+      structuredData,
+      documents: [] as Array<{ id: string; name: string; text: string }>,
+      missing: [] as string[],
+      conflicts: [],
     };
   }
 
   private async readText(buffer: Buffer, mimeType: string, fileName: string) {
-    if (mimeType.includes('officedocument.wordprocessingml') || fileName.toLowerCase().endsWith('.docx')) return extractDocxText(buffer);
-    if (mimeType.startsWith('text/')) return buffer.toString('utf8');
+    if (
+      mimeType.includes("officedocument.wordprocessingml") ||
+      fileName.toLowerCase().endsWith(".docx")
+    )
+      return extractDocxText(buffer);
+    if (mimeType.startsWith("text/")) return buffer.toString("utf8");
     return `[Archivo maestro ${fileName}; contenido binario no textual. Respetar estructura y requerir revisión humana.]`;
   }
 
-  private async pending(db: Db, actor: Exp006Actor, expedienteId: string, pendingId: string, access: 'read' | 'write' = 'write') {
+  private async pending(
+    db: Db,
+    actor: Exp006Actor,
+    expedienteId: string,
+    pendingId: string,
+    access: "read" | "write" = "write",
+    includeHistory = false,
+  ) {
     await this.assertExpediente(db, actor, expedienteId, access);
-    const row = await db.expedienteArtefactoPendiente.findFirst({ where: { id: pendingId, organization_id: actor.organizationId, expediente_id: expedienteId, en_alcance: true } });
-    if (!row) throw new ExpedienteArtifactsError(403, 'EXP006_PENDING_ACCESS_DENIED', 'No tienes acceso a este pendiente.');
+    const row = await db.expedienteArtefactoPendiente.findFirst({
+      where: {
+        id: pendingId,
+        organization_id: actor.organizationId,
+        expediente_id: expedienteId,
+        ...(includeHistory && access === 'read' ? {} : {en_alcance: true}),
+      },
+    });
+    if (!row)
+      throw new ExpedienteArtifactsError(
+        403,
+        "EXP006_PENDING_ACCESS_DENIED",
+        "No tienes acceso a este pendiente.",
+      );
     return row;
   }
 
-  private async assertExpediente(db: Db, actor: Exp006Actor, expedienteId: string, access: 'read' | 'write' = 'write') {
-    const record = await db.expediente.findFirst({ where: { id: expedienteId, ...(access === 'read' ? expedienteReadWhere(actor as any) : { organization_id: actor.organizationId, archived_at: null, ...expedienteAccessWhere(actor as any) }) }, select: { id: true, notaria_id: true, datos_operacion: true, estatus: true } });
-    if (!record) throw new ExpedienteArtifactsError(403, 'EXP006_EXPEDIENTE_ACCESS_DENIED', 'No tienes acceso a este expediente.');
+  private async assertExpediente(
+    db: Db,
+    actor: Exp006Actor,
+    expedienteId: string,
+    access: "read" | "write" = "write",
+  ) {
+    const record = await db.expediente.findFirst({
+      where: {
+        id: expedienteId,
+        ...(access === "read"
+          ? expedienteReadWhere(actor as any)
+          : {
+              organization_id: actor.organizationId,
+              archived_at: null,
+              ...expedienteAccessWhere(actor as any),
+            }),
+      },
+      select: {
+        id: true,
+        notaria_id: true,
+        datos_operacion: true,
+        estatus: true,
+      },
+    });
+    if (!record)
+      throw new ExpedienteArtifactsError(
+        403,
+        "EXP006_EXPEDIENTE_ACCESS_DENIED",
+        "No tienes acceso a este expediente.",
+      );
     return record;
   }
 
-  private async completeLinkedTracking(tx: Prisma.TransactionClient, actor: Exp006Actor, expedienteId: string, actId: string | null, activityMasterId: string) {
+  private async completeLinkedTracking(
+    tx: Prisma.TransactionClient,
+    actor: Exp006Actor,
+    expedienteId: string,
+    actId: string | null,
+    activityMasterId: string,
+  ) {
     if (!actId) return false;
-    const remaining = await tx.expedienteArtefactoPendiente.count({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, expediente_acto_id: actId, en_alcance: true, obligatoria: true, estado: { notIn: ['VALIDADO', 'NO_APLICA'] }, explicacion_snapshot: { path: ['conditions', 'actividad_id'], equals: activityMasterId } } });
+    const remaining = await tx.expedienteArtefactoPendiente.count({
+      where: {
+        organization_id: actor.organizationId,
+        expediente_id: expedienteId,
+        expediente_acto_id: actId,
+        en_alcance: true,
+        obligatoria: true,
+        estado: { notIn: ["VALIDADO", "NO_APLICA"] },
+        explicacion_snapshot: {
+          path: ["conditions", "actividad_id"],
+          equals: activityMasterId,
+        },
+      },
+    });
     if (remaining) return false;
     const activity = await tx.expedienteSeguimientoActividad.findFirst({
       where: {
@@ -408,17 +1709,99 @@ export class ExpedienteArtifactsService {
         },
       },
     });
-    if (!activity || ['COMPLETADO', 'NO_APLICA'].includes(activity.estado)) return false;
-    const dependencies = await tx.expedienteSeguimientoDependencia.findMany({ where: { organization_id: actor.organizationId, expediente_id: expedienteId, actividad_id: activity.id, bloqueante: true }, select: { depende_actividad_id: true } });
-    if (dependencies.length && await tx.expedienteSeguimientoActividad.count({ where: { id: { in: dependencies.map((item) => item.depende_actividad_id) }, estado: { notIn: ['COMPLETADO', 'NO_APLICA'] } } })) return false;
-    const next = await tx.expedienteSeguimientoActividad.update({ where: { id: activity.id }, data: { estado: 'COMPLETADO', primera_fecha_inicio: activity.primera_fecha_inicio || new Date(), fecha_completada_actual: new Date(), version: { increment: 1 } } });
-    await tx.expedienteSeguimientoHistorial.create({ data: { organization_id: actor.organizationId, expediente_id: expedienteId, actividad_id: activity.id, actor_user_id: actor.id, estado_anterior: activity.estado, estado_nuevo: 'COMPLETADO', version_anterior: activity.version, version_nueva: next.version, razon: 'Todos los documentos obligatorios EXP-006 vinculados fueron validados.', detalles: json({ source: 'EXP-006', activity_master_id: activityMasterId }) } });
+    if (!activity || ["COMPLETADO", "NO_APLICA"].includes(activity.estado))
+      return false;
+    const dependencies = await tx.expedienteSeguimientoDependencia.findMany({
+      where: {
+        organization_id: actor.organizationId,
+        expediente_id: expedienteId,
+        actividad_id: activity.id,
+        bloqueante: true,
+      },
+      select: { depende_actividad_id: true },
+    });
+    if (
+      dependencies.length &&
+      (await tx.expedienteSeguimientoActividad.count({
+        where: {
+          id: { in: dependencies.map((item) => item.depende_actividad_id) },
+          estado: { notIn: ["COMPLETADO", "NO_APLICA"] },
+        },
+      }))
+    )
+      return false;
+    const next = await tx.expedienteSeguimientoActividad.update({
+      where: { id: activity.id },
+      data: {
+        estado: "COMPLETADO",
+        primera_fecha_inicio: activity.primera_fecha_inicio || new Date(),
+        fecha_completada_actual: new Date(),
+        version: { increment: 1 },
+      },
+    });
+    await tx.expedienteSeguimientoHistorial.create({
+      data: {
+        organization_id: actor.organizationId,
+        expediente_id: expedienteId,
+        actividad_id: activity.id,
+        actor_user_id: actor.id,
+        estado_anterior: activity.estado,
+        estado_nuevo: "COMPLETADO",
+        version_anterior: activity.version,
+        version_nueva: next.version,
+        razon:
+          "Todos los documentos obligatorios EXP-006 vinculados fueron validados.",
+        detalles: json({
+          source: "EXP-006",
+          activity_master_id: activityMasterId,
+        }),
+      },
+    });
     return true;
   }
 
-  private toResponse(row: any) { return { id: row.id, artifact_id: row.artefacto_id, rule_id: row.regla_id, master_version_id: row.artefacto_version_id, act_id: row.expediente_acto_id, subject_type: row.sujeto_tipo, subject_id: row.sujeto_id, ordinal: row.ordinal, estado: row.estado, obligatoria: row.obligatoria, explanation: row.explicacion_snapshot, source_revision: row.source_revision, version: row.version, in_scope: row.en_alcance, review_required: row.requiere_revision, review_reason: row.motivo_revision, document_id: row.current_document_id, validated_at: row.validado_at }; }
+  private toResponse(row: any) {
+    return {
+      id: row.id,
+      artifact_id: row.artefacto_id,
+      rule_id: row.regla_id,
+      master_version_id: row.artefacto_version_id,
+      act_id: row.expediente_acto_id,
+      subject_type: row.sujeto_tipo,
+      subject_id: row.sujeto_id,
+      ordinal: row.ordinal,
+      estado: row.estado,
+      obligatoria: row.obligatoria,
+      explanation: row.explicacion_snapshot,
+      source_revision: row.source_revision,
+      version: row.version,
+      in_scope: row.en_alcance,
+      review_required: row.requiere_revision,
+      review_reason: row.motivo_revision,
+      document_id: row.current_document_id,
+      validated_at: row.validado_at,
+    };
+  }
 
-  private audit(tx: Prisma.TransactionClient, actor: Exp006Actor, action: string, entity: string, entityId: string, details: unknown) {
-    return tx.auditLog.create({ data: { organization_id: actor.organizationId, user_id: actor.id, accion: action, entidad: entity, entidad_id: entityId, valores_nuevos: json(details), correlation_id: randomUUID(), session_id: actor.sessionId } });
+  private audit(
+    tx: Prisma.TransactionClient,
+    actor: Exp006Actor,
+    action: string,
+    entity: string,
+    entityId: string,
+    details: unknown,
+  ) {
+    return tx.auditLog.create({
+      data: {
+        organization_id: actor.organizationId,
+        user_id: actor.id,
+        accion: action,
+        entidad: entity,
+        entidad_id: entityId,
+        valores_nuevos: json(details),
+        correlation_id: randomUUID(),
+        session_id: actor.sessionId,
+      },
+    });
   }
 }

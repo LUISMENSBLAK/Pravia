@@ -197,6 +197,10 @@ export class ComparecienteAltaSessionService {
       'image/jpeg',
       'image/png',
       'image/webp',
+      'image/heic',
+      'image/heif',
+      'image/gif',
+      'text/plain',
       'image/bmp',
       'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -204,7 +208,7 @@ export class ComparecienteAltaSessionService {
       'application/zip',
     ]);
     if (!allowedMimeTypes.has(mimeType)) {
-      throw new Error('Tipo de archivo no permitido. Usa PDF, JPG/JPEG, PNG, WEBP, BMP, DOC, DOCX, XML o ZIP.');
+      throw new Error('Tipo de archivo no permitido. Usa PDF, JPG/JPEG, PNG, WEBP, HEIC/HEIF, GIF, TXT, DOCX, XML o ZIP.');
     }
 
     const sesion = await prisma.comparecienteAltaSession.findUnique({ where: { id: sessionId } });
@@ -375,7 +379,7 @@ export class ComparecienteAltaSessionService {
       if (actor.userId !== sesion.usuario_id) throw new Error('La sesión de alta no pertenece al usuario autenticado.');
       const operationId = `compareciente-alta-extraction:${actor.organizationId}:${sesion.id}:${requestKey}`;
       resultadoIA = await extraerMultiplesDocumentos(documentosParaIA, {
-        actor, idempotencyKey: operationId, traceId: operationId,
+        actor, idempotencyKey: operationId, traceId: operationId, fullProfile: true,
       });
     } catch (error: any) {
       await prisma.comparecienteAltaSession.update({ where: { id: sessionId }, data: { estatus: 'FALLIDO' } });
@@ -423,23 +427,8 @@ export class ComparecienteAltaSessionService {
       camposCombinados.correo_electronico = mailVal;
     }
 
-    // ── 5. AUTO-COMPLETAR AUTORIDAD EMISORA si no viene del documento ─────────
-    const tipoIdCampo = camposCombinados.tipo_identificacion;
-    if (!camposCombinados.autoridad_emisora) {
-      const tieneINE = documentosParaIA.some(d =>
-        d.tipoDocumento.toUpperCase().includes('INE') ||
-        d.nombreOriginal.toUpperCase().includes('INE')
-      );
-      const tienePasaporte = documentosParaIA.some(d =>
-        d.tipoDocumento.toUpperCase().includes('PASAPORTE')
-      );
-
-      if (tieneINE) {
-        camposCombinados.autoridad_emisora = 'Instituto Nacional Electoral';
-      } else if (tienePasaporte) {
-        camposCombinados.autoridad_emisora = 'Secretaría de Relaciones Exteriores';
-      }
-    }
+    // The filename/upload category is not evidence of the issuing authority.
+    // Only the sourced extraction may propose it (a passport may be foreign).
 
     // ── 6. SEPARAR DOMICILIOS POR TIPO (FISCAL / PARTICULAR / IDENTIFICACION) ─
     const domiciliosFiscales = (resultadoIA.domicilios_detectados || []).filter(
@@ -459,13 +448,7 @@ export class ComparecienteAltaSessionService {
 
     const borradorLimpio = { ...(sesion.borrador_json as any) || {} };
     for (const conflicto of consolidacion.conflicts) delete borradorLimpio[conflicto.campo];
-    // Limpiar únicamente campos no acreditables documentalmente salvo que vengan de IA
-    delete borradorLimpio.tratamiento;
-    delete borradorLimpio.aliases;
-    delete borradorLimpio.escolaridad;
-    delete borradorLimpio.correo;
-    delete borradorLimpio.telefono;
-    delete borradorLimpio.regimen_matrimonial;
+    // Missing documentary evidence never deletes manually entered draft data.
 
     // Asegurar que giro no retenga valores mock salvo acreditación documental
     if (!camposCombinados.giro) {
@@ -486,9 +469,9 @@ export class ComparecienteAltaSessionService {
         dom_particular_colonia: domParticular.colonia || '',
         dom_particular_cp: domParticular.codigo_postal || '',
         dom_particular_municipio: domParticular.municipio || '',
-        dom_particular_ciudad: domParticular.ciudad || domParticular.localidad || domParticular.municipio || '',
+        dom_particular_ciudad: domParticular.ciudad || domParticular.localidad || '',
         dom_particular_estado: domParticular.estado || '',
-        dom_particular_pais: domParticular.pais || 'México',
+        dom_particular_pais: domParticular.pais || '',
         dom_particular_fuente: domParticular.fuente || ''
       } : {}),
 
@@ -500,9 +483,9 @@ export class ComparecienteAltaSessionService {
         dom_fiscal_colonia: domFiscal.colonia || '',
         dom_fiscal_cp: domFiscal.codigo_postal || '',
         dom_fiscal_municipio: domFiscal.municipio || '',
-        dom_fiscal_ciudad: domFiscal.ciudad || domFiscal.localidad || domFiscal.municipio || '',
+        dom_fiscal_ciudad: domFiscal.ciudad || domFiscal.localidad || '',
         dom_fiscal_estado: domFiscal.estado || '',
-        dom_fiscal_pais: domFiscal.pais || 'México',
+        dom_fiscal_pais: domFiscal.pais || '',
         dom_fiscal_fuente: domFiscal.fuente || ''
       } : {}),
 
@@ -532,6 +515,8 @@ export class ComparecienteAltaSessionService {
       _ia_uso: resultadoIA.uso || null,
       _ia_usos: resultadoIA.usos || (resultadoIA.uso ? [resultadoIA.uso] : []),
       _ia_documentos_curp: resultadoIA.documentos_curp || [],
+      _ia_identificadores_ine: resultadoIA.identificadores_ine || {},
+      _ia_lecturas_descartadas: resultadoIA.lecturas_descartadas || [],
     };
 
     await prisma.comparecienteAltaSession.update({
@@ -561,6 +546,7 @@ export class ComparecienteAltaSessionService {
       faltantes: faltantesAplicables,
       domicilios_detectados: resultadoIA.domicilios_detectados || [],
       documentos_curp: resultadoIA.documentos_curp || [],
+      identificadores_ine: resultadoIA.identificadores_ine || {},
       resultado: {
         proveedor: resultadoIA.proveedor,
         modelo: resultadoIA.modelo,
@@ -954,6 +940,7 @@ export class ComparecienteAltaSessionService {
               storage_key: tempDoc.storage_key_temporal,
               mime_type: tempDoc.mime_type,
               size_bytes: tempDoc.tamano_bytes,
+              checksum_sha256: tempDoc.sha256,
               subido_por_id: finalUsuarioId
             }
           });

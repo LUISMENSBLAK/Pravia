@@ -464,7 +464,7 @@ export class ExpedienteFinanceService {
           role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId },
         traceId: operationId,
       };
-      const extraction = await extraerFinanzasDesdeDocumento(document, 'EXP008', 'GENERAL', { ...context, idempotencyKey: `${operationId}:general` });
+      const extraction = await extraerFinanzasDesdeDocumento(document, 'EXP008', 'GENERAL', { ...context, idempotencyKey: `${operationId}:general`, traceId: `${operationId}:general` });
       let suggestion = incomePrefillSuggestions(extraction);
       const nativeAmounts = nativeIncomeAmountValues(await nativeIncomeDocumentText(file.buffer, mimeType));
       const sourceAmountConflict = nativeAmounts.length > 1 || Boolean(suggestion.monto_reportado && nativeAmounts.length === 1 && nativeAmounts[0] !== suggestion.monto_reportado);
@@ -477,7 +477,7 @@ export class ExpedienteFinanceService {
       const currencyConflict = extraction.campos.some((item) => item.campo === 'moneda' && !/^(MXN|PESOS? MEXICANOS?|MONEDA NACIONAL)$/i.test(item.valor.trim()));
       if (!suggestion.monto_reportado && !amountConflict && !currencyConflict && firstPassReason !== 'MULTIPLE_DISTINCT_AMOUNTS') {
         attempts = 2;
-        const focused = await extraerFinanzasDesdeDocumento(document, 'EXP008', 'AMOUNT', { ...context, idempotencyKey: `${operationId}:amount` });
+        const focused = await extraerFinanzasDesdeDocumento(document, 'EXP008', 'AMOUNT', { ...context, idempotencyKey: `${operationId}:amount`, traceId: `${operationId}:amount` });
         const focusedSuggestion = incomePrefillSuggestions(focused);
         retryReason = focusedSuggestion.monto_reportado ? 'SUGGESTED' : incomeProposalOutcomeReason(focused);
         const initialReadableAmounts = extraction.campos.filter((item) => item.campo === 'monto').map((item) => normalizeIncomeProposalAmount(item.valor)).filter((item): item is string => Boolean(item));

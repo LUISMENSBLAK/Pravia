@@ -203,7 +203,7 @@ export const assistantConversationService = {
     const selected = [...new Set((Array.isArray(rawIds) ? rawIds : []).map(String).filter(Boolean))].slice(0, 6);
     if (selected.length) return selected;
     const normalized = message.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-    if (!/\b(?:adjunt[oa]s?|(?:est[eaos]+|es[eaos]+|el|la|los|las)\s+(?:datos|informacion|pdf|archivo|documento|foto|imagen)(?:s)?|con\s+(?:sus|los)\s+datos)\b/.test(normalized)) return [];
+    if (!/\b(?:adjunt[oa]s?|adjunte|(?:est[eaos]+|es[eaos]+|el|la|los|las)\s+(?:(?:[1-6]|dos|tres|cuatro|cinco|seis|varios|ultimos)\s+)?(?:datos|informacion|pdf|archivo|documento|foto|imagen)(?:s)?|con\s+(?:sus|los)\s+datos)\b/.test(normalized)) return [];
     await ownedConversation(user, conversationId);
     const previous = await prisma.assistantMessage.findFirst({
       where: { conversation_id: conversationId, role: 'USER', status: 'COMPLETE', attachments: { some: { status: { not: 'ARCHIVED' } } } },

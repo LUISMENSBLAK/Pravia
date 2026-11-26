@@ -1,4 +1,5 @@
 import express from 'express';
+import { getManualArtifactOptions, selectManualArtifacts } from '../controllers/expedienteArtifacts.controller';
 import { readCaseSheets, generateCaseSheet, caseSheetUrl } from '../controllers/caseSheet.controller';
 import {
   getExpedientes,
@@ -165,6 +166,8 @@ router.patch('/:id/seguimiento/actividades/:activityId', requirePermission('expe
 router.put('/:id/seguimiento/actividades/:activityId/dependencias', requirePermission('expedientes.write'), setExpedienteSeguimientoDependencies);
 router.post('/:id/seguimiento/actividades/:activityId/reabrir', requirePermission('expedientes.write'), reopenExpedienteSeguimientoActividad);
 router.get('/:id/plantillas-formatos', requirePermission('documentos.read'), getExpedienteArtifacts);
+router.get('/:id/plantillas-formatos/seleccion', requirePermission('documentos.read'), getManualArtifactOptions);
+router.put('/:id/plantillas-formatos/seleccion', requirePermission('documentos.write'), selectManualArtifacts);
 router.post('/:id/plantillas-formatos/materializar', requirePermission('documentos.write'), materializeExpedienteArtifacts);
 router.get('/:id/plantillas-formatos/instituciones', requirePermission('documentos.read'), getExpedienteInstitutions);
 router.put('/:id/plantillas-formatos/instituciones', requirePermission('expedientes.write'), requirePermission('documentos.write'), selectExpedienteInstitutions);

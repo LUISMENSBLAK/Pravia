@@ -1165,6 +1165,9 @@ export class ComparecienteService {
       'image/jpeg',
       'image/png',
       'image/webp',
+      'image/heic',
+      'image/heif',
+      'image/gif',
       'image/bmp',
       'application/msword',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -1173,7 +1176,7 @@ export class ComparecienteService {
       'application/zip',
     ]);
     if (!allowedMimeTypes.has(mimeType)) {
-      throw new Error('Tipo de archivo no permitido. Usa PDF, JPG/JPEG, PNG, WEBP, BMP, DOC, DOCX, XML, TXT o ZIP.');
+      throw new Error('Tipo de archivo no permitido. Usa PDF, JPG/JPEG, PNG, WEBP, HEIC/HEIF, GIF, DOCX, XML, TXT o ZIP.');
     }
     if (!Object.values(TipoDocumentoCompareciente).includes(categoria as TipoDocumentoCompareciente)) {
       throw new Error('La categoría documental seleccionada no es válida.');
@@ -1322,7 +1325,7 @@ export class ComparecienteService {
       const extraction = await extraerMultiplesDocumentos(readable, {
         actor: { userId: actor.id, organizationId: actor.organizationId, membershipId: actor.membershipId,
           role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId },
-        idempotencyKey: operationId, traceId: operationId,
+        idempotencyKey: operationId, traceId: operationId, fullProfile: true,
       });
       const ineIdentifiers = {
         cic: extraction.identificadores_ine?.cic

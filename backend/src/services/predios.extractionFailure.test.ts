@@ -23,6 +23,24 @@ describe('Predios: errores reales de extracción', () => {
     vi.spyOn(service, 'get').mockResolvedValue({ documentos: [source] } as any);
     return { service, prisma };
   };
+  it('mantiene ambas fuentes de un lote con trazas únicas como exige el ledger PostgreSQL', async () => {
+    const tx = { predioDatoFuente: { create: vi.fn().mockResolvedValue({}) }, auditLog: { create: vi.fn().mockResolvedValue({}) } };
+    const prisma = { $transaction: vi.fn(async (work) => work(tx)) };
+    const service = new PrediosService(prisma as any);
+    const sources = ['one', 'two'].map(id => ({ ...source, documento_id: id, documento: { ...source.documento, nombre_original: `${id}.pdf` } }));
+    vi.spyOn(service, 'get').mockResolvedValue({ documentos: sources, colindancias: [] } as any);
+    const traces = new Set<string>();
+    mocks.extract.mockImplementation(async (_doc, context) => {
+      if (traces.has(context.traceId)) throw new PlatformDomainError('AI_SETTLEMENT_FAILED', 'Traza ya utilizada.', 503);
+      traces.add(context.traceId);
+      return { proveedor: 'OpenAI', modelo: 'qa', campos: [{ campo: 'clave_catastral', valor: 'CAT-SINTETICO', confianza: 'LECTURA_CLARA' }], colindancias: [], alertas: [] };
+    });
+    const result = await service.proposeFromDocument(actor, 'property', ['one', 'two'], 'request');
+    expect(result.errores).toEqual([]);
+    expect(result.propuestas[0].fuentes).toHaveLength(2);
+    expect(traces.size).toBe(2);
+    expect(result.persisted_master).toBe(false);
+  });
   it.each(['AI_EXTERNAL_DISABLED', 'AI_BALANCE_EXHAUSTED', 'AI_OPERATION_DISABLED'])('no atribuye %s a un archivo corrupto', async (code) => {
     const { service, prisma } = setup();
     mocks.extract.mockRejectedValue(new PlatformDomainError(code, 'Revisa la configuración de IA.', 503));

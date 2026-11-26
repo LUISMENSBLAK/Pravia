@@ -13,7 +13,7 @@
 .searchBar input { min-width: 0; min-height: 44px; padding: 0 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); font: inherit; }
 .searchBar button, .officialLink { min-height: 44px; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--color-navy-900); border-radius: var(--radius-md); color: white; background: var(--color-navy-900); font: inherit; font-size: .66rem; font-weight: 740; cursor: pointer; text-decoration: none; }
 .searchBar button:disabled { opacity: .45; cursor: not-allowed; }
-.criterionActions { display: flex; justify-content: flex-end; }
+.criterionActions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: flex-end; }
 .criterionActions button, .editCriterion { min-height: 40px; padding: 0 12px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--color-navy-900); border-radius: var(--radius-md); color: white; background: var(--color-navy-900); font: inherit; font-size: .65rem; font-weight: 760; cursor: pointer; }
 .editCriterion { margin-top: 10px; color: var(--color-navy-900); background: white; }
 .browser { min-width: 0; display: grid; grid-template-columns: minmax(280px,.8fr) minmax(300px,1.2fr); gap: 12px; }
@@ -67,6 +67,15 @@
 .criterionForm > footer button { min-height: 42px; padding: 0 15px; border: 1px solid var(--color-navy-900); border-radius: var(--radius-md); background: white; color: var(--color-navy-900); font: inherit; font-weight: 750; cursor: pointer; }
 .criterionForm > footer button[type="submit"] { color: white; background: var(--color-navy-900); }
 .criterionForm > footer button:disabled { opacity: .5; cursor: wait; }
+.uploadForm { display: grid; gap: 16px; min-width: 0; }
+.uploadForm p { line-height: 1.5; color: var(--color-text-secondary); }
+.uploadForm label { display: grid; gap: 8px; }
+.uploadForm input,.uploadForm textarea,.uploadForm select { min-width: 0; max-width: 100%; }
+.uploadForm button { min-height: 44px; padding: 10px 16px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); background: var(--color-surface); font: inherit; cursor: pointer; }
+.uploadForm button:disabled { opacity: .5; cursor: not-allowed; }
+.uploadForm footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; }
+.uploadForm .confirmReview { display: flex; align-items: center; gap: 12px; }
+.legalText { max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; line-height: 1.6; background: var(--color-surface-subtle); border: 1px solid var(--color-border); border-radius: var(--radius-md); font: inherit; }
 @container (max-width: 620px) { .browser { grid-template-columns: 1fr; } .sourceList { max-height: 320px; } }
 @media (max-width: 1024px) { .library { grid-template-columns: 1fr; } .collections { display: flex; overflow-x: auto; } .collections header { min-width: 220px; } .collections > button { width: auto; min-width: max-content; border-right: 1px solid var(--color-border); } }
 @media (max-width: 767px) { .explorer { padding: 10px; } .searchBar { grid-template-columns: auto minmax(0,1fr); } .searchBar button { grid-column: 1 / -1; } .browser { grid-template-columns: 1fr; } .sourceList { max-height: 320px; } .detail dl div { grid-template-columns: 1fr; gap: 3px; } }

@@ -96,7 +96,7 @@ export type ExpedienteSeguimiento = {
 };
 
 export type ExpedienteArtifactPending = {
-  id: string; artifact_id: string; rule_id: string; master_version_id: string; act_id?: string | null;
+  id: string; artifact_id: string; rule_id: string | null; master_version_id: string; act_id?: string | null;
   subject_type: 'EXPEDIENTE' | 'COMPARECIENTE' | 'INMUEBLE' | 'FIJO'; subject_id?: string | null; ordinal: number;
   estado: 'PENDIENTE' | 'PENDIENTE_REVISION' | 'VALIDADO' | 'NO_APLICA'; obligatoria: boolean;
   explanation: { artifact_name?: string; artifact_type?: 'PLANTILLA' | 'FORMATO'; owner_type?: string; act_names?: string[]; subject_name?: string; master_version?: number; [key: string]: unknown };

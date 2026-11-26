@@ -31,6 +31,19 @@ const baseInput = (overrides: Partial<ISRV3Input> = {}): ISRV3Input => ({
 });
 
 describe('ISR v3 · 38 fixtures contractuales independientes', () => {
+  it.each(['2026-11-11', '2026-11-23'])('regresión del cliente: costo mínimo 10%% y pago estatal acreditable (%s)', (operationDate) => {
+    // LISR 121 I, 126 y 127; Anexo 8 RMF 2026 apartado A.I.
+    // No se inventa un INPC: se verifica el piso usando un costo actualizado
+    // expresamente confirmado, menor al mínimo, y ambas fechas comunicadas.
+    const result = calculateISRV3(baseInput({ operationDate,
+      values: { operation:'746130.00', appraisal:'746130.00', cadastral:'', landSale:'746130.00', constructionSale:'0' },
+      parties:[seller({ acquisitionLayers:[{id:'client-case', percentage:'100', acquisitionAct:'ONEROSA', legalDate:'2025-05-26', fiscalDate:'2025-05-26', adjustedLandCost:'2034.65', adjustedConstructionCost:'0', source:'Costo actualizado confirmado para aislar piso fiscal; no representa un INPC obtenido', verified:true}] }), buyer()],
+    }), rules);
+    expect(result.saleISR[0]).toMatchObject({ amount:'126288.13', taxableBase:'671517.00',
+      acquisitionWorksheet:{minimumCost:'74613.00', appliedCost:'74613.00'},
+      distribution:{statePayment:'33575.85',federalRemainder:'92712.28'} });
+    expect(result.acquisitionISR[0]).toMatchObject({status:'NO_GENERADO',amount:'0.00'});
+  });
   it('una base positiva fuera del rango de tarifa queda pendiente, no provoca error ni inventa un tramo', () => {
     const input = baseInput({ values: { ...baseInput().values, operation: '400000.01', landSale: '400000.01' } });
     expect(calculateISRV3(input, rules).saleISR[0]).toMatchObject({ status: 'PENDIENTE_INFORMACION', amount: null, route: 'TARIFA_SIN_TRAMO' });

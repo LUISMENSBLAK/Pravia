@@ -4,7 +4,7 @@ import type { Request } from 'express';
 import prisma from '../config/prisma';
 import { budgetTotals, normalizeEditableBudgetConcepts, withDerivedHonorariosIva } from '../domain/expedienteBudget';
 import { cotizacionObjectWhere } from './objectAccess.service';
-import { INSUFFICIENT_LEGAL_FOUNDATION } from './knowledge.service';
+import { INSUFFICIENT_LEGAL_FOUNDATION, KnowledgeService } from './knowledge.service';
 import { readQuoteTerritory, territoryApplies, type QuoteTerritory } from '../domain/quoteTerritory';
 
 type Actor = NonNullable<Request['user']>;
@@ -130,10 +130,12 @@ export class QuoteAIProposalService {
     if (!rows.length) throw new QuoteAIError(409, 'QUOTE_AI_FOUNDATION_INSUFFICIENT', INSUFFICIENT_LEGAL_FOUNDATION);
     const normalized = withDerivedHonorariosIva(normalizeEditableBudgetConcepts(rows));
     const totals = budgetTotals(normalized);
+    const legalEvidence=await new KnowledgeService(this.db).retrieve(actor,{query:`${act} honorarios arancel`,jurisdiction:territory?.jurisdiction,legal_date:legalDate.toISOString().slice(0,10),limit:8});
     const evidence = {
       operation_territory: territory,
       quote_updated_at: quote.updated_at.toISOString(),
       layers: {
+        legal_library:legalEvidence,
         tariff: tariffs.filter((item) => territoryApplies({ jurisdiction: item.jurisdiction }, territory)).map((item) => ({ source_id: item.id, code: item.inventory_code, title: item.title, official_url: item.source_url, version: item.versions[0]?.version, validity: { from: item.versions[0]?.effective_from, to: item.versions[0]?.effective_to } })),
         internal_policy: criteria.filter((item) => applicableCriterionIds.has(item.id))
           .map((item) => ({ criterion_id: item.id, code: item.code, title: item.title, label: 'CRITERIO INTERNO — NO ES NORMA.', scope: item.scope })),

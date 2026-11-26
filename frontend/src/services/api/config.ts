@@ -25,3 +25,17 @@ export const apiUrl = (path: string) => {
 // limit. Auth/session requests keep their existing same-origin cookie route.
 export const apiUploadUrl = (path: string) => apiConfig.uploadBaseUrl && !/^https?:\/\//i.test(path)
   ? `${apiConfig.uploadBaseUrl}${path.startsWith('/') ? path : `/${path}`}` : apiUrl(path);
+
+// The existing Netlify rewrite has a 26-second ceiling. Long IA operations
+// reuse the already configured Render origin, just like multipart uploads.
+// Auth/refresh and ordinary business writes keep the same-origin cookie route.
+export const apiOperationUrl = (path: string, method = 'GET') => {
+  const route = path.split('?')[0];
+  const longRunning = method.toUpperCase() === 'POST' && (
+    /\/(?:ia|propuestas?-ia)(?:\/|$)/.test(route)
+    || /\/(?:extraer(?:-ia)?|extract|interpret-operation|interpretar(?:-operacion)?|analizar-ia)$/.test(route)
+    || /\/proyecto\/(?:generar|aplicar-indicaciones)$/.test(route)
+    || /\/predios\/[^/]+\/extracciones\/preview$/.test(route)
+  );
+  return longRunning ? apiUploadUrl(path) : apiUrl(path);
+};

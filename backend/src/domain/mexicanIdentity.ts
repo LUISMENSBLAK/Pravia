@@ -32,6 +32,18 @@ export function validateRfc(value: string | null | undefined, personType: 'FISIC
   return normalized;
 }
 
+/** Format only, never existence/validity checks with RENAPO or SAT. */
+export function hasValidIdentifierStructure(campo: string, value: string) {
+  try {
+    if (campo === 'curp') return Boolean(validateCurp(value));
+    if (campo === 'rfc') {
+      try { return Boolean(validateRfc(value, 'FISICA')); }
+      catch { return Boolean(validateRfc(value, 'MORAL')); }
+    }
+    return true;
+  } catch { return false; }
+}
+
 export function validateOptionalDate(value: string | null | undefined, label: string) {
   if (!value) return null;
   const date = new Date(value);

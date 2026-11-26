@@ -5,6 +5,7 @@ import { predioObjectWhere, canAccessDocumento } from './objectAccess.service';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { downloadFile } from './supabase.service';
 import { extraerPredioDesdeDocumento } from './openaiDocument.service';
+import { isAbsentDocumentValue } from '../domain/documentExtraction';
 import { PlatformDomainError } from '../platform/platform.errors';
 
 type Actor = NonNullable<Request['user']>;
@@ -280,7 +281,7 @@ export class PrediosService {
             actor: { userId: actor.id, organizationId: actor.organizationId, membershipId: actor.membershipId,
               role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId },
             idempotencyKey: `${idempotencyKey}:document:${link.documento_id}`,
-            traceId: idempotencyKey,
+            traceId: `${idempotencyKey}:document:${link.documento_id}`,
           },
         ),
       })));
@@ -296,7 +297,7 @@ export class PrediosService {
       const resultLinks = succeeded.map((entry) => entry.link);
       const extractionId = crypto.randomUUID();
       const currentData = current as unknown as Record<string, unknown>;
-      const candidates = results.flatMap((result, index) => result.campos.filter((field) => aiFields.has(field.campo) && text(field.valor, 5_000) && !/DATO\s+NO\s+ENCONTRADO/i.test(field.valor)).map((field) => ({ ...field, documento_id: resultLinks[index].documento_id, documento_nombre: resultLinks[index].documento.nombre_original })));
+      const candidates = results.flatMap((result, index) => result.campos.filter((field) => aiFields.has(field.campo) && !isAbsentDocumentValue(field.valor)).map((field) => ({ ...field, documento_id: resultLinks[index].documento_id, documento_nombre: resultLinks[index].documento.nombre_original })));
       const proposals = [...new Set(candidates.map((field) => field.campo))].map((campo) => {
         const values = candidates.filter((field) => field.campo === campo); const unique = [...new Set(values.map((field) => text(field.valor, 5_000)).filter(Boolean))]; const chosen = values[0];
         return { campo, valor_actual: proposalValue(currentData[campo]), valor_propuesto: unique.length === 1 ? unique[0] : null, pagina: chosen.pagina || null, seccion: text(chosen.seccion, 180), fragmento_fuente: text(chosen.fragmento, 800), confianza: chosen.confianza, fuentes: values.map((field) => ({ documento_id: field.documento_id, nombre: field.documento_nombre, valor: text(field.valor, 5_000) })), conflicto: unique.length > 1 };

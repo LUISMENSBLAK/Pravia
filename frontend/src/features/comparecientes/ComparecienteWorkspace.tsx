@@ -232,6 +232,7 @@ export function ComparecienteWorkspace() {
   }>({});
   const [dirty, setDirty] = useState(false);
   const dirtyRef = useRef(dirty);
+  const manuallyEditedFields = useRef(new Set<string>());
   dirtyRef.current = dirty;
   const [extractionState, setExtractionState] = useState("");
   const [extractionReview, setExtractionReview] = useState<{
@@ -339,6 +340,7 @@ export function ComparecienteWorkspace() {
     document.body.scrollTop = 0;
   }, [id]);
   const change = (name: string, value: string) => {
+    manuallyEditedFields.current.add(name);
     setDraft((current) => ({ ...current, [name]: value }));
     setDirty(true);
     setMessage("");
@@ -499,7 +501,10 @@ export function ComparecienteWorkspace() {
       Object.entries(values).filter(
         ([key, value]) =>
           key !== "tipo_persona" &&
+          key !== "pep_estado" &&
+          !key.startsWith("_") &&
           typeof value === "string" &&
+          value.trim().length > 0 &&
           !proposal[key]?.estado?.includes("CONFLICTO"),
       ),
     );
@@ -508,12 +513,12 @@ export function ComparecienteWorkspace() {
     for (const [key, rawValue] of Object.entries(safeValues)) {
       const proposed = String(rawValue || "");
       const current = String(draft[key] || "");
-      if (!createMode && current.trim() && current.trim().toLocaleUpperCase("es-MX") !== proposed.trim().toLocaleUpperCase("es-MX")) {
+      if (current.trim() && (!createMode || manuallyEditedFields.current.has(key)) && current.trim().toLocaleUpperCase("es-MX") !== proposed.trim().toLocaleUpperCase("es-MX")) {
         conflicts.push({ field: key, current, proposed });
         mappedSources[key] = { ...(mappedSources[key] || {}), valor: proposed, estado: "EN_CONFLICTO" };
       } else valuesToApply[key] = proposed;
     }
-    setIneIdentifiers(response.identificadores_ine || {});
+    setIneIdentifiers(response.identificadores_ine || response.borrador_actualizado?._ia_identificadores_ine || {});
     setDraft((current) => ({
       ...current,
       ...valuesToApply,
@@ -583,6 +588,17 @@ export function ComparecienteWorkspace() {
     setMessage("");
     setBusy(true);
     try {
+      const reviewedEnums: Record<string, string[]> = {
+        sexo: ['MASCULINO', 'FEMENINO', 'OTRO'],
+        estado_civil: ['SOLTERO', 'CASADO', 'DIVORCIADO', 'VIUDO', 'UNION_LIBRE'],
+        regimen_matrimonial: ['SOCIEDAD_CONYUGAL', 'SEPARACION_DE_BIENES', 'SOCIEDAD_LEGAL', 'OTRO'],
+        tipo_identificacion: ['INE', 'PASAPORTE', 'CEDULA_PROFESIONAL', 'DOCUMENTO_MIGRATORIO', 'OTRA'],
+      };
+      for (const [field, allowed] of Object.entries(reviewedEnums)) {
+        if (sources[field] && draft[field] && !allowed.includes(draft[field])) {
+          throw new Error('Revisa la lectura literal marcada «por revisar» y selecciona su valor correcto antes de guardar.');
+        }
+      }
       if (createMode) {
         const name =
           draft.tipo_persona === "FISICA" ? draft.nombre : draft.razon_social;

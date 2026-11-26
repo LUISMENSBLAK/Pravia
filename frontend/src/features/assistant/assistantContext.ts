@@ -19,7 +19,8 @@ export function resolveAssistantContext(location: Pick<Location, 'pathname' | 'h
   const first = segments[0] ?? '';
   const module = (first === 'riesgos' ? 'compliance' : first === 'calculo-isr' ? 'isr' : first === 'mi-dia' ? 'mi-dia' : first in labels ? first : 'unknown') as AssistantModule;
   const agendaEventId = module === 'agenda' ? new URLSearchParams(location.hash.replace(/^#/, '')).get('evento') : null;
-  const entityType = agendaEventId ? 'evento' : first === 'riesgos' && segments[1] === 'revisiones' && segments[2] ? 'complianceReview' : segments[1] ? entityRoutes.get(first) : undefined;
+  const isCreateRoute = ['nuevo', 'nueva', 'new', 'alta', 'crear'].includes(decodeURIComponent(segments[1] || '').toLowerCase());
+  const entityType = agendaEventId ? 'evento' : first === 'riesgos' && segments[1] === 'revisiones' && segments[2] ? 'complianceReview' : segments[1] && !isCreateRoute ? entityRoutes.get(first) : undefined;
   const query = new URLSearchParams(location.search || '');
   const contextual = {
     expedienteId: entityType === 'expediente' ? segments[1] : query.get('expediente_id') || undefined,

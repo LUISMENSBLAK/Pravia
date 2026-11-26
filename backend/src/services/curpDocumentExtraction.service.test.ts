@@ -25,6 +25,18 @@ async function syntheticCurpPdf() {
 }
 
 describe('extracción determinística CURP PDF', () => {
+  it('perfil completo añade visión de todas las páginas y conserva la CURP local si el proveedor falla', async () => {
+    const bytes = await syntheticCurpPdf();
+    const execute = vi.fn().mockRejectedValue(new PlatformDomainError('AI_PROVIDER_TIMEOUT', 'Tiempo agotado', 504));
+    const result = await extraerMultiplesDocumentos([{ buffer: bytes, mimeType: 'application/pdf', tipoDocumento: 'CURP', documentoId: 'curp-profile', nombreOriginal: 'CURP_SINTETICA.pdf' }], {
+      actor: { userId: 'qa', organizationId: 'org', membershipId: 'member', role: 'ABOGADO', permissions: ['ia.execute'], scope: 'ASSIGNED_OBJECTS', sessionId: 'session' },
+      idempotencyKey: 'full-profile', traceId: 'full-profile', fullProfile: true, gateway: { execute },
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute.mock.calls[0][0].payload.body.input[0].content).toContainEqual(expect.objectContaining({ type: 'input_file', file_data: `data:application/pdf;base64,${bytes.toString('base64')}` }));
+    expect(result.campos).toMatchObject([{ campo: 'curp', valor: 'GARA900101HDFRBC09' }]);
+    expect(result.errores).toEqual([expect.objectContaining({ documento_id: 'curp-profile', code: 'AI_PROVIDER_TIMEOUT' })]);
+  });
   it('conserva la lectura local real y declara el análisis parcial si falla la IA de otro documento', async () => {
     const execute = vi.fn().mockRejectedValue(new PlatformDomainError('AI_EXTERNAL_DISABLED', 'IA deshabilitada en este entorno.', 503));
     const result = await extraerMultiplesDocumentos([

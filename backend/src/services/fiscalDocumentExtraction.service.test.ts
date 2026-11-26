@@ -1,8 +1,9 @@
 import { createCanvas } from '@napi-rs/canvas';
 import { PDFDocument, StandardFonts } from 'pdf-lib';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fiscalCsfSynthetic } from '../fixtures/fiscalCsf.synthetic';
 import { FiscalDocumentExtractionService, parseFiscalCsfText } from './fiscalDocumentExtraction.service';
+import { extraerMultiplesDocumentos } from './openaiDocument.service';
 
 const extractor = new FiscalDocumentExtractionService();
 async function pdf(text: string) {
@@ -26,6 +27,20 @@ function png(text: string, fontSize = 32) {
 const file = (buffer: Buffer, originalname: string, mimetype: string) => ({ buffer, originalname, mimetype, size: buffer.length });
 
 describe('CSF sintéticas sin validez fiscal · extracción real', () => {
+  it('no pierde CURP ni actividades ya leídas al pasar al perfil de Comparecientes', async () => {
+    const bytes = await pdf('CONSTANCIA DE SITUACION FISCAL\nRFC: QAFA010101QA1\nCURP: GARA900101HDFRBC78\nNombre(s): PERSONA\nPrimer Apellido: PRUEBA\nSegundo Apellido: SINTETICA\nCodigo Postal: 63735\nActividades Economicas:\n1 SERVICIOS DE ARQUITECTURA 100 01/01/2020\nRegimenes:');
+    const execute = vi.fn();
+    const result = await extraerMultiplesDocumentos([{ buffer: bytes, mimeType: 'application/pdf', tipoDocumento: 'CONSTANCIA_FISCAL', documentoId: 'csf', nombreOriginal: 'CSF_SINTETICA.pdf' }], {
+      actor: { userId: 'qa', organizationId: 'org', membershipId: 'member', role: 'DIRECCION', permissions: ['ia.execute'], scope: 'GLOBAL', sessionId: 'session' },
+      idempotencyKey: 'csf-fields', traceId: 'csf-fields', gateway: { execute },
+    });
+    expect(execute).not.toHaveBeenCalled();
+    expect(result.campos).toEqual(expect.arrayContaining([
+      expect.objectContaining({ campo: 'curp', valor: 'GARA900101HDFRBC78', documento_id: 'csf' }),
+      expect.objectContaining({ campo: 'actividad_economica', valor: 'SERVICIOS DE ARQUITECTURA', documento_id: 'csf' }),
+    ]));
+    expect(result.actividades_economicas).toEqual([{ actividad: 'SERVICIOS DE ARQUITECTURA', porcentaje: '100' }]);
+  });
   it('lee etiquetas de CSF tabular sin inventar la clave SAT ausente', () => {
     const parsed = parseFiscalCsfText(`CONSTANCIA DE SITUACIÓN FISCAL
 Lugar y Fecha de Emisión

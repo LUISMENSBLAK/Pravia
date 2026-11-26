@@ -40,7 +40,7 @@ describe('EXP-008 · prellenado temporal desde comprobante', () => {
     expect(result.evidencia.some((item) => item.campo === 'monto')).toBe(false);
     expect(ai.extract).toHaveBeenCalledTimes(1);
     expect(ai.usage).not.toHaveBeenCalled();
-    expect(ai.extract).toHaveBeenCalledWith(expect.anything(), 'EXP008', 'GENERAL', expect.objectContaining({ idempotencyKey: 'prefill-multi:general', traceId: 'prefill-multi' }));
+    expect(ai.extract).toHaveBeenCalledWith(expect.anything(), 'EXP008', 'GENERAL', expect.objectContaining({ idempotencyKey: 'prefill-multi:general', traceId: 'prefill-multi:general' }));
   });
 
   it('devuelve sólo sugerencias claras sin persistir ingreso, documento ni movimiento', async () => {
@@ -79,6 +79,7 @@ describe('EXP-008 · prellenado temporal desde comprobante', () => {
     expect(result.monto_reportado).toBe('123.45');
     expect(ai.extract).toHaveBeenCalledTimes(2);
     expect(ai.extract).toHaveBeenLastCalledWith(expect.anything(), 'EXP008', 'AMOUNT', expect.objectContaining({ idempotencyKey: 'prefill-recovery:amount' }));
+    expect(new Set(ai.extract.mock.calls.map(call => call[3].traceId)).size).toBe(2);
     expect(ai.usage).not.toHaveBeenCalled();
     expect(Object.keys(db)).toEqual(['expediente']);
   });

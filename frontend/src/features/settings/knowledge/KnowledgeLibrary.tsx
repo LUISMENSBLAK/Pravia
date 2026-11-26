@@ -3,6 +3,7 @@ import { BookOpenText, ChevronRight, CircleHelp, ExternalLink, Pencil, Plus, Sea
 import { settingsService } from '../settings.service';
 import { useAuth } from '../../auth/AuthProvider';
 import styles from './KnowledgeLibrary.module.css';
+import { KnowledgeDocumentUpload, KnowledgeVersionReview } from './KnowledgeDocumentUpload';
 
 type Version = { id: string; version: number; label: string; verification_status: string; effective_from?: string | null; effective_to?: string | null };
 type Source = { id: string; inventory_code: string; title: string; jurisdiction: string; category: string; authority?: string | null; source_url?: string | null; applicability?: string | null; ingestion_status: string; versions: Version[] };
@@ -25,6 +26,10 @@ export function KnowledgeLibrary() {
   const [selected, setSelected] = useState<Source | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [documentUpload,setDocumentUpload]=useState<{source?:Source}|null>(null);
+  const [reviewVersion,setReviewVersion]=useState<{source:Source;version:Version}|null>(null);
+  const [sourcesReload,setSourcesReload]=useState(0);
+  const [notice,setNotice]=useState('');
   const [retrieval, setRetrieval] = useState<{ status: string; message?: string | null; evidence: Evidence[] } | null>(null);
   const [criteria, setCriteria] = useState<Criterion[]>([]);
   const [selectedCriterion, setSelectedCriterion] = useState<Criterion | null>(null);
@@ -44,7 +49,7 @@ export function KnowledgeLibrary() {
         .finally(() => setLoading(false));
     }, 220);
     return () => window.clearTimeout(timer);
-  }, [query, jurisdiction, category, collection]);
+  }, [query, jurisdiction, category, collection, sourcesReload]);
   useEffect(() => {
     if (collection !== 'CRITERIOS INTERNOS') return;
     setCriteriaLoading(true); setError('');
@@ -94,6 +99,8 @@ export function KnowledgeLibrary() {
   return <section className={styles.library}>
     <aside className={styles.collections} aria-label="Colecciones de conocimiento"><header><BookOpenText /><div><strong>Biblioteca jurídica</strong><small>{payload?.pagination.total ?? 0} fuentes inventariadas</small></div></header>{collections.map((item) => <button type="button" key={item} aria-current={collection === item ? 'page' : undefined} onClick={() => setCollection(item)}><span>{item}</span><ChevronRight /></button>)}</aside>
     <main className={styles.explorer}>
+      {canManage&&<div className={styles.criterionActions}><button type="button" onClick={()=>setDocumentUpload({})}><Plus size={16}/>Cargar documento jurídico</button></div>}
+      {notice&&<p role="status">{notice}</p>}
       <div className={styles.searchBar}><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar fuente, artículo o materia…" aria-label="Buscar en Biblioteca jurídica" /><button type="button" onClick={() => void retrieve()} disabled={query.trim().length < 3}>Buscar fundamento</button></div>
       {error && <div className={styles.error} role="alert">{error}</div>}
       {retrieval && <section className={styles.evidence} aria-label="Paquete de evidencia"><header><div><CircleHelp /><strong>Fundamento</strong></div><button type="button" onClick={() => setRetrieval(null)}>Cerrar</button></header>{retrieval.message ? <p className={styles.insufficient}>{retrieval.message}</p> : <ul>{retrieval.evidence.map((item, index) => <li key={`${item.source_id}-${item.version}-${index}`}><strong>{item.inventory_code} · {item.title}</strong><small>Versión {item.version} · {item.jurisdiction} · {item.category}</small><p>{item.article_fragment}</p>{item.official_url && <a href={item.official_url} target="_blank" rel="noreferrer">Ver fuente oficial <ExternalLink /></a>}</li>)}</ul>}<p className={styles.disclosure}>Se muestra evidencia verificable y explicación práctica; no razonamiento interno privado.</p></section>}
@@ -104,6 +111,9 @@ export function KnowledgeLibrary() {
         <section className={styles.sourceList} aria-label="Fuentes">{loading ? <p>Cargando fuentes…</p> : visible.length ? visible.map((source) => <button type="button" key={source.id} aria-current={selected?.id === source.id ? 'true' : undefined} onClick={() => setSelected(source)}><span><b>{source.inventory_code}</b><strong>{source.title}</strong><small>{source.jurisdiction} · {source.category}</small></span><i data-status={source.versions[0]?.verification_status || 'PENDIENTE'}>{source.versions[0]?.verification_status === 'VERIFICADA' ? 'Verificada' : 'Pendiente'}</i></button>) : <p>No hay fuentes en esta colección.</p>}</section>
         <article className={styles.detail}>{selected ? <><header><span>{selected.inventory_code}</span><h2>{selected.title}</h2><p>{selected.authority || 'Autoridad no registrada'}</p></header><dl><div><dt>Jurisdicción</dt><dd>{selected.jurisdiction}</dd></div><div><dt>Categoría</dt><dd>{selected.category}</dd></div><div><dt>Estado de ingesta</dt><dd>{selected.ingestion_status.replaceAll('_', ' ')}</dd></div><div><dt>Aplicabilidad</dt><dd>{selected.applicability || 'Pendiente de clasificación'}</dd></div></dl><section><h3>Versiones</h3>{selected.versions.length ? selected.versions.map((version) => <div className={styles.version} key={version.id}><ShieldCheck /><span><strong>V{version.version} · {version.label}</strong><small>{version.verification_status} · {version.effective_from ? new Date(version.effective_from).toLocaleDateString('es-MX') : 'Vigencia pendiente'}</small></span></div>) : <p>La metadata está inventariada; todavía no existe texto oficial verificado.</p>}</section>{selected.source_url && <a className={styles.officialLink} href={selected.source_url} target="_blank" rel="noreferrer">Abrir URL oficial <ExternalLink /></a>}</> : <p>Selecciona una fuente.</p>}</article>
       </div>}
+      {documentUpload&&<KnowledgeDocumentUpload source={documentUpload.source} onClose={()=>setDocumentUpload(null)} onSaved={()=>{setDocumentUpload(null);setSourcesReload(v=>v+1);setNotice('Documento conservado como pendiente. Revisa el texto, la fuente y la vigencia antes de habilitarlo para la IA.');}}/>}
+      {reviewVersion&&<KnowledgeVersionReview key={reviewVersion.version.id} sourceId={reviewVersion.source.id} version={reviewVersion.version} canManage={canManage} onClose={()=>setReviewVersion(null)} onVerified={()=>{setReviewVersion(null);setSourcesReload(v=>v+1);setNotice('Versión verificada. Su uso en consultas respeta la fecha de vigencia y el alcance de esta organización.');}}/>}
+      {selected&&collection!=='CRITERIOS INTERNOS'&&<section className={styles.criterionActions} aria-label="Acciones documentales de la fuente">{canManage&&<button type="button" onClick={()=>setDocumentUpload({source:selected})}>Agregar versión a {selected.inventory_code}</button>}{selected.versions.map(version=><button key={version.id} type="button" onClick={()=>setReviewVersion({source:selected,version})}>Revisar texto y original V{version.version}</button>)}</section>}
     </main>
   </section>;
 }

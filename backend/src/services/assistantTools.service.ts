@@ -300,7 +300,7 @@ const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
     });
     return {
       data: packet,
-      provenance: packet.evidence.map((item) => source('KnowledgeSource', item.source_id, `${item.inventory_code} · ${item.title} · ${item.label}`, '/configuracion/biblioteca-conocimiento')),
+      provenance: [...packet.evidence.map((item) => source('KnowledgeSource', item.source_id, `${item.inventory_code} · ${item.title} · ${item.label}`, '/configuracion/biblioteca-conocimiento')),...packet.internal_criteria.map(item=>source('KnowledgeCriterion',item.id,`${item.code} · ${item.title} · CRITERIO INTERNO, NO ES NORMA`,'/configuracion/biblioteca-conocimiento'))],
       truncated: packet.evidence.length >= boundedLimit(args.limit, 8),
     };
   },

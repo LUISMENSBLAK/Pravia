@@ -1,9 +1,12 @@
 import { Router } from 'express';
 import { addKnowledgeVersion, createKnowledgeCriterion, detectKnowledgeVersion, importKnowledgeInventory, listKnowledgeCriteria, listKnowledgeSources, registerKnowledgeImpact, retrieveKnowledge, updateKnowledgeCriterion, verifyKnowledgeVersion } from '../controllers/knowledge.controller';
 import { requirePermission } from '../middleware/auth.middleware';
+import { knowledgeUpload, uploadKnowledgeDocument, readKnowledgeDocument } from '../controllers/knowledge.controller';
 
 const router = Router();
 router.get('/sources', requirePermission('configuracion.catalogos.read'), listKnowledgeSources);
+router.post('/documents', requirePermission('configuracion.manage'), knowledgeUpload.single('file'), uploadKnowledgeDocument);
+router.get('/sources/:sourceId/versions/:versionId', requirePermission('configuracion.catalogos.read'), readKnowledgeDocument);
 router.get('/criteria', requirePermission('configuracion.catalogos.read'), listKnowledgeCriteria);
 router.post('/retrieve', requirePermission('configuracion.catalogos.read'), retrieveKnowledge);
 router.post('/inventory', requirePermission('configuracion.manage'), importKnowledgeInventory);

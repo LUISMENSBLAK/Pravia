@@ -9,6 +9,7 @@ import { extraerMultiplesDocumentos, getOpenAIModelName, type DocumentoParaExtra
 import { calculateISR, ISRCalculationInput, ISRRateBracket, ISRRuleSetSnapshot, ISRValidationError } from '../domain/isrTaxEngine';
 import { buildISRV3RuleSnapshot, calculateISRV3, ISR_V3_CALCULATION_REVISION, type ISRV3Input, type ISRV3Result } from '../domain/isrV3Engine';
 import { applyISRProposal, describeISRProposal, normalizeISRExtractionFields } from '../domain/isrProposal';
+import { canonicalExtractedValue } from '../domain/documentExtraction';
 import { interpretISROperationWithAI } from './isrOperationInterpretation.service';
 import { aiGateway, type AiGatewayExecutor } from '../platform/aiGateway.runtime';
 import { comparecienteObjectWhere } from './objectAccess.service';
@@ -710,9 +711,10 @@ export class ISRService {
     const extraction = await extraerMultiplesDocumentos(readable, {
       actor: { userId: user.id, organizationId: user.organizationId, membershipId: user.membershipId,
         role: user.rol, permissions: user.permissions, scope: user.scope, sessionId: user.sessionId },
-      idempotencyKey: operationId, traceId: operationId,
+      idempotencyKey: operationId, traceId: operationId, purpose: 'ISR',
     });
-    const fields = normalizeISRExtractionFields(extraction.campos);
+    const fields = normalizeISRExtractionFields(extraction.campos).map(field => ({ ...field,
+      valor: canonicalExtractedValue(field.campo, field.valor), fragmento: field.fragmento || field.valor }));
     if (fields.some((field) => !readable.some((source) => source.documentoId === field.documento_id))) throw new ISRValidationError('ISR_EXTRACTION_SOURCE_INVALID', 'La propuesta no identifica inequívocamente un documento del cálculo.', undefined, 409);
     const groups = new Map<string, typeof fields>();
     for (const field of fields) { const list = groups.get(field.campo) || []; list.push(field); groups.set(field.campo, list); }
