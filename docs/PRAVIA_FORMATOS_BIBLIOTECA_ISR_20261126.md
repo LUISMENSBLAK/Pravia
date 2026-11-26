@@ -2,6 +2,8 @@
 
 ## Estado del cierre local
 
+Actualización posterior: el código de esta validación se publicó en `main`, Render y Netlify mediante `72972c9cb949f7cedeec246648585dce61bf0005`. La migración productiva y la configuración IA equivalente se completaron, con respaldo restaurado y comprobaciones productivas. El estado final de publicación está en [PRAVIA_PUBLICATION_20261126.md](PRAVIA_PUBLICATION_20261126.md); las referencias a «sin publicar» en este informe describen el corte local previo, no el estado posterior del rollout.
+
 Las tres actualizaciones cuentan con implementación y pruebas locales sobre PostgreSQL aislado, API y Chrome. No se hizo commit, push, deploy ni cambio de configuración productiva. La rama sigue siendo `codex/release-pravia-20261028`, con HEAD `dedb7076077b15d2243486de8ca7e8145d4543cd`; se conservaron las modificaciones anteriores de extracción.
 
 La evidencia funcional usa datos sintéticos y archivos marcados como QA sin validez. Los resultados de esta ronda no certifican todos los formatos bancarios reales, toda salida jurídica de IA ni el comportamiento de una configuración productiva distinta.
