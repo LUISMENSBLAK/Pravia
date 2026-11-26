@@ -2287,7 +2287,7 @@ model ExpedienteArtefactoPendiente {
   expediente_id                   String                             @db.Uuid
   expediente_acto_id              String?                            @db.Uuid
   artefacto_id                    String                             @db.Uuid
-  regla_id                        String                             @db.Uuid
+  regla_id                        String?                            @db.Uuid
   artefacto_version_id            String                             @db.Uuid
   normativa_revision_id           String?                            @db.Uuid
   sujeto_tipo                     ExpedienteArtefactoSujeto
@@ -2314,7 +2314,7 @@ model ExpedienteArtefactoPendiente {
   expediente                      Expediente                         @relation("Exp006PendingExpediente", fields: [expediente_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
   expedienteActo                  ExpedienteActo?                    @relation("Exp006PendingAct", fields: [expediente_acto_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
   artefacto                       CatalogoArtefacto                  @relation("Exp006PendingArtifact", fields: [artefacto_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
-  regla                           CatalogoArtefactoRegla             @relation("Exp006PendingRule", fields: [regla_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
+  regla                           CatalogoArtefactoRegla?            @relation("Exp006PendingRule", fields: [regla_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
   artefactoVersion                CatalogoArtefactoVersion           @relation("Exp006PendingMasterVersion", fields: [artefacto_version_id], references: [id], onDelete: Restrict, onUpdate: NoAction)
   normativaRevision               CatalogoNormativaRevision?         @relation("Exp006PendingNormativeRevision", fields: [normativa_revision_id, organization_id], references: [id, organization_id], onDelete: Restrict, onUpdate: NoAction)
   currentDocument                 Documento?                         @relation("Exp006PendingCurrentDocument", fields: [current_document_id], references: [id], onDelete: Restrict, onUpdate: NoAction)

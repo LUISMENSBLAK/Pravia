@@ -284,6 +284,7 @@ export class ExpedienteArtifactsService {
     }
     const obsolete = await tx.expedienteArtefactoPendiente.findMany({ where: {
       organization_id: actor.organizationId, expediente_id: expedienteId, en_alcance: true,
+      regla_id: { not: null }, // Recovery must preserve manual selections unknown to the old resolver.
       ...(activeKeys.size ? { identity_key: { notIn: [...activeKeys] } } : {}),
     } });
     for (const row of obsolete) {
@@ -378,8 +379,9 @@ export class ExpedienteArtifactsService {
 
   private async pending(db: Db, actor: Exp006Actor, expedienteId: string, pendingId: string, access: 'read' | 'write' = 'write') {
     await this.assertExpediente(db, actor, expedienteId, access);
-    const row = await db.expedienteArtefactoPendiente.findFirst({ where: { id: pendingId, organization_id: actor.organizationId, expediente_id: expedienteId, en_alcance: true } });
+    const row = await db.expedienteArtefactoPendiente.findFirst({ where: { id: pendingId, organization_id: actor.organizationId, expediente_id: expedienteId, ...(access === 'read' ? {} : { en_alcance: true }) } });
     if (!row) throw new ExpedienteArtifactsError(403, 'EXP006_PENDING_ACCESS_DENIED', 'No tienes acceso a este pendiente.');
+    if (access === 'write' && !row.regla_id) throw new ExpedienteArtifactsError(409, 'EXP006_RECOVERY_MANUAL_READ_ONLY', 'El formato manual se conserva en modo de recuperación; su edición requiere la versión nueva.');
     return row;
   }
 
