@@ -141,7 +141,7 @@ export type QuoteAIProposal = {
   id: string; status: 'PENDIENTE' | 'APLICADA' | 'DESCARTADA' | 'SUPERADA'; created_at: string;
   model_version: string;
   proposal: { concepts: Array<{ categoria: QuoteConceptCategory; concepto: string; importe: number; explanation?: { layer: string; sample_size?: number; range?: { min: number; median: number; max: number }; reason: string } }>; totals: { total: string | number } };
-  evidence_packet: { layers?: { tariff?: Array<{ code: string; title: string; official_url?: string | null }>; internal_policy?: Array<{ code: string; title: string; label: string }>; validated_comparables?: { sample_quotes: number; act: string } }; taxes_notice?: string };
+  evidence_packet: { layers?: { tariff?: Array<{ code: string; title: string; official_url?: string | null }>; internal_policy?: Array<{ code: string; title: string; label: string }>; validated_comparables?: { sample_quotes: number; act: string }; legal_library?: { evidence: Array<{ source_id: string; title: string; label: string; version: number; article_heading?: string | null; article_fragment: string; official_url?: string | null; jurisdiction: string }>; official_directories?: Array<{ title: string; url: string }> } }; legal_review?: Array<{ category: string; status: string; message: string; amount?: string; article?: string; official_url?: string; uma_url?: string }>; taxes_notice?: string };
 };
 
 export type QuoteMetrics = { sent: number; accepted: number; totalAmount: number; conversionRate: number | null };

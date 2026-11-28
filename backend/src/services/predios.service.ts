@@ -5,7 +5,7 @@ import { predioObjectWhere, canAccessDocumento } from './objectAccess.service';
 import { expedienteAccessWhere } from '../middleware/auth.middleware';
 import { downloadFile } from './supabase.service';
 import { extraerPredioDesdeDocumento } from './openaiDocument.service';
-import { isAbsentDocumentValue } from '../domain/documentExtraction';
+import { orderPropertyCandidates, propertyDocumentKind, propertyDocumentRules, propertyIdentityMismatch, propertyTargetFrom } from '../domain/propertyDocumentPolicy';
 import { PlatformDomainError } from '../platform/platform.errors';
 
 type Actor = NonNullable<Request['user']>;
@@ -78,13 +78,14 @@ const decimalFields = [
   'superficie_terreno_m2', 'superficie_construccion_m2', 'superficie_construccion_comercial_m2',
   'valor_catastral', 'valor_avaluo', 'valor_operacion',
 ] as const;
-const aiFields = new Set<string>([...scalarFields, ...decimalFields, 'datos_registrales', 'colindancias']);
+const aiFields = new Set(Object.keys(propertyDocumentRules));
 const propertyAiApplicableFields = [...aiFields];
+const scalarLimits: Record<string, number> = { apodo: 160, ubicacion_texto: 500, numero_exterior: 80, numero_interior: 80, codigo_postal: 20, pais: 120, descripcion: 30_000, colindancias: 120_000, datos_registrales: 2_000 };
 const currentDocumentStatuses = ['PENDIENTE', 'VIGENTE', 'POR_VENCER'] as const;
 
 function normalizeInput(input: PredioInput) {
   const data: Record<string, unknown> = {};
-  for (const field of scalarFields) data[field] = upperText(input[field], field === 'descripcion' ? 5_000 : 500);
+  for (const field of scalarFields) data[field] = field === 'descripcion' ? text(input[field], scalarLimits[field]) : upperText(input[field], scalarLimits[field] || 180);
   for (const field of decimalFields) data[field] = decimal(input[field], field.replace(/_/g, ' '), field.startsWith('valor_') ? 2 : 4);
   if (input.datos_registrales === null || input.datos_registrales === undefined || input.datos_registrales === '') data.datos_registrales = Prisma.JsonNull;
   else if (typeof input.datos_registrales === 'object') data.datos_registrales = json(input.datos_registrales);
@@ -282,6 +283,7 @@ export class PrediosService {
               role: actor.rol, permissions: actor.permissions, scope: actor.scope, sessionId: actor.sessionId },
             idempotencyKey: `${idempotencyKey}:document:${link.documento_id}`,
             traceId: `${idempotencyKey}:document:${link.documento_id}`,
+            propertyTarget: propertyTargetFrom(current as unknown as Record<string, unknown>),
           },
         ),
       })));
@@ -294,22 +296,44 @@ export class PrediosService {
         throw new PredioError(422, 'PREDIO_AI_NO_READABLE_SOURCE', 'No fue posible interpretar ninguno de los documentos seleccionados. Revisa el formato y la disponibilidad de los archivos y vuelve a intentar.');
       }
       const results = succeeded.map((entry) => entry.result);
-      const resultLinks = succeeded.map((entry) => entry.link);
       const extractionId = crypto.randomUUID();
       const currentData = current as unknown as Record<string, unknown>;
-      const candidates = results.flatMap((result, index) => result.campos.filter((field) => aiFields.has(field.campo) && !isAbsentDocumentValue(field.valor)).map((field) => ({ ...field, documento_id: resultLinks[index].documento_id, documento_nombre: resultLinks[index].documento.nombre_original })));
-      const proposals = [...new Set(candidates.map((field) => field.campo))].map((campo) => {
-        const values = candidates.filter((field) => field.campo === campo); const unique = [...new Set(values.map((field) => text(field.valor, 5_000)).filter(Boolean))]; const chosen = values[0];
-        return { campo, valor_actual: proposalValue(currentData[campo]), valor_propuesto: unique.length === 1 ? unique[0] : null, pagina: chosen.pagina || null, seccion: text(chosen.seccion, 180), fragmento_fuente: text(chosen.fragmento, 800), confianza: chosen.confianza, fuentes: values.map((field) => ({ documento_id: field.documento_id, nombre: field.documento_nombre, valor: text(field.valor, 5_000) })), conflicto: unique.length > 1 };
+      const rankAlerts: string[] = [];
+      const candidates = succeeded.flatMap(({ link, result }) => {
+        const tipo = propertyDocumentKind(result.tipo_documental || link.documento.nombre_original) || (!result.tipo_documental ? propertyDocumentKind(link.tipo_vinculo) : undefined);
+        if (!tipo) { rankAlerts.push(`${link.documento.nombre_original}: no se acreditó un tipo de fuente admitido para llenar la ficha.`); return []; }
+        const identifiers = Object.fromEntries(result.campos.filter(field => ['clave_catastral', 'cuenta_predial', 'folio_real'].includes(field.campo) && propertyDocumentRules[field.campo].includes(tipo) && field.confianza === 'LECTURA_CLARA').map(field => [field.campo, field.valor]));
+        if (propertyIdentityMismatch(currentData, identifiers)) { rankAlerts.push(`${link.documento.nombre_original}: un identificador no coincide con la ficha; verifica que sea el mismo inmueble antes de reutilizar esos datos.`); return []; }
+        const fields = result.campos.filter(field => field.campo !== 'colindancias' && aiFields.has(field.campo));
+        if (tipo === 'ANTECEDENTE' && result.colindancias.length) {
+          const boundaries = result.colindancias.map(({ pagina, fragmento, ...item }) => {
+            if (!item.medida) return { ...item, medida: null };
+            try { return { ...item, medida: decimal(normalizeAIProposalDecimal(item.medida), 'medida propuesta')?.toString() }; }
+            catch { rankAlerts.push(`${link.documento.nombre_original}: una medida de colindancia requiere revisión manual.`); return { ...item, medida: null, descripcion: [item.descripcion, fragmento || item.medida].filter(Boolean).join('\n') }; }
+          });
+          fields.push({ campo: 'colindancias', valor: JSON.stringify(boundaries), pagina: result.colindancias[0]?.pagina, fragmento: result.colindancias.map(item => item.fragmento).filter(Boolean).join('\n'), confianza: 'LECTURA_DUDOSA' });
+        }
+        return fields.map(field => ({ ...field, tipo, principal: link.es_antecedente_principal, documento_id: link.documento_id, documento_nombre: link.documento.nombre_original, fecha: link.fecha_vinculo, modelo: result.modelo }));
       });
-      const boundaries = results.flatMap((result, index) => result.colindancias.map((item) => ({ ...item, documento_id: resultLinks[index].documento_id })));
-      if (boundaries.length) proposals.push({ campo: 'colindancias', valor_actual: JSON.stringify(current.colindancias), valor_propuesto: JSON.stringify(boundaries), pagina: null, seccion: null, fragmento_fuente: null, confianza: 'LECTURA_DUDOSA', fuentes: resultLinks.map((link) => ({ documento_id: link.documento_id, nombre: link.documento.nombre_original, valor: 'Colindancias propuestas' })), conflicto: false });
+      const mixedProperty = ['clave_catastral','cuenta_predial','folio_real'].some(campo => new Set(candidates.filter(item => item.campo === campo && item.confianza === 'LECTURA_CLARA' && propertyDocumentRules[campo]?.includes(item.tipo)).map(item => item.valor.toUpperCase().replace(/[^0-9A-Z]/g, ''))).size > 1);
+      if (mixedProperty) rankAlerts.push('Los documentos no coinciden en sus identificadores. Revisa y vuelve a seleccionar únicamente fuentes del mismo inmueble.');
+      const proposals = propertyAiApplicableFields.flatMap(campo => {
+        const { ordered, selected, conflict, unresolved } = orderPropertyCandidates(campo, candidates, value => { try { return new Prisma.Decimal(normalizeAIProposalDecimal(value)).toString(); } catch { return value; } });
+        if (!selected) return [];
+        const raw = selected.valor.trim();
+        const cap = scalarLimits[campo] || 180;
+        const parseInvalid = /^(?:superficie_|valor_)/.test(campo) && !(() => { try { return /^\d+(?:\.\d+)?$/.test(normalizeAIProposalDecimal(raw)); } catch { return false; } })();
+        const unavailable = mixedProperty || unresolved || parseInvalid || raw.length > cap;
+        if (!unavailable && conflict) rankAlerts.push(`${campo.replace(/_/g, ' ')}: discrepancia documental; se propone la fuente prioritaria para tu revisión.`);
+        if (raw.length > cap || parseInvalid) rankAlerts.push(`${campo.replace(/_/g, ' ')}: revisa y captura manualmente la lectura; no se truncó ni corrigió.`);
+        return [{ campo, valor_actual: proposalValue(currentData[campo]), valor_propuesto: unavailable ? null : raw, pagina: selected.pagina || null, seccion: text(selected.seccion, 180), fragmento_fuente: text(selected.fragmento, 800), confianza: selected.confianza, fuentes: ordered.map(field => ({ documento_id: field.documento_id, nombre: field.documento_nombre, valor: campo === 'colindancias' ? 'Segmentos transcritos del antecedente' : text(field.valor, cap), tipo: field.tipo, pagina: field.pagina || null, fecha_vinculo: field.fecha, confianza: field.confianza })), conflicto: unavailable, discrepancia: conflict, modelo: selected.modelo }];
+      });
       const found = new Set(proposals.map((item) => item.campo));
       const faltantes = propertyAiApplicableFields.filter((field) => !found.has(field));
       await this.prisma.$transaction(async (tx) => {
         for (const proposal of proposals) await tx.predioDatoFuente.create({ data: {
           organization_id: actor.organizationId, predio_id: predioId, extraccion_id: extractionId, documento_id: proposal.fuentes[0].documento_id, source_document_ids: json(proposal.fuentes.map((source) => source.documento_id)),
-          proveedor_ia: results[0].proveedor, modelo_ia: results[0].modelo,
+          proveedor_ia: results[0].proveedor, modelo_ia: proposal.modelo,
           estado: proposal.conflicto || (proposal.valor_actual && proposal.valor_actual !== proposal.valor_propuesto) ? 'EN_CONFLICTO' : 'PENDIENTE_CONFIRMACION',
           campo: proposal.campo, valor_actual: proposal.valor_actual, valor_propuesto: proposal.valor_propuesto,
           pagina: proposal.pagina, seccion: proposal.seccion, fragmento_fuente: proposal.fragmento_fuente, confianza: proposal.confianza,
@@ -317,10 +341,11 @@ export class PrediosService {
         await tx.auditLog.create({ data: {
           organization_id: actor.organizationId, user_id: actor.id, accion: 'PROPOSE_PROPERTY_FIELDS_AI', entidad: 'Predio', entidad_id: predioId,
           valores_nuevos: json({ extraccion_id: extractionId, documento_ids: ids, campos: proposals.map((item) => item.campo), conflictos: proposals.filter((item) => item.conflicto).map((item) => item.campo), faltantes, errores: extractionErrors.map((item) => ({ documento_id: item.documento_id, error: item.error })), persistencia_maestra: false }),
+          detalles: json({ fuentes_por_campo: proposals.map(item => ({ campo: item.campo, discrepancia: item.discrepancia, fuentes: item.fuentes.map(({ valor: _valor, nombre: _nombre, ...fuente }) => fuente) })) }),
           correlation_id: crypto.randomUUID(), session_id: actor.sessionId,
         } });
       });
-      return { extraccion_id: extractionId, documentos: links.map((link) => ({ id: link.documento_id, nombre: link.documento.nombre_original })), propuestas: proposals, faltantes, errores: extractionErrors, alertas: [...new Set(results.flatMap((result) => result.alertas))], conflictos: proposals.filter((item) => item.conflicto).map((item) => ({ campo: item.campo, fuentes: item.fuentes })), persisted_master: false };
+      return { extraccion_id: extractionId, documentos: links.map((link) => ({ id: link.documento_id, nombre: link.documento.nombre_original })), propuestas: proposals, faltantes, errores: extractionErrors, alertas: [...new Set([...rankAlerts, ...results.flatMap((result) => result.alertas)])], conflictos: proposals.filter((item) => item.conflicto).map((item) => ({ campo: item.campo, fuentes: item.fuentes })), persisted_master: false };
     } catch (error) {
       if (error instanceof PlatformDomainError) throw new PredioError(error.status, error.code, error.message);
       throw error;
@@ -338,11 +363,13 @@ export class PrediosService {
       for (const proposal of proposals) {
         const decision = input.decisions?.[proposal.campo];
         if (!decision) throw new PredioError(400, 'PREDIO_AI_DECISION_REQUIRED', 'Decide aceptar o conservar cada campo propuesto.');
+        if (decision === 'ACCEPT' && (!aiFields.has(proposal.campo) || proposal.valor_propuesto == null)) throw new PredioError(400, 'PREDIO_AI_DECISION_INVALID', 'No hay un valor aplicable para este campo. Conserva el actual o captura el valor manualmente.');
         if (decision === 'ACCEPT' && proposal.valor_propuesto != null) {
           if (proposal.campo === 'colindancias') boundaries = JSON.parse(proposal.valor_propuesto);
           else if (decimalFields.includes(proposal.campo as typeof decimalFields[number])) updates[proposal.campo] = decimal(normalizeAIProposalDecimal(proposal.valor_propuesto), proposal.campo, proposal.campo.startsWith('valor_') ? 2 : 4);
           else if (proposal.campo === 'datos_registrales') updates[proposal.campo] = json({ referencia: upperText(proposal.valor_propuesto, 2_000) });
-          else if (aiFields.has(proposal.campo)) updates[proposal.campo] = upperText(proposal.valor_propuesto, proposal.campo === 'descripcion' ? 5_000 : 500);
+          else if (proposal.campo === 'descripcion') updates[proposal.campo] = text(proposal.valor_propuesto, scalarLimits.descripcion);
+          else if (aiFields.has(proposal.campo)) updates[proposal.campo] = upperText(proposal.valor_propuesto, scalarLimits[proposal.campo] || 180);
         }
         await tx.predioDatoFuente.update({ where: { id: proposal.id }, data: { estado: decision === 'ACCEPT' ? 'CONFIRMADO' : 'DESCARTADO', decidido_por_id: actor.id, decidido_at: new Date() } });
       }

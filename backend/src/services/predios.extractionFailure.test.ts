@@ -33,7 +33,7 @@ describe('Predios: errores reales de extracción', () => {
     mocks.extract.mockImplementation(async (_doc, context) => {
       if (traces.has(context.traceId)) throw new PlatformDomainError('AI_SETTLEMENT_FAILED', 'Traza ya utilizada.', 503);
       traces.add(context.traceId);
-      return { proveedor: 'OpenAI', modelo: 'qa', campos: [{ campo: 'clave_catastral', valor: 'CAT-SINTETICO', confianza: 'LECTURA_CLARA' }], colindancias: [], alertas: [] };
+      return { proveedor: 'OpenAI', modelo: 'qa', tipo_documental: 'PREDIAL', campos: [{ campo: 'clave_catastral', valor: 'CAT-SINTETICO', confianza: 'LECTURA_CLARA' }], colindancias: [], alertas: [] };
     });
     const result = await service.proposeFromDocument(actor, 'property', ['one', 'two'], 'request');
     expect(result.errores).toEqual([]);

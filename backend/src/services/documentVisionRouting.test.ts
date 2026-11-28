@@ -1,6 +1,7 @@
 import { createCanvas } from '@napi-rs/canvas';
 import { readFileSync } from 'node:fs';
 import JSZip from 'jszip';
+import { PDFDocument } from 'pdf-lib';
 import { consolidateExtractedFields } from '../domain/documentExtraction';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ActorContext } from '../auth/actorContext';
@@ -23,6 +24,23 @@ const field = (id: string, campo: string, valor: string, confianza: string) => (
 afterEach(() => vi.unstubAllEnvs());
 
 describe('Contrato de visión documental · Gateway simulado, no proveedor real', () => {
+  it('no envía una escritura de condominio sin identificador guardado y aísla las páginas de la unidad al analizar', async () => {
+    const pdf = await PDFDocument.create();
+    for (let i=0;i<8;i+=1) pdf.addPage();
+    const doc = { buffer: Buffer.from(await pdf.save()), mimeType: 'application/pdf', nombreOriginal:'Escritura de condominio QA.pdf', tipoDocumento:'ANTECEDENTE', documentoId:'unit-qa' };
+    const execute = vi.fn().mockResolvedValue(reply({tipo_documental:'ANTECEDENTE',objeto:{alcance:'MULTIPLE',campo:'folio_real',valor:'QA123',fragmento:'Folio real: QA-123',pagina:4,paginas_unidad:[4,5]},
+      campos:[{campo:'folio_real',valor:'QA-123',pagina:4,fragmento:'Folio real: QA-123',confianza:'LECTURA_CLARA'},{campo:'regimen',valor:'Unidad ajena',pagina:8,fragmento:'Otra unidad',confianza:'LECTURA_CLARA'}],
+      colindancias:[{referencia:'Norte',pagina:5,fragmento:'Norte con pasillo'},{referencia:'Sur',pagina:8,fragmento:'En otra unidad'}],alertas:[]}));
+    const context={actor,idempotencyKey:'property-unit',traceId:'property-unit',gateway:{execute}};
+    const blocked=await extraerPredioDesdeDocumento(doc,context);
+    expect(execute).not.toHaveBeenCalled();
+    expect(blocked).toMatchObject({proveedor:'LOCAL',campos:[],colindancias:[]});
+    const scoped=await extraerPredioDesdeDocumento(doc,{...context,propertyTarget:{folio_real:'QA-123'}});
+    expect(scoped.campos).toEqual([expect.objectContaining({campo:'folio_real',confianza:'LECTURA_DUDOSA'})]);
+    expect(scoped.colindancias).toEqual([expect.objectContaining({referencia:'Norte'})]);
+    const outOfScope=await extraerPredioDesdeDocumento(doc,{...context,propertyTarget:{folio_real:'QA-999'}});
+    expect(outOfScope).toMatchObject({campos:[],colindancias:[]});
+  });
   it.each([
     [{ status:'incomplete', incomplete_details:{reason:'max_output_tokens'}, output:[] }, 'DOCUMENT_RESPONSE_INCOMPLETE'],
     [{ output:[{content:[{type:'refusal',refusal:'private provider details'}]}] }, 'DOCUMENT_RESPONSE_REFUSED'],

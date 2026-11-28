@@ -297,10 +297,11 @@ const READ_TOOL_HANDLERS: Partial<Record<AssistantToolName, ToolExecutor>> = {
     const packet = await new KnowledgeService(db).retrieve(input.user, {
       query: textArg(args.query, 500), jurisdiction: textArg(args.jurisdiction, 80), category: textArg(args.category, 120),
       legal_date: textArg(args.legal_date, 10), limit: boundedLimit(args.limit, 8),
+      include_document_reading: input.user.permissions.includes('configuracion.catalogos.read'),
     });
     return {
       data: packet,
-      provenance: [...packet.evidence.map((item) => source('KnowledgeSource', item.source_id, `${item.inventory_code} · ${item.title} · ${item.label}`, '/configuracion/biblioteca-conocimiento')),...packet.internal_criteria.map(item=>source('KnowledgeCriterion',item.id,`${item.code} · ${item.title} · CRITERIO INTERNO, NO ES NORMA`,'/configuracion/biblioteca-conocimiento'))],
+      provenance: [...packet.evidence.map((item) => source('KnowledgeSource', item.source_id, `${item.inventory_code} · ${item.title} · ${item.label}`, '/configuracion/biblioteca-conocimiento')),...packet.document_readings.map(item=>source('KnowledgeSource',item.source_id,`${item.title} · ${item.label} · ${item.reading_status}`,'/configuracion/biblioteca-conocimiento')),...packet.internal_criteria.map(item=>source('KnowledgeCriterion',item.id,`${item.code} · ${item.title} · CRITERIO INTERNO, NO ES NORMA`,'/configuracion/biblioteca-conocimiento'))],
       truncated: packet.evidence.length >= boundedLimit(args.limit, 8),
     };
   },

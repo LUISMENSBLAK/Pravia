@@ -10,6 +10,8 @@ export interface ExtractionField {
   documento_id?: string;
   pagina?: number;
   fragmento?: string;
+  verificacion_local?: 'MRZ_TD3' | 'MRZ_TD3_AMBIGUO' | 'BIRTH_DATE_LABEL';
+  mrz_control?: string;
 }
 
 export interface ExtractionConflict {
@@ -46,6 +48,7 @@ export function canonicalExtractedValue(campo: string, literal: string) {
   if (['curp', 'rfc'].includes(campo)) return literal.replace(/\s+/g, '').toUpperCase();
   const key = normalize(literal).replace(/[\s-]+/g, '_');
   const aliases: Record<string, Record<string, string>> = {
+    nacionalidad: { MEX: 'MEXICANA', MEXICO: 'MEXICANA', MEXICANO: 'MEXICANA', MEXICANA: 'MEXICANA', MEXICAN: 'MEXICANA' },
     estado_civil: { SOLTERA: 'SOLTERO', SOLTERO: 'SOLTERO', CASADA: 'CASADO', CASADO: 'CASADO', DIVORCIADA: 'DIVORCIADO', DIVORCIADO: 'DIVORCIADO', VIUDA: 'VIUDO', VIUDO: 'VIUDO', UNION_LIBRE: 'UNION_LIBRE' },
     regimen_matrimonial: { SEPARACION_DE_BIENES: 'SEPARACION_DE_BIENES', SOCIEDAD_CONYUGAL: 'SOCIEDAD_CONYUGAL', SOCIEDAD_LEGAL: 'SOCIEDAD_LEGAL' },
     sexo: { MASCULINO: 'MASCULINO', HOMBRE: 'MASCULINO', H: 'MASCULINO', FEMENINO: 'FEMENINO', MUJER: 'FEMENINO', F: 'FEMENINO' },
@@ -77,7 +80,7 @@ function sourceRank(field: ExtractionField) {
   return match === -1 ? rules.length + 1 : match;
 }
 
-export function consolidateExtractedFields(fields: ExtractionField[]) {
+export function consolidateExtractedFields(fields: ExtractionField[], options: { reconcileNames?: boolean } = {}) {
   const grouped = new Map<string, ExtractionField[]>();
   for (const field of fields) {
     const rawCampo = String(field.campo || '').trim();
@@ -105,7 +108,7 @@ export function consolidateExtractedFields(fields: ExtractionField[]) {
   };
   const paternal = uniqueSurname('apellido_paterno'), maternal = uniqueSurname('apellido_materno');
   const names = grouped.get('nombre') || [];
-  if (paternal && maternal) for (const field of names) {
+  if (options.reconcileNames !== false && paternal && maternal) for (const field of names) {
     const given = names.find(other => other !== field &&
       normalize(field.valor) === normalize(`${other.valor} ${paternal} ${maternal}`));
     if (given) {
@@ -170,6 +173,7 @@ export function consolidateExtractedFields(fields: ExtractionField[]) {
       confianza: selected.confianza,
       pagina: selected.pagina,
       fragmento: selected.fragmento,
+      ...(selected.verificacion_local === 'MRZ_TD3' ? { verificacion_local: selected.verificacion_local } : {}),
       estado: 'PENDIENTE_CONFIRMACION',
     };
   }

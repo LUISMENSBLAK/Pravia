@@ -1,18 +1,43 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { PDFParse } from 'pdf-parse';
-import { createWorker } from 'tesseract.js';
+import { createCanvas, loadImage } from '@napi-rs/canvas';
+import { createWorker, PSM } from 'tesseract.js';
 import { validateCurp } from '../domain/mexicanIdentity';
+import { readIneMrz, readInePrintedValidity, readPassportMrz, readPassportMrzCandidate } from '../domain/machineReadableIdentity';
 
 const normalize = (value: string) => value.normalize('NFC').replace(/\r/g, '').replace(/[ \t]+/g, ' ').trim();
 
-async function recognizeImages(images: Buffer[]) {
+type IdentityKind = 'CURP' | 'INE' | 'PASSPORT';
+
+async function recognizeImages(images: Buffer[], kind?: IdentityKind) {
   const languageDataDir = path.join(path.dirname(require.resolve('@tesseract.js-data/spa')), '4.0.0_best_int');
   const worker = await createWorker('spa', 1, { langPath: languageDataDir, cacheMethod: 'none' });
   try {
     const results: Array<{ page: number; text: string }> = [];
     for (const [index, image] of images.entries()) {
-      results.push({ page: index + 1, text: normalize((await worker.recognize(image)).data.text) });
+      const original = normalize((await worker.recognize(image)).data.text);
+      const alternatives = [original];
+      const isMrzDocument = kind === 'INE' || kind === 'PASSPORT';
+      if (isMrzDocument && !(kind === 'INE' ? readIneMrz(original) : readPassportMrz(original))) {
+        // Fixed, overlapping search zones cover a card photographed with a
+        // wide margin as well as a scanned page. No character substitutions.
+        const bitmap = await loadImage(image);
+        if (bitmap.width * bitmap.height <= 16_000_000) {
+          const windows = kind === 'INE' ? [[0.10, 0.30, 0.84, 0.28], [0.14, 0.16, 0.76, 0.36], [0.02, 0.55, 0.96, 0.43]] : [[0.02, 0.54, 0.96, 0.44], [0.02, 0.27, 0.96, 0.4], [0.42, 0.14, 0.56, 0.48]];
+          await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
+          for (const [left, top, width, height] of windows) {
+            const w = Math.floor(bitmap.width * width), h = Math.floor(bitmap.height * height);
+            if (w < 10 || h < 10) continue;
+            const scale = Math.min(2.4, 2150 / w);
+            const canvas = createCanvas(Math.ceil(w * scale), Math.ceil(h * scale));
+            canvas.getContext('2d').drawImage(bitmap, Math.floor(bitmap.width * left), Math.floor(bitmap.height * top), w, h, 0, 0, canvas.width, canvas.height);
+            alternatives.push(normalize((await worker.recognize(canvas.toBuffer('image/png'))).data.text));
+          }
+          await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
+        }
+      }
+      results.push({ page: index + 1, text: alternatives.join('\n\n') });
     }
     return results;
   } finally { await worker.terminate(); }
@@ -47,18 +72,18 @@ function assertBoundedImage(buffer: Buffer, mimeType: string) {
   }
 }
 
-async function ocrPdf(buffer: Buffer) {
+export async function readSmallScannedPdf(buffer: Buffer, maxPages: 3 | 6 = 3, kind?: IdentityKind) {
   const parser = new PDFParse({ data: buffer, maxImageSize: 16_000_000 });
   try {
     const info = await parser.getInfo();
-    if (info.total > 3) throw new Error('IDENTITY_OCR_PAGE_LIMIT');
+    if (info.total > maxPages) throw new Error('IDENTITY_OCR_PAGE_LIMIT');
     const sizes = (await parser.getInfo({ parsePageInfo: true })).pages;
     const longestSide = Math.max(0, ...sizes.flatMap((page) => [page.width, page.height]));
     if (sizes.length !== info.total || !Number.isFinite(longestSide) || longestSide <= 0) throw new Error('IDENTITY_OCR_PAGE_SIZE');
     const scale = Math.min(2.5, 2200 / longestSide);
-    const pages = (await parser.getScreenshot({ first: 3, scale, imageBuffer: true, imageDataUrl: false })).pages;
+    const pages = (await parser.getScreenshot({ first: maxPages, scale, imageBuffer: true, imageDataUrl: false })).pages;
     if (!pages.length || pages.some((page) => !page.data.length)) throw new Error('IDENTITY_OCR_RENDER_FAILED');
-    return await recognizeImages(pages.map((page) => Buffer.from(page.data)));
+    return await recognizeImages(pages.map((page) => Buffer.from(page.data)), kind);
   } finally { await parser.destroy(); }
 }
 
@@ -78,7 +103,7 @@ export type OcrIdentityDocumentResult = {
   method: 'LOCAL_OCR_PDF' | 'LOCAL_OCR_IMAGE';
   status: 'REVIEW_REQUIRED';
   recognized: boolean;
-  fields: Array<{ campo: 'curp'; valor: string; page: number; fragmento: string }>;
+  fields: Array<{ campo: 'curp' | 'folio_identificacion' | 'fecha_vencimiento_identificacion'; valor: string; page: number; fragmento: string; verificacion_local?: 'MRZ_TD3' | 'MRZ_TD3_AMBIGUO'; mrz_control?: string }>;
   identificadores_ine: { cic?: string; ocr?: string };
   warnings: string[];
 };
@@ -89,24 +114,28 @@ export type OcrIdentityDocumentResult = {
  * still a real OCR attempt, but remains REVIEW_REQUIRED and never mutates the
  * master record automatically.
  */
-export async function extractIdentityPdfWithLocalOcr(buffer: Buffer, documentId: string, kind: 'CURP' | 'INE'): Promise<OcrIdentityDocumentResult> {
+export async function extractIdentityPdfWithLocalOcr(buffer: Buffer, documentId: string, kind: IdentityKind): Promise<OcrIdentityDocumentResult> {
   if (!buffer.length || buffer.subarray(0, 5).toString('latin1') !== '%PDF-') throw new Error('IDENTITY_PDF_INVALID');
-  return extractIdentityFields(buffer, documentId, kind, await ocrPdf(buffer), 'LOCAL_OCR_PDF');
+  return extractIdentityFields(buffer, documentId, kind, await readSmallScannedPdf(buffer, 3, kind), 'LOCAL_OCR_PDF');
 }
 
-export async function extractIdentityImageWithLocalOcr(buffer: Buffer, documentId: string, kind: 'CURP' | 'INE', mimeType: string): Promise<OcrIdentityDocumentResult> {
+export async function extractIdentityImageWithLocalOcr(buffer: Buffer, documentId: string, kind: IdentityKind, mimeType: string): Promise<OcrIdentityDocumentResult> {
   assertBoundedImage(buffer, mimeType);
-  return extractIdentityFields(buffer, documentId, kind, await recognizeImages([buffer]), 'LOCAL_OCR_IMAGE');
+  return extractIdentityFields(buffer, documentId, kind, await recognizeImages([buffer], kind), 'LOCAL_OCR_IMAGE');
 }
 
-function extractIdentityFields(buffer: Buffer, documentId: string, kind: 'CURP' | 'INE',
+function extractIdentityFields(buffer: Buffer, documentId: string, kind: IdentityKind,
   pages: Array<{ page: number; text: string }>, method: OcrIdentityDocumentResult['method']): OcrIdentityDocumentResult {
   const combined = pages.map((page) => page.text).join('\n');
   const upper = combined.toUpperCase();
   const heading = upper.normalize('NFD').replace(/\p{Diacritic}/gu, '');
+  const ineMrz = kind === 'INE' ? readIneMrz(upper) : undefined;
+  const passportMrz = kind === 'PASSPORT' ? readPassportMrzCandidate(upper) : undefined;
   const recognized = kind === 'CURP'
     ? /CLAVE\s+UNICA\s+DE\s+REGISTRO\s+DE\s+POBLACION|CURP\s+CERTIFICADA/.test(heading)
-    : /INSTITUTO\s+NACIONAL\s+ELECTORAL|CREDENCIAL\s+PARA\s+VOTAR/.test(heading);
+    : kind === 'PASSPORT' ? Boolean(passportMrz)
+    : Boolean(ineMrz) || /INSTITUTO\s+NACIONAL\s+ELECTORAL|CREDENCIAL\s+PARA\s+VOTAR/.test(heading)
+    || (/\bCLAVE\s+DE\s+ELECTOR\b/.test(heading) && /\bCURP\b/.test(heading) && /\b(?:SECCION|VIGENCIA)\b/.test(heading));
   const curps = recognized ? validCurps(upper) : [];
   // This position allows letters and digits. An OCR 0/O or 1/I cannot be
   // disambiguated by the shape validator; never select one silently.
@@ -116,23 +145,32 @@ function extractIdentityFields(buffer: Buffer, documentId: string, kind: 'CURP' 
     const values = [...new Set([...upper.matchAll(pattern)].map((match) => match[1]))];
     return values.length === 1 ? values[0] : undefined;
   };
-  const cic = recognized && kind === 'INE' ? readUnique(/\bCIC[ \t]*[:#-]?[ \t]*((?:IDMEX)?\d{8,12})\b/g) : undefined;
-  const ocr = recognized && kind === 'INE' ? readUnique(/\bOCR[ \t]*[:#-]?[ \t]*(\d{8,18})\b/g) : undefined;
+  const labelCic = recognized && kind === 'INE' ? readUnique(/\bCIC[ \t]*[:#-]?[ \t]*((?:IDMEX)?\d{8,12})\b/g) : undefined;
+  const labelOcr = recognized && kind === 'INE' ? readUnique(/\bOCR[ \t]*[:#-]?[ \t]*(\d{8,18})\b/g) : undefined;
+  const cic = ineMrz && labelCic && labelCic.replace(/^IDMEX/, '') !== ineMrz.cic.replace(/^IDMEX/, '') ? undefined : ineMrz?.cic || labelCic;
+  const ocr = ineMrz && labelOcr && labelOcr !== ineMrz.ocr ? undefined : ineMrz?.ocr || labelOcr;
   const curpPage = curp ? pages.find((page) => page.text.toUpperCase().includes(curp))?.page : undefined;
+  const validity = recognized && kind === 'INE' ? readInePrintedValidity(combined) : undefined;
+  const fields: OcrIdentityDocumentResult['fields'] = [];
+  if (passportMrz) fields.push({ campo: 'folio_identificacion', valor: passportMrz.uncertainPrefix ? passportMrz.folio.slice(1) : passportMrz.folio,
+    page: pages.find(p => readPassportMrzCandidate(p.text)?.folio === passportMrz.folio)?.page || 1, fragmento: passportMrz.fragmento,
+    verificacion_local: passportMrz.uncertainPrefix ? 'MRZ_TD3_AMBIGUO' : 'MRZ_TD3', ...(passportMrz.uncertainPrefix ? {mrz_control:passportMrz.control} : {}) });
+  else if (curp && curpPage) fields.push({ campo: 'curp', valor: curp, page: curpPage, fragmento: curp });
+  if (validity) fields.push({ campo: 'fecha_vencimiento_identificacion', valor: validity.year, page: pages.find(p => readInePrintedValidity(p.text)?.year === validity.year)?.page || 1, fragmento: validity.fragmento });
   return {
     document_id: documentId,
     sha256: createHash('sha256').update(buffer).digest('hex'),
     method,
     status: 'REVIEW_REQUIRED',
     recognized,
-    fields: curp && curpPage ? [{ campo: 'curp', valor: curp, page: curpPage, fragmento: curp }] : [],
+    fields,
     identificadores_ine: { cic: cic || undefined, ocr: ocr || undefined },
     warnings: [
       'OCR_LOCAL_REQUIERE_CONFIRMACION_HUMANA',
       ...(!recognized ? ['IDENTIFICACION_NO_RECONOCIDA'] : []),
       ...(kind === 'INE' && !cic ? ['INE_CIC_NO_LEGIBLE_O_AMBIGUO'] : []),
       ...(kind === 'INE' && !ocr ? ['INE_OCR_NO_LEGIBLE_O_AMBIGUO'] : []),
-      ...(!curp ? [curps.length > 1 ? 'CURP_CONTRADICTORIA'
+      ...(kind !== 'PASSPORT' && !curp ? [curps.length > 1 ? 'CURP_CONTRADICTORIA'
         : ambiguousCurp ? 'CURP_CARACTER_AMBIGUO' : 'CURP_NO_LEGIBLE_O_INVALIDA'] : []),
     ],
   };

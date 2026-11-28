@@ -68,7 +68,8 @@ describe('PRD-001 ficha maestra inmobiliaria', () => {
     mocks.propose.mockResolvedValueOnce({ extraccion_id: 'extract-missing', documentos: [{ id: 'doc-1', nombre: 'titulo.pdf' }], propuestas: [], alertas: [], faltantes: ['folio_real'], errores: [], conflictos: [], persisted_master: false });
     const user = userEvent.setup(); renderPath('/predios/property-1'); await screen.findByText('Extracción asistida'); await user.click(screen.getByLabelText('titulo.pdf')); await user.click(screen.getByRole('button', { name: /Extraer información con IA/ }));
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Folio real: DATO NO ENCONTRADO')).toBeInTheDocument();
+    await user.click(within(dialog).getByText('Campos sin propuesta (1)'));
+    expect(within(dialog).getByText('Folio real')).toBeVisible();
     expect(within(dialog).queryByRole('button', { name: 'Aplicar decisiones' })).not.toBeInTheDocument();
     expect(screen.getByDisplayValue('FR-001')).toBeInTheDocument();
   });

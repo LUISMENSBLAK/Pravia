@@ -74,6 +74,16 @@ const gatewayFromFetch = (fetchImpl: ReturnType<typeof vi.fn>) => ({
 });
 
 describe('PRAVIA IA multi-intent planner', () => {
+  it('consulta la Biblioteca para una frase cotidiana sobre un código aunque el plan no elija la fuente', async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(planResponse([], {scope:'NEEDS_CONTEXT'})).mockResolvedValueOnce(textResponse('La versión pendiente contiene la regla sintética; no acredita vigencia.'));
+    const executeTool = vi.fn().mockResolvedValue(toolResult('searchLegalKnowledge', { evidence: [], document_readings: [{ article_fragment: 'Regla sintética', normative_use: false }] }));
+    const send = createAssistantChatService({ gateway: gatewayFromFetch(fetchImpl) as any, executeTool });
+    const message = '¿Qué dice el artículo 7 del Código Civil de Nayarit?';
+    const result = await send({ message }, { ...actionUser, permissions:[...actionUser.permissions,'ai.search','configuracion.catalogos.read'] }, 'legal-qa');
+    expect(executeTool).toHaveBeenCalledOnce();
+    expect(executeTool).toHaveBeenCalledWith(expect.objectContaining({ tool:'searchLegalKnowledge', args:{ query:message, jurisdiction:'NAYARIT' } }));
+    expect(result.message).toContain('no acredita vigencia');
+  });
   it('routes a literal edit of the visible party through canonical confirmation, not provider prose', async () => {
     const executeAction=vi.fn().mockResolvedValue({status:'success',message:'Revisa',confirmation:{id:'c',title:'Actualizar',details:[]}});
     const gateway={execute:vi.fn()}; const send=createAssistantChatService({gateway:gateway as any,executeAction});

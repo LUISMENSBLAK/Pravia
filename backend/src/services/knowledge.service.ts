@@ -97,6 +97,8 @@ export type KnowledgeEvidenceItem = {
   jurisdiction: string;
   category: string;
   score: number;
+  article_heading?: string | null;
+  verification_status?: string;
 };
 
 export function buildEvidencePacket(items: KnowledgeEvidenceItem[], limit = 8) {
@@ -141,6 +143,21 @@ export function exactArticleHeadingPattern(query: string) {
   const suffix = match[2] ? `\\s+${match[2].toUpperCase()}` : '';
   const ordinal = /^\d+$/u.test(match[1]) ? '[Oº]?' : '';
   return `^\\s*ART[IÍ]CULO\\s+${article}${ordinal}${suffix}(?:\\s|[.,:;\\-]|$)`;
+}
+
+const legalKey = (value: string) => value.normalize('NFD').replace(/\p{M}/gu, '').toUpperCase().trim();
+export function legalSearchTerms(query: string) {
+  const plain = legalKey(query).replace(/\bARTICULO\s+(?:\d+[A-Z]?|UNICO|PRIMERO|SEGUNDO|TERCERO)(?:\s+(?:BIS|TER))?\b/g, ' ');
+  const titleLabel = plain.match(/\b(?:CODIGO (?:CIVIL|FISCAL|PENAL)|LEY (?:DE INGRESOS|DE HACIENDA(?: MUNICIPAL)?|DEL NOTARIADO))\b/)?.[0] || '';
+  const stop = new Set(['QUE','DICE','DIME','HABLA','SOBRE','ESTABLECE','SEGUN','PARA','PUEDES','PODRIAS','EXPLICA','BUSCA','DENTRO','BIBLIOTECA','DOCUMENTO','JURIDICA','VIGENTE','NAYARIT','JALISCO','ESTADO','DERECHO','ARTICULO','DEL','LAS','LOS','POR','CON','UNA','COMO']);
+  const words = [...new Set((query.normalize('NFC').match(/[\p{L}]{3,}/gu) || []).filter(word => !stop.has(legalKey(word))))].slice(0, 18);
+  return { titleLabel, keywords: words.join(' OR ') };
+}
+
+export function officialLegalDirectories(jurisdiction: string) {
+  const federal = { title: 'Leyes federales · Cámara de Diputados', url: 'https://www.diputados.gob.mx/LeyesBiblio/index.htm' };
+  if (legalKey(jurisdiction) === 'NAYARIT') return [{ title: 'Publicaciones oficiales · Nayarit', url: 'https://periodicooficial.nayarit.gob.mx/publicaciones' }, federal];
+  return [federal];
 }
 
 export class KnowledgeService {
@@ -313,33 +330,58 @@ export class KnowledgeService {
     const legalDate = input.legal_date ? new Date(`${clean(input.legal_date, 10)}T12:00:00Z`) : new Date();
     if(Number.isNaN(legalDate.getTime()))throw new KnowledgeValidationError('KNOW_DATE_INVALID','La fecha de consulta no es válida.');
     if(input.legal_date&&(!/^\d{4}-\d{2}-\d{2}$/.test(String(input.legal_date).trim())||legalDate.toISOString().slice(0,10)!==String(input.legal_date).trim()))throw new KnowledgeValidationError('KNOW_DATE_INVALID','La fecha de consulta debe existir en el calendario y usar AAAA-MM-DD.');
-    const limit = Math.min(20, Math.max(1, Number(input.limit) || 8));
+    const limit = Math.floor(Math.min(20, Math.max(1, Number(input.limit) || 8)));
     const articlePattern = exactArticleHeadingPattern(query);
+    const { titleLabel, keywords } = legalSearchTerms(query);
+    const municipality = legalKey(clean(input.municipality, 150));
+    const includeDocumentReading = input.include_document_reading === true;
+    const articleVector = Prisma.sql`to_tsvector('spanish', coalesce(a.body, ''))`;
+    const documentVector = Prisma.sql`to_tsvector('spanish', coalesce(v.content_text, ''))`;
+    const tsQuery = Prisma.sql`websearch_to_tsquery('spanish', ${keywords})`;
+    // Translate before upper() so results are stable under both C and ICU
+    // database collations. In C, accented lowercase letters are not uppercased.
+    const sqlKey = (column: Prisma.Sql) => Prisma.sql`upper(translate(${column}, 'áéíóúüñÁÉÍÓÚÜÑ', 'aeiouunAEIOUUN'))`;
+    const titleKey = sqlKey(Prisma.sql`s.title`);
+    const jurisdictionKey = sqlKey(Prisma.sql`s.jurisdiction`);
+    const headingKey = sqlKey(Prisma.sql`coalesce(a.heading, '')`);
+    const titleMatches = Prisma.sql`(${titleLabel} <> '' AND position(${titleLabel} in ${titleKey}) > 0)`;
+    const numberedVariant = String.raw`^\s*ARTICULO\s+[0-9]+[Oº]?[. ]*\s+(BIS|TER)\M`;
+    const strictArticle = Prisma.sql`(${headingKey} ~* ${articlePattern.replace(/\[IÍ\]/g, 'I').replace(/[Úú]/g, 'U')} AND (${/\\s\+(?:BIS|TER)/.test(articlePattern)} OR ${headingKey} !~* ${numberedVariant}))`;
     const rows = await this.db.$queryRaw<KnowledgeEvidenceItem[]>(Prisma.sql`
       SELECT s.id AS source_id, s.inventory_code, s.title, v.version, v.label,
-        left(coalesce(a.body, v.content_text), 1200) AS article_fragment, s.source_url AS official_url,
+        left(coalesce(a.body, v.content_text, ''), 1200) AS article_fragment, s.source_url AS official_url,
+        a.heading AS article_heading, v.verification_status::text AS verification_status,
         jsonb_build_object('from', v.effective_from, 'to', v.effective_to) AS validity,
         s.jurisdiction, s.category,
-        (ts_rank_cd(to_tsvector('spanish', coalesce(a.body, v.content_text, '')), websearch_to_tsquery('spanish', ${query})) * 10
+        (ts_rank_cd(CASE WHEN a.id IS NOT NULL THEN ${articleVector} ELSE ${documentVector} END, ${tsQuery}) * 20
           + similarity(s.title, ${query})
-          + CASE WHEN ${articlePattern} <> '' AND coalesce(a.heading, '') ~* ${articlePattern} THEN 100 ELSE 0 END
+          + CASE WHEN ${titleMatches} THEN 10 ELSE 0 END
           + CASE WHEN s.inventory_code ILIKE ${`%${query}%`} THEN 3 ELSE 0 END) AS score
       FROM knowledge_sources s
       JOIN knowledge_source_versions v ON v.source_id = s.id AND v.organization_id = s.organization_id
       LEFT JOIN knowledge_articles a ON a.version_id = v.id AND a.organization_id = v.organization_id
       WHERE s.organization_id = ${actor.organizationId}::uuid AND s.active = true
-        AND v.verification_status IN ('VERIFICADA', 'SUPERADA')
-        AND (v.effective_from IS NULL OR v.effective_from <= ${legalDate})
-        AND (v.effective_to IS NULL OR v.effective_to >= ${legalDate})
-        AND (${jurisdiction} = '' OR s.jurisdiction = ${jurisdiction})
+        AND ((v.verification_status IN ('VERIFICADA', 'SUPERADA') AND v.effective_from <= ${legalDate}
+          AND (v.effective_to IS NULL OR v.effective_to >= ${legalDate}) AND coalesce(a.body, v.content_text, '') <> '')
+          OR (${includeDocumentReading} AND v.verification_status = 'PENDIENTE'
+            AND (${titleMatches} OR s.inventory_code ILIKE ${query} OR similarity(s.title, ${query}) > 0.4)
+            AND v.version = (SELECT max(latest.version) FROM knowledge_source_versions latest WHERE latest.source_id = s.id AND latest.organization_id = s.organization_id)))
+        AND (${jurisdiction} = '' OR ${jurisdictionKey} = ${legalKey(jurisdiction)} OR (${municipality} <> '' AND ${jurisdictionKey} = ${municipality}))
         AND (${category} = '' OR s.category = ${category})
-        AND ((${articlePattern} <> '' AND coalesce(a.heading, '') ~* ${articlePattern})
-          OR to_tsvector('spanish', coalesce(a.body, v.content_text, '')) @@ websearch_to_tsquery('spanish', ${query})
-          OR similarity(s.title, ${query}) > 0.15 OR s.inventory_code ILIKE ${`%${query}%`})
-      ORDER BY score DESC, s.inventory_code ASC LIMIT ${limit}
+        AND (${titleLabel} = '' OR ${titleMatches})
+        AND ((${articlePattern} <> '' AND (${strictArticle} OR (v.verification_status = 'PENDIENTE' AND coalesce(v.content_text, '') = '')))
+          OR (${articlePattern} = '' AND (${titleMatches} OR ${articleVector} @@ ${tsQuery} OR (a.id IS NULL AND ${documentVector} @@ ${tsQuery})
+            OR similarity(s.title, ${query}) > 0.25 OR s.inventory_code ILIKE ${query})))
+      ORDER BY CASE WHEN v.verification_status = 'PENDIENTE' THEN 1 ELSE 0 END, score DESC, s.inventory_code ASC, a.ordinal ASC LIMIT ${includeDocumentReading ? limit * 2 : limit}
     `);
     const criteria=await this.db.knowledgeCriterion.findMany({where:{organization_id:actor.organizationId,active:true},select:{id:true,code:true,title:true,content:true,scope:true},take:200});
-    return {...buildEvidencePacket(rows.map((row) => ({ ...row, score: Number(row.score || 0) })), limit),internal_criteria:relevantInternalCriteria(criteria,query,jurisdiction,legalDate)};
+    const verified = rows.filter(row => row.verification_status !== 'PENDIENTE').map(row => ({ ...row, score: Number(row.score || 0) }));
+    const readings = rows.filter(row => row.verification_status === 'PENDIENTE').slice(0, Math.min(4, limit)).map(({ score: _score, ...row }) => ({ ...row,
+      reading_status: row.article_fragment ? 'LECTURA DOCUMENTAL SIN VIGENCIA VERIFICADA' : 'ORIGINAL CARGADO SIN TEXTO RECUPERABLE',
+      normative_use: false,
+    }));
+    return {...buildEvidencePacket(verified, limit), internal_criteria:relevantInternalCriteria(criteria,query,jurisdiction,legalDate),
+      document_readings: readings, official_directories: verified.length ? [] : officialLegalDirectories(jurisdiction || (/\bNAYARIT\b/i.test(query) ? 'NAYARIT' : '')) };
   }
 }
 

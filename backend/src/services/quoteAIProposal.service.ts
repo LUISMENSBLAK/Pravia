@@ -6,6 +6,7 @@ import { budgetTotals, normalizeEditableBudgetConcepts, withDerivedHonorariosIva
 import { cotizacionObjectWhere } from './objectAccess.service';
 import { INSUFFICIENT_LEGAL_FOUNDATION, KnowledgeService } from './knowledge.service';
 import { readQuoteTerritory, territoryApplies, type QuoteTerritory } from '../domain/quoteTerritory';
+import { isConveyance, legalReviewForQuote } from '../domain/quoteLegalReview';
 
 type Actor = NonNullable<Request['user']>;
 const json = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -127,10 +128,15 @@ export class QuoteAIProposalService {
     const internalRows = approvedInternalBudgetRows(criteria, act, legalDate, territory);
     const applicableCriterionIds = new Set(internalRows.map((row) => row.explanation.criterion_id));
     const rows = internalRows.length ? internalRows : comparableRows;
-    if (!rows.length) throw new QuoteAIError(409, 'QUOTE_AI_FOUNDATION_INSUFFICIENT', INSUFFICIENT_LEGAL_FOUNDATION);
-    const normalized = withDerivedHonorariosIva(normalizeEditableBudgetConcepts(rows));
+    const normalized = rows.length ? withDerivedHonorariosIva(normalizeEditableBudgetConcepts(rows)) : [];
     const totals = budgetTotals(normalized);
-    const legalEvidence=await new KnowledgeService(this.db).retrieve(actor,{query:`${act} honorarios arancel`,jurisdiction:territory?.jurisdiction,legal_date:legalDate.toISOString().slice(0,10),limit:8});
+    const day = legalDate.toISOString().slice(0,10);
+    const legalEvidence = territory ? await new KnowledgeService(this.db).retrieve(actor, {
+      query: isConveyance(act) ? `${act} inscripción registral adquisición bienes inmuebles traslación dominio ${territory.municipality || ''}` : `${act} arancel honorarios`,
+      jurisdiction: territory.jurisdiction, municipality: territory.municipality, legal_date: day, limit: 8,
+    }) : undefined;
+    const realEstate = /\bINMUEBL|\bPREDIO\b|\bTERRENO\b/i.test(act) || Boolean(quote.cuenta_predial || quote.valor_catastral);
+    const legalReview = legalReviewForQuote(act, territory, day, realEstate);
     const evidence = {
       operation_territory: territory,
       quote_updated_at: quote.updated_at.toISOString(),
@@ -142,7 +148,8 @@ export class QuoteAIProposalService {
         validated_comparables: { organization_id: actor.organizationId, act, sample_quotes: new Set(comparables.map((item) => item.id)).size },
       },
       exclusions: ['BORRADOR', 'RECHAZADA', 'CANCELADA', 'PROPUESTA_IA_NO_APLICADA'],
-      taxes_notice: 'Impuestos, derechos e ISR no se estiman libremente: requieren motor determinístico o fuente tarifaria verificada.',
+      legal_review: legalReview,
+      taxes_notice: [rows.length ? '' : 'No se propusieron honorarios: no hay arancel interno aprobado ni comparables aceptados para este acto.', 'La propuesta sólo modifica honorarios y su IVA. No incluye referencias o impuestos pendientes y conserva los impuestos, derechos y gastos que ya capturaste.'].filter(Boolean).join(' '),
     };
     const proposal = { concepts: rows, totals: { honorarios: totals.honorarios, iva_honorarios: totals.iva_honorarios, impuestos_derechos: totals.subtotal_impuestos_derechos, total: totals.total } };
     const created = await this.db.cotizacionIAProposal.create({ data: { organization_id: actor.organizationId, cotizacion_id: quoteId, proposal: json(proposal), evidence_packet: json(evidence), model_version: 'PRAVIA-COT-IA-001/layered-v3', idempotency_key: key, created_by_id: actor.id } });
@@ -156,7 +163,7 @@ export class QuoteAIProposalService {
     if (!['APLICAR', 'DESCARTAR'].includes(action)) throw new QuoteAIError(400, 'QUOTE_AI_DECISION_INVALID', 'Selecciona aplicar o descartar la propuesta.');
     return this.db.$transaction(async (tx) => {
       await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${`pravia:quote-budget:${actor.organizationId}:${quoteId}`}))`);
-      const quote = await tx.cotizacion.findFirst({ where: { id: quoteId, ...cotizacionObjectWhere(actor) }, include: { prospecto: true, actos: { include: { tipo_acto: { select: { nombre: true } } }, orderBy: { orden: 'asc' } } } });
+      const quote = await tx.cotizacion.findFirst({ where: { id: quoteId, ...cotizacionObjectWhere(actor) }, include: { prospecto: true, actos: { include: { tipo_acto: { select: { nombre: true } } }, orderBy: { orden: 'asc' } }, conceptos: { orderBy: { orden: 'asc' } } } });
       const proposal = await tx.cotizacionIAProposal.findFirst({ where: { id: proposalId, organization_id: actor.organizationId, cotizacion_id: quoteId } });
       if (!quote || !proposal) throw new QuoteAIError(404, 'QUOTE_AI_PROPOSAL_NOT_FOUND', 'La propuesta ya no está disponible.');
       if (proposal.status !== 'PENDIENTE') return { data: proposal, idempotent: true, applied: proposal.status === 'APLICADA' };
@@ -180,10 +187,15 @@ export class QuoteAIProposalService {
         }
       }
       const raw = proposal.proposal as Record<string, unknown>;
-      const concepts = withDerivedHonorariosIva(normalizeEditableBudgetConcepts(raw.concepts));
-      const totals = budgetTotals(concepts);
-      await tx.cotizacionConcepto.deleteMany({ where: { organization_id: actor.organizationId, cotizacion_id: quoteId } });
-      await tx.cotizacionConcepto.createMany({ data: concepts.map((row) => ({ organization_id: actor.organizationId, cotizacion_id: quoteId, concepto: row.concepto, categoria: row.categoria, importe: row.importe, orden: row.orden,
+      if (!Array.isArray(raw.concepts) || !raw.concepts.length) throw new QuoteAIError(409, 'QUOTE_AI_FOUNDATION_INSUFFICIENT', INSUFFICIENT_LEGAL_FOUNDATION);
+      const concepts = withDerivedHonorariosIva(normalizeEditableBudgetConcepts(raw.concepts).filter(row => row.categoria === 'HONORARIOS'));
+      if (!concepts.length) throw new QuoteAIError(409, 'QUOTE_AI_FOUNDATION_INSUFFICIENT', INSUFFICIENT_LEGAL_FOUNDATION);
+      const preserved = (quote.conceptos || []).filter(row => row.categoria !== 'HONORARIOS' && row.categoria !== 'IVA_HONORARIOS');
+      const existing = preserved.length ? normalizeEditableBudgetConcepts(preserved.map(row => ({ ...row, importe: row.importe.toString(), iva_tasa: row.iva_tasa?.toString() }))) : [];
+      const totals = budgetTotals([...existing, ...concepts]);
+      const lastOrder = preserved.reduce((max, row) => Math.max(max, row.orden), -1);
+      await tx.cotizacionConcepto.deleteMany({ where: { organization_id: actor.organizationId, cotizacion_id: quoteId, categoria: { in: ['HONORARIOS', 'IVA_HONORARIOS'] } } });
+      await tx.cotizacionConcepto.createMany({ data: concepts.map((row, index) => ({ organization_id: actor.organizationId, cotizacion_id: quoteId, concepto: row.concepto, categoria: row.categoria, importe: row.importe, orden: lastOrder + index + 1,
         tratamiento_iva: row.tratamiento_iva, iva_tasa: row.iva_tasa, regla_fiscal_fuente: row.regla_fiscal_fuente, regla_fiscal_version: row.regla_fiscal_version,
         origen: row.categoria === 'IVA_HONORARIOS' ? 'DERIVADO' : 'IA_PROPUESTA' })) });
       await tx.cotizacion.update({ where: { id: quoteId }, data: { total_notaria: totals.total, total_cliente: totals.total, honorarios_pravia: null } });

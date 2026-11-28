@@ -63,6 +63,18 @@ describe('decisión de propuesta: revisión, concurrencia y permisos', () => {
     expect(db.cotizacionConcepto.deleteMany).not.toHaveBeenCalled();
     expect(db.auditLog.create).toHaveBeenCalled();
   });
+  it('prepara la revisión aun sin comparables ni honorarios y no modifica la cotización', async () => {
+    const db: any = {
+      cotizacion:{findFirst:vi.fn().mockResolvedValue({id:'q',organization_id:'org',updated_at:now,territorio_operacion:territory,actos:[{tipo_acto:{nombre:'Compraventa de inmueble'}}],etapa_contractual:'EN_ELABORACION'}),findMany:vi.fn().mockResolvedValue([]),update:vi.fn()},
+      cotizacionIAProposal:{findFirst:vi.fn().mockResolvedValue(null),create:vi.fn().mockImplementation(({data})=>({id:'proposal',...data}))},
+      knowledgeSource:{findMany:vi.fn().mockResolvedValue([])},knowledgeCriterion:{findMany:vi.fn().mockResolvedValue([])},$queryRaw:vi.fn().mockResolvedValue([]),auditLog:{create:vi.fn()},
+    };
+    const result = await new QuoteAIProposalService(db).generate(actor,'q',{idempotency_key:'qa-without-honoraria'});
+    expect(result.data.proposal.concepts).toEqual([]);
+    expect(result.data.evidence_packet.legal_review).toHaveLength(2);
+    expect(result.data.evidence_packet.taxes_notice).toContain('No se propusieron honorarios');
+    expect(db.cotizacion.update).not.toHaveBeenCalled();
+  });
   const scope = { kind:'ARANCEL_PROPIO',jurisdiction:'NAYARIT',state:'NAYARIT',municipality:'TEPIC',approval_status:'APROBADO',review_status:'REVISADO',fixed_honorarium:'100',version:2,act:'COMPRAVENTA' };
   const setup = (overrides: Record<string, any> = {}) => {
     const quote = { id:'q',updated_at:now,territorio_operacion:territory,prospecto:{ tipo_acto:'COMPRAVENTA' },etapa_contractual:'EN_ELABORACION',...overrides.quote };
@@ -92,6 +104,12 @@ describe('decisión de propuesta: revisión, concurrencia y permisos', () => {
     tx.cotizacionIAProposal.findFirst.mockResolvedValue({id:'p',status:'APLICADA'});
     expect(await service.decide(actor,'q','p',{action:'APLICAR'})).toMatchObject({applied:true,idempotent:true});
     expect(tx.cotizacionConcepto.deleteMany).toHaveBeenCalledTimes(1);
+  });
+  it('reemplaza sólo honorarios e IVA y conserva el impuesto capturado', async () => {
+    const {tx,service}=setup({quote:{conceptos:[{concepto:'Derecho capturado',categoria:'IMPUESTOS_DERECHOS',importe:new Prisma.Decimal('250'),orden:4}]}});
+    await service.decide(actor,'q','p',{action:'APLICAR'});
+    expect(tx.cotizacionConcepto.deleteMany).toHaveBeenCalledWith({where:{organization_id:'org',cotizacion_id:'q',categoria:{in:['HONORARIOS','IVA_HONORARIOS']}}});
+    expect(tx.cotizacion.update).toHaveBeenCalledWith(expect.objectContaining({data:expect.objectContaining({total_cliente:'366.00'})}));
   });
   it('no expone una propuesta idempotente antes de comprobar object access', async () => {
     const {tx,service}=setup();tx.cotizacion.findFirst.mockResolvedValue(null);

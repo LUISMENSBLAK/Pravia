@@ -95,8 +95,9 @@ describe('H3-F-001 · alta asistida canónica', () => {
     expect(result.borrador_actualizado).not.toHaveProperty('autoridad_emisora');
     expect(result.identificadores_ine).toEqual({ cic: '123456789', ocr: '1234567890123' });
     expect(result.borrador_actualizado._ia_identificadores_ine).toEqual(result.identificadores_ine);
-    expect(result.borrador_actualizado.dom_fiscal_ciudad).toBe('');
-    expect(result.borrador_actualizado.dom_fiscal_pais).toBe('');
+    expect(result.borrador_actualizado).not.toHaveProperty('dom_fiscal_ciudad');
+    expect(result.borrador_actualizado).not.toHaveProperty('dom_fiscal_pais');
+    expect(result.borrador_actualizado).not.toHaveProperty('dom_fiscal_municipio');
   });
 
   it('inicia la sesión con una consulta compatible con el scoping tenant-aware', async () => {

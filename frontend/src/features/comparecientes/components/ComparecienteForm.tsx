@@ -12,19 +12,26 @@ type Props = {
   onChange(name: string, value: string): void;
 };
 
+function FieldSource({ source }: { source?: { estado?: string; fuente?: string; pagina?: number; fragmento?: string } }) {
+  if (!source) return null;
+  if (source.estado === 'EN_CONFLICTO') return <small className={styles.sourceConflict}>Conflicto entre documentos · revisa el valor</small>;
+  const convention = source.fragmento?.match(/Convención PRAVIA: (.+)$/)?.[1];
+  return <small className={styles.sourceHint}>Fuente: {source.fuente || 'Documento cargado'}{source.pagina ? ` · p. ${source.pagina}` : ''}{convention ? ` · Fecha estimada por convención: ${convention}` : ''}</small>;
+}
+
 function Field({ draft, name, label, readOnly, onChange, type = 'text', required, source, placeholder }: {
   draft: NewComparecienteDraft; name: string; label: string; readOnly: boolean; onChange(name: string, value: string): void;
   type?: string; required?: boolean; source?: any; placeholder?: string;
 }) {
   const id = `compareciente-${name}`;
-  return <label className={styles.workspaceField} htmlFor={id}><span>{label}{required ? ' *' : ''}</span><input id={id} name={name} type={type} value={draft[name] || ''} readOnly={readOnly} required={required} placeholder={placeholder} onChange={(event) => onChange(name, event.target.value)} />{source && <small className={source.estado === 'EN_CONFLICTO' ? styles.sourceConflict : styles.sourceHint}>{source.estado === 'EN_CONFLICTO' ? 'Conflicto entre documentos · revisa el valor' : `Fuente: ${source.fuente || 'Documento cargado'}`}</small>}</label>;
+  return <label className={styles.workspaceField} htmlFor={id}><span>{label}{required ? ' *' : ''}</span><input id={id} name={name} type={type} value={draft[name] || ''} readOnly={readOnly} required={required} placeholder={placeholder} onChange={(event) => onChange(name, event.target.value)} /><FieldSource source={source} /></label>;
 }
 
 function SelectField({ draft, name, label, readOnly, onChange, options, source }: { draft: NewComparecienteDraft; name: string; label: string; readOnly: boolean; onChange(name:string,value:string):void; options: Array<[string,string]>; source?: any }) {
   const id = `compareciente-${name}`;
   const literal = draft[name] || '';
   const needsReview = Boolean(literal && !options.some(([value]) => value === literal));
-  return <label className={styles.workspaceField} htmlFor={id}><span>{label}</span><select id={id} name={name} value={literal} aria-invalid={needsReview || undefined} aria-describedby={needsReview ? `${id}-review` : undefined} disabled={readOnly} onChange={(event) => onChange(name,event.target.value)}>{needsReview && <option value={literal}>{literal} · por revisar</option>}{options.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select>{needsReview && <small id={`${id}-review`} className={styles.sourceConflict}>Lectura literal sin equivalencia confirmada. Revisa y selecciona el valor correcto.</small>}{source && <small className={source.estado === 'EN_CONFLICTO' ? styles.sourceConflict : styles.sourceHint}>{source.estado === 'EN_CONFLICTO' ? 'Conflicto entre documentos · revisa el valor' : `Fuente: ${source.fuente || 'Documento cargado'}`}</small>}</label>;
+  return <label className={styles.workspaceField} htmlFor={id}><span>{label}</span><select id={id} name={name} value={literal} aria-invalid={needsReview || undefined} aria-describedby={needsReview ? `${id}-review` : undefined} disabled={readOnly} onChange={(event) => onChange(name,event.target.value)}>{needsReview && <option value={literal}>{literal} · por revisar</option>}{options.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select>{needsReview && <small id={`${id}-review`} className={styles.sourceConflict}>Lectura literal sin equivalencia confirmada. Revisa y selecciona el valor correcto.</small>}<FieldSource source={source} /></label>;
 }
 
 function Section({ icon: Icon, title, children }: { icon: LucideIcon; title: string; children: React.ReactNode }) {

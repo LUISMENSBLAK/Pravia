@@ -510,9 +510,16 @@ export function ComparecienteWorkspace() {
     );
     const conflicts: Array<{ field: string; current: string; proposed: string }> = [];
     const valuesToApply: Record<string, string> = {};
+    const aliasKey = (value: string) => value.trim().normalize('NFD').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').toLocaleUpperCase('es-MX');
     for (const [key, rawValue] of Object.entries(safeValues)) {
-      const proposed = String(rawValue || "");
+      let proposed = String(rawValue || "");
       const current = String(draft[key] || "");
+      if (key === 'aliases' && current.trim()) {
+        const variants = [...current.split(','), ...proposed.split(',')].map(value => value.trim()).filter(Boolean);
+        const unique = new Map<string, string>();
+        for (const variant of variants) if (!unique.has(aliasKey(variant))) unique.set(aliasKey(variant), variant);
+        proposed = [...unique.values()].join(', ');
+      }
       if (current.trim() && (!createMode || manuallyEditedFields.current.has(key)) && current.trim().toLocaleUpperCase("es-MX") !== proposed.trim().toLocaleUpperCase("es-MX")) {
         conflicts.push({ field: key, current, proposed });
         mappedSources[key] = { ...(mappedSources[key] || {}), valor: proposed, estado: "EN_CONFLICTO" };
@@ -538,7 +545,8 @@ export function ComparecienteWorkspace() {
       missing,
       errors,
       unavailable: documentErrors.some((entry: any) => String(entry?.code || '').startsWith('AI_')),
-      alerts: response.alertas || nested._ia_alertas || response.resultado?.alertas || [],
+      alerts: Array.from(new Set<string>([...(response.alertas || nested._ia_alertas || response.resultado?.alertas || []),
+        ...(response.conflicts || response.conflictos || nested._ia_conflictos || []).map((item: { motivo?: string }) => item.motivo).filter(Boolean)])),
       curpDocuments: response.documentos_curp || response.resultado?.documentos_curp || nested._ia_documentos_curp || [],
       csfDocuments: response.documentos_csf || response.resultado?.documentos_csf || [],
       structure: response.estructura_persona_moral || nested._ia_estructura_persona_moral || response.resultado?.estructura_persona_moral || null,

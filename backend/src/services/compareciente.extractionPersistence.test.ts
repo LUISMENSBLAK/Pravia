@@ -9,7 +9,7 @@ describe('Compareciente: persistencia tras extracción pagada', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.download.mockResolvedValue(Buffer.from('synthetic document'));
-    mocks.extract.mockResolvedValue({ proveedor: 'QA', modelo: 'synthetic', campos: [{ campo: 'ocupacion', valor: 'ARQUITECTA', documento_id: 'doc', confianza: 'LECTURA_CLARA' }], alertas: [] });
+    mocks.extract.mockResolvedValue({ proveedor: 'QA', modelo: 'synthetic', tipos_documentales: [{ documento_id: 'doc', tipo_documental: 'GENERALES' }], campos: [{ campo: 'ocupacion', valor: 'ARQUITECTA', documento_id: 'doc', confianza: 'LECTURA_CLARA' }], alertas: [] });
   });
   const setup = () => {
     const tx = { $executeRaw: vi.fn(), comparecienteDatoFuente: { create: vi.fn() }, auditLog: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn() } };

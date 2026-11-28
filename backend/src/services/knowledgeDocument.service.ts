@@ -7,6 +7,7 @@ import { extractDocxText } from './docxText';
 import { DOCX_MIME } from './functionalDocumentRenderer.service';
 import { canonicalUploadedDocumentMime } from './documentUploadValidation';
 import { KnowledgeValidationError, normalizeInventoryRow, splitLegalArticles } from './knowledge.service';
+import { readSmallScannedPdf } from './identityDocumentOcr.service';
 
 type Actor = { id:string; organizationId:string };
 export async function legalDocumentText(file: Express.Multer.File) {
@@ -39,7 +40,11 @@ export class KnowledgeDocumentService {
   async upload(actor:Actor,input:Record<string,unknown>,file:Express.Multer.File) {
     const parsed=await legalDocumentText(file);
     const supplied=String(input.content_text||'').trim();
-    const text=(supplied||parsed.text).trim();
+    // OCR stays local. Do not index an incomplete slice of a long legal PDF.
+    const native = parsed.text.trim();
+    const ocr = !supplied && !native && parsed.mime === 'application/pdf'
+      ? await readSmallScannedPdf(file.buffer, 6).then(pages => pages.every(page => page.text.trim()) ? pages.map(page => page.text).join('\n\n') : '').catch(() => '') : '';
+    const text=(supplied||native||ocr).trim();
     if(text.length>5_000_000) throw new KnowledgeValidationError('KNOW_TEXT_LIMIT','El texto supera el límite de 5 millones de caracteres. Divide el documento.');
     const sourceId=String(input.source_id||'');
     const label=String(input.label||'').trim();
@@ -59,7 +64,7 @@ export class KnowledgeDocumentService {
         const version=await tx.knowledgeSourceVersion.create({data:{organization_id:actor.organizationId,source_id:current.id,version:(latest._max.version||0)+1,label,
           verification_status:'PENDIENTE',legal_status:'PENDIENTE_VERIFICAR',review_required:true,content_text:text||null,
           checksum_sha256:createHash('sha256').update(file.buffer).digest('hex'),created_by_id:actor.id,
-          provenance:{storage_key:key,file_name:file.originalname,mime_type:parsed.mime,size_bytes:file.buffer.length,text_method:supplied?'TRANSCRIPCION_ADMINISTRATIVA':'TEXTO_NATIVO',text_sha256:text?createHash('sha256').update(text).digest('hex'):null}}});
+          provenance:{storage_key:key,file_name:file.originalname,mime_type:parsed.mime,size_bytes:file.buffer.length,text_method:supplied?'TRANSCRIPCION_ADMINISTRATIVA':native?'TEXTO_NATIVO':ocr?'OCR_LOCAL_PENDIENTE_COTEJO':'SIN_TEXTO_RECUPERABLE',text_sha256:text?createHash('sha256').update(text).digest('hex'):null}}});
         const provider=await tx.storageProviderRecord.findUniqueOrThrow({where:{code:'runtime-primary'},select:{id:true}});
         const location=await tx.storageBlobLocation.findFirstOrThrow({where:{organization_id:actor.organizationId,object_key:key,provider_id:provider.id},select:{id:true,blob_id:true}});
         await tx.$queryRaw`SELECT id FROM storage_blob_locations WHERE id = ${location.id}::uuid FOR UPDATE`;
@@ -68,7 +73,7 @@ export class KnowledgeDocumentService {
         await tx.storageBlobReference.create({data:{organization_id:actor.organizationId,blob_id:location.blob_id,owner_type:'KnowledgeSourceVersion',owner_id:version.id}});
         if(text)await tx.knowledgeArticle.createMany({data:splitLegalArticles(text).map(article=>({...article,organization_id:actor.organizationId,version_id:version.id}))});
         await tx.auditLog.create({data:{organization_id:actor.organizationId,user_id:actor.id,accion:'CARGAR_DOCUMENTO_JURIDICO',entidad:'KnowledgeSourceVersion',entidad_id:version.id,detalles:{source_id:current.id,version:version.version,sha256:version.checksum_sha256,text_available:Boolean(text),auto_verified:false}}});
-        return {source_id:current.id,version_id:version.id,version:version.version,text_available:Boolean(text),verification_status:'PENDIENTE',message:text?'Archivo cargado. Revisa texto, procedencia y vigencia antes de verificarlo.':'Original conservado. No tiene texto recuperable: agrega una transcripción revisada antes de verificarlo.'};
+        return {source_id:current.id,version_id:version.id,version:version.version,text_available:Boolean(text),verification_status:'PENDIENTE',message:ocr?'Texto recuperado con OCR local. Coteja el resultado con el original antes de verificarlo.':text?'Archivo cargado. Revisa texto, procedencia y vigencia antes de verificarlo.':'Original conservado. No tiene texto recuperable: agrega una transcripción revisada antes de verificarlo.'};
       },{timeout:25000});
     } catch(error){await deleteFile(key).catch(()=>undefined);if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')throw new KnowledgeValidationError('KNOW_INVENTORY_DUPLICATE','El código de fuente ya existe. Selecciona esa fuente y usa Agregar versión.',409);throw error;}
   }

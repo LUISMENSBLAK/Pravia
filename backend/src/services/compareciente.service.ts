@@ -3,6 +3,7 @@ import type { Request } from 'express';
 import * as crypto from 'crypto';
 import { validateCurp, validateOptionalDate, validateRfc } from '../domain/mexicanIdentity';
 import { consolidateExtractedFields } from '../domain/documentExtraction';
+import { consolidatePartyDocuments, documentedPartyName, partyDocumentSources, proposePartyAddresses } from '../domain/partyDocumentPolicy';
 import { extraerMultiplesDocumentos, missingApplicableComparecienteFields, type DocumentoParaExtraccion } from './openaiDocument.service';
 import { requireActorContext } from '../auth/actorContext';
 import { ComplianceDocumentService } from './complianceDocument.service';
@@ -1336,11 +1337,19 @@ export class ComparecienteService {
       // When both identifiers are present there is deliberately no default.
       // Folio is selected by the human in the existing identification field.
       if (ineIdentifiers.cic && ineIdentifiers.ocr) extraction.campos = (extraction.campos || []).filter((field) => field.campo !== 'folio_identificacion');
-      const consolidated = consolidateExtractedFields(extraction.campos || []);
+      const personType = compareciente.tipo_persona as 'FISICA' | 'MORAL';
+      const sources = partyDocumentSources(links.map(link => ({ documentoId: link.documento.id, nombreOriginal: link.documento.nombre_original, tipoDocumento: String(link.categoria || link.documento.tipo || 'OTRO') })), extraction.tipos_documentales);
+      const consolidated = consolidatePartyDocuments(extraction.campos || [], sources, personType);
+      if (personType === 'FISICA') {
+        const eligibleAddresses = (extraction.domicilios_detectados || []).filter(address => !consolidated.excludedDocumentIds.includes(address.documento_id || ''));
+        const address = consolidateExtractedFields(proposePartyAddresses(eligibleAddresses, sources, Boolean(consolidated.proposals.nombre_completo), Boolean(skipped.length || extraction.errores?.length), documentedPartyName(consolidated.values)));
+        Object.assign(consolidated.values, address.values);
+        Object.assign(consolidated.proposals, address.proposals);
+      }
       if (consolidated.values.correo_electronico && !consolidated.values.correo) consolidated.values.correo = consolidated.values.correo_electronico;
       if (consolidated.values.email && !consolidated.values.correo) consolidated.values.correo = consolidated.values.email;
       if (consolidated.values.celular && !consolidated.values.telefono) consolidated.values.telefono = consolidated.values.celular;
-      const faltantes = missingApplicableComparecienteFields(extraction, compareciente.tipo_persona as 'FISICA' | 'MORAL');
+      const faltantes = missingApplicableComparecienteFields({ ...extraction, campos: Object.keys(consolidated.proposals).map(campo => ({ campo, valor: 'PROPUESTO', confianza: 'LECTURA_CLARA' })) }, personType);
       const persistProposals = () => this.prisma.$transaction(async (tx) => {
         await tx.$executeRaw(Prisma.sql`SELECT pg_advisory_xact_lock(hashtext(${correlationId}))`);
         const prior = await tx.auditLog.findFirst({ where: { organization_id: actorOrganizationId,
@@ -1348,19 +1357,19 @@ export class ComparecienteService {
         select: { id: true } });
         if (prior) return;
         for (const [field, proposal] of Object.entries(consolidated.proposals)) {
-          const alternatives = proposal.estado === 'EN_CONFLICTO' ? proposal.alternativas : [proposal];
+          const alternatives = proposal.estado === 'EN_CONFLICTO' ? proposal.alternativas : proposal.fuentes || [proposal];
           for (const alternative of alternatives) {
             const curpSource = extraction.documentos_curp?.find((document) => document.document_id === alternative.documento_id);
             const ineSource = extraction.documentos_ine?.some((document) => document.document_id === alternative.documento_id);
             const csfSource = extraction.documentos_csf?.find((document) => document.document_id === alternative.documento_id);
-            const origin = curpSource
+            const origin = alternative.verificacion_local === 'MRZ_TD3' ? { provider: 'LOCAL_DOCUMENTARY_CROSSCHECK', model: 'ICAO_TD3_V1' } : curpSource
               ? { provider: curpSource.source === 'DETERMINISTIC_PDF_TEXT' ? 'LOCAL_DETERMINISTIC' : 'LOCAL_OCR', model: curpSource.schema }
               : ineSource ? { provider: 'LOCAL_OCR', model: 'TESSERACT_SPA_IDENTITY_V1' }
               : csfSource ? { provider: csfSource.source.startsWith('LOCAL_OCR') ? 'LOCAL_OCR' : 'LOCAL_DETERMINISTIC', model: 'FISCAL_CSF_LOCAL_V1' }
               : { provider: extraction.proveedor, model: extraction.modelo };
             await tx.comparecienteDatoFuente.create({ data: {
               organization_id: actorOrganizationId, compareciente_id: comparecienteId, campo: field, entidad_destino: 'ComparecienteWorkspace',
-              valor_detectado: alternative.valor || null, documento_id: alternative.documento_id || null,
+              valor_detectado: alternative.valor || null, documento_id: alternative.documento_id?.split(':')[0] || null,
               pagina: alternative.pagina || null, fragmento_fuente: alternative.fragmento || null,
               proveedor_ia: origin.provider, modelo_ia: origin.model, confianza: alternative.confianza || null,
               estado: proposal.estado === 'EN_CONFLICTO' ? 'EN_CONFLICTO' : 'PENDIENTE_CONFIRMACION', correlation_id: correlationId,
@@ -1368,20 +1377,21 @@ export class ComparecienteService {
           }
         }
         for (const document of extraction.documentos_curp || []) {
+          const documentId = document.document_id.split(':')[0];
           for (const field of ['nombre_literal', 'folio_documental', 'entidad_registro', 'fecha_inscripcion', 'certificacion_literal'] as const) {
             const detected = document.fields[field];
             if (!detected) continue;
             const campo = `curp_${field}`;
             const existing = await tx.comparecienteDatoFuente.findFirst({ where: {
               organization_id: actorOrganizationId, compareciente_id: comparecienteId,
-              documento_id: document.document_id, campo, archived_at: null,
+              documento_id: documentId, campo, archived_at: null,
               valor_detectado: detected.normalized,
             }, select: { id: true } });
             if (existing) continue;
             await tx.comparecienteDatoFuente.create({ data: {
               organization_id: actorOrganizationId, compareciente_id: comparecienteId,
               campo, entidad_destino: 'CURP_DOCUMENT_METADATA', valor_detectado: detected.normalized,
-              documento_id: document.document_id, pagina: detected.page,
+              documento_id: documentId, pagina: detected.page,
               fragmento_fuente: detected.literal, proveedor_ia: 'LOCAL_DETERMINISTIC',
               confianza: 'LECTURA_CLARA', estado: 'PENDIENTE_CONFIRMACION',
               correlation_id: correlationId,
@@ -1389,6 +1399,7 @@ export class ComparecienteService {
           }
         }
         for (const document of extraction.documentos_csf || []) {
+          const documentId = document.document_id.split(':')[0];
           const fiscalFields = [
             { campo: 'csf_sha256', value: document.sha256, fragment: document.source },
             ...document.regimenes_fiscales.map((regime) => ({
@@ -1398,13 +1409,13 @@ export class ComparecienteService {
           for (const field of fiscalFields) {
             const existing = await tx.comparecienteDatoFuente.findFirst({ where: {
               organization_id: actorOrganizationId, compareciente_id: comparecienteId,
-              documento_id: document.document_id, campo: field.campo,
+              documento_id: documentId, campo: field.campo,
               valor_detectado: field.value, archived_at: null,
             }, select: { id: true } });
             if (existing) continue;
             await tx.comparecienteDatoFuente.create({ data: {
               organization_id: actorOrganizationId, compareciente_id: comparecienteId,
-              documento_id: document.document_id, campo: field.campo,
+              documento_id: documentId, campo: field.campo,
               entidad_destino: 'FISCAL_PROFILE', valor_detectado: field.value,
               fragmento_fuente: field.fragment || null, proveedor_ia: 'LOCAL_DETERMINISTIC',
               modelo_ia: 'FISCAL_CSF_LOCAL_V1', confianza: 'LECTURA_CLARA',
@@ -1413,13 +1424,14 @@ export class ComparecienteService {
           }
         }
         for (const document of extraction.documentos_ine || []) {
+          const documentId = document.document_id.split(':')[0];
           const existing = await tx.comparecienteDatoFuente.findFirst({ where: {
             organization_id: actorOrganizationId, compareciente_id: comparecienteId,
-            documento_id: document.document_id, campo: 'ine_ocr_processing_status', archived_at: null,
+            documento_id: documentId, campo: 'ine_ocr_processing_status', archived_at: null,
           }, select: { id: true } });
           if (!existing) await tx.comparecienteDatoFuente.create({ data: {
             organization_id: actorOrganizationId, compareciente_id: comparecienteId,
-            documento_id: document.document_id, campo: 'ine_ocr_processing_status',
+            documento_id: documentId, campo: 'ine_ocr_processing_status',
             entidad_destino: 'IDENTITY_DOCUMENT_REVIEW', valor_detectado: document.status,
             fragmento_fuente: document.method, proveedor_ia: 'LOCAL_OCR', modelo_ia: 'TESSERACT_SPA_IDENTITY_V1',
             confianza: document.identificadores_ine.cic || document.identificadores_ine.ocr ? 'LECTURA_DUDOSA' : 'LECTURA_DEFICIENTE',
@@ -1455,15 +1467,15 @@ export class ComparecienteService {
       }
       return {
         values: consolidated.values, proposals: consolidated.proposals, conflicts: consolidated.conflicts,
-        domicilios_detectados: extraction.domicilios_detectados || [], documentos_omitidos: skipped,
+        domicilios_detectados: personType === 'MORAL' ? extraction.domicilios_detectados || [] : [], documentos_omitidos: skipped,
         errores: extraction.errores || [],
         documentos_curp: extraction.documentos_curp || [],
         documentos_csf: extraction.documentos_csf || [],
         documentos_ine: extraction.documentos_ine || [],
-        identificadores_ine: ineIdentifiers,
+        identificadores_ine: consolidated.proposals.nombre_completo ? {} : ineIdentifiers,
         faltantes,
         resumen_ejecutivo: extraction.resumen_ejecutivo || '',
-        alertas: extraction.alertas || [],
+        alertas: [...(extraction.alertas || []), ...consolidated.reviewWarnings],
         estructura_persona_moral: compareciente.tipo_persona === 'MORAL' ? extraction.estructura_persona_moral : undefined,
       };
     } catch (error) { throw error; }

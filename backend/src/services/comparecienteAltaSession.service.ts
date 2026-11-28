@@ -6,7 +6,6 @@ import { uploadFile, deleteFile, downloadFile } from './supabase.service';
 import {
   extraerMultiplesDocumentos,
   missingApplicableComparecienteFields,
-  curpToFechaNacimiento,
   extraerFolioIneMrz,
   autoridadPorTipoDocumento,
   DocumentExtractionResult,
@@ -15,6 +14,7 @@ import {
 } from './openaiDocument.service';
 import { validateCurp, validateOptionalDate, validateRfc } from '../domain/mexicanIdentity';
 import { consolidateExtractedFields } from '../domain/documentExtraction';
+import { consolidatePartyDocuments, documentedPartyName, partyDocumentSources, proposePartyAddresses } from '../domain/partyDocumentPolicy';
 import { requireActorContext } from '../auth/actorContext';
 import { enqueueComparecienteCreatedTx } from './complianceScreening.service';
 
@@ -387,34 +387,24 @@ export class ComparecienteAltaSessionService {
     }
 
     // ── 3. CONSOLIDAR CAMPOS CON TRAZABILIDAD ─────────────────────────────────
-    const consolidacion = consolidateExtractedFields(resultadoIA.campos);
-    const faltantesAplicables = missingApplicableComparecienteFields(
-      resultadoIA,
-      (sesion.tipo_persona || resultadoIA.tipo_persona_detectado || 'FISICA') as 'FISICA' | 'MORAL',
-    );
+    const personType = (sesion.tipo_persona || resultadoIA.tipo_persona_detectado || 'FISICA') as 'FISICA' | 'MORAL';
+    const sources = partyDocumentSources(cargasTemporales.map(carga => ({ documentoId: carga.id, nombreOriginal: carga.nombre_original, tipoDocumento: carga.tipo_documento || undefined })), resultadoIA.tipos_documentales);
+    const campos = resultadoIA.identificadores_ine?.cic && resultadoIA.identificadores_ine?.ocr ? resultadoIA.campos.filter(field => field.campo !== 'folio_identificacion') : resultadoIA.campos;
+    const consolidacion = consolidatePartyDocuments(campos, sources, personType);
     const erroresExtraccion = [...erroresCarga, ...(resultadoIA.errores || [])];
+    if (personType === 'FISICA') {
+      const eligibleAddresses = (resultadoIA.domicilios_detectados || []).filter(address => !consolidacion.excludedDocumentIds.includes(address.documento_id || ''));
+      const address = consolidateExtractedFields(proposePartyAddresses(eligibleAddresses, sources, Boolean(consolidacion.proposals.nombre_completo), Boolean(erroresExtraccion.length), documentedPartyName(consolidacion.values)));
+      Object.assign(consolidacion.values, address.values);
+      Object.assign(consolidacion.proposals, address.proposals);
+    }
+    const faltantesAplicables = missingApplicableComparecienteFields({ ...resultadoIA, campos: Object.keys(consolidacion.proposals).map(campo => ({ campo, valor: 'PROPUESTO', confianza: 'LECTURA_CLARA' })) }, personType);
     // ZIP members use <source uuid>:<entry>. A failed member keeps its original
     // archive retryable rather than falsely marking the entire source processed.
     const failedDocumentIds = new Set(erroresExtraccion.map((entry) => String(entry.documento_id).split(':')[0]));
     const documentosProcesados = documentosParaIA.filter((document) => !failedDocumentIds.has(document.documentoId));
     const camposCombinados: Record<string, any> = { ...consolidacion.values };
     const propuestaRespuesta: Record<string, any> = { ...consolidacion.proposals };
-
-    // ── 4. DERIVAR FECHA DE NACIMIENTO DESDE CURP si no viene del documento ──
-    if (!camposCombinados.fecha_nacimiento && camposCombinados.curp) {
-      const derivada = curpToFechaNacimiento(camposCombinados.curp);
-      if (derivada) {
-        camposCombinados.fecha_nacimiento = derivada;
-        camposCombinados._fecha_nacimiento_fuente = 'Derivada de CURP';
-        propuestaRespuesta.fecha_nacimiento = {
-          valor: derivada,
-          fuente: 'Derivada de CURP',
-          confianza: 'LECTURA_CLARA',
-          estado: 'DERIVADO',
-          nota: 'Derivada de CURP'
-        };
-      }
-    }
 
     // ── 4c. DATOS DE CONTACTO (TELÉFONO Y CORREO ELECTRONICO) ─────────────────
     const telVal = camposCombinados.telefono || camposCombinados.celular || camposCombinados.telefono_1 || camposCombinados.numero_contacto;
@@ -431,13 +421,14 @@ export class ComparecienteAltaSessionService {
     // Only the sourced extraction may propose it (a passport may be foreign).
 
     // ── 6. SEPARAR DOMICILIOS POR TIPO (FISCAL / PARTICULAR / IDENTIFICACION) ─
-    const domiciliosFiscales = (resultadoIA.domicilios_detectados || []).filter(
+    const legacyAddresses = personType === 'MORAL' ? resultadoIA.domicilios_detectados || [] : [];
+    const domiciliosFiscales = legacyAddresses.filter(
       d => d.tipo_sugerido === 'FISCAL'
     );
-    const domiciliosParticulares = (resultadoIA.domicilios_detectados || []).filter(
+    const domiciliosParticulares = legacyAddresses.filter(
       d => d.tipo_sugerido === 'COMPROBADO'
     );
-    const domiciliosIdentificacion = (resultadoIA.domicilios_detectados || []).filter(
+    const domiciliosIdentificacion = legacyAddresses.filter(
       d => d.tipo_sugerido === 'IDENTIFICACION'
     );
 
@@ -447,17 +438,11 @@ export class ComparecienteAltaSessionService {
     const domIdent = domiciliosIdentificacion[0] || null;
 
     const borradorLimpio = { ...(sesion.borrador_json as any) || {} };
-    for (const conflicto of consolidacion.conflicts) delete borradorLimpio[conflicto.campo];
     // Missing documentary evidence never deletes manually entered draft data.
 
-    // Asegurar que giro no retenga valores mock salvo acreditación documental
-    if (!camposCombinados.giro) {
-      camposCombinados.giro = '';
-    }
-
     const borradorMejorado = {
-      ...borradorLimpio,
       ...camposCombinados,
+      ...Object.fromEntries(Object.entries(borradorLimpio).filter(([, value]) => typeof value === 'string' ? value.trim() : value != null)),
       tipo_persona: resultadoIA.tipo_persona_detectado || borradorLimpio.tipo_persona || sesion.tipo_persona || 'FISICA',
       pep_estado: 'PENDIENTE',
 
@@ -500,11 +485,11 @@ export class ComparecienteAltaSessionService {
       } : {}),
 
       // Lista completa para el flujo de confirmación
-      domicilios_detectados: resultadoIA.domicilios_detectados || [],
+      domicilios_detectados: legacyAddresses,
       actividades_economicas: resultadoIA.actividades_economicas || [],
       regimenes: resultadoIA.regimenes || [],
       _ia_resumen: resultadoIA.resumen_ejecutivo || `Extracción completada sobre ${documentosParaIA.length} documentos.`,
-      _ia_alertas: resultadoIA.alertas || [],
+      _ia_alertas: [...(resultadoIA.alertas || []), ...consolidacion.reviewWarnings],
       _ia_faltantes: faltantesAplicables,
       _ia_errores: erroresExtraccion,
       _ia_estructura_persona_moral: resultadoIA.estructura_persona_moral || null,
@@ -515,7 +500,7 @@ export class ComparecienteAltaSessionService {
       _ia_uso: resultadoIA.uso || null,
       _ia_usos: resultadoIA.usos || (resultadoIA.uso ? [resultadoIA.uso] : []),
       _ia_documentos_curp: resultadoIA.documentos_curp || [],
-      _ia_identificadores_ine: resultadoIA.identificadores_ine || {},
+      _ia_identificadores_ine: consolidacion.proposals.nombre_completo ? {} : resultadoIA.identificadores_ine || {},
       _ia_lecturas_descartadas: resultadoIA.lecturas_descartadas || [],
     };
 
@@ -523,7 +508,7 @@ export class ComparecienteAltaSessionService {
       where: { id: sessionId },
       data: {
         estatus: 'PENDIENTE_CONFIRMACION',
-        borrador_json: borradorMejorado,
+        borrador_json: JSON.parse(JSON.stringify(borradorMejorado)) as Prisma.InputJsonValue,
         tipo_persona: resultadoIA.tipo_persona_detectado || sesion.tipo_persona
       }
     });
@@ -542,17 +527,18 @@ export class ComparecienteAltaSessionService {
       errores: erroresExtraccion,
       sesion_id: sessionId,
       propuesta: propuestaRespuesta,
+      values: camposCombinados,
       conflictos: consolidacion.conflicts,
       faltantes: faltantesAplicables,
-      domicilios_detectados: resultadoIA.domicilios_detectados || [],
+      domicilios_detectados: legacyAddresses,
       documentos_curp: resultadoIA.documentos_curp || [],
-      identificadores_ine: resultadoIA.identificadores_ine || {},
+      identificadores_ine: consolidacion.proposals.nombre_completo ? {} : resultadoIA.identificadores_ine || {},
       resultado: {
         proveedor: resultadoIA.proveedor,
         modelo: resultadoIA.modelo,
         tipo_persona_detectado: resultadoIA.tipo_persona_detectado || 'FISICA',
         resumen_ejecutivo: resultadoIA.resumen_ejecutivo || '',
-        alertas: resultadoIA.alertas || [],
+        alertas: [...(resultadoIA.alertas || []), ...consolidacion.reviewWarnings],
         faltantes: faltantesAplicables,
         estructura_persona_moral: resultadoIA.estructura_persona_moral,
         campos: resultadoIA.campos,
